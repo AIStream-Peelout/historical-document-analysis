@@ -9,8 +9,8 @@ collections as well.
 This code was primarily run and tested on py.313 venv on Mac OS Silicon with 48gb of RAM. We are working on setting up a CI/CD pipeline but in the interim
 we cannot guarantee its ability to run on other environments.
 
-1. Run `git clone https://github.com/isaacmg/multimodal-document-analysis.git`
-2. `cd multimodal-document-analysis`
+1. Run `git clone https://github.com/AIStream-Peelout/historical-document-analysis.git`
+2. `cd historical-document-analysis`
 3. Run `pip install -r requirements.txt`
 
 ### .env file
