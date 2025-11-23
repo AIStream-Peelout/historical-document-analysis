@@ -38,3 +38,4 @@ python-dotenv
 google-cloud-aiplatform
 google-generativeai
 neo4j
+pydantic
