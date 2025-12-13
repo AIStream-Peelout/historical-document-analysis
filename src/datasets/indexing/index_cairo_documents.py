@@ -8,7 +8,7 @@ from typing import List, Dict
 from src.datasets.cairo_genizah.indexing.elastic_index_genizah import ElasticsearchGenizahProcessor
 from src.datasets.document_models.genizah_document import GenizahDocument
 from src.datasets.cairo_genizah.indexing.image_url_helpers import ImageURLHelper
-from src.multimodal_embeddings.embedding_models import NomicsEmbedding
+from src.embeddings.embedding_models import NomicsEmbedding
 import dotenv
 import re
 dotenv.load_dotenv()

@@ -7,7 +7,7 @@ from typing import Any, Dict, List, Optional, Literal
 import dotenv
 from src.datasets.document_models.bibliography_document import BibliographyDocument
 from PIL import Image
-from src.multimodal_embeddings.embedding_models import NomicsEmbedding
+from src.embeddings.embedding_models import NomicsEmbedding
 from src.datasets.indexing.elastic_index_genizah import (
     ElasticsearchGenizahProcessor,
 )

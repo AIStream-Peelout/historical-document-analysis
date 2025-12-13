@@ -2,8 +2,8 @@ import json
 import logging
 from pathlib import Path
 from typing import List, Optional
-from src.multimodal_embeddings.embedding_models import MultiModalEmbedding
-from src.multimodal_embeddings.visualizations.document_visualizer import DocumentVisualization
+from src.embeddings.embedding_models import MultiModalEmbedding
+from src.embeddings.visualizations.document_visualizer import DocumentVisualization
 import pickle
 import pandas as pd
 from google.cloud import storage
