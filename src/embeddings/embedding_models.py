@@ -18,6 +18,27 @@ from transformers.utils.import_utils import is_flash_attn_2_available
 
 logger = logging.getLogger(__name__)
 
+class TextEmbedding(ABC):
+    """Base class for text embedding models with common methods and attributes"""
+
+    def __init__(self):
+        self.device = self._get_device()
+        self.cache_dir = Path("embedding_cache")
+        self.cache_dir.mkdir(exist_ok=True)
+
+    def _get_device(self):
+        """Determine the best available device"""
+        if torch.cuda.is_available():
+            return "cuda:0"
+        elif hasattr(torch.backends, 'mps') and torch.backends.mps.is_available():
+            return "mps"
+        else:
+            return "cpu"
+
+    @abstractmethod
+    def get_text_embeddings(self, text: str):
+        """Get embeddings for text"""
+        pass
 
 class MultiModalEmbedding(ABC):
     """Base class for multimodal embedding models with common methods and attributes"""
