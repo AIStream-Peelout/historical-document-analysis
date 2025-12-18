@@ -39,3 +39,4 @@ google-cloud-aiplatform
 google-generativeai
 neo4j
 pydantic
+pydantic-ai
