@@ -25,7 +25,7 @@ scikit-learn
 selenium
 google-cloud-storage
 git+https://github.com/illuin-tech/colpali.git
-elasticsearch
+elasticsearch==8.19.0
 wandb
 datasets
 hf_xet

@@ -10,6 +10,7 @@ from elasticsearch import Elasticsearch
 from elasticsearch.helpers import bulk
 
 logger = logging.getLogger(__name__)
+logging.getLogger('elasticsearch').setLevel(logging.DEBUG)
 
 
 class ElasticsearchGenizahProcessor:

@@ -4,7 +4,7 @@ from typing import List, Optional, Dict, Any
 import dotenv
 dotenv.load_dotenv()
 
-from src.datasets.cairo_genizah.indexing.biblio.index_bibliography import (
+from src.datasets.indexing.bibliography.index_bibliography import (
     index_bibliography_to_elasticsearch,
 )
 
@@ -347,10 +347,10 @@ def main() -> None:
     """
 
     index_all_bibliography(
-        root_dir="/Users/isaac1/Documents/GitHub/multimodal-document-analysis/src/datasets/raw_data/cairo_genizah/academic_literature",
-        index_name="bibliography_0.0.2",
+        root_dir="/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/academic_literature",
+        index_name="bibliography_text_only_0.4",
         embedding_mode="text_only",
-        suffix= "*_gemini_gemini_2.5_flash",
+        suffix= "_gemini_gemini_2.5_flash",
         dry_run=False,
     )
 

@@ -55,7 +55,7 @@ class StructuredPageData(BaseModel):
         default_factory=dict,
         description="Transcriptions organized by shelf mark, then line number"
     )
-    extracted_page_number: Optional[int] = Field(
+    extracted_page_number: Optional[List[int]] = Field(
         None,
         description="Page number extracted from the document"
     )
@@ -81,8 +81,8 @@ class StructuredJSONLLM:
     """
 
     def __init__(self,
-                 raw_data_dir: Optional[str] = None,
-                 ollama_url: str = "http://localhost:11434/v1",
+                 raw_data_dir: Optional[str] = None, #str = "http://localhost:1234/v1",
+                 ollama_url: str = "http://localhost:1234/v1",
                  model_name: str = "qwen3-vl:8b",
                  use_gemini: bool = False,
                  gemini_api_key: Optional[str] = None,
@@ -203,6 +203,14 @@ Classification: Based on the text and image of the document. Please classify the
     - catalog: These pages will generally be very structured. Likely listing many shelf-marks and associations.
     - diagram/map: These pages are generally image based.
 
+**IMPORTANT: Extract page numbers**
+Look at the actual printed/visible page numbers in the document image (usually at top or bottom of page).
+- Single page scan: return one number, e.g., [119]
+- Two-page spread scan: return both numbers in order, e.g., [118, 119]
+- No visible page numbers: return empty list []
+These are NOT the PDF page numbers - extract the actual numbers printed on the document.
+
+
 Guidelines:
 1. Extract all shelf marks mentioned in the text. Common patterns include:
    - Cambridge: T-S followed by classification (T-S A43.1, T-S NS 322.64, T-S Ar.31.30)
@@ -221,7 +229,9 @@ Guidelines:
 3. Extract Hebrew/Arabic transcriptions and associate them with shelf marks
 4. If no footnotes exist, use empty object
 5. If no transcriptions exist, use empty object. DO NOT EVER TRY TO TRANSCRIBE IMAGES OF THE DOCUMENT. YOU ARE TO USE ONLY THE PROVIDED OCR TEXT. 
-6. If no shelf marks are mentioned, use empty object"""
+6. If no shelf marks are mentioned, use empty object
+7. Extract the page number or page numbers from the bottom as a list. 
+"""
 
         return prompt
 
@@ -313,7 +323,7 @@ Guidelines:
                     self.model,
                     output_type=StructuredPageData,
                     system_prompt=system_prompt,
-                    retries=2
+                    retries=1
                 )
             else:
                 agent = self.agent

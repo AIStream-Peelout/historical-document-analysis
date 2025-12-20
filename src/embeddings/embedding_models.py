@@ -226,6 +226,7 @@ class NomicsEmbedding(MultiModalEmbedding):
             if use_cache:
                 self.save_to_cache(cache_path, embedding)
             if self.image_only:
+                logger.info(f"Using image-only embedding for document {doc_identifier}")
                 return torch.mean(image_embeddings, dim=1).cpu().to(torch.float32).numpy()
             if self.text_only:
                 return torch.mean(query_embeddings, dim=1).cpu().to(torch.float32).numpy()
