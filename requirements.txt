@@ -40,3 +40,8 @@ google-generativeai
 neo4j
 pydantic
 pydantic-ai
+langgraph
+langchain
+google-generativeai
+google-cloud-vision
+aiohttp

@@ -5,4 +5,8 @@ wandb/
 *.env
 src/datasets/raw_data
 .env
-.env
+src/models/llm/transcription_raw_outputs
+src/models/llm/genizah_images
+.idea
+/.idea
+idea/
