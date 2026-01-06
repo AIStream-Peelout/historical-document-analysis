@@ -213,7 +213,37 @@ def create_comparison_html(doc_id: str, ground_truth: str,
 # ============================================================================
 
 class TranscriptionState(TypedDict):
-    """State passed between nodes"""
+    """State object passed between LangGraph nodes during transcription pipeline.
+
+    This TypedDict defines the complete state that flows through the transcription
+    evaluation workflow. Each node reads from and writes to this state.
+
+    Attributes:
+        doc_id (str): Unique identifier for the document/fragment being processed
+        image_path (str): Absolute path to the manuscript image file
+        catalog_metadata (dict): Metadata from catalog including description, dates, etc.
+        ground_truth (str): Reference transcription text for evaluation
+
+        vision_ocr_result (Optional[dict]): Google Vision OCR output
+        gemini_flash_result (Optional[dict]): Gemini Flash model output
+        gemini_pro_result (Optional[dict]): Gemini Pro model output
+
+        vision_ocr_metrics (Optional[dict]): Evaluation metrics for Vision OCR
+        gemini_flash_metrics (Optional[dict]): Evaluation metrics for Gemini Flash
+        gemini_pro_metrics (Optional[dict]): Evaluation metrics for Gemini Pro
+
+        all_results (list): List of all successful model results
+        disagreements (list): List of disagreement records between models
+        needs_review (bool): Flag indicating if human review is needed
+        final_transcription (str): Consensus transcription selected by strategy
+        confidence_score (float): Overall confidence in consensus result
+        consensus_strategy (str): Strategy used to select consensus
+
+        consensus_metrics (Optional[dict]): Evaluation metrics for consensus output
+
+        processing_time (float): Total processing time for document in seconds
+        model_times (dict): Dictionary mapping model names to their processing times
+    """
     # Input
     doc_id: str
     image_path: str
@@ -251,7 +281,19 @@ class TranscriptionState(TypedDict):
 # ============================================================================
 
 async def download_image(url_or_filename: str, doc_id: str, output_dir: Path, image_prefix="https://storage.googleapis.com/cairo-genizah-es-json/images/") -> Path:
-    """Download image from URL or locate local file"""
+    """Download image from URL or locate local file.
+
+    :param url_or_filename: Either a full HTTP URL or a local filename
+    :type url_or_filename: str
+    :param doc_id: Document identifier used for organizing downloaded files
+    :type doc_id: str
+    :param output_dir: Base directory for storing images
+    :type output_dir: Path
+    :param image_prefix: URL prefix for images
+    :type image_prefix: str
+    :return: Path to the downloaded or located image file
+    :rtype: Path
+    """
     url_or_filename = image_prefix + url_or_filename
     if url_or_filename.startswith("http"):
         filename = Path(urlparse(url_or_filename).path).name
@@ -274,7 +316,13 @@ async def download_image(url_or_filename: str, doc_id: str, output_dir: Path, im
 
 
 def has_ground_truth(metadata: dict) -> bool:
-    """Check if document has ground truth transcription"""
+    """Check if document has valid ground truth transcription.
+
+    :param metadata: Document metadata dictionary from catalog
+    :type metadata: dict
+    :return: True if ground truth exists and is longer than 10 characters
+    :rtype: bool
+    """
     transcriptions = metadata.get('transcriptions', [])
     if not transcriptions:
         return False
@@ -284,8 +332,17 @@ def has_ground_truth(metadata: dict) -> bool:
 
 
 def evaluate_transcription(ground_truth: str, hypothesis: str, model_name: str) -> dict:
-    """Calculate all metrics for a transcription"""
+    """Calculate all evaluation metrics for a transcription.
 
+    :param ground_truth: Reference transcription text
+    :type ground_truth: str
+    :param hypothesis: Model-generated transcription to evaluate
+    :type hypothesis: str
+    :param model_name: Identifier for the model being evaluated
+    :type model_name: str
+    :return: Dictionary containing metrics
+    :rtype: dict
+    """
     # Clean whitespace for comparison
     gt_clean = ' '.join(ground_truth.split())
     hyp_clean = ' '.join(hypothesis.split())
@@ -308,7 +365,13 @@ def evaluate_transcription(ground_truth: str, hypothesis: str, model_name: str) 
 # LangGraph Nodes
 # ============================================================================
 async def vision_ocr_node(state: TranscriptionState) -> TranscriptionState:
-    """Call Google Vision OCR and evaluate"""
+    """Execute Google Vision OCR transcription and evaluate results.
+
+    :param state: Current pipeline state containing image path and ground truth
+    :type state: TranscriptionState
+    :return: Updated state with vision_ocr_result and vision_ocr_metrics populated
+    :rtype: TranscriptionState
+    """
     if not Config.USE_VISION_OCR:
         print(f"  ⏭️  Vision OCR: Skipped")
         state['vision_ocr_result'] = None
@@ -371,7 +434,13 @@ async def vision_ocr_node(state: TranscriptionState) -> TranscriptionState:
 
 
 async def gemini_flash_node(state: TranscriptionState) -> TranscriptionState:
-    """Call Gemini Flash and evaluate"""
+    """Execute Gemini Flash transcription and evaluate results.
+
+    :param state: Current pipeline state containing image path and ground truth
+    :type state: TranscriptionState
+    :return: Updated state with gemini_flash_result and gemini_flash_metrics populated
+    :rtype: TranscriptionState
+    """
     if not Config.USE_GEMINI_FLASH:
         print(f"  ⏭️  Gemini Flash: Skipped")
         state['gemini_flash_result'] = None
@@ -478,7 +547,13 @@ Return ONLY the Hebrew transcription with no commentary."""
 
 
 async def gemini_pro_node(state: TranscriptionState) -> TranscriptionState:
-    """Call Gemini Pro and evaluate"""
+    """Execute Gemini Pro transcription and evaluate results.
+
+    :param state: Current pipeline state containing image path and ground truth
+    :type state: TranscriptionState
+    :return: Updated state with gemini_pro_result and gemini_pro_metrics populated
+    :rtype: TranscriptionState
+    """
     if not Config.USE_GEMINI_PRO:
         print(f"  ⏭️  Gemini Pro: Skipped (disabled)")
         state['gemini_pro_result'] = None
@@ -550,8 +625,15 @@ Return only Hebrew transcription."""
 
     return state
 
+
 async def consensus_node(state: TranscriptionState) -> TranscriptionState:
-    """Compute consensus and evaluate it"""
+    """Compute consensus transcription from all model outputs.
+
+    :param state: Current pipeline state with model results populated
+    :type state: TranscriptionState
+    :return: Updated state with consensus results and metrics
+    :rtype: TranscriptionState
+    """
     print(f"  🤝 Computing consensus...")
 
     # Collect results
@@ -631,12 +713,24 @@ async def consensus_node(state: TranscriptionState) -> TranscriptionState:
 
 
 def should_review(state: TranscriptionState) -> str:
-    """Conditional routing"""
+    """Determine if consensus result needs human review.
+
+    :param state: Current pipeline state with disagreements recorded
+    :type state: TranscriptionState
+    :return: "review" if needs_review is True, "end" otherwise
+    :rtype: str
+    """
     return "review" if state['needs_review'] else "end"
 
 
 async def review_node(state: TranscriptionState) -> TranscriptionState:
-    """Placeholder for review"""
+    """Placeholder node for human review workflow.
+
+    :param state: Current pipeline state
+    :type state: TranscriptionState
+    :return: Unmodified state
+    :rtype: TranscriptionState
+    """
     return state
 
 
@@ -691,6 +785,7 @@ def build_evaluation_graph():
                     state['model_times']['gemini_pro'] = result['model_times']['gemini_pro']
 
         return state
+
     workflow = StateGraph(TranscriptionState)
 
     workflow.add_node("parallel_models", parallel_models_node)
@@ -712,6 +807,7 @@ def build_evaluation_graph():
 # ============================================================================
 # W&B Logging
 # ============================================================================
+
 def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
     """Log comprehensive metrics and return table rows for batch logging.
 
@@ -723,13 +819,34 @@ def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
     :rtype: tuple
     """
 
-    # Log scalar metrics for time series (keep this - logs immediately)
+    # Log scalar metrics for time series
     metrics = {
         'doc_id': state['doc_id'],
         'processing_time_total': state['processing_time'],
     }
 
-    # ... all the metrics logging code stays the same ...
+    # Log individual model metrics as scalars
+    for model_key in ['vision_ocr', 'gemini_flash', 'gemini_pro']:
+        model_metrics = state.get(f'{model_key}_metrics')
+        if model_metrics:
+            for key, value in model_metrics.items():
+                if isinstance(value, (int, float)):
+                    metrics[f'{model_key}/{key}'] = value
+
+    # Log consensus metrics
+    if state.get('consensus_metrics'):
+        for key, value in state['consensus_metrics'].items():
+            if isinstance(value, (int, float)):
+                metrics[f'consensus/{key}'] = value
+
+    # Log strategy and metadata
+    metrics['consensus/strategy'] = state['consensus_strategy']
+    metrics['consensus/num_disagreements'] = len(state['disagreements'])
+    metrics['consensus/needs_review'] = state['needs_review']
+
+    # Log timing
+    for model, duration in state['model_times'].items():
+        metrics[f'timing/{model}'] = duration
 
     wandb.log(metrics)
 
@@ -782,7 +899,7 @@ def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
             ])
 
     # ========================================================================
-    # HTML COMPARISON (keep this - logs immediately with unique key)
+    # HTML COMPARISON - Log immediately with unique key
     # ========================================================================
 
     ocr_text = (state.get('vision_ocr_result') or {}).get('text', '')
@@ -808,31 +925,6 @@ def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
         wandb.log({f"comparison_html/{state['doc_id']}": wandb.Html(comparison_html)})
 
     return text_comparison_row, metrics_rows
-    # ========================================================================
-    # HTML COMPARISON (existing, keep for detailed view)
-    # ========================================================================
-
-    ocr_text = (state.get('vision_ocr_result') or {}).get('text', '')
-    flash_text = (state.get('gemini_flash_result') or {}).get('text', '')
-    pro_text = (state.get('gemini_pro_result') or {}).get('text', '')
-
-    if ocr_text or flash_text or pro_text:
-        comparison_html = create_comparison_html(
-            state['doc_id'],
-            state['ground_truth'],
-            ocr_text,
-            flash_text,
-            pro_text,
-            state['final_transcription'],
-            state['consensus_strategy']
-        )
-
-        # Save HTML file
-        html_path = Config.RAW_OUTPUTS_DIR / state['doc_id'] / "comparison.html"
-        html_path.write_text(comparison_html, encoding='utf-8')
-
-        # Log to W&B
-        wandb.log({f"comparison_html/{state['doc_id']}": wandb.Html(comparison_html)})
 
 
 # ============================================================================
@@ -840,24 +932,38 @@ def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
 # ============================================================================
 
 async def process_document(doc_id: str, metadata: dict, graph, wandb_run) -> dict:
-    """Process single document - saves results incrementally"""
+    """Process a single document through the complete transcription pipeline.
+
+    :param doc_id: Unique document identifier
+    :type doc_id: str
+    :param metadata: Document metadata from catalog
+    :type metadata: dict
+    :param graph: Compiled LangGraph workflow
+    :type graph: langgraph.graph.CompiledGraph
+    :param wandb_run: Active W&B run for logging
+    :type wandb_run: wandb.sdk.wandb_run.Run
+    :return: Final pipeline state or None if skipped
+    :rtype: Optional[dict]
+    """
 
     print(f"\n📄 {doc_id}")
     print(f"   {metadata.get('description', '')[:80]}...")
 
     images = metadata.get('images', [])
-    assert images, f"No images found for {doc_id}"
+    if not images:
+        print(f"  ⚠️  No images found - skipping")
+        return None
 
     image_path = await download_image(images[0], doc_id, Config.IMAGES_DIR)
     if not image_path.exists():
-        print(f"  ⚠️  Image download failed for {doc_id}, skipping.")
-
+        print(f"  ⚠️  Image missing: {image_path} - skipping")
         return None
-    assert image_path.exists(), f"Image file missing: {image_path}"
 
     # Extract ground truth
     ground_truth = extract_ground_truth(metadata.get('transcriptions', []))
-    assert ground_truth, f"No ground truth found for {doc_id}"
+    if not ground_truth:
+        print(f"  ⚠️  No ground truth found - skipping")
+        return None
 
     print(f"  📝 Ground truth: {len(ground_truth)} chars")
 
@@ -890,8 +996,12 @@ async def process_document(doc_id: str, metadata: dict, graph, wandb_run) -> dic
     final_state = await graph.ainvoke(initial_state)
     final_state['processing_time'] = time.time() - start_time
 
-    # Log to W&B
-    log_to_wandb(final_state, wandb_run.name)
+    # Log to W&B and get table rows
+    text_row, metrics_rows = log_to_wandb(final_state, wandb_run.name)
+
+    # Store rows in state for later batch logging
+    final_state['_text_comparison_row'] = text_row
+    final_state['_metrics_rows'] = metrics_rows
 
     # Save incrementally to file
     save_incremental_result(final_state)
@@ -903,7 +1013,7 @@ async def process_document(doc_id: str, metadata: dict, graph, wandb_run) -> dic
 
 
 async def main():
-    """Main evaluation pipeline"""
+    """Main evaluation pipeline entry point."""
 
     print("=" * 80)
     print("Cairo Genizah Transcription Evaluation")
@@ -976,12 +1086,59 @@ async def main():
     # Build graph
     graph = build_evaluation_graph()
 
-    # Process documents
+    # Process documents - collect table rows
     results = []
+    text_comparison_rows = []
+    all_metrics_rows = []
+
     for i, (doc_id, metadata) in enumerate(test_docs.items(), 1):
         print(f"\n[{i}/{len(test_docs)}]", end=" ")
         result = await process_document(doc_id, metadata, graph, wandb_run)
-        results.append(result)
+        if result:
+            results.append(result)
+            # Collect table rows
+            text_comparison_rows.append(result['_text_comparison_row'])
+            all_metrics_rows.extend(result['_metrics_rows'])
+
+    # ========================================================================
+    # LOG FINAL TABLES TO W&B
+    # ========================================================================
+
+    print("\n📊 Logging tables to W&B...")
+
+    # Text comparison table
+    text_comparison_table = wandb.Table(
+        columns=[
+            "fragment_id",
+            "image",
+            "ground_truth",
+            "vision_ocr",
+            "gemini_flash",
+            "gemini_pro",
+            "consensus",
+            "consensus_strategy"
+        ],
+        data=text_comparison_rows
+    )
+    wandb.log({"text_comparison": text_comparison_table})
+
+    # Metrics table
+    metrics_table = wandb.Table(
+        columns=[
+            "fragment_id",
+            "model",
+            "cer",
+            "wer",
+            "similarity",
+            "char_count",
+            "gt_char_count",
+            "char_diff",
+            "processing_time_sec",
+            "exact_match"
+        ],
+        data=all_metrics_rows
+    )
+    wandb.log({"metrics": metrics_table})
 
     # Aggregate statistics
     print("\n" + "=" * 80)
