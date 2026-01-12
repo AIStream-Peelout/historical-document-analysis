@@ -27,7 +27,7 @@ dotenv.load_dotenv()
 
 class Config:
     """Pipeline configuration"""
-    catalog_path = "/Users/isaac1/Documents/historical-document-analysis/src/datasets/raw_data/merged_princeton_friedberger_first_25_with_transcriptions.json"
+    catalog_path = "/Users/isaac1/Documents/historical-document-analysis/src/datasets/raw_data/merged_princeton_first_25_with_transcriptions.json"
     IMAGES_DIR = Path("./genizah_images")
     RESULTS_DIR = Path("./transcription_results")
     RAW_OUTPUTS_DIR = Path("./transcription_raw_outputs")
@@ -48,7 +48,7 @@ class Config:
     # Model selection
     USE_VISION_OCR = True
     USE_GEMINI_FLASH = True
-    USE_GEMINI_PRO = False  # Set to False to skip Pro (quota issues)
+    USE_GEMINI_PRO = True # Set to False to skip Pro (quota issues)
 
     # Evaluation
     MIN_CONFIDENCE_THRESHOLD = 0.7
@@ -569,7 +569,8 @@ async def gemini_pro_node(state: TranscriptionState) -> TranscriptionState:
 
         catalog_hint = state['catalog_metadata'].get('description', '')
 
-        prompt = f"""Transcribe this Hebrew manuscript image with maximum accuracy.
+        prompt = f"""The following is the image of a document from Cairo Genizah. The text may be in Hebrew, Arabic, Aramaic, Judeo-Arabic or some combination. Below I have provided
+        some contextual information from the catalog entry.
 
 Context: {catalog_hint}
 
