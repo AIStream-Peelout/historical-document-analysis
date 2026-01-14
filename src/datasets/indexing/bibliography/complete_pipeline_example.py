@@ -15,12 +15,13 @@ import dotenv
 from src.models.llm.add_full_text_to_structured import add_full_text_to_structured
 
 # Add the src directory to the Python path
-project_root = Path(__file__).parent.parent.parent.parent.parent.parent
+project_root = Path(__file__).parent.parent.parent.parent.parent
 data_root = project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" / "academic_literature"
 sys.path.append(str(project_root))
 
 # Load environment variables from project root
 dotenv.load_dotenv(project_root / ".env")
+
 
 from src.models.ocr.book_ocr_service import BookOCRService
 from src.models.llm.structured_json_llm import StructuredJSONLLM
@@ -30,6 +31,12 @@ from src.models.llm.add_full_text_to_structured import add_full_text_to_structur
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+ollam_model_names_to_extensions = {
+    "qwen3_vl_8b": "qwen3-vl:8b",
+    "qwen_model": "qwen/qwen3-vl-8b"
+
+}
 
 
 def load_book_metadata(example_file: str) -> dict:
@@ -54,9 +61,7 @@ def get_pdf_files_in_directory():
 
 
 def run_specific_file(example_file: str, book_file: str, model_extension: str = "", use_gemini=True) -> dict:
-    """Run the complete pipeline including secondary processing for enhanced analysis.
-    :param example_file: The path to example file within in the academic_literature directory (e.g.cairo_to_manchester/cairo_to_manchester_intro.pdf)
-    """
+    """Run the complete pipeline including secondary processing for enhanced analysis."""
     print(f"Processing file: {example_file}")
 
     # Step 1: OCR Processing
@@ -71,25 +76,27 @@ def run_specific_file(example_file: str, book_file: str, model_extension: str = 
 
     # Step 2: Initial Structured Processing
     print("Step 2: Running initial structured LLM processing...")
-
-    # Load book metadata to provide context to the LLM
     book_metadata = load_book_metadata(book_file)
     if book_metadata:
         print(f"✅ Loaded book metadata: {book_metadata.get('title', 'Unknown title')}")
-
-    structured_llm = StructuredJSONLLM(model_name="gemma3:27b", book_metadata=book_metadata, use_gemini=use_gemini)
+    model_name = ollam_model_names_to_extensions[model_extension]
+    structured_llm = StructuredJSONLLM(model_name=model_name, book_metadata=book_metadata, use_gemini=use_gemini)
     structured_result = structured_llm.process_from_ocr_service(ocr_result)
     print(f"Structured processing completed: {structured_result}")
-    # Get the structured directory from the structured result
-    pdf_name = Path(example_file).stem
-    structured_dir = full_output_path / f"{pdf_name}_structured_"
-    if model_extension:
-        structured_dir = full_output_path / f"{pdf_name}_structured_{model_extension}"
-    # Re-add full text after processing
+
+    # USE THE ACTUAL DIRECTORY FROM THE RESULT - DON'T RECONSTRUCT!
+    structured_dir = Path(structured_result.get('structured_dir'))
+    if not structured_dir.exists():
+        print(f"ERROR: Structured directory doesn't exist: {structured_dir}")
+        return structured_result
+
+    print(f"✅ Using structured directory: {structured_dir}")
+
+    # Step 2.5: Re-add full text after processing
     if structured_result.get('processed_pages', 0) > 0:
         print("Step 2.5: Adding full OCR text to structured files...")
         add_results = add_full_text_to_structured(
-            structured_dir=str(structured_dir),
+            structured_dir=str(structured_dir),  # Use the actual path
             ocr_results_path=ocr_result['ocr_results_path']
         )
         print(f"Added full text to {add_results['files_updated']} files")
@@ -98,21 +105,23 @@ def run_specific_file(example_file: str, book_file: str, model_extension: str = 
     print("Step 3: Running secondary enhanced processing...")
     secondary_processor = SecondaryLLMProcessor(model_name="gemma3:27b")
 
-    if structured_dir.exists():
-        enhanced_data = secondary_processor.process_from_structured_dir(
-            structured_dir,
-            output_path=structured_dir.parent / f"{pdf_name}_enhanced.json"
-        )
-        print(f"Enhanced processing completed:")
-        print(f"  - Pages processed: {enhanced_data.get('processing_metadata', {}).get('total_pages', 0)}")
-        print(
-            f"  - Enhanced shelf mark transcriptions: {len(enhanced_data.get('context_analysis', {}).get('enhanced_shelf_mark_transcriptions', {}))}")
-        print(f"  - People extracted: {len(enhanced_data.get('people_locations', {}).get('people', []))}")
-        print(f"  - Locations extracted: {len(enhanced_data.get('people_locations', {}).get('locations', []))}")
-    else:
-        print(f"Structured directory not found: {structured_dir}")
+    pdf_name = Path(example_file).stem
+    enhanced_json_path = structured_dir.parent / f"{pdf_name}_enhanced.json"
+
+    enhanced_data = secondary_processor.process_from_structured_dir(
+        structured_dir,  # Use the actual path
+        output_path=enhanced_json_path
+    )
+    print(f"Enhanced processing completed:")
+    print(f"  - Pages processed: {enhanced_data.get('processing_metadata', {}).get('total_pages', 0)}")
+    print(
+        f"  - Enhanced shelf mark transcriptions: {len(enhanced_data.get('context_analysis', {}).get('enhanced_shelf_mark_transcriptions', {}))}")
+    print(f"  - People extracted: {len(enhanced_data.get('people_locations', {}).get('people', []))}")
+    print(f"  - Locations extracted: {len(enhanced_data.get('people_locations', {}).get('locations', []))}")
+
     print(f"Complete pipeline finished for {example_file}")
     print("-" * 80)
+    return structured_result
 
 
 def run_digitized_file(example_file: str, book_file: str, use_gemini: bool = True, model_extension: str = None):
@@ -152,8 +161,11 @@ def run_digitized_file(example_file: str, book_file: str, use_gemini: bool = Tru
     book_metadata = load_book_metadata(book_file)
     if book_metadata:
         print(f"✅ Loaded book metadata: {book_metadata.get('title', 'Unknown title')}")
-
-    structured_llm = StructuredJSONLLM(use_gemini=use_gemini, book_metadata=book_metadata)
+    if not use_gemini:
+        model_name = ollam_model_names_to_extensions[model_extension]
+        structured_llm = StructuredJSONLLM(use_gemini=use_gemini, book_metadata=book_metadata, model_name=model_name)
+    else:
+        structured_llm = StructuredJSONLLM(use_gemini=use_gemini, book_metadata=book_metadata)
     structured_result = structured_llm.process_from_ocr_service(ocr_service_result=ocr_result)
     print(f"Structured processing completed: {structured_result}")
 
@@ -343,7 +355,7 @@ def resume_specific_file(example_file: str, run_structured: bool = True, book_fi
             print(f"Warning: Could not load enhanced data summary: {e}")
     else:
         print("Step 3: Running secondary enhanced processing...")
-        secondary_processor = SecondaryLLMProcessor(model_name="gemma3:27b")
+        secondary_processor = SecondaryLLMProcessor()
 
         # Use the correct structured directory path
         if structured_result and 'structured_dir' in structured_result:
@@ -410,9 +422,9 @@ if __name__ == "__main__":
                       # book_file="rylands_articles/bjrl-article-p710.json",
                       #use_gemini=True,
                       # model_extension="gemini_gemini_2.5_flash")
-    run_digitized_file(
-        example_file="mcgill/mcgill_frag.pdf",
-        book_file="mcgill/mcgill_frag_metadata.json",
-        use_gemini=True,
-        model_extension="gemini_gemini_2.5_flash",
+    run_specific_file(
+        example_file="malkhhut_ish/volume_1/200_400/malk-ish-1-360.pdf",
+        book_file="malkhhut_ish/malkhuth_ish_metadata.json",
+        use_gemini=False,
+        model_extension="qwen_model",
     )

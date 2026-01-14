@@ -3,7 +3,7 @@
 Structured JSON LLM Service for Bibliography Processing (Pydantic AI Version)
 
 This module provides a service to process OCR text and images through an LLM
-(Ollama or Gemini) to extract structured JSON data from Cairo Genizah bibliography documents.
+(LM Studio or Gemini) to extract structured JSON data from Cairo Genizah bibliography documents.
 
 Usage:
     from structured_json_llm import StructuredJSONLLM
@@ -17,12 +17,13 @@ import logging
 import os
 import base64
 import time
+import re
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union
 from PIL import Image
 
 import dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.google import GoogleModel
@@ -75,14 +76,15 @@ class StructuredJSONLLM:
 
     This class handles:
     - Loading OCR results and images
-    - Calling Ollama or Gemini LLM with structured prompts
+    - Calling LM Studio or Gemini LLM with structured prompts
     - Automatic validation and retry via Pydantic AI
-    - Saving structured results
+    - Saving ALL results including validation failures
+    - Fallback parsing for failed validations
     """
 
     def __init__(self,
-                 raw_data_dir: Optional[str] = None, #str = "http://localhost:1234/v1",
-                 ollama_url: str = "http://localhost:1234/v1",
+                 raw_data_dir: Optional[str] = None,
+                 lm_studio_url: str = "http://localhost:1234/v1",
                  model_name: str = "qwen3-vl:8b",
                  use_gemini: bool = False,
                  gemini_api_key: Optional[str] = None,
@@ -93,9 +95,9 @@ class StructuredJSONLLM:
         Initialize the StructuredJSONLLM service.
 
         :param raw_data_dir: Directory where raw data files are stored (optional, defaults to biblio/raw_data)
-        :param ollama_url: URL for Ollama API (default: http://localhost:11434/v1). Should follow OpenAI style.
-        :param model_name: Name of the Ollama model to use (default: qwen3-vl:8b)
-        :param use_gemini: Whether to use Gemini instead of Ollama (default: False)
+        :param lm_studio_url: URL for LM Studio API (default: http://localhost:1234/v1). Should follow OpenAI style.
+        :param model_name: Name of the model to use (default: qwen3-vl:8b)
+        :param use_gemini: Whether to use Gemini instead of LM Studio (default: False)
         :param gemini_api_key: Gemini API key (if None, will try to get from environment)
         :param gemini_model: Gemini model name (default: gemini-2.0-flash-exp)
         :param gemini_safety_settings: Custom safety settings for Gemini
@@ -110,6 +112,13 @@ class StructuredJSONLLM:
 
         self.raw_data_dir.mkdir(parents=True, exist_ok=True)
 
+        # Create directories for failed outputs
+        self.failed_outputs_dir = self.raw_data_dir / "failed_outputs"
+        self.failed_outputs_dir.mkdir(parents=True, exist_ok=True)
+
+        self.raw_outputs_dir = self.raw_data_dir / "raw_outputs"
+        self.raw_outputs_dir.mkdir(parents=True, exist_ok=True)
+
         # Configuration
         self.use_gemini = use_gemini
         self.book_metadata = book_metadata
@@ -119,24 +128,24 @@ class StructuredJSONLLM:
         if self.use_gemini:
             self._setup_gemini(gemini_model, gemini_api_key, gemini_safety_settings)
         else:
-            self._setup_ollama(model_name, ollama_url)
+            self._setup_lm_studio(model_name, lm_studio_url)
 
         # Create agent with structured output
         self.agent = Agent(
             self.model,
             output_type=StructuredPageData,
             system_prompt=self._get_system_prompt(),
-            retries=2  # Pydantic AI will automatically retry on validation failures
+            retries=3  # Increase retries
         )
 
         logger.info(
-            f"StructuredJSONLLM initialized with {'Gemini' if use_gemini else 'Ollama'} model: {self.model_name}")
+            f"StructuredJSONLLM initialized with {'Gemini' if use_gemini else 'LM Studio'} model: {self.model_name}")
 
-    def _setup_ollama(self, model_name: str, ollama_url: str):
-        """Setup Ollama model"""
+    def _setup_lm_studio(self, model_name: str, lm_studio_url: str):
+        """Setup LM Studio model"""
         self.model = OpenAIChatModel(
             model_name,
-            provider=OllamaProvider(base_url=ollama_url)
+            provider=OllamaProvider(base_url=lm_studio_url)
         )
         self.model_name = model_name
 
@@ -227,10 +236,41 @@ Guidelines:
    Note: Shelf marks may use various separators (periods, spaces, hyphens)
 2. Identify footnotes and extract their content with proper numbering
 3. Extract Hebrew/Arabic transcriptions and associate them with shelf marks
-4. If no footnotes exist, use empty object
-5. If no transcriptions exist, use empty object. DO NOT EVER TRY TO TRANSCRIBE IMAGES OF THE DOCUMENT. YOU ARE TO USE ONLY THE PROVIDED OCR TEXT. 
-6. If no shelf marks are mentioned, use empty object
+4. If no footnotes exist, use empty object {}
+5. If no transcriptions exist, use empty object {}. DO NOT EVER TRY TO TRANSCRIBE IMAGES OF THE DOCUMENT. YOU ARE TO USE ONLY THE PROVIDED OCR TEXT. 
+6. If no shelf marks are mentioned, use empty object {}
 7. Extract the page number or page numbers from the bottom as a list. 
+
+## CRITICAL OUTPUT FORMAT REQUIREMENTS
+
+You MUST return ONLY valid JSON matching this EXACT structure. No markdown, no code blocks, no explanations.
+
+{
+  "shelf_marks_mentioned": {
+    "T-S A43.1": "Brief description of what this shelf mark discusses",
+    "ENA 2689.11": "Another brief description"
+  },
+  "footnotes": {
+    "1": "Content of footnote 1",
+    "2": "Content of footnote 2"
+  },
+  "transcriptions": {
+    "T-S A43.1": {
+      "1": "Line 1 transcription",
+      "2": "Line 2 transcription"
+    }
+  },
+  "extracted_page_number": [119],
+  "summary": "A comprehensive summary of the page content",
+  "classification": "general_academic"
+}
+
+MANDATORY RULES:
+- classification MUST be EXACTLY one of: "general_academic", "transcription", "catalog", "diagram/map"
+- extracted_page_number MUST be a list of integers like [119] or [118, 119], or empty list []
+- All fields are REQUIRED - use empty objects {} or empty lists [] if no data exists
+- Use empty string "" for summary ONLY if absolutely no content exists
+- Return ONLY the JSON object - no markdown code blocks, no explanations, no preamble
 """
 
         return prompt
@@ -296,17 +336,204 @@ Guidelines:
             logger.error(f"Failed to encode image {image_path}: {e}")
             raise
 
+    def _extract_json_from_response(self, text: str) -> Optional[Dict[str, Any]]:
+        """
+        Extract JSON from LLM response, handling markdown code blocks and other formatting.
+
+        :param text: Raw text response from LLM
+        :return: Parsed JSON dict or None if parsing fails
+        """
+        # Try direct JSON parse first
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # Try to extract from markdown code blocks
+        json_pattern = r'```(?:json)?\s*(\{.*?\})\s*```'
+        matches = re.findall(json_pattern, text, re.DOTALL)
+
+        if matches:
+            for match in matches:
+                try:
+                    return json.loads(match)
+                except json.JSONDecodeError:
+                    continue
+
+        # Try to find JSON object in text
+        brace_start = text.find('{')
+        brace_end = text.rfind('}')
+
+        if brace_start != -1 and brace_end != -1:
+            try:
+                json_str = text[brace_start:brace_end + 1]
+                return json.loads(json_str)
+            except json.JSONDecodeError:
+                pass
+
+        return None
+
+    def _fix_common_validation_issues(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Attempt to fix common validation issues in LLM output.
+
+        :param data: Raw dictionary from LLM
+        :return: Fixed dictionary
+        """
+        fixed = data.copy()
+
+        # Ensure all required fields exist
+        if 'shelf_marks_mentioned' not in fixed:
+            fixed['shelf_marks_mentioned'] = {}
+        if 'footnotes' not in fixed:
+            fixed['footnotes'] = {}
+        if 'transcriptions' not in fixed:
+            fixed['transcriptions'] = {}
+        if 'extracted_page_number' not in fixed:
+            fixed['extracted_page_number'] = []
+        if 'summary' not in fixed:
+            fixed['summary'] = 'No summary provided'
+        if 'classification' not in fixed:
+            fixed['classification'] = 'general_academic'
+
+        # Fix classification
+        valid_classes = ['general_academic', 'transcription', 'catalog', 'diagram/map']
+        if fixed['classification'] not in valid_classes:
+            logger.warning(f"Invalid classification '{fixed['classification']}', defaulting to 'general_academic'")
+            fixed['classification'] = 'general_academic'
+
+        # Fix page numbers
+        if fixed['extracted_page_number'] is None:
+            fixed['extracted_page_number'] = []
+        elif not isinstance(fixed['extracted_page_number'], list):
+            try:
+                fixed['extracted_page_number'] = [int(fixed['extracted_page_number'])]
+            except (ValueError, TypeError):
+                fixed['extracted_page_number'] = []
+
+        # Ensure all values in extracted_page_number are integers
+        try:
+            fixed['extracted_page_number'] = [int(x) for x in fixed['extracted_page_number']]
+        except (ValueError, TypeError):
+            logger.warning("Could not convert page numbers to integers")
+            fixed['extracted_page_number'] = []
+
+        # Ensure dictionaries are dictionaries
+        for field in ['shelf_marks_mentioned', 'footnotes', 'transcriptions']:
+            if not isinstance(fixed[field], dict):
+                logger.warning(f"Field '{field}' is not a dict, resetting to empty dict")
+                fixed[field] = {}
+
+        # Ensure summary is a string
+        if not isinstance(fixed['summary'], str):
+            fixed['summary'] = str(fixed['summary'])
+
+        return fixed
+
+    def _create_fallback_output(self, page_number: int, pdf_name: str,
+                                ocr_text: str, error_message: str) -> Dict[str, Any]:
+        """
+        Create a fallback structured output when all else fails.
+
+        :param page_number: Page number
+        :param pdf_name: PDF name
+        :param ocr_text: OCR text
+        :param error_message: Error message from validation
+        :return: Minimal valid structured data
+        """
+        return {
+            'shelf_marks_mentioned': {},
+            'footnotes': {},
+            'transcriptions': {},
+            'extracted_page_number': [],
+            'summary': f'[VALIDATION FAILED] Page processing failed: {error_message}',
+            'classification': 'general_academic',
+            'metadata': {
+                'page_number': page_number,
+                'pdf_name': pdf_name,
+                'processed_at': str(Path().cwd()),
+                'model_used': self.model_name,
+                'provider': 'gemini' if self.use_gemini else 'lm_studio',
+                'validation_failed': True,
+                'error_message': error_message
+            }
+        }
+
+    def _save_raw_output(self, page_number: int, pdf_name: str,
+                         raw_response: str, ocr_text: str):
+        """
+        Save raw LLM output for debugging.
+
+        :param page_number: Page number
+        :param pdf_name: PDF name
+        :param raw_response: Raw response from LLM
+        :param ocr_text: Original OCR text
+        """
+        try:
+            raw_file = self.raw_outputs_dir / f"{pdf_name}_page_{page_number:03d}_raw.txt"
+            with open(raw_file, 'w', encoding='utf-8') as f:
+                f.write("=" * 80 + "\n")
+                f.write(f"RAW LLM OUTPUT - Page {page_number} from {pdf_name}\n")
+                f.write("=" * 80 + "\n\n")
+                f.write("RAW RESPONSE:\n")
+                f.write("-" * 80 + "\n")
+                f.write(raw_response)
+                f.write("\n\n" + "=" * 80 + "\n")
+                f.write("ORIGINAL OCR TEXT:\n")
+                f.write("-" * 80 + "\n")
+                f.write(ocr_text[:1000])
+                if len(ocr_text) > 1000:
+                    f.write(f"\n... ({len(ocr_text) - 1000} more characters)")
+            logger.info(f"Saved raw output to {raw_file}")
+        except Exception as e:
+            logger.error(f"Failed to save raw output: {e}")
+
+    def _save_failed_output(self, page_number: int, pdf_name: str,
+                            raw_response: str, ocr_text: str, error: Exception):
+        """
+        Save failed validation output for debugging.
+
+        :param page_number: Page number
+        :param pdf_name: PDF name
+        :param raw_response: Raw response from LLM
+        :param ocr_text: Original OCR text
+        :param error: Validation error
+        """
+        try:
+            failed_file = self.failed_outputs_dir / f"{pdf_name}_page_{page_number:03d}_failed.txt"
+            with open(failed_file, 'w', encoding='utf-8') as f:
+                f.write("=" * 80 + "\n")
+                f.write(f"FAILED VALIDATION - Page {page_number} from {pdf_name}\n")
+                f.write("=" * 80 + "\n\n")
+                f.write(f"ERROR:\n{str(error)}\n\n")
+                f.write("=" * 80 + "\n")
+                f.write("RAW LLM RESPONSE:\n")
+                f.write("-" * 80 + "\n")
+                f.write(raw_response)
+                f.write("\n\n" + "=" * 80 + "\n")
+                f.write("ORIGINAL OCR TEXT:\n")
+                f.write("-" * 80 + "\n")
+                f.write(ocr_text[:1000])
+                if len(ocr_text) > 1000:
+                    f.write(f"\n... ({len(ocr_text) - 1000} more characters)")
+            logger.warning(f"Saved failed output to {failed_file}")
+        except Exception as e:
+            logger.error(f"Failed to save failed output: {e}")
+
     async def process_page(self, ocr_text: str, image_path: Union[str, Path],
                            page_number: int, pdf_name: str) -> Dict[str, Any]:
         """
         Process a single page through the LLM to extract structured data.
+        ALWAYS saves output, even if validation fails.
 
         :param ocr_text: Raw OCR text from the page
         :param image_path: Path to the page image
         :param page_number: Page number for identification
         :param pdf_name: Name of the source PDF
-        :return: Structured JSON data
+        :return: Structured JSON data (or fallback if validation fails)
         """
+        raw_response = None
+
         try:
             logger.info(f"Processing page {page_number} from {pdf_name}")
 
@@ -323,7 +550,7 @@ Guidelines:
                     self.model,
                     output_type=StructuredPageData,
                     system_prompt=system_prompt,
-                    retries=1
+                    retries=3
                 )
             else:
                 agent = self.agent
@@ -334,52 +561,124 @@ Guidelines:
 OCR Text:
 {ocr_text}
 
-Extract the structured data according to the schema."""
+Extract the structured data according to the schema. Return ONLY valid JSON, no markdown formatting."""
 
             # Encode image
             image_b64 = self._encode_image_to_base64(image_path)
 
-            # Run agent with image - Pydantic AI handles validation and retries!
-            # For Ollama models, we pass the image in a special way
-            if not self.use_gemini:
-                # Ollama approach - pass image as base64 in the prompt context
-                result = await agent.run(
-                    prompt,
-                    message_history=[{
-                        'role': 'user',
-                        'content': prompt,
-                        'images': [image_b64]  # Ollama format
-                    }]
-                )
-            else:
-                # Gemini approach - use PIL Image
-                pil_image = Image.open(image_path)
-                result = await agent.run(
-                    prompt,
-                    message_history=[{
-                        'role': 'user',
-                        'content': [prompt, pil_image]
-                    }]
-                )
+            # Run agent with image
+            try:
+                if not self.use_gemini:
+                    # LM Studio approach - pass image as base64 in the prompt context
+                    result = await agent.run(
+                        prompt,
+                        message_history=[{
+                            'role': 'user',
+                            'content': prompt,
+                            'images': [image_b64]
+                        }]
+                    )
+                else:
+                    # Gemini approach - use PIL Image
+                    pil_image = Image.open(image_path)
+                    result = await agent.run(
+                        prompt,
+                        message_history=[{
+                            'role': 'user',
+                            'content': [prompt, pil_image]
+                        }]
+                    )
 
-            # result.output is already validated StructuredPageData!
-            structured_data = result.output.model_dump()
+                # Successfully validated!
+                structured_data = result.output.model_dump()
+
+                # Try to get raw response for logging
+                try:
+                    if hasattr(result, 'data') and hasattr(result.data, 'choices'):
+                        raw_response = result.data.choices[0].message.content
+                    elif hasattr(result, '_messages'):
+                        raw_response = str(result._messages[-1])
+                    else:
+                        raw_response = "Raw response not available"
+                except:
+                    raw_response = "Raw response extraction failed"
+
+                # Save raw output
+                self._save_raw_output(page_number, pdf_name, raw_response, ocr_text)
+
+            except Exception as validation_error:
+                logger.error(f"Validation failed for page {page_number}: {validation_error}")
+
+                # Try to extract raw response from error
+                error_str = str(validation_error)
+
+                # Try to get the actual LLM response
+                try:
+                    # Pydantic AI validation errors sometimes contain the raw data
+                    if "validation error" in error_str.lower():
+                        # Try to extract JSON from error message
+                        start_idx = error_str.find('{')
+                        end_idx = error_str.rfind('}')
+                        if start_idx != -1 and end_idx != -1:
+                            raw_response = error_str[start_idx:end_idx + 1]
+                        else:
+                            raw_response = error_str
+                    else:
+                        raw_response = error_str
+                except:
+                    raw_response = str(validation_error)
+
+                # Save failed output
+                self._save_failed_output(page_number, pdf_name, raw_response, ocr_text, validation_error)
+
+                # Try to extract and fix JSON
+                extracted_json = self._extract_json_from_response(raw_response)
+
+                if extracted_json:
+                    logger.info(f"Extracted JSON from failed response, attempting to fix...")
+                    try:
+                        fixed_data = self._fix_common_validation_issues(extracted_json)
+                        # Try to validate the fixed data
+                        validated = StructuredPageData(**fixed_data)
+                        structured_data = validated.model_dump()
+                        logger.info(f"Successfully fixed and validated page {page_number}!")
+                    except ValidationError as ve:
+                        logger.error(f"Could not fix validation issues: {ve}")
+                        # Create fallback output
+                        structured_data = self._create_fallback_output(
+                            page_number, pdf_name, ocr_text, str(validation_error)
+                        )
+                else:
+                    logger.error(f"Could not extract JSON from response")
+                    # Create fallback output
+                    structured_data = self._create_fallback_output(
+                        page_number, pdf_name, ocr_text, str(validation_error)
+                    )
 
             # Add metadata
-            structured_data['metadata'] = {
+            if 'metadata' not in structured_data:
+                structured_data['metadata'] = {}
+
+            structured_data['metadata'].update({
                 'page_number': page_number,
                 'pdf_name': pdf_name,
                 'processed_at': str(Path().cwd()),
                 'model_used': self.model_name,
-                'provider': 'gemini' if self.use_gemini else 'ollama'
-            }
+                'provider': 'gemini' if self.use_gemini else 'lm_studio'
+            })
 
             logger.info(f"Successfully processed page {page_number}")
             return structured_data
 
         except Exception as e:
-            logger.error(f"Failed to process page {page_number}: {e}")
-            raise
+            logger.error(f"Catastrophic failure processing page {page_number}: {e}")
+
+            # Even in catastrophic failure, save what we can
+            if raw_response:
+                self._save_failed_output(page_number, pdf_name, raw_response, ocr_text, e)
+
+            # Return fallback output
+            return self._create_fallback_output(page_number, pdf_name, ocr_text, str(e))
 
     def process_page_sync(self, ocr_text: str, image_path: Union[str, Path],
                           page_number: int, pdf_name: str) -> Dict[str, Any]:
@@ -391,12 +690,15 @@ Extract the structured data according to the schema."""
                                      pdf_name: str) -> Dict[str, Any]:
         """
         Process a page with text-only (no image) for cases where image is not available.
+        ALWAYS saves output, even if validation fails.
 
         :param ocr_text: Raw OCR text from the page
         :param page_number: Page number for identification
         :param pdf_name: Name of the source PDF
-        :return: Structured JSON data
+        :return: Structured JSON data (or fallback if validation fails)
         """
+        raw_response = None
+
         try:
             logger.info(f"Processing page {page_number} from {pdf_name} (text-only)")
 
@@ -412,7 +714,7 @@ Extract the structured data according to the schema."""
                     self.model,
                     output_type=StructuredPageData,
                     system_prompt=system_prompt,
-                    retries=2
+                    retries=3
                 )
             else:
                 agent = self.agent
@@ -425,30 +727,94 @@ OCR Text:
 
 Note: No image is available for this page, so use only the text to determine structure.
 
-Extract the structured data according to the schema."""
+Extract the structured data according to the schema. Return ONLY valid JSON, no markdown formatting."""
 
             # Run agent without image
-            result = await agent.run(prompt)
+            try:
+                result = await agent.run(prompt)
 
-            # result.output is already validated StructuredPageData!
-            structured_data = result.output.model_dump()
+                # Successfully validated!
+                structured_data = result.output.model_dump()
+
+                # Try to get raw response
+                try:
+                    if hasattr(result, 'data') and hasattr(result.data, 'choices'):
+                        raw_response = result.data.choices[0].message.content
+                    elif hasattr(result, '_messages'):
+                        raw_response = str(result._messages[-1])
+                    else:
+                        raw_response = "Raw response not available"
+                except:
+                    raw_response = "Raw response extraction failed"
+
+                # Save raw output
+                self._save_raw_output(page_number, pdf_name, raw_response, ocr_text)
+
+            except Exception as validation_error:
+                logger.error(f"Validation failed for page {page_number}: {validation_error}")
+
+                # Extract raw response
+                error_str = str(validation_error)
+                try:
+                    if "validation error" in error_str.lower():
+                        start_idx = error_str.find('{')
+                        end_idx = error_str.rfind('}')
+                        if start_idx != -1 and end_idx != -1:
+                            raw_response = error_str[start_idx:end_idx + 1]
+                        else:
+                            raw_response = error_str
+                    else:
+                        raw_response = error_str
+                except:
+                    raw_response = str(validation_error)
+
+                # Save failed output
+                self._save_failed_output(page_number, pdf_name, raw_response, ocr_text, validation_error)
+
+                # Try to extract and fix JSON
+                extracted_json = self._extract_json_from_response(raw_response)
+
+                if extracted_json:
+                    logger.info(f"Extracted JSON from failed response, attempting to fix...")
+                    try:
+                        fixed_data = self._fix_common_validation_issues(extracted_json)
+                        validated = StructuredPageData(**fixed_data)
+                        structured_data = validated.model_dump()
+                        logger.info(f"Successfully fixed and validated page {page_number}!")
+                    except ValidationError as ve:
+                        logger.error(f"Could not fix validation issues: {ve}")
+                        structured_data = self._create_fallback_output(
+                            page_number, pdf_name, ocr_text, str(validation_error)
+                        )
+                else:
+                    logger.error(f"Could not extract JSON from response")
+                    structured_data = self._create_fallback_output(
+                        page_number, pdf_name, ocr_text, str(validation_error)
+                    )
 
             # Add metadata
-            structured_data['metadata'] = {
+            if 'metadata' not in structured_data:
+                structured_data['metadata'] = {}
+
+            structured_data['metadata'].update({
                 'page_number': page_number,
                 'pdf_name': pdf_name,
                 'processed_at': str(Path().cwd()),
                 'model_used': self.model_name,
                 'processing_mode': 'text_only',
-                'provider': 'gemini' if self.use_gemini else 'ollama'
-            }
+                'provider': 'gemini' if self.use_gemini else 'lm_studio'
+            })
 
             logger.info(f"Successfully processed page {page_number} (text-only)")
             return structured_data
 
         except Exception as e:
-            logger.error(f"Failed to process page {page_number} (text-only): {e}")
-            raise
+            logger.error(f"Catastrophic failure processing page {page_number}: {e}")
+
+            if raw_response:
+                self._save_failed_output(page_number, pdf_name, raw_response, ocr_text, e)
+
+            return self._create_fallback_output(page_number, pdf_name, ocr_text, str(e))
 
     def process_page_text_only_sync(self, ocr_text: str, page_number: int,
                                     pdf_name: str) -> Dict[str, Any]:
@@ -461,6 +827,7 @@ Extract the structured data according to the schema."""
                                   starting_page_number: int = 1) -> Dict[str, Any]:
         """
         Process OCR results file and create structured JSON for each page.
+        ALWAYS saves results, even for failed validations.
 
         :param ocr_results_path: Path to the OCR results JSON file
         :param output_dir: Directory to save structured results (optional)
@@ -487,9 +854,11 @@ Extract the structured data according to the schema."""
 
             results = {
                 'pdf_name': pdf_name,
+                'structured_dir': str(structured_dir),
                 'total_pages': len(ocr_data['pages']),
                 'processed_pages': 0,
                 'failed_pages': 0,
+                'validation_failures': 0,
                 'structured_files': [],
                 'error_summary': {
                     'validation_errors': 0,
@@ -534,13 +903,18 @@ Extract the structured data according to the schema."""
                             full_text, page_number, pdf_name
                         )
 
-                    # Save structured data
+                    # Save structured data (even if validation failed)
                     output_file = structured_dir / f"page_{page_number:03d}_structured.json"
                     with open(output_file, 'w', encoding='utf-8') as f:
                         json.dump(structured_data, f, indent=2, ensure_ascii=False)
 
                     results['structured_files'].append(str(output_file))
                     results['processed_pages'] += 1
+
+                    # Check if this was a validation failure
+                    if structured_data.get('metadata', {}).get('validation_failed'):
+                        results['validation_failures'] += 1
+                        results['error_summary']['validation_errors'] += 1
 
                     logger.info(f"Processed page {page_number}/{len(ocr_data['pages'])}")
 
@@ -572,15 +946,20 @@ Extract the structured data according to the schema."""
             logger.info(
                 f"Completed processing {pdf_name}: "
                 f"{results['processed_pages']} pages processed, "
-                f"{results['failed_pages']} failed"
+                f"{results['validation_failures']} validation failures, "
+                f"{results['failed_pages']} total failures"
             )
 
             # Log error summary
-            if results['failed_pages'] > 0:
+            if results['failed_pages'] > 0 or results['validation_failures'] > 0:
                 logger.warning("Error Summary:")
                 for error_type, count in results['error_summary'].items():
                     if count > 0:
                         logger.warning(f"  {error_type}: {count} pages")
+
+                logger.info(f"All outputs saved to: {structured_dir}")
+                logger.info(f"Raw outputs saved to: {self.raw_outputs_dir}")
+                logger.info(f"Failed outputs saved to: {self.failed_outputs_dir}")
 
             return results
 
@@ -629,9 +1008,9 @@ def main():
         description="Process OCR results with LLM to extract structured JSON"
     )
     parser.add_argument("ocr_results_path", help="Path to OCR results JSON file")
-    parser.add_argument("--model", default="qwen3-vl:8b", help="Ollama model name")
-    parser.add_argument("--ollama-url", default="http://localhost:11434", help="Ollama API URL")
-    parser.add_argument("--use-gemini", action="store_true", help="Use Gemini instead of Ollama")
+    parser.add_argument("--model", default="qwen3-vl:8b", help="Model name")
+    parser.add_argument("--lm-studio-url", default="http://localhost:1234/v1", help="LM Studio API URL")
+    parser.add_argument("--use-gemini", action="store_true", help="Use Gemini instead of LM Studio")
     parser.add_argument("--gemini-model", default="gemini-2.0-flash-exp", help="Gemini model name")
     parser.add_argument("--gemini-api-key", help="Gemini API key (or set GEMINI_API_KEY env var)")
     parser.add_argument("--starting-page", type=int, default=1, help="Starting page number")
@@ -642,7 +1021,7 @@ def main():
         # Initialize service
         llm_service = StructuredJSONLLM(
             model_name=args.model,
-            ollama_url=args.ollama_url,
+            lm_studio_url=args.lm_studio_url,
             use_gemini=args.use_gemini,
             gemini_model=args.gemini_model,
             gemini_api_key=args.gemini_api_key
@@ -654,10 +1033,16 @@ def main():
             starting_page_number=args.starting_page
         )
 
-        print(f"Processing completed:")
+        print(f"\nProcessing completed:")
         print(f"  - Processed pages: {results['processed_pages']}")
+        print(f"  - Validation failures: {results['validation_failures']}")
         print(f"  - Failed pages: {results['failed_pages']}")
         print(f"  - Structured files: {len(results['structured_files'])}")
+        print(f"\nOutputs saved to:")
+        print(
+            f"  - Structured data: {Path(results['structured_files'][0]).parent if results['structured_files'] else 'N/A'}")
+        print(f"  - Raw outputs: {llm_service.raw_outputs_dir}")
+        print(f"  - Failed outputs: {llm_service.failed_outputs_dir}")
 
     except Exception as e:
         logger.error(f"Processing failed: {e}")

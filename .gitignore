@@ -10,3 +10,4 @@ src/models/llm/genizah_images
 .idea
 /.idea
 idea/
+*.txt

@@ -55,8 +55,8 @@ class SecondaryLLMProcessor:
     """
     
     def __init__(self, 
-                 ollama_url: str = "http://localhost:11434",
-                 model_name: str = "llama3.1:8b",
+                 ollama_url: str = "http://localhost:1234/v1",
+                 model_name: str = "c4ai-command-r-v01",
                  context_window_pages: int = 5):
         """
         Initialize the SecondaryLLMProcessor service.
