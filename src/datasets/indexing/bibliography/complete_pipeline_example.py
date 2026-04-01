@@ -417,14 +417,20 @@ if __name__ == "__main__":
                       #use_gemini=True,
                       #model_extension="gemini_gemini_2.5_flash"
                      # )
-
     # run_specific_file(example_file="rylands_articles/bjrl-article-p710.pdf",
                       # book_file="rylands_articles/bjrl-article-p710.json",
                       #use_gemini=True,
                       # model_extension="gemini_gemini_2.5_flash")
     run_specific_file(
-        example_file="malkhhut_ish/volume_1/200_400/malk-ish-1-360.pdf",
-        book_file="malkhhut_ish/malkhuth_ish_metadata.json",
+        example_file="cambridge_articles/HiddenHekhalotToward.pdf",
+        book_file="cambridge_article/HiddenHekhalotToward_metadata.json",
+        use_gemini=False,
+        model_extension="qwen_model",
+    )
+
+    run_specific_file(
+        example_file="cambridge_articles/judeo-spanish.pdf",
+        book_file="cambridge_article/judeo-spanish_metadata.json",
         use_gemini=False,
         model_extension="qwen_model",
     )
