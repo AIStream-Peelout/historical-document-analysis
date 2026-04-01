@@ -14,7 +14,10 @@ Expected format:
 import re
 import unicodedata
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Tuple
+
+# Canonical section keys used throughout the eval pipeline
+SECTION_KEYS: Tuple[str, ...] = ("gemara", "rashi", "tosafot")
 
 # Hebrew names as they appear in the delimiter lines → canonical keys
 SECTION_MARKERS: Dict[str, str] = {

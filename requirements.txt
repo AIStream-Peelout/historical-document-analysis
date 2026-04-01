@@ -45,3 +45,4 @@ langchain
 google-generativeai
 google-cloud-vision
 aiohttp
+kraken

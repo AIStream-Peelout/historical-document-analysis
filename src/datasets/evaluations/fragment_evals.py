@@ -664,6 +664,7 @@ async def main(
     # Config summary
     print(f"\n⚙️  Configuration:")
     print(f"   Vision OCR: {'✓' if AgentConfig.USE_VISION_OCR else '✗'}")
+    print(f"   Kraken: {'✓' if AgentConfig.USE_KRAKEN else '✗'}")
     print(
         f"   Gemini Flash: {'✓' if AgentConfig.USE_GEMINI_FLASH else '✗'} (timeout: {AgentConfig.GEMINI_FLASH_TIMEOUT}s)")
     print(f"   Gemini Pro: {'✓' if AgentConfig.USE_GEMINI_PRO else '✗'} (timeout: {AgentConfig.GEMINI_PRO_TIMEOUT}s)")

@@ -54,8 +54,8 @@ class AgentConfig:
 
     # Rate limiting
     DELAY_BETWEEN_DOCS = 3  # seconds
-    KRAKEN_MODEL_PATH = os.getenv("KRAKEN_MODEL_PATH", "MiDRASH_Gen_01.mlmodel")
-    USE_KRAKEN = False  # Kraken is very slow and has no API rate limits, so disable by default
+    KRAKEN_MODEL_PATH = os.getenv("KRAKEN_MODEL_PATH", "/Users/isaac1/Documents/historical-document-analysis/src/datasets/raw_data/cairo_genizah/custom_model_weights/MiDRASH_Gen_01.mlmodel")
+    USE_KRAKEN = True  # Kraken is very slow and has no API rate limits, so disable by default
     KRAKEN_TIMEOUT = 120  # seconds per document
 
 # ============================================================================

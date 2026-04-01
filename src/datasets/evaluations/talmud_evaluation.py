@@ -1,28 +1,22 @@
 """
 talmud_eval.py
-Section-aware evaluation runner for Talmud pages.
+Section-aware Talmud evaluation — extends genizah_fragment_eval.py.
 
-Adds two models to the existing pipeline:
-  1. Kraken/MiDRASH — domain-specific HTR model (whole-page CER)
-  2. Section-aware Gemini calls — Flash + Pro prompted to output JSON
-     with gemara / rashi / tosafot keys, enabling per-section CER
+Adds:
+  - Ground truth parsing from --- Section --- delimited text files
+  - Section-aware Gemini prompts (JSON output: gemara / rashi / tosafot)
+  - Kraken / MiDRASH as a fourth model in the benchmark
+  - Per-section CER logged to W&B alongside the existing per-model metrics
+  - Levenshtein-based CER (standard for HTR papers) alongside the existing
+    SequenceMatcher CER so results are directly comparable to OCRBench / MiDRASH paper
 
-W&B metric key structure:
-    {model}/{section}/cer_strict    — CER computed with nikud included
-    {model}/{section}/cer_lenient   — CER computed after stripping nikud
-    {model}/overall/cer_strict
-    {model}/overall/cer_lenient
-    kraken/overall/cer_strict       — Kraken is whole-page only (no layout split)
-    kraken/overall/cer_lenient
+Reuses from genizah_fragment_eval.py:
+  BatchManager, EvalConfig, save_raw_output, save_incremental_result,
+  evaluate_transcription, log_to_wandb (for base metrics), create_comparison_html
 
-Run directly:
-    python talmud_eval.py \
-        --images_dir .../converted_images \
-        --gt_dir     .../texts \
-        --kraken_model MiDRASH_Gen_01.mlmodel \
-        --wandb_project cairo-genizah-vlm-eval
-
-Or import and call run_talmud_evaluation() programmatically.
+Run:
+    python talmud_eval.py --max_documents 5 --skip_pro   # smoke test
+    python talmud_eval.py                                 # full run
 """
 
 from __future__ import annotations
@@ -30,7 +24,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import logging
 import re
 import time
 from pathlib import Path
@@ -38,483 +31,764 @@ from typing import Dict, List, Optional, Tuple
 
 import wandb
 
-# Internal imports (same package)
+# Reuse the existing eval infrastructure
+from src.datasets.evaluations.fragment_evals  import (
+    EvalConfig,
+    BatchManager,
+    evaluate_transcription,   # SequenceMatcher-based — kept for cross-run consistency
+    save_raw_output,
+    save_incremental_result,
+    log_to_wandb,
+    create_comparison_html,
+)
+
+# Agent imports (same path as fragment eval)
 from src.models.llm.genizah_fragment_agent import AgentConfig, call_gemini_with_retry
-from src.models.ocr.kraken_transcriber import preload_kraken_model, transcribe_with_kraken
+
+# New modules
 from src.datasets.document_models.talmud_gt_parser import (
     load_gt_directory,
     strip_nikud,
     normalize_whitespace,
     get_section_summary,
+    SECTION_KEYS,           # ('gemara', 'rashi', 'tosafot')
 )
 
-logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
-logger = logging.getLogger(__name__)
+from src.models.ocr.kraken_transcriber import preload_kraken_model, transcribe_with_kraken
 
-# --------------------------------------------------------------------------- #
-# CER / WER utilities                                                          #
-# --------------------------------------------------------------------------- #
+# ============================================================================
+# Talmud-specific config (extends EvalConfig without modifying it)
+# ============================================================================
 
-def _edit_distance(a: str, b: str) -> int:
-    """Standard Levenshtein edit distance — O(len(a)*len(b))."""
+TALMUD_IMAGES_DIR = Path(
+    "/Users/isaac1/Documents/GitHub/multimodal-document-analysis"
+    "/src/datasets/raw_data/talmud/bavli/talmud_complete/converted_images"
+)
+TALMUD_GT_DIR = Path(
+    "/Users/isaac1/Documents/GitHub/multimodal-document-analysis"
+    "/src/datasets/raw_data/talmud/bavli/talmud_complete/texts"
+)
+TALMUD_RESULTS_DIR = Path("./talmud_results")
+IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tif", ".tiff")
+
+# ============================================================================
+# Per-section W&B tables
+#
+# One table per Talmud section (gemara / rashi / tosafot) plus a full-page
+# table that includes Kraken.  Rows accumulate in module-level lists and the
+# full table is re-logged after every document so W&B shows live updates.
+#
+# Column layout per section table:
+#   doc_id | ground_truth | flash | pro
+#   | flash_cer_strict | flash_cer_lenient | pro_cer_strict | pro_cer_lenient
+#
+# Full-page table (whole-document concat, Kraken included):
+#   doc_id | ground_truth | flash | pro | kraken
+#   | flash_cer | pro_cer | kraken_cer_strict | kraken_cer_lenient
+# ============================================================================
+
+_MAX_CELL_CHARS = 3000  # W&B renders long strings slowly; cap per cell
+
+_SECTION_COLUMNS = [
+    "doc_id",
+    "ground_truth",
+    "gemini_flash",
+    "gemini_pro",
+    "flash_cer_strict",
+    "flash_cer_lenient",
+    "pro_cer_strict",
+    "pro_cer_lenient",
+    "gt_chars",
+    "flash_chars",
+    "pro_chars",
+]
+
+_FULL_PAGE_COLUMNS = [
+    "doc_id",
+    "ground_truth",
+    "gemini_flash",
+    "gemini_pro",
+    "kraken",
+    "flash_cer_strict",
+    "flash_cer_lenient",
+    "pro_cer_strict",
+    "pro_cer_lenient",
+    "kraken_cer_strict",
+    "kraken_cer_lenient",
+    "gt_chars",
+    "flash_chars",
+    "pro_chars",
+    "kraken_chars",
+]
+
+# Accumulated rows — keyed by section name; "full_page" for the fourth table
+_table_rows: Dict[str, List[List]] = {
+    "gemara": [],
+    "rashi": [],
+    "tosafot": [],
+    "full_page": [],
+}
+
+
+def _cell(text: str) -> str:
+    """Truncate text for W&B table cell with a length indicator."""
+    if len(text) <= _MAX_CELL_CHARS:
+        return text
+    return text[:_MAX_CELL_CHARS] + f"\n… [{len(text)} chars total]"
+
+
+def _append_section_table_rows(
+        doc_id: str,
+        gt_sections: Dict[str, str],
+        flash_sections: Optional[Dict[str, str]],
+        pro_sections: Optional[Dict[str, str]],
+        flash_section_metrics: Optional[Dict],
+        pro_section_metrics: Optional[Dict],
+        kraken_text: Optional[str],
+        kraken_metrics: Optional[Dict],
+        full_gt: str,
+        flash_full: str,
+        pro_full: str,
+) -> None:
+    """Build one row per section table and append to module-level accumulators."""
+
+    def _cer(metrics, section, key):
+        if not metrics:
+            return None
+        return (metrics.get(section) or {}).get(key)
+
+    # ── Per-section rows (gemara, rashi, tosafot) ──────────────────────────
+    for section in SECTION_KEYS:
+        gt_text = gt_sections.get(section, "")
+        fl_text = (flash_sections or {}).get(section, "")
+        pro_text = (pro_sections or {}).get(section, "")
+
+        row = [
+            doc_id,
+            _cell(gt_text),
+            _cell(fl_text),
+            _cell(pro_text),
+            _cer(flash_section_metrics, section, "cer_strict"),
+            _cer(flash_section_metrics, section, "cer_lenient"),
+            _cer(pro_section_metrics, section, "cer_strict"),
+            _cer(pro_section_metrics, section, "cer_lenient"),
+            len(gt_text),
+            len(fl_text),
+            len(pro_text),
+        ]
+        _table_rows[section].append(row)
+
+    # ── Full-page row (Kraken lives here) ─────────────────────────────────
+    km = kraken_metrics or {}
+    full_row = [
+        doc_id,
+        _cell(full_gt),
+        _cell(flash_full),
+        _cell(pro_full),
+        _cell(kraken_text or ""),
+        _cer(flash_section_metrics, "overall", "cer_strict"),
+        _cer(flash_section_metrics, "overall", "cer_lenient"),
+        _cer(pro_section_metrics, "overall", "cer_strict"),
+        _cer(pro_section_metrics, "overall", "cer_lenient"),
+        km.get("cer_levenshtein"),
+        km.get("cer_levenshtein_lenient"),
+        len(full_gt),
+        len(flash_full),
+        len(pro_full),
+        len(kraken_text or ""),
+    ]
+    _table_rows["full_page"].append(full_row)
+
+
+def log_section_tables(step: int) -> None:
+    """Re-log all four section tables to W&B with the current accumulated rows.
+
+    Called after every document so the tables update live in the W&B dashboard.
+    Table names are stable across calls so W&B replaces rather than duplicates.
+    """
+    for section in SECTION_KEYS:
+        rows = _table_rows[section]
+        if rows:
+            wandb.log(
+                {f"transcriptions/{section}": wandb.Table(
+                    columns=_SECTION_COLUMNS,
+                    data=rows,
+                )},
+                step=step,
+            )
+
+    full_rows = _table_rows["full_page"]
+    if full_rows:
+        wandb.log(
+            {"transcriptions/full_page": wandb.Table(
+                columns=_FULL_PAGE_COLUMNS,
+                data=full_rows,
+            )},
+            step=step,
+        )
+
+
+# ============================================================================
+# Levenshtein CER — standard for HTR benchmark papers
+# ============================================================================
+
+def _levenshtein(a: str, b: str) -> int:
     if not a:
         return len(b)
     if not b:
         return len(a)
     prev = list(range(len(b) + 1))
-    for i, ca in enumerate(a, 1):
-        curr = [i]
-        for j, cb in enumerate(b, 1):
-            curr.append(min(prev[j] + 1, curr[j - 1] + 1, prev[j - 1] + (ca != cb)))
+    for ca in a:
+        curr = [prev[0] + 1]
+        for j, cb in enumerate(b):
+            curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (ca != cb)))
         prev = curr
     return prev[-1]
 
 
-def compute_cer(hypothesis: str, reference: str) -> float:
-    """Character Error Rate = edit_distance(hyp, ref) / len(ref).
+def cer_levenshtein(hypothesis: str, reference: str) -> float:
+    """Standard Levenshtein CER: edit_distance / len(reference).
 
-    Returns 1.0 (100 % error) when reference is empty to avoid ZeroDivisionError.
+    Use this for numbers reported in the paper — it matches OCRBench / MiDRASH
+    paper conventions. The existing calculate_cer() uses SequenceMatcher which
+    gives slightly different values; we keep both for cross-run consistency.
     """
     ref = normalize_whitespace(reference)
     hyp = normalize_whitespace(hypothesis)
     if not ref:
         return 1.0
-    return min(_edit_distance(hyp, ref) / len(ref), 1.0)
+    return min(_levenshtein(hyp, ref) / len(ref), 1.0)
 
 
-def compute_cer_pair(hypothesis: str, reference: str) -> Tuple[float, float]:
+def cer_pair(hypothesis: str, reference: str) -> Tuple[float, float]:
     """Return (cer_strict, cer_lenient) — with and without nikud."""
-    cer_strict = compute_cer(hypothesis, reference)
-    cer_lenient = compute_cer(strip_nikud(hypothesis), strip_nikud(reference))
-    return cer_strict, cer_lenient
+    return (
+        cer_levenshtein(hypothesis, reference),
+        cer_levenshtein(strip_nikud(hypothesis), strip_nikud(reference)),
+    )
 
 
-# --------------------------------------------------------------------------- #
-# Section-aware Gemini prompts                                                 #
-# --------------------------------------------------------------------------- #
+# ============================================================================
+# Section-aware Gemini prompts
+# ============================================================================
 
-_TALMUD_LAYOUT_DESCRIPTION = """
-This is a page from the Babylonian Talmud (תלמוד בבלי). The page is divided into 
-three distinct textual sections arranged spatially:
+_LAYOUT = """This is a page from the Babylonian Talmud (תלמוד בבלי).
+The page has three spatially distinct sections:
+  • GEMARA (גמרא)   — center, large square script (Babylonian Aramaic / Hebrew)
+  • RASHI (רש"י)    — inner margin (right), smaller semi-cursive Rashi script
+  • TOSAFOT (תוספות) — outer margin (left), smaller square script"""
 
-1. GEMARA (גמרא) — The main Talmudic text in the CENTER of the page, printed in 
-   larger square Hebrew/Aramaic script.
-2. RASHI (רש"י) — Rabbi Shlomo Yitzchaki's commentary, printed in the INNER MARGIN 
-   (typically the right margin), in a distinctive smaller semi-cursive Rashi script.
-3. TOSAFOT (תוספות) — Later medieval commentary, printed in the OUTER MARGIN 
-   (typically the left margin), in smaller square script.
-"""
+_SCHEMA = """\
+Return ONLY valid JSON — no markdown, no commentary:
+{"gemara": "...", "rashi": "...", "tosafot": "..."}
+Use empty string for any absent or fully illegible section."""
 
-_SECTION_JSON_SCHEMA = """\
-Return ONLY a JSON object (no markdown, no commentary) with this exact structure:
-{
-    "gemara": "<full gemara transcription>",
-    "rashi": "<full rashi transcription>",
-    "tosafot": "<full tosafot transcription>"
-}
-If a section is absent or illegible, use an empty string for that key.
-"""
+FLASH_PROMPT = f"""{_LAYOUT}
 
-TALMUD_FLASH_PROMPT = f"""{_TALMUD_LAYOUT_DESCRIPTION}
+Transcribe each section EXACTLY as visible. Do NOT complete from memory — variants matter.
+Mark unclear characters with [?]. Preserve nikud and line breaks (\\n).
+{_SCHEMA}"""
 
-TRANSCRIPTION INSTRUCTIONS:
-1. Identify each of the three sections by its physical location on the page.
-2. Transcribe each section EXACTLY as it appears — character by character.
-3. Do NOT normalize, correct, or complete text from memory.
-4. Preserve vocalization marks (nikud) where visible.
-5. Mark unclear characters with [?].
-6. Preserve line breaks within each section using \\n.
+PRO_PROMPT = f"""{_LAYOUT}
 
-{_SECTION_JSON_SCHEMA}"""
-
-TALMUD_PRO_PROMPT = f"""{_TALMUD_LAYOUT_DESCRIPTION}
-
-TRANSCRIPTION INSTRUCTIONS:
-Think step-by-step:
-  Step 1 — Identify the three spatial regions of the page.
-  Step 2 — For each region, determine the script style (square vs. Rashi script) to confirm 
-            which commentary it contains.
-  Step 3 — Transcribe EXACTLY what is visible in each region.
-            • Do NOT draw on memorized versions of the Talmud — textual variants matter.
-            • Do NOT fill in damaged or obscured text.
-            • Mark ambiguous characters with [?].
-            • Preserve nikud where present.
-            • Preserve line structure within each section.
-
-{_SECTION_JSON_SCHEMA}"""
+Step 1 — Locate each section by position and script style.
+Step 2 — Transcribe what you see, NOT what you know the text should say.
+  • Textual variants and scribal errors are the scholarly signal — preserve them.
+  • Mark damaged/unclear chars with [?].
+  • Preserve nikud and layout.
+Step 3 — Output the JSON below.
+{_SCHEMA}"""
 
 
-# --------------------------------------------------------------------------- #
-# Section JSON parser                                                          #
-# --------------------------------------------------------------------------- #
+def _parse_section_json(raw: str, model_label: str = "") -> Optional[Dict[str, str]]:
+    """Extract {gemara, rashi, tosafot} from a VLM response.
 
-def parse_section_json(response_text: str) -> Optional[Dict[str, str]]:
-    """Extract and validate the section JSON from a VLM response.
+    Tries four strategies in order:
+      1. JSON inside markdown fences (```json ... ```)
+      2. First bare JSON object in the response
+      3. Case-insensitive key matching (model used "Gemara" instead of "gemara")
+      4. Plain-text fallback: look for labelled sections (--- Gemara --- / **Gemara:**)
 
-    Handles:
-      - Clean JSON response
-      - JSON wrapped in markdown code fences (```json ... ```)
-      - Missing keys (fills with empty string)
-
-    Returns None if parsing fails entirely.
+    Always logs the raw response on failure so you can see exactly what came back.
     """
-    if not response_text:
+    if not raw:
         return None
 
-    # Strip markdown fences if present
-    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", response_text, re.DOTALL)
-    raw_json = fence_match.group(1) if fence_match else response_text.strip()
+    # Canonical aliases — covers common model variations
+    _KEY_ALIASES: Dict[str, str] = {
+        "gemara": "gemara", "talmud": "gemara", "main text": "gemara",
+        "גמרא": "gemara",
+        "rashi": "rashi", "rashi commentary": "rashi", "commentary": "rashi",
+        'rashi (רש"י)': "rashi", "rashi (רשי)": "rashi",
+        "רשי": "rashi", 'רש"י': "rashi",
+        "tosafot": "tosafot", "tosafos": "tosafot", "tosfot": "tosafot",
+        "tosafot commentary": "tosafot",
+        "תוספות": "tosafot",
+    }
 
-    # Attempt to isolate a JSON object if there's surrounding prose
-    obj_match = re.search(r"\{.*\}", raw_json, re.DOTALL)
-    if obj_match:
-        raw_json = obj_match.group(0)
+    def _normalize_keys(d: dict) -> Optional[Dict[str, str]]:
+        """Map whatever keys the model used to our canonical set."""
+        out: Dict[str, str] = {}
+        for raw_key, val in d.items():
+            canonical = _KEY_ALIASES.get(raw_key.strip().lower())
+            if canonical and canonical not in out:
+                out[canonical] = str(val).strip()
+        # Accept result even if only some sections are present
+        return out if out else None
 
+    # ── Strategy 1: entire response is valid JSON ─────────────────────────────
+    # Try this first — it's the happy path and handles escaped chars correctly.
+    # Regex strategies below fail on `\"` inside Hebrew string values.
     try:
-        data = json.loads(raw_json)
-    except json.JSONDecodeError as exc:
-        logger.warning(f"JSON parse failed: {exc}. Raw: {raw_json[:300]}")
-        return None
+        data = json.loads(raw.strip())
+        if isinstance(data, dict):
+            result = _normalize_keys(data)
+            if result:
+                return {k: result.get(k, "") for k in SECTION_KEYS}
+    except json.JSONDecodeError:
+        pass
 
-    # Normalize keys and fill missing sections
-    normalized: Dict[str, str] = {}
-    for key in ("gemara", "rashi", "tosafot"):
-        normalized[key] = str(data.get(key, "")).strip()
+    # ── Strategy 2: JSON inside markdown fences ───────────────────────────────
+    fence_m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
+    if fence_m:
+        try:
+            data = json.loads(fence_m.group(1))
+            result = _normalize_keys(data)
+            if result:
+                return {k: result.get(k, "") for k in SECTION_KEYS}
+        except json.JSONDecodeError:
+            pass
 
-    return normalized
-
-
-# --------------------------------------------------------------------------- #
-# Per-section metrics computation                                              #
-# --------------------------------------------------------------------------- #
-
-SECTION_KEYS = ("gemara", "rashi", "tosafot")
-
-
-def compute_section_metrics(
-    section_transcriptions: Dict[str, str],
-    gt_sections: Dict[str, str],
-) -> Dict[str, Dict[str, float]]:
-    """Compute CER per section and overall.
-
-    Args:
-        section_transcriptions: {'gemara': '...', 'rashi': '...', 'tosafot': '...'}
-        gt_sections: same structure from ground truth
-
-    Returns:
-        {
-            'gemara':  {'cer_strict': float, 'cer_lenient': float},
-            'rashi':   {...},
-            'tosafot': {...},
-            'overall': {'cer_strict': float, 'cer_lenient': float},
-        }
-    """
-    metrics: Dict[str, Dict[str, float]] = {}
-
-    all_hyp_chars: List[str] = []
-    all_ref_chars: List[str] = []
-    all_hyp_chars_lenient: List[str] = []
-    all_ref_chars_lenient: List[str] = []
-
-    for section in SECTION_KEYS:
-        hyp = normalize_whitespace(section_transcriptions.get(section, ""))
-        ref = normalize_whitespace(gt_sections.get(section, ""))
-
-        if not ref:
-            # Section absent in GT — skip from per-section metrics but note it
-            metrics[section] = {"cer_strict": None, "cer_lenient": None, "skipped": True}
+    # ── Strategy 3: Largest JSON object in the response ───────────────────────
+    # Find ALL {...} spans and try the longest one (avoids tiny nested objects).
+    # Note: this regex cannot handle escaped quotes inside string values, which
+    # is why Strategy 1 runs first for clean JSON responses.
+    json_candidates = re.findall(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}", raw, re.DOTALL)
+    json_candidates.sort(key=len, reverse=True)
+    for candidate in json_candidates:
+        try:
+            data = json.loads(candidate)
+            if isinstance(data, dict):
+                result = _normalize_keys(data)
+                if result:
+                    return {k: result.get(k, "") for k in SECTION_KEYS}
+        except json.JSONDecodeError:
             continue
 
-        cer_strict, cer_lenient = compute_cer_pair(hyp, ref)
-        metrics[section] = {"cer_strict": cer_strict, "cer_lenient": cer_lenient}
+    # ── Strategy 4: Plain-text fallback ──────────────────────────────────────
+    # Handles responses like:
+    #   **Gemara:**\ntext...\n\n**Rashi:**\ntext...
+    #   --- GEMARA ---\ntext...\n--- RASHI ---
+    section_pattern = re.compile(
+        r"(?:^|\n)\s*(?:\*\*|###|---\s*)?"  # optional markdown/delimiter
+        r"(gemara|rashi|tosafot|tosafos|גמרא|רשי|תוספות)"
+        r"(?:\s*\(.*?\))?"  # optional Hebrew in parens
+        r"(?:\*\*|:|\s*---)*\s*\n"  # closing marker + newline
+        r"(.*?)(?=\n\s*(?:\*\*|###|---\s*)?(?:gemara|rashi|tosafot|tosafos|גמרא|רשי|תוספות)|$)",
+        re.IGNORECASE | re.DOTALL,
+    )
+    plain_sections: Dict[str, str] = {}
+    for m in section_pattern.finditer(raw):
+        key = _KEY_ALIASES.get(m.group(1).strip().lower())
+        if key and key not in plain_sections:
+            plain_sections[key] = m.group(2).strip()
 
-        all_hyp_chars.extend(list(hyp))
-        all_ref_chars.extend(list(ref))
-        all_hyp_chars_lenient.extend(list(strip_nikud(hyp)))
-        all_ref_chars_lenient.extend(list(strip_nikud(ref)))
+    if plain_sections:
+        return {k: plain_sections.get(k, "") for k in SECTION_KEYS}
 
-    # Overall CER computed over concatenated chars (weighted by section length)
-    if all_ref_chars:
-        overall_strict = compute_cer("".join(all_hyp_chars), "".join(all_ref_chars))
-        overall_lenient = compute_cer(
-            "".join(all_hyp_chars_lenient), "".join(all_ref_chars_lenient)
-        )
+    # ── All strategies failed — log what we got so you can diagnose it ────────
+    label = f"[{model_label}] " if model_label else ""
+    print(f"    ✗ {label}JSON parse failed on {len(raw)}-char response.")
+    print(f"      First 400 chars: {repr(raw[:400])}")
+    return None
+
+
+# ============================================================================
+# Section-level metrics
+# ============================================================================
+
+def compute_section_metrics(
+        predicted: Dict[str, str],
+        gt: Dict[str, str],
+) -> Dict[str, Dict[str, Optional[float]]]:
+    """CER per section + weighted overall.
+
+    Returns {section: {cer_strict, cer_lenient}} for each section present in GT,
+    plus an 'overall' key weighted by GT character count.
+    """
+    metrics: Dict[str, Dict] = {}
+    total_ref_chars: List[str] = []
+    total_hyp_chars: List[str] = []
+    total_ref_lenient: List[str] = []
+    total_hyp_lenient: List[str] = []
+
+    for section in SECTION_KEYS:
+        ref = normalize_whitespace(gt.get(section, ""))
+        hyp = normalize_whitespace(predicted.get(section, ""))
+        if not ref:
+            metrics[section] = {"cer_strict": None, "cer_lenient": None}
+            continue
+        s, l = cer_pair(hyp, ref)
+        metrics[section] = {"cer_strict": s, "cer_lenient": l}
+        total_ref_chars.extend(ref)
+        total_hyp_chars.extend(hyp)
+        total_ref_lenient.extend(strip_nikud(ref))
+        total_hyp_lenient.extend(strip_nikud(hyp))
+
+    if total_ref_chars:
+        metrics["overall"] = {
+            "cer_strict": cer_levenshtein("".join(total_hyp_chars), "".join(total_ref_chars)),
+            "cer_lenient": cer_levenshtein("".join(total_hyp_lenient), "".join(total_ref_lenient)),
+        }
     else:
-        overall_strict = overall_lenient = 1.0
+        metrics["overall"] = {"cer_strict": 1.0, "cer_lenient": 1.0}
 
-    metrics["overall"] = {"cer_strict": overall_strict, "cer_lenient": overall_lenient}
     return metrics
 
 
-# --------------------------------------------------------------------------- #
-# W&B logging helpers                                                          #
-# --------------------------------------------------------------------------- #
-
-def _flatten_metrics_for_wandb(
-    model_name: str, metrics: Dict[str, Dict[str, float]]
-) -> Dict[str, float]:
-    """Convert nested metrics dict to flat W&B-compatible key/value pairs.
-
-    e.g.  flash/gemara/cer_strict = 0.12
-    """
-    flat: Dict[str, float] = {}
-    for section, values in metrics.items():
-        for metric_name, value in values.items():
-            if value is not None and metric_name != "skipped":
-                flat[f"{model_name}/{section}/{metric_name}"] = value
-    return flat
+def _wandb_section_payload(model: str, metrics: Dict) -> Dict[str, float]:
+    """Flatten section metrics to W&B log dict."""
+    out = {}
+    for section, vals in metrics.items():
+        for k, v in vals.items():
+            if v is not None:
+                out[f"{model}/{section}/{k}"] = v
+    return out
 
 
-def log_document_to_wandb(
-    doc_id: str,
-    step: int,
-    model_results: Dict[str, Dict],  # model_name → {section_metrics, raw_text, ...}
-) -> None:
-    """Log per-document metrics to the active W&B run."""
-    log_payload: Dict[str, object] = {"doc_id": doc_id, "step": step}
+# ============================================================================
+# Talmud VLM calls
+# ============================================================================
 
-    for model_name, result in model_results.items():
-        section_metrics = result.get("section_metrics")
-        if section_metrics:
-            log_payload.update(_flatten_metrics_for_wandb(model_name, section_metrics))
-
-        # Also log character counts for diagnostics
-        for section in SECTION_KEYS:
-            raw = result.get("sections", {}).get(section, "")
-            log_payload[f"{model_name}/{section}/char_count"] = len(raw)
-
-        processing_time = result.get("processing_time")
-        if processing_time is not None:
-            log_payload[f"{model_name}/processing_time_s"] = processing_time
-
-    wandb.log(log_payload, step=step)
-
-
-# --------------------------------------------------------------------------- #
-# Section-aware VLM transcription calls                                        #
-# --------------------------------------------------------------------------- #
-
-async def transcribe_talmud_flash(
-    image_path: str,
-) -> Tuple[Optional[Dict[str, str]], float]:
-    """Run Gemini Flash on a Talmud page, requesting section JSON output.
-
-    Returns (section_dict_or_None, elapsed_seconds).
-    """
+async def _call_section_aware(model_name: str, image_path: str, prompt: str, timeout: int):
     t0 = time.time()
-    raw = await call_gemini_with_retry(
-        AgentConfig.GEMINI_FLASH_MODEL,
-        image_path,
-        TALMUD_FLASH_PROMPT,
-        temperature=0.1,
-        timeout=AgentConfig.GEMINI_FLASH_TIMEOUT,
-    )
-    elapsed = time.time() - t0
-    sections = parse_section_json(raw) if raw else None
-    return sections, elapsed
+    raw = await call_gemini_with_retry(model_name, image_path, prompt, temperature=0.1, timeout=timeout)
+    label = model_name.split("-")[0]  # e.g. "gemini" — keep it short
+    return _parse_section_json(raw, model_label=label), time.time() - t0
 
 
-async def transcribe_talmud_pro(
-    image_path: str,
-) -> Tuple[Optional[Dict[str, str]], float]:
-    """Run Gemini Pro on a Talmud page, requesting section JSON output."""
-    t0 = time.time()
-    raw = await call_gemini_with_retry(
-        AgentConfig.GEMINI_PRO_MODEL,
-        image_path,
-        TALMUD_PRO_PROMPT,
-        temperature=0.1,
-        timeout=AgentConfig.GEMINI_PRO_TIMEOUT,
-    )
-    elapsed = time.time() - t0
-    sections = parse_section_json(raw) if raw else None
-    return sections, elapsed
+# ============================================================================
+# Per-document evaluation
+# ============================================================================
 
-
-async def transcribe_talmud_kraken(
-    model_path: str,
-    image_path: str,
-) -> Tuple[Optional[str], float]:
-    """Run Kraken on a Talmud page. Returns (whole_page_text, elapsed_seconds).
-
-    NOTE: Kraken produces a single text stream — it does not separate sections.
-    We log whole-page CER only. The physical layout (center vs. margins) could
-    be used in future work to classify lines by section using baseline x-coordinates.
+async def evaluate_talmud_document(
+        doc_id: str,
+        image_path: Path,
+        gt_sections: Dict[str, str],
+        kraken_model_path: str,
+        skip_flash: bool = False,
+        skip_pro: bool = False,
+        skip_kraken: bool = False,
+        batch_num: Optional[int] = None,
+) -> Optional[Dict]:
     """
-    t0 = time.time()
-    text = await transcribe_with_kraken(model_path, image_path)
-    elapsed = time.time() - t0
-    return text, elapsed
-
-
-# --------------------------------------------------------------------------- #
-# Per-document evaluation                                                      #
-# --------------------------------------------------------------------------- #
-
-async def evaluate_document(
-    doc_id: str,
-    image_path: Path,
-    gt_sections: Dict[str, str],
-    kraken_model_path: str,
-    skip_flash: bool = False,
-    skip_pro: bool = False,
-    skip_kraken: bool = False,
-) -> Dict[str, Dict]:
-    """Run all models on one document and compute section-level metrics.
-
-    Returns a dict: model_name → {sections, section_metrics, processing_time}
+    Run all models on one Talmud page and return a result dict compatible
+    with the existing W&B table schema, plus extended section metrics.
     """
-    logger.info(f"\n{'='*60}")
-    logger.info(f"Document: {doc_id}")
-    logger.info(f"GT summary:\n{get_section_summary(gt_sections)}")
+    print(f"\n📄 {doc_id}")
+    print(get_section_summary(gt_sections))
 
-    results: Dict[str, Dict] = {}
+    # Concatenated GT for whole-document metrics (used for Kraken + existing log_to_wandb)
+    full_gt = "\n".join(gt_sections.get(k, "") for k in SECTION_KEYS if gt_sections.get(k))
+    if not full_gt.strip():
+        print(f"  ⚠️  No GT text — gt_sections keys: {list(gt_sections.keys())}, SECTION_KEYS: {SECTION_KEYS}")
+        return None
 
-    # --- Gemini Flash ---
+    # Build a minimal TranscriptionState stub so log_to_wandb can be reused
+    state = {
+        "doc_id": doc_id,
+        "image_path": str(image_path),
+        "catalog_metadata": {"description": f"Talmud Bavli — {doc_id}"},
+        "ground_truth": full_gt,
+        "vision_ocr_result": None,
+        "gemini_flash_result": None,
+        "gemini_pro_result": None,
+        "kraken_result": None,
+        "vision_ocr_metrics": None,
+        "gemini_flash_metrics": None,
+        "gemini_pro_metrics": None,
+        "kraken_metrics": None,
+        "all_results": [],
+        "disagreements": [],
+        "needs_review": False,
+        "final_transcription": "",
+        "confidence_score": 0.0,
+        "consensus_strategy": "pro_preferred",
+        "consensus_metrics": None,
+        "analysis_result": None,
+        "processing_time": 0.0,
+        "model_times": {},
+        # Talmud-specific additions
+        "_flash_sections": None,
+        "_pro_sections": None,
+        "_flash_section_metrics": None,
+        "_pro_section_metrics": None,
+    }
+
+    t_doc_start = time.time()
+
+    # ── Gemini Flash ─────────────────────────────────────────────────────────
     if not skip_flash:
-        logger.info("  ⚡ Gemini Flash (section-aware)...")
-        sections, elapsed = await transcribe_talmud_flash(str(image_path))
-        if sections:
-            section_metrics = compute_section_metrics(sections, gt_sections)
-            results["flash"] = {
-                "sections": sections,
-                "section_metrics": section_metrics,
-                "processing_time": elapsed,
-            }
-            _log_section_results("flash", sections, section_metrics)
-        else:
-            logger.warning("  ✗ Flash returned no parseable section JSON")
-            results["flash"] = {"sections": {}, "section_metrics": None, "processing_time": elapsed}
+        print("  ⚡ Gemini Flash (section-aware)...")
+        sections, elapsed = await _call_section_aware(
+            AgentConfig.GEMINI_FLASH_MODEL, str(image_path),
+            FLASH_PROMPT, AgentConfig.GEMINI_FLASH_TIMEOUT,
+        )
+        state["model_times"]["gemini_flash"] = elapsed
 
-    # --- Gemini Pro (sequential, with delay to avoid rate limiting) ---
+        if sections:
+            reconstructed = "\n".join(sections.get(k, "") for k in SECTION_KEYS if sections.get(k))
+            state["gemini_flash_result"] = {
+                "text": reconstructed, "model": "gemini_flash_talmud_section",
+                "char_count": len(reconstructed), "processing_time": elapsed,
+            }
+            state["gemini_flash_metrics"] = evaluate_transcription(full_gt, reconstructed, "gemini_flash")
+            state["gemini_flash_metrics"]["processing_time"] = elapsed
+
+            section_m = compute_section_metrics(sections, gt_sections)
+            state["_flash_sections"] = sections
+            state["_flash_section_metrics"] = section_m
+
+            print(f"    ✓ overall CER strict={section_m['overall']['cer_strict']:.3f} "
+                  f"lenient={section_m['overall']['cer_lenient']:.3f}")
+        else:
+            pass  # _parse_section_json already printed the raw response
+
+    # ── Gemini Pro (after a short pause) ─────────────────────────────────────
     if not skip_pro:
         await asyncio.sleep(3)
-        logger.info("  🎯 Gemini Pro (section-aware)...")
-        sections, elapsed = await transcribe_talmud_pro(str(image_path))
+        print("  🎯 Gemini Pro (section-aware)...")
+        sections, elapsed = await _call_section_aware(
+            AgentConfig.GEMINI_PRO_MODEL, str(image_path),
+            PRO_PROMPT, AgentConfig.GEMINI_PRO_TIMEOUT,
+        )
+        state["model_times"]["gemini_pro"] = elapsed
+
         if sections:
-            section_metrics = compute_section_metrics(sections, gt_sections)
-            results["pro"] = {
-                "sections": sections,
-                "section_metrics": section_metrics,
-                "processing_time": elapsed,
+            reconstructed = "\n".join(sections.get(k, "") for k in SECTION_KEYS if sections.get(k))
+            state["gemini_pro_result"] = {
+                "text": reconstructed, "model": "gemini_pro_talmud_section",
+                "char_count": len(reconstructed), "processing_time": elapsed,
             }
-            _log_section_results("pro", sections, section_metrics)
-        else:
-            logger.warning("  ✗ Pro returned no parseable section JSON")
-            results["pro"] = {"sections": {}, "section_metrics": None, "processing_time": elapsed}
+            state["gemini_pro_metrics"] = evaluate_transcription(full_gt, reconstructed, "gemini_pro")
+            state["gemini_pro_metrics"]["processing_time"] = elapsed
 
-    # --- Kraken ---
+            section_m = compute_section_metrics(sections, gt_sections)
+            state["_pro_sections"] = sections
+            state["_pro_section_metrics"] = section_m
+
+            # Pro output drives consensus transcription
+            state["final_transcription"] = reconstructed
+            state["consensus_metrics"] = evaluate_transcription(
+                full_gt, reconstructed, "consensus_pro_preferred"
+            )
+
+            print(f"    ✓ overall CER strict={section_m['overall']['cer_strict']:.3f} "
+                  f"lenient={section_m['overall']['cer_lenient']:.3f}")
+        else:
+            pass  # _parse_section_json already printed the raw response
+
+    # Fallback consensus to Flash if Pro failed
+    if not state["final_transcription"] and state.get("gemini_flash_result"):
+        state["final_transcription"] = state["gemini_flash_result"]["text"]
+        state["consensus_strategy"] = "flash_fallback"
+        state["consensus_metrics"] = state["gemini_flash_metrics"]
+
+    # ── Kraken ───────────────────────────────────────────────────────────────
     if not skip_kraken:
-        logger.info("  🐙 Kraken / MiDRASH...")
-        whole_page_text, elapsed = await transcribe_talmud_kraken(
-            kraken_model_path, str(image_path)
+        print("  🐙 Kraken / MiDRASH...")
+        t0 = time.time()
+        kraken_text = await transcribe_with_kraken(
+            kraken_model_path, str(image_path), timeout=120.0
         )
-        if whole_page_text:
-            # Compute CER against concatenated GT (all sections joined)
-            full_gt = "\n".join(
-                gt_sections.get(k, "") for k in SECTION_KEYS if gt_sections.get(k)
-            )
-            cer_strict, cer_lenient = compute_cer_pair(whole_page_text, full_gt)
-            kraken_metrics = {
-                "overall": {"cer_strict": cer_strict, "cer_lenient": cer_lenient}
+        elapsed = time.time() - t0
+        state["model_times"]["kraken"] = elapsed
+
+        if kraken_text:
+            state["kraken_result"] = {
+                "text": kraken_text, "model": "kraken_midrash_gen_01",
+                "char_count": len(kraken_text), "processing_time": elapsed,
             }
-            results["kraken"] = {
-                "sections": {"whole_page": whole_page_text},
-                "section_metrics": kraken_metrics,
-                "processing_time": elapsed,
-            }
-            logger.info(
-                f"    ✓ Kraken overall CER: strict={cer_strict:.3f}  lenient={cer_lenient:.3f}"
-            )
+            # Reuse existing evaluate_transcription for SequenceMatcher metrics
+            state["kraken_metrics"] = evaluate_transcription(full_gt, kraken_text, "kraken")
+            state["kraken_metrics"]["processing_time"] = elapsed
+            # Also compute proper Levenshtein CER for the paper
+            state["kraken_metrics"]["cer_levenshtein"], state["kraken_metrics"]["cer_levenshtein_lenient"] = \
+                cer_pair(kraken_text, full_gt)
+
+            print(f"    ✓ {len(kraken_text)} chars  "
+                  f"CER strict={state['kraken_metrics']['cer_levenshtein']:.3f}  "
+                  f"lenient={state['kraken_metrics']['cer_levenshtein_lenient']:.3f}")
         else:
-            logger.warning("  ✗ Kraken failed")
-            results["kraken"] = {"sections": {}, "section_metrics": None, "processing_time": elapsed}
+            print("    ✗ Kraken failed")
 
-    return results
+    state["processing_time"] = time.time() - t_doc_start
+
+    # ── W&B logging ──────────────────────────────────────────────────────────
+    # Step counter = total rows logged so far (used so W&B time-series is ordered)
+    _step = len(_table_rows["full_page"])  # before we append the new row
+
+    flash_sections = state.get("_flash_sections") or {}
+    pro_sections = state.get("_pro_sections") or {}
+    flash_full = "\n".join(flash_sections.get(k, "") for k in SECTION_KEYS)
+    pro_full = "\n".join(pro_sections.get(k, "") for k in SECTION_KEYS)
+    kraken_text = (state.get("kraken_result") or {}).get("text", "")
+    kraken_metrics = state.get("kraken_metrics")
+
+    # 1. Append to the four section tables and immediately re-log them so
+    #    W&B shows live updates after every document.
+    _append_section_table_rows(
+        doc_id=doc_id,
+        gt_sections=gt_sections,
+        flash_sections=flash_sections or None,
+        pro_sections=pro_sections or None,
+        flash_section_metrics=state.get("_flash_section_metrics"),
+        pro_section_metrics=state.get("_pro_section_metrics"),
+        kraken_text=kraken_text or None,
+        kraken_metrics=kraken_metrics,
+        full_gt=full_gt,
+        flash_full=flash_full,
+        pro_full=pro_full,
+    )
+    log_section_tables(step=_step)
+
+    # 2. Scalar metrics (CER timeseries + timing) — kept for chart views
+    scalar_payload: Dict = {"doc_id": doc_id}
+
+    if state.get("_flash_section_metrics"):
+        scalar_payload.update(_wandb_section_payload("flash", state["_flash_section_metrics"]))
+    if state.get("_pro_section_metrics"):
+        scalar_payload.update(_wandb_section_payload("pro", state["_pro_section_metrics"]))
+    if kraken_metrics:
+        scalar_payload.update({
+            "kraken/overall/cer_strict": kraken_metrics.get("cer_levenshtein"),
+            "kraken/overall/cer_lenient": kraken_metrics.get("cer_levenshtein_lenient"),
+            "kraken/overall/wer": kraken_metrics.get("wer"),
+            "kraken/processing_time_s": kraken_metrics.get("processing_time"),
+        })
+    for model_key in ("gemini_flash", "gemini_pro", "kraken"):
+        t = state["model_times"].get(model_key)
+        if t is not None:
+            scalar_payload[f"timing/{model_key}_s"] = t
+
+    wandb.log({k: v for k, v in scalar_payload.items() if v is not None}, step=_step)
+
+    # 3. HTML comparison (kept for quick visual spot-checks)
+    if Path(state["image_path"]).exists():
+        _update_comparison_html_with_kraken(state)
+
+    # 4. Raw text files + incremental JSONL
+    for model_key, label in [
+        ("gemini_flash_result", "gemini_flash"),
+        ("gemini_pro_result", "gemini_pro"),
+        ("kraken_result", "kraken"),
+    ]:
+        r = state.get(model_key)
+        if r:
+            save_raw_output(doc_id, label, r["text"])
+
+    save_raw_output(doc_id, "ground_truth", full_gt, full_gt)
+    save_incremental_result(state, batch_num)
+
+    return state
 
 
-def _log_section_results(
-    model_name: str,
-    sections: Dict[str, str],
-    metrics: Dict[str, Dict[str, float]],
+def _update_comparison_html_with_kraken(state: Dict) -> None:
+    """Extend the existing comparison HTML to include a Kraken column."""
+    kraken_text = (state.get("kraken_result") or {}).get("text", "")
+    if not kraken_text:
+        return
+
+    html = create_comparison_html(
+        state["doc_id"],
+        state.get("ground_truth", ""),
+        "",  # Vision OCR (not run)
+        (state.get("gemini_flash_result") or {}).get("text", ""),
+        (state.get("gemini_pro_result") or {}).get("text", ""),
+        state["final_transcription"],
+        state["consensus_strategy"],
+    )
+
+    # Inject Kraken section before </body>
+    kraken_block = f"""
+        <div class="section" style="grid-column: span 2;">
+            <h3>Kraken / MiDRASH Gen 01 ({len(kraken_text)} chars)</h3>
+            <div class="text">{kraken_text[:800]}...</div>
+        </div>"""
+    html = html.replace("</body>", kraken_block + "\n</body>")
+
+    html_path = EvalConfig.RAW_OUTPUTS_DIR / state["doc_id"] / "comparison.html"
+    html_path.parent.mkdir(parents=True, exist_ok=True)
+    html_path.write_text(html, encoding="utf-8")
+    wandb.log({f"comparison_html/{state['doc_id']}": wandb.Html(html)})
+
+
+# ============================================================================
+# Main evaluation loop
+# ============================================================================
+
+async def run_talmud_eval(
+        images_dir: Path = TALMUD_IMAGES_DIR,
+        gt_dir: Path = TALMUD_GT_DIR,
+        kraken_model_path: str = "MiDRASH_Gen_01.mlmodel",
+        max_documents: Optional[int] = None,
+        skip_flash: bool = False,
+        skip_pro: bool = False,
+        skip_kraken: bool = False,
+        wandb_project: str = EvalConfig.WANDB_PROJECT,
+        wandb_run_name: Optional[str] = None,
 ) -> None:
-    """Pretty-print per-section CER to the console."""
-    for section in list(SECTION_KEYS) + ["overall"]:
-        m = metrics.get(section, {})
-        if m.get("skipped"):
-            logger.info(f"    {model_name}/{section}: GT absent — skipped")
-        elif m.get("cer_strict") is not None:
-            logger.info(
-                f"    {model_name}/{section}: "
-                f"CER strict={m['cer_strict']:.3f}  lenient={m['cer_lenient']:.3f}  "
-                f"({len(sections.get(section,''))} chars transcribed)"
-            )
+    TALMUD_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    EvalConfig.RAW_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
 
+    # Match images ↔ GT by filename stem.
+    #
+    # Image names follow the pattern:  01_2_page_001.png
+    # GT stems follow the pattern:     01_2
+    #
+    # Strategy: strip a trailing _page_NNN (or _NNN) suffix from the image stem
+    # to recover the GT key, then group all pages of the same GT document together.
+    # When multiple pages exist for one GT file we use all of them independently
+    # (each page gets its own eval row keyed as "01_2_page_001", "01_2_page_002", …).
+    _page_suffix_re = re.compile(r"_page_\d+$", re.IGNORECASE)
 
-# --------------------------------------------------------------------------- #
-# Main evaluation loop                                                         #
-# --------------------------------------------------------------------------- #
-
-async def run_talmud_evaluation(
-    images_dir: Path,
-    gt_dir: Path,
-    kraken_model_path: str,
-    output_dir: Optional[Path] = None,
-    wandb_project: str = "cairo-genizah-vlm-eval",
-    wandb_run_name: Optional[str] = None,
-    max_documents: Optional[int] = None,
-    skip_flash: bool = False,
-    skip_pro: bool = False,
-    skip_kraken: bool = False,
-    image_extensions: Tuple[str, ...] = (".jpg", ".jpeg", ".png", ".tif", ".tiff"),
-) -> None:
-    """
-    Main evaluation loop. Matches images to GT files by filename stem, runs all
-    models, computes per-section CER, and logs everything to W&B.
-
-    Image/GT matching:
-        images_dir/01_2.jpg  ←→  gt_dir/01_2.txt
-        (stem must match exactly)
-    """
-    # --- Validate paths ---
-    if not images_dir.is_dir():
-        raise FileNotFoundError(f"Images directory not found: {images_dir}")
-    if not gt_dir.is_dir():
-        raise FileNotFoundError(f"GT directory not found: {gt_dir}")
-
-    # --- Load all ground truth ---
-    logger.info(f"Loading ground truth from {gt_dir} ...")
     gt_by_stem = load_gt_directory(gt_dir)
-    logger.info(f"  Found {len(gt_by_stem)} GT files: {sorted(gt_by_stem.keys())}")
+    image_map: Dict[str, Path] = {}  # doc_id (image stem) → image path
 
-    # --- Find matching images ---
-    image_files: Dict[str, Path] = {}
-    for ext in image_extensions:
-        for img_path in images_dir.glob(f"*{ext}"):
-            stem = img_path.stem
-            if stem in gt_by_stem:
-                image_files[stem] = img_path
+    for ext in IMAGE_EXTENSIONS:
+        for p in images_dir.glob(f"*{ext}"):
+            # Try exact match first (stem == GT key)
+            if p.stem in gt_by_stem:
+                image_map[p.stem] = p
+                continue
+            # Strip _page_NNN suffix and try again
+            gt_key = _page_suffix_re.sub("", p.stem)
+            if gt_key in gt_by_stem:
+                image_map[p.stem] = p  # keep full stem as unique doc_id
 
-    if not image_files:
+    doc_ids = sorted(image_map.keys())
+    if not doc_ids:
         raise RuntimeError(
-            f"No images in {images_dir} matched GT stems {sorted(gt_by_stem.keys())}"
+            f"No images in {images_dir} matched GT stems in {gt_dir}.\n"
+            f"GT stems found: {sorted(gt_by_stem.keys())}\n"
+            f"Example image stems: "
+            + ", ".join(
+                p.stem for ext in IMAGE_EXTENSIONS
+                for p in list(images_dir.glob(f"*{ext}"))[:3]
+            )
         )
 
-    doc_ids = sorted(image_files.keys())
     if max_documents:
         doc_ids = doc_ids[:max_documents]
 
-    logger.info(f"Matched {len(doc_ids)} documents for evaluation: {doc_ids}")
+    print(f"Matched {len(doc_ids)} documents: {doc_ids}")
 
-    # --- Preload Kraken model (amortize cost across all documents) ---
     if not skip_kraken:
-        logger.info(f"Preloading Kraken model: {kraken_model_path}")
         preload_kraken_model(kraken_model_path)
 
-    # --- Initialize W&B ---
-    run = wandb.init(
+    wandb.init(
         project=wandb_project,
-        name=wandb_run_name or f"talmud-eval-{time.strftime('%Y%m%d-%H%M%S')}",
+        name=wandb_run_name or f"talmud-{time.strftime('%Y%m%d-%H%M%S')}",
         config={
             "eval_type": "talmud_section_aware",
             "num_documents": len(doc_ids),
@@ -522,182 +796,98 @@ async def run_talmud_evaluation(
             "kraken_model": kraken_model_path if not skip_kraken else None,
             "gemini_flash_model": AgentConfig.GEMINI_FLASH_MODEL,
             "gemini_pro_model": AgentConfig.GEMINI_PRO_MODEL,
-            "skip_flash": skip_flash,
-            "skip_pro": skip_pro,
-            "skip_kraken": skip_kraken,
         },
-        tags=["talmud", "section-eval"],
+        tags=["talmud", "section-eval", "kraken"],
     )
 
-    # --- Output dir for transcription artifacts ---
-    if output_dir:
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-    # --- Per-document evaluation ---
     all_results: List[Dict] = []
 
-    for step, doc_id in enumerate(doc_ids):
-        image_path = image_files[doc_id]
-        gt_sections = gt_by_stem[doc_id]
-
+    for i, doc_id in enumerate(doc_ids):
+        gt_key = _page_suffix_re.sub("", doc_id)
         try:
-            model_results = await evaluate_document(
+            result = await evaluate_talmud_document(
                 doc_id=doc_id,
-                image_path=image_path,
-                gt_sections=gt_sections,
+                image_path=image_map[doc_id],
+                gt_sections=gt_by_stem[gt_key],
                 kraken_model_path=kraken_model_path,
                 skip_flash=skip_flash,
                 skip_pro=skip_pro,
                 skip_kraken=skip_kraken,
+                batch_num=1,
             )
-
-            # Log to W&B
-            log_document_to_wandb(doc_id=doc_id, step=step, model_results=model_results)
-            all_results.append({"doc_id": doc_id, "results": model_results})
-
-            # Optionally save transcription artifacts
-            if output_dir:
-                _save_document_output(output_dir, doc_id, model_results, gt_sections)
+            if result:
+                all_results.append(result)
 
         except Exception as exc:
-            logger.error(f"Failed on {doc_id}: {exc}", exc_info=True)
-            wandb.log({"error": str(exc), "error_doc": doc_id}, step=step)
+            print(f"  ❌ {doc_id}: {exc}")
+            wandb.log({"error": str(exc), "error_doc": doc_id})
 
-        # Delay between documents to respect API rate limits
-        if step < len(doc_ids) - 1:
+        if i < len(doc_ids) - 1:
             await asyncio.sleep(AgentConfig.DELAY_BETWEEN_DOCS)
 
-    # --- Compute and log aggregate summary ---
-    summary = _compute_aggregate_summary(all_results)
-    for key, value in summary.items():
-        wandb.summary[key] = value
-
-    logger.info("\n" + "=" * 60)
-    logger.info("EVALUATION COMPLETE — AGGREGATE SUMMARY")
-    for key, value in sorted(summary.items()):
-        logger.info(f"  {key}: {value:.4f}" if isinstance(value, float) else f"  {key}: {value}")
-
+    # Section tables are already live in W&B (re-logged after every document).
+    # Just log the aggregate summary to wandb.summary and finish.
+    _log_summary(all_results)
     wandb.finish()
 
 
-def _save_document_output(
-    output_dir: Path,
-    doc_id: str,
-    model_results: Dict[str, Dict],
-    gt_sections: Dict[str, str],
-) -> None:
-    """Save per-document transcription results as JSON for offline inspection."""
-    out = {
-        "doc_id": doc_id,
-        "ground_truth": gt_sections,
-        "model_outputs": {
-            model: {
-                "sections": result.get("sections", {}),
-                "section_metrics": {
-                    sec: {k: v for k, v in vals.items() if k != "skipped"}
-                    for sec, vals in (result.get("section_metrics") or {}).items()
-                },
-                "processing_time_s": result.get("processing_time"),
-            }
-            for model, result in model_results.items()
-        },
-    }
-    (output_dir / f"{doc_id}_eval.json").write_text(
-        json.dumps(out, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-
-
-def _compute_aggregate_summary(all_results: List[Dict]) -> Dict[str, float]:
-    """Average per-section CER across all documents for each model."""
+def _log_summary(results: List[Dict]) -> None:
+    """Compute mean CER per model/section across all documents and write to wandb.summary."""
     from collections import defaultdict
+    accs: Dict[str, List[float]] = defaultdict(list)
 
-    accumulators: Dict[str, List[float]] = defaultdict(list)
+    # Pull from the accumulated table rows (columns are stable, index them by name)
+    sec_col = {c: i for i, c in enumerate(_SECTION_COLUMNS)}
+    fp_col = {c: i for i, c in enumerate(_FULL_PAGE_COLUMNS)}
 
-    for entry in all_results:
-        for model_name, result in entry["results"].items():
-            section_metrics = result.get("section_metrics") or {}
-            for section, vals in section_metrics.items():
-                for metric, value in vals.items():
-                    if value is not None and metric != "skipped":
-                        accumulators[f"{model_name}/{section}/{metric}"].append(value)
+    for section in SECTION_KEYS:
+        for row in _table_rows[section]:
+            for model, cer_key in [("flash", "flash_cer_strict"), ("flash", "flash_cer_lenient"),
+                                   ("pro", "pro_cer_strict"), ("pro", "pro_cer_lenient")]:
+                v = row[sec_col[cer_key]]
+                if v is not None:
+                    accs[f"mean/{model}/{section}/{cer_key.split('_', 1)[1]}"].append(v)
 
-    summary: Dict[str, float] = {}
-    for key, values in accumulators.items():
-        summary[f"mean_{key}"] = sum(values) / len(values)
+    for row in _table_rows["full_page"]:
+        for col_key in ("kraken_cer_strict", "kraken_cer_lenient"):
+            v = row[fp_col[col_key]]
+            if v is not None:
+                accs[f"mean/kraken/overall/{col_key.replace('kraken_', '')}"].append(v)
 
-    summary["num_documents_evaluated"] = len(all_results)
-    return summary
+    summary = {k: sum(v) / len(v) for k, v in accs.items()}
+    summary["num_documents"] = len(results)
+
+    print("\nAggregate summary:")
+    for k, v in sorted(summary.items()):
+        wandb.summary[k] = v
+        print(f"  {k}: {v:.4f}" if isinstance(v, float) else f"  {k}: {v}")
 
 
-# --------------------------------------------------------------------------- #
-# CLI entry point                                                              #
-# --------------------------------------------------------------------------- #
-
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Talmud section-aware evaluation with per-section CER logged to W&B"
-    )
-    parser.add_argument(
-        "--images_dir",
-        type=Path,
-        default=Path(
-            "/Users/isaac1/Documents/GitHub/multimodal-document-analysis"
-            "/src/datasets/raw_data/talmud/bavli/talmud_complete/converted_images"
-        ),
-        help="Directory containing Talmud page images",
-    )
-    parser.add_argument(
-        "--gt_dir",
-        type=Path,
-        default=Path(
-            "/Users/isaac1/Documents/GitHub/multimodal-document-analysis"
-            "/src/datasets/raw_data/talmud/bavli/talmud_complete/texts"
-        ),
-        help="Directory containing ground truth .txt files",
-    )
-    parser.add_argument(
-        "--kraken_model",
-        type=str,
-        default="MiDRASH_Gen_01.mlmodel",
-        help="Path to the MiDRASH Kraken .mlmodel file",
-    )
-    parser.add_argument(
-        "--output_dir",
-        type=Path,
-        default=None,
-        help="Optional directory to save per-document JSON artifacts",
-    )
-    parser.add_argument(
-        "--wandb_project",
-        type=str,
-        default="cairo-genizah-vlm-eval",
-    )
-    parser.add_argument("--wandb_run_name", type=str, default=None)
-    parser.add_argument(
-        "--max_documents",
-        type=int,
-        default=None,
-        help="Cap number of documents (useful for quick smoke tests)",
-    )
-    parser.add_argument("--skip_flash", action="store_true")
-    parser.add_argument("--skip_pro", action="store_true")
-    parser.add_argument("--skip_kraken", action="store_true")
-    return parser.parse_args()
-
+# ============================================================================
+# CLI
+# ============================================================================
 
 if __name__ == "__main__":
-    args = _parse_args()
-    asyncio.run(
-        run_talmud_evaluation(
-            images_dir=args.images_dir,
-            gt_dir=args.gt_dir,
-            kraken_model_path=args.kraken_model,
-            output_dir=args.output_dir,
-            wandb_project=args.wandb_project,
-            wandb_run_name=args.wandb_run_name,
-            max_documents=args.max_documents,
-            skip_flash=args.skip_flash,
-            skip_pro=args.skip_pro,
-            skip_kraken=args.skip_kraken,
-        )
-    )
+    p = argparse.ArgumentParser()
+    p.add_argument("--images_dir", type=Path, default=TALMUD_IMAGES_DIR)
+    p.add_argument("--gt_dir", type=Path, default=TALMUD_GT_DIR)
+    p.add_argument("--kraken_model", default="MiDRASH_Gen_01.mlmodel")
+    p.add_argument("--max_documents", type=int, default=None)
+    p.add_argument("--wandb_project", default=EvalConfig.WANDB_PROJECT)
+    p.add_argument("--wandb_run_name", default=None)
+    p.add_argument("--skip_flash", action="store_true")
+    p.add_argument("--skip_pro", action="store_true")
+    p.add_argument("--skip_kraken", action="store_true")
+    args = p.parse_args()
+
+    asyncio.run(run_talmud_eval(
+        images_dir=args.images_dir,
+        gt_dir=args.gt_dir,
+        kraken_model_path="/Users/isaac1/Documents/historical-document-analysis/src/datasets/raw_data/cairo_genizah/custom_model_weights/MiDRASH_Gen_01.mlmodel",
+        max_documents=args.max_documents,
+        skip_flash=args.skip_flash,
+        skip_pro=args.skip_pro,
+        skip_kraken=args.skip_kraken,
+        wandb_project=args.wandb_project,
+        wandb_run_name=args.wandb_run_name,
+    ))
