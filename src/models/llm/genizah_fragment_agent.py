@@ -34,7 +34,7 @@ class AgentConfig:
 
     # Models
     GEMINI_FLASH_MODEL = "gemini-3-flash-preview"
-    GEMINI_PRO_MODEL = "gemini-3-pro-preview"
+    GEMINI_PRO_MODEL = "gemini-3.1-pro-preview"
     GEMINI_ANALYSIS_MODEL = "gemini-2.0-flash-exp"
 
     # Model selection
