@@ -422,9 +422,17 @@ if __name__ == "__main__":
                       # book_file="rylands_articles/bjrl-article-p710.json",
                       #use_gemini=True,
                       # model_extension="gemini_gemini_2.5_flash")
-    run_specific_file(
-        example_file="malkhhut_ish/volume_1/200_400/malk-ish-1-360.pdf",
-        book_file="malkhhut_ish/malkhuth_ish_metadata.json",
-        use_gemini=False,
-        model_extension="qwen_model",
-    )
+    # run_specific_file(
+        #example_file="malkhhut_ish/volume_1/200_400/malk-ish-1-360.pdf",
+         #book_file="malkhhut_ish/malkhuth_ish_metadata.json",
+         #use_gemini=False,
+        #model_extension="qwen_model",
+    #)
+    # run_specific_file(example_file="ottomon_era/ottomon_era.pdf",
+                      #book_file="ottomon_era/ottomon_era_metadata.json",
+                      #use_gemini=False,
+                      #model_extension="qwen_model",)
+    run_specific_file(example_file="religious_identity_yagur/religious_moshe.pdf",
+                      book_file="religious_identity_yagur/religious_moshe_metadata.json",
+                      use_gemini=False,
+                      model_extension="qwen_model",)
