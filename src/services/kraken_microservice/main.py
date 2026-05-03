@@ -1,10 +1,9 @@
 import logging
 import os
-import shutil
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional
 
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from pydantic import BaseModel
 
 # Suppress kraken warnings before importing it
