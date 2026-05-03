@@ -45,7 +45,7 @@ async def test_api_key():
         print_error("GEMINI_API_KEY not found in environment")
         return False
 
-    print_success(f"API key found: {api_key[:20]}...")
+    print_success("API key found")
     genai.configure(api_key=api_key)
     return True
 
