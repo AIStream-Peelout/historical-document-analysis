@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 KRAKEN_MICROSERVICE_URL = os.getenv("KRAKEN_MICROSERVICE_URL", "http://localhost:8002")
 
 def preload_kraken_model(model_path: str) -> None:
-    """Preload the Kraken model by hitting the microservice synchronoulsy."""
+    """Preload the Kraken model by hitting the microservice synchronously."""
     import requests
     url = f"{KRAKEN_MICROSERVICE_URL}/preload"
     logger.info(f"Triggering preload via {url} for model: {model_path}")
