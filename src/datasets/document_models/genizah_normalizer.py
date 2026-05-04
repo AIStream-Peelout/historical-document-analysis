@@ -6,6 +6,7 @@ This module provides:
 1. Canonical ID generation (underscore-separated UUID)
 2. Variant generation (all known formats for search)
 3. Bidirectional matching (any format → canonical ID)
+4. Institution/collection lookup from shelfmark prefix
 
 Example:
     Input: "T-S AS 18.170"
@@ -345,6 +346,149 @@ class ShelfmarkNormalizer:
         id1 = ShelfmarkNormalizer.to_canonical_id(shelfmark1)
         id2 = ShelfmarkNormalizer.to_canonical_id(shelfmark2)
         return id1 == id2
+
+    # Maps known shelfmark prefixes → institution / collection / sub-collection
+    INSTITUTION_MAPPING: Dict[str, Dict[str, Optional[str]]] = {
+        # Cambridge University Library (Taylor-Schechter)
+        "T-S": {"institution": "Cambridge University Library", "collection": "Taylor-Schechter", "subcollection": None},
+        "T-S AS": {"institution": "Cambridge University Library", "collection": "Taylor-Schechter", "subcollection": "Additional Series"},
+        "T-S NS": {"institution": "Cambridge University Library", "collection": "Taylor-Schechter", "subcollection": "New Series"},
+        "T-S Ar": {"institution": "Cambridge University Library", "collection": "Taylor-Schechter", "subcollection": "Arabic"},
+        "T-S K": {"institution": "Cambridge University Library", "collection": "Taylor-Schechter", "subcollection": "Miscellaneous"},
+        "CUL Add": {"institution": "Cambridge University Library", "collection": "Additional Manuscripts", "subcollection": None},
+        "ULC Add": {"institution": "Cambridge University Library", "collection": "Additional Manuscripts", "subcollection": None},
+        "CUL Or": {"institution": "Cambridge University Library", "collection": "Oriental Manuscripts", "subcollection": None},
+        "Mosseri": {"institution": "Cambridge University Library", "collection": "Mosseri", "subcollection": None},
+        "L-G": {"institution": "Cambridge University Library / Bodleian Library Oxford", "collection": "Lewis-Gibson", "subcollection": None},
+        # JTS / ENA
+        "ENA": {"institution": "Jewish Theological Seminary", "collection": "Elkan Nathan Adler", "subcollection": "Main series"},
+        "ENA NS": {"institution": "Jewish Theological Seminary", "collection": "Elkan Nathan Adler", "subcollection": "New Series"},
+        "ENA II": {"institution": "Jewish Theological Seminary", "collection": "Elkan Nathan Adler", "subcollection": "Second Adler acquisition"},
+        "JTS MS": {"institution": "Jewish Theological Seminary", "collection": "General Manuscripts", "subcollection": None},
+        "JTS MS Rabbinica": {"institution": "Jewish Theological Seminary", "collection": "General Manuscripts", "subcollection": "Rabbinic literature from ENA"},
+        "JTS MS Lutzki": {"institution": "Jewish Theological Seminary", "collection": "General Manuscripts", "subcollection": "Biblical texts from ENA"},
+        "JTS Scroll": {"institution": "Jewish Theological Seminary", "collection": "General Manuscripts", "subcollection": "Scrolls from ENA"},
+        "KE": {"institution": "Jewish Theological Seminary", "collection": "Kahle Acquisition", "subcollection": None},
+        # Manchester / Rylands (Gaster)
+        "Gaster A": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Series A"},
+        "Gaster B": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Series B"},
+        "Gaster P": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Series P"},
+        "Gaster L": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Series L"},
+        "Gaster C": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Series C"},
+        "Gaster Ar": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Arabic Series"},
+        "Gaster Hebrew MS": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Hebrew Manuscripts"},
+        "Gaster Hebrew MS Add": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Hebrew Manuscripts Additional"},
+        "Rylands Genizah": {"institution": "John Rylands Library, University of Manchester", "collection": "Pre-Gaster Acquisitions", "subcollection": None},
+        "JRL": {"institution": "John Rylands Library, University of Manchester", "collection": "General designation", "subcollection": None},
+        # Bodleian
+        "MS. Heb.": {"institution": "Bodleian Library, Oxford", "collection": "Hebrew Manuscripts", "subcollection": None},
+        "Bodl.": {"institution": "Bodleian Library, Oxford", "collection": "Bodleian Manuscripts", "subcollection": None},
+        # Penn
+        "Halper": {"institution": "University of Pennsylvania, Katz Center", "collection": "Dropsie College", "subcollection": None},
+        "CAJS": {"institution": "University of Pennsylvania, Center for Advanced Judaic Studies", "collection": "CAJS", "subcollection": None},
+        "Penn CAJS": {"institution": "University of Pennsylvania, Center for Advanced Judaic Studies", "collection": "CAJS", "subcollection": None},
+        # AIU Paris
+        "AIU": {"institution": "Alliance Israélite Universelle, Paris", "collection": "Cairo Genizah", "subcollection": None},
+        # Budapest
+        "Kaufmann": {"institution": "Hungarian Academy of Sciences, Budapest", "collection": "David Kaufmann", "subcollection": None},
+        "MS Kaufmann A": {"institution": "Hungarian Academy of Sciences, Budapest", "collection": "David Kaufmann", "subcollection": "Codices"},
+        "DKG": {"institution": "Hungarian Academy of Sciences, Budapest", "collection": "David Kaufmann", "subcollection": None},
+        # British Library
+        "BL Or": {"institution": "British Library, London", "collection": "Oriental Manuscripts", "subcollection": None},
+        "BL Add": {"institution": "British Library, London", "collection": "Additional Manuscripts", "subcollection": None},
+        # Russia / St. Petersburg
+        "RNL": {"institution": "Russian National Library, St. Petersburg", "collection": "Genizah", "subcollection": None},
+        "Yevr.": {"institution": "Russian National Library, St. Petersburg", "collection": "Evreiskii (Jewish)", "subcollection": None},
+        # Dropsie alias
+        "Dropsie": {"institution": "University of Pennsylvania (formerly Dropsie College)", "collection": "Dropsie", "subcollection": None},
+    }
+
+    @staticmethod
+    def _normalize_for_prefix_match(shelf_mark: str) -> str:
+        """Translate raw shelfmark encodings (e.g. TEI MS- prefixes, Manchester format)
+        into a human-readable form suitable for prefix lookup against INSTITUTION_MAPPING."""
+        if not shelf_mark:
+            return ""
+        sm = shelf_mark.strip()
+        sm = sm.replace("MS-TS-AS", "T-S AS")
+        sm = sm.replace("MS-TS-NS", "T-S NS")
+        sm = sm.replace("MS-TS-K", "T-S K")
+        sm = sm.replace("MS-TS-AR", "T-S Ar")
+        sm = sm.replace("MS-TS-", "T-S ")
+        sm = sm.replace("MS-MOSSERI", "Mosseri")
+        sm = sm.replace("MS-L-G", "L-G")
+        sm = sm.replace("MS-OR-", "CUL Or ")
+        sm = sm.replace("MS-ADD-", "CUL Add ")
+        if sm.startswith("Manchester:") or sm.startswith("Manchester "):
+            parts = sm.split(":", 1)
+            tail = parts[1].strip() if len(parts) > 1 else sm
+            if tail.startswith("A "):
+                return "Gaster A"
+            if tail.startswith("B "):
+                return "Gaster B"
+            if tail.startswith("P "):
+                return "Gaster P"
+            if tail.startswith("L "):
+                return "Gaster L"
+            if tail.startswith("C "):
+                return "Gaster C"
+        return sm
+
+    @staticmethod
+    def get_institution_info(shelf_mark: str) -> Dict[str, Optional[str]]:
+        """Return institution, collection, and subcollection for a shelfmark.
+
+        Matches the shelfmark against INSTITUTION_MAPPING using the longest
+        known prefix, after normalising TEI and Manchester encodings.
+
+        Args:
+            shelf_mark: Shelfmark in any known format.
+
+        Returns:
+            Dict with keys 'institution', 'collection', 'subcollection'
+            (all Optional[str]).  Returns all-None dict if no match found.
+
+        Examples:
+            ShelfmarkNormalizer.get_institution_info("T-S AS 18.170")
+            {'institution': 'Cambridge University Library', 'collection': 'Taylor-Schechter', 'subcollection': 'Additional Series'}
+            ShelfmarkNormalizer.get_institution_info("MS-TS-AS-00018-00170")
+            {'institution': 'Cambridge University Library', 'collection': 'Taylor-Schechter', 'subcollection': 'Additional Series'}
+            ShelfmarkNormalizer.get_institution_info("Paris X.10")
+            {'institution': 'Alliance Israélite Universelle, Paris', 'collection': 'Cairo Genizah', 'subcollection': 'Series X'}
+        """
+        empty: Dict[str, Optional[str]] = {"institution": None, "collection": None, "subcollection": None}
+        if not shelf_mark:
+            return empty
+
+        sm = shelf_mark.strip()
+
+        # Special handling: Paris / AIU with Roman-numeral sub-collections
+        if "Paris" in sm or "AIU" in sm:
+            result = {"institution": "Alliance Israélite Universelle, Paris",
+                      "collection": "Cairo Genizah",
+                      "subcollection": None}
+            rest = sm.replace("Paris", "").replace("AIU", "").strip(" ,:")
+            roman_match = re.match(r"^([IVX]+)", rest)
+            if roman_match:
+                result["subcollection"] = f"Series {roman_match.group(1)}"
+            return result
+
+        candidate = ShelfmarkNormalizer._normalize_for_prefix_match(sm)
+        best_key = None
+        for key in sorted(ShelfmarkNormalizer.INSTITUTION_MAPPING.keys(), key=len, reverse=True):
+            if candidate.startswith(key):
+                best_key = key
+                break
+
+        if not best_key:
+            return empty
+
+        mapped = ShelfmarkNormalizer.INSTITUTION_MAPPING[best_key]
+        return {
+            "institution": mapped.get("institution"),
+            "collection": mapped.get("collection"),
+            "subcollection": mapped.get("subcollection"),
+        }
 
 
 def test_normalization():
