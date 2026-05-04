@@ -11,3 +11,6 @@ src/models/llm/genizah_images
 /.idea
 idea/
 *.txt
+genizah_images
+transcription_raw_outputs
+transcription_results

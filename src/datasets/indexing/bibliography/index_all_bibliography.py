@@ -80,7 +80,7 @@ def find_structured_directories(
     for dir_path in search_root.rglob("*"):
         if dir_path.is_dir() and dir_path.name.endswith(actual_suffix):
             # Verify it's actually a structured directory by checking for JSON files
-            json_files = list(dir_path.glob("*_structured.json")) + list(dir_path.glob("page_*_structured.json"))
+            json_files = list(dir_path.rglob("*_structured.json")) + list(dir_path.rglob("page_*_structured.json"))
             if json_files:
                 structured_dirs.append(dir_path)
     
@@ -345,14 +345,15 @@ def main() -> None:
             --mode hybrid \
             --dry-run
     """
-
-    index_all_bibliography(
-        root_dir="/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/academic_literature",
-        index_name="bibliography_text_only_0.4",
-        embedding_mode="text_only",
-        suffix= "_gemini_gemini_2.5_flash",
-        dry_run=False,
-    )
+    suffix_list = ["*_gemini_gemini_2.5_flash", "qwen", "_vl_8b"]
+    for suffix in suffix_list:
+        index_all_bibliography(
+            root_dir="/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/academic_literature",
+            index_name="bibliography_text_only_0.5",
+            embedding_mode="text_only",
+            suffix= suffix,
+            dry_run=False,
+        )
 
 
 if __name__ == "__main__":

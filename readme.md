@@ -6,7 +6,7 @@ collections as well.
 ## Setup/Use
 
 ### Initial installation
-This code was primarily run and tested on py.313 venv on Mac OS Silicon with 48gb of RAM. We are working on setting up a CI/CD pipeline but in the interim
+This code was primarily run and tested on a Python 3.13 venv on Mac OS Silicon with 48gb+ of RAM. We are working on setting up a CI/CD pipeline but in the interim
 we cannot guarantee its ability to run on other environments.
 
 1. Run `git clone https://github.com/AIStream-Peelout/historical-document-analysis.git`
@@ -23,13 +23,13 @@ OPEN_AI_API_KEY = SOME_KEY_HERE
 WANDB_API_KEY = WANDB_API_KEY
 ELASTIC_SEARCH_HOST = es_endpoint.your_domain.com
 ELASTIC_USER = YOUR_USERNAME
-ELASTIC_PASSWORD = YOUR_PASSWORD
+ELASTIC_PASSWORD = YOUR_PASSWORDs.
 GOOGLE_APPLICATION_CREDENTIALS=/path_to_your_gcp_creds
-
 ```
 
-## Cairo Genizah AI Assistant (GenizahAI)
-For Cairo Genizah research we have organized the code in the following ways. We have also supplied most of the data we have collected from various sites (subject to licensing constraints). 
+## Cairo Genizah AI Project (GenizahAI)
+For Cairo Genizah research we have organized the code in the following way. 
+We have also supplied most of the data we have collected from various sites (subject to licensing constraints). 
 
 This code primarily builds the elastic search indices, SQL database, and graph database for the project. A separate repository contains the code for the  frontend and backend APIs. 
 
@@ -82,7 +82,7 @@ src
     
 ```
 Under other_sources there are further subfolders for specific institutions such as Manchester, Paris, UPenn, etc. Due to 
-copyright and respect for the authors reasons we cannot share the raw data in `academic_literature` with external parties.
+copyright and respect for the authors we cannot share the raw data in `academic_literature` with external parties.
 Normally this data is the full length scanned material of the books or the downloaded articles from websites.
 
 For purposes of training the transcription model we have also scraped the complete Talmud Bavli. This can be found on under the Talmud 
@@ -92,7 +92,7 @@ Furthermore, we have added tons of newspapers from the NLI to help improve the t
 
 ### Databases/Indexing 
 
-We currently index to two primary places `elasticsearch` and `postgresql`. GenizahDocument under `genizah_document.py` does much of the heavy 
+We currently index to two primary places `elasticsearch` and `neo4j`. In the past we also experimented with PostgreSQL but we currently do not use it. However, we have kept core scripts in case others find them useful. GenizahDocument under `genizah_document.py` does much of the heavy 
 lifting when preparing data for elasticsearch indexing. The main indexing can be found under:
 
 ```

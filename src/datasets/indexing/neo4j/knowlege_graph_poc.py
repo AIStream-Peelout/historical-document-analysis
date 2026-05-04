@@ -516,7 +516,7 @@ def main():
     neo4j_uri = os.getenv('NEO4J_URI', 'bolt://localhost:7687')
     neo4j_user = os.getenv('NEO4J_USER', 'neo4j')
     neo4j_password = os.getenv('NEO4J_PASSWORD')
-    data_dir = os.getenv('DATA_DIR', '/Users/isaac1/Documents/pgp-metadata/data')
+    data_dir = os.getenv('DATA_DIR', '/Users/isaac/Documents/GitHub/pgp-metadata/data')
 
     if not neo4j_password:
         logger.error("NEO4J_PASSWORD environment variable not set")
