@@ -197,6 +197,32 @@ class PrincetonGenizahKG:
                 }
                 tx.run(query, **params)
 
+                # Fragment → Place relationships from place columns
+                # mentioned / possibly_mentioned are comma-separated place names
+                place_links = [
+                    ('mentioned',           'MENTIONS_PLACE',    {}),
+                    ('possibly_mentioned',  'MENTIONS_PLACE',    {'certain': False}),
+                    ('destination',         'SENT_TO',           {}),
+                    ('location',            'WRITTEN_AT',        {}),
+                    ('origin',              'ORIGINATED_FROM',   {}),
+                ]
+                for col, rel_type, rel_props in place_links:
+                    raw = doc_data.get(col)
+                    if not raw:
+                        continue
+                    # Some columns are single values, others comma-separated lists
+                    place_names = [p.strip() for p in str(raw).split(',') if p.strip()]
+                    for place_name in place_names:
+                        tx.run(
+                            f"""
+                            MATCH (f:Fragment {{canonical_shelfmark: $csm}})
+                            MERGE (pl:Place {{name: $place}})
+                            MERGE (f)-[r:{rel_type}]->(pl)
+                            """,
+                            csm=canonical,
+                            place=place_name,
+                        )
+
         batch_size = 100
         with self.driver.session(database=self.database) as session:
             for i in tqdm(range(0, len(df), batch_size), desc="Importing fragments"):
@@ -290,7 +316,10 @@ class PrincetonGenizahKG:
         def process_batch(tx, batch):
             for _, row in batch.iterrows():
                 doc_data = row.where(pd.notnull(row), None).to_dict()
-                query = """
+                name = doc_data['name']
+
+                # Create / update Person node
+                tx.run("""
                 MERGE (p:Person {name: $name})
                 SET p.name_variants           = $name_variants,
                     p.gender                  = $gender,
@@ -299,9 +328,8 @@ class PrincetonGenizahKG:
                     p.home_base               = $home_base,
                     p.related_documents_count = $related_documents_count,
                     p.url                     = $url
-                """
-                tx.run(query, {
-                    'name':                    doc_data['name'],
+                """, {
+                    'name':                    name,
                     'name_variants':           doc_data.get('name_variants'),
                     'gender':                  doc_data.get('gender'),
                     'social_roles':            doc_data.get('social_roles'),
@@ -310,6 +338,25 @@ class PrincetonGenizahKG:
                     'related_documents_count': doc_data.get('related_documents_count'),
                     'url':                     doc_data.get('url'),
                 })
+
+                # Person -[:LIVED_IN]-> Place  (home_base is a single value)
+                if doc_data.get('home_base'):
+                    tx.run("""
+                        MERGE (p:Person {name: $name})
+                        MERGE (pl:Place {name: $place})
+                        MERGE (p)-[:LIVED_IN]->(pl)
+                    """, name=name, place=doc_data['home_base'].strip())
+
+                # Person -[:TRAVELED_TO]-> Place  (traveled_to is comma-separated)
+                if doc_data.get('traveled_to'):
+                    for place in str(doc_data['traveled_to']).split(','):
+                        place = place.strip()
+                        if place:
+                            tx.run("""
+                                MERGE (p:Person {name: $name})
+                                MERGE (pl:Place {name: $place})
+                                MERGE (p)-[:TRAVELED_TO]->(pl)
+                            """, name=name, place=place)
 
         batch_size = 100
         with self.driver.session(database=self.database) as session:
@@ -519,7 +566,7 @@ def main():
     neo4j_user     = os.getenv('NEO4J_USER', 'neo4j')
     neo4j_password = os.getenv('NEO4J_PASSWORD')
     neo4j_database = os.getenv('NEO4J_DATABASE', 'genizah-prod')
-    data_dir       = os.getenv('DATA_DIR', '/Users/isaac/Documents/GitHub/pgp-metadata/data')
+    data_dir       = os.getenv('DATA_DIR', '/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/pgp_raw/data')
 
     if not neo4j_password:
         logger.error("NEO4J_PASSWORD environment variable not set")
