@@ -119,6 +119,7 @@ class PrincetonGenizahKG:
             "CREATE INDEX fragment_pgpid       IF NOT EXISTS FOR (f:Fragment)    ON (f.pgpid)",
             "CREATE INDEX book_year            IF NOT EXISTS FOR (b:BookArticle) ON (b.year)",
             "CREATE INDEX person_period        IF NOT EXISTS FOR (p:Person)      ON (p.period)",
+            "CREATE INDEX scholar_position    IF NOT EXISTS FOR (s:Scholar)     ON (s.position)",
         ]
         with self.driver.session(database=self.database) as session:
             for constraint in tqdm(constraints, desc="Creating constraints"):
