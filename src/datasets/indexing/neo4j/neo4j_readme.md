@@ -8,8 +8,8 @@ The goal of the Neo4j Cairo Genizah Knowledge Graph is to create a knowledge gra
 ## Creating Knowledge Graph
 
 There are two main files to create the knowledge graph: 
-1. `knowledge_graph_bib_import.py` Imports the bibliographic data that we've collected into the knowledge graph.
-2. `knowledge_graph_poc.py` Imports the publicly available data from PGP into the knowledge graph.
+1. `biblio_import.py` Imports the bibliographic data that we've collected into the knowledge graph.
+2. `knowlege_graph_poc.py` Imports the publicly available data from PGP into the knowledge graph.
 
 The order which the files are run in doesn't matter. 
 
