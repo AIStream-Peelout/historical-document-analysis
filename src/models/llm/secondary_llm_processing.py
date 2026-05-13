@@ -21,6 +21,7 @@ import json
 import logging
 import os
 import base64
+import asyncio
 from pathlib import Path
 from typing import Dict, List, Optional, Any, Union, Tuple
 import requests
@@ -41,6 +42,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Backend constants
+# ---------------------------------------------------------------------------
+BACKEND_OLLAMA  = "ollama"   # local LM Studio / Ollama endpoint
+BACKEND_GEMINI  = "gemini"   # Google Gemini via google-generativeai SDK
+
+GEMINI_FLASH_MODEL = "gemini-3-flash-preview"   # matches AgentConfig
+
 
 class SecondaryLLMProcessor:
     """
@@ -54,44 +63,75 @@ class SecondaryLLMProcessor:
     - Enhanced structured output
     """
     
-    def __init__(self, 
+    def __init__(self,
+                 backend: str = BACKEND_OLLAMA,
                  ollama_url: str = "http://localhost:1234/v1",
                  model_name: str = "c4ai-command-r-v01",
+                 gemini_model: str = GEMINI_FLASH_MODEL,
+                 gemini_api_key: Optional[str] = None,
                  context_window_pages: int = 5):
         """
         Initialize the SecondaryLLMProcessor service.
-        
+
         Args:
-            ollama_url: URL for Ollama API (default: http://localhost:11434)
-            model_name: Name of the Ollama model to use (default: llama3.1:8b)
-            context_window_pages: Number of pages to include in context window (default: 5)
+            backend:             "ollama" (LM Studio / local) or "gemini".
+                                 Automatically promoted to "gemini" when a
+                                 *gemini_api_key* is supplied and *backend* was
+                                 not explicitly set to "ollama".
+            ollama_url:          Base URL for the Ollama/LM Studio endpoint.
+            model_name:          Model name used when backend="ollama".
+            gemini_model:        Gemini model name when backend="gemini".
+                                 Defaults to gemini-3-flash-preview.
+            gemini_api_key:      Gemini API key. Falls back to GEMINI_API_KEY env var.
+            context_window_pages: Number of pages included in each context window.
         """
-        self.ollama_url = ollama_url
-        self.model_name = model_name
+        # Resolve the API key first so the auto-promote check can use it.
+        resolved_api_key = gemini_api_key or os.getenv("GEMINI_API_KEY")
+
+        # Auto-promote to Gemini when a key is available and the caller did not
+        # explicitly request Ollama.  This avoids a silent fallback to a local
+        # model that may not be running.
+        if backend == BACKEND_OLLAMA and resolved_api_key:
+            backend = BACKEND_GEMINI
+            logger.info("gemini_api_key provided — switching backend to 'gemini' automatically")
+
+        if backend not in (BACKEND_OLLAMA, BACKEND_GEMINI):
+            raise ValueError(f"backend must be '{BACKEND_OLLAMA}' or '{BACKEND_GEMINI}', got '{backend}'")
+
+        self.backend              = backend
+        self.ollama_url           = ollama_url
+        self.model_name           = model_name
+        self.gemini_model         = gemini_model
+        self.gemini_api_key       = resolved_api_key
         self.context_window_pages = context_window_pages
-        
-        # Test Ollama connection
-        self._test_ollama_connection()
-        
-        logger.info(f"SecondaryLLMProcessor initialized with model: {model_name}")
-    
+
+        if self.backend == BACKEND_OLLAMA:
+            self._test_ollama_connection()
+        else:
+            self._test_gemini_connection()
+
+        logger.info(f"SecondaryLLMProcessor initialised — backend={backend}, "
+                    f"model={gemini_model if backend == BACKEND_GEMINI else model_name}")
+
     def _test_ollama_connection(self):
-        """Test connection to Ollama API."""
+        """Test connection to Ollama / LM Studio API."""
         try:
             response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
             if response.status_code == 200:
                 models = response.json().get('models', [])
-                model_names = [model['name'] for model in models]
+                model_names = [m['name'] for m in models]
                 logger.info(f"Connected to Ollama. Available models: {model_names}")
-                
                 if not any(self.model_name in name for name in model_names):
-                    logger.warning(f"Model '{self.model_name}' not found. Available models: {model_names}")
+                    logger.warning(f"Model '{self.model_name}' not found in {model_names}")
             else:
-                logger.error(f"Failed to connect to Ollama: HTTP {response.status_code}")
-                raise Exception(f"Cannot connect to Ollama at {self.ollama_url}")
+                raise Exception(f"Cannot connect to Ollama at {self.ollama_url}: HTTP {response.status_code}")
         except requests.exceptions.RequestException as e:
-            logger.error(f"Failed to connect to Ollama: {e}")
-            raise Exception(f"Cannot connect to Ollama at {self.ollama_url}")
+            raise Exception(f"Cannot connect to Ollama at {self.ollama_url}: {e}")
+
+    def _test_gemini_connection(self):
+        """Verify that the Gemini API key is present."""
+        if not self.gemini_api_key:
+            raise ValueError("Gemini backend requires GEMINI_API_KEY env var or gemini_api_key param.")
     
     def _create_context_analysis_prompt(self, pages_data: List[Dict[str, Any]]) -> str:
         """
@@ -222,10 +262,10 @@ Analyze the provided pages and return the enhanced structured data:"""
     def _create_people_locations_prompt(self, text_content: str) -> str:
         """
         Create a focused prompt for people and location extraction.
-        
+
         Args:
             text_content: Combined text content from multiple pages
-            
+
         Returns:
             Formatted prompt string for people/location extraction
         """
@@ -267,45 +307,142 @@ Guidelines:
 6. Return ONLY valid JSON
 
 Extract the people and locations:"""
-        
+
+        return prompt
+
+    def _create_kg_triplets_prompt(self, text_content: str, people: list, locations: list) -> str:
+        """
+        Create a prompt for extracting KG triplets (subject → relation → object).
+
+        Uses the already-extracted people and locations as anchors so the LLM
+        focuses on relationships rather than re-doing NER.
+
+        Supported relation types mirror the Neo4j schema:
+          Person  → LIVED_IN       → Place
+          Person  → TRAVELED_TO    → Place
+          Person  → WROTE          → Fragment   (shelf mark)
+          Person  → MENTIONED_IN   → Fragment   (shelf mark)
+          Place   → MENTIONED_IN   → Fragment   (shelf mark)
+          Scholar → WROTE          → BookArticle (title)
+          BookArticle → CITES      → BookArticle (title)
+
+        Args:
+            text_content: Combined text from all pages (truncated)
+            people: List of person dicts already extracted
+            locations: List of location dicts already extracted
+
+        Returns:
+            Formatted prompt string
+        """
+        people_list  = ", ".join(p['name'] for p in people[:30])  if people    else "none identified"
+        loc_list     = ", ".join(l['name'] for l in locations[:30]) if locations else "none identified"
+
+        prompt = f"""You are an expert in Judaic studies building a knowledge graph of Cairo Genizah scholarship.
+
+Previously identified entities:
+  People:    {people_list}
+  Locations: {loc_list}
+
+Text to analyze (excerpt):
+{text_content[:4000]}
+
+Extract knowledge-graph triplets connecting these entities. Use ONLY these relation types:
+  - LIVED_IN        : person permanently resided in a place
+  - TRAVELED_TO     : person traveled to or visited a place
+  - WROTE           : person wrote a manuscript (use shelf mark) or book/article (use title)
+  - MENTIONED_IN    : person or place is mentioned in a manuscript (use shelf mark)
+  - ORIGINATED_FROM : document or person originated from a place
+  - SENT_TO         : document was sent to a place or person
+  - CITES           : one book/article cites another (use titles)
+
+Return ONLY valid JSON in this exact format:
+```json
+{{
+    "triplets": [
+        {{
+            "subject":       "Exact name of person, place, or shelf mark",
+            "subject_type":  "Person|Place|Fragment|BookArticle",
+            "relation":      "LIVED_IN",
+            "object":        "Exact name of person, place, or shelf mark",
+            "object_type":   "Person|Place|Fragment|BookArticle",
+            "evidence":      "The sentence or phrase that supports this triplet",
+            "confidence":    "high|medium|low"
+        }}
+    ]
+}}
+```
+
+Rules:
+1. Only extract triplets directly supported by the text — do not infer.
+2. Use the canonical name form from the entity lists above where possible.
+3. For shelf marks use the format as written (e.g. "T-S 13J7.4", "ENA 2713.17").
+4. Omit triplets with confidence "low" unless the evidence is a direct quote.
+5. Return ONLY valid JSON, no commentary.
+
+Extract the triplets:"""
+
         return prompt
     
+    def _call_llm(self, prompt: str) -> str:
+        """Route the prompt to whichever backend is active and return the text response."""
+        if self.backend == BACKEND_GEMINI:
+            return self._call_gemini(prompt)
+        return self._call_ollama(prompt)
+
     def _call_ollama(self, prompt: str) -> str:
-        """
-        Call Ollama API with text prompt.
-        
-        Args:
-            prompt: Text prompt for the LLM
-            
-        Returns:
-            LLM response text
-        """
+        """Call Ollama / LM Studio API with a text prompt."""
         try:
             payload = {
                 "model": self.model_name,
                 "prompt": prompt,
                 "stream": False,
-                "format": "json"
+                "format": "json",
             }
-            
             response = requests.post(
                 f"{self.ollama_url}/api/generate",
                 json=payload,
-                timeout=300
+                timeout=300,
             )
-            
             if response.status_code == 200:
-                result = response.json()
-                return result.get('response', '')
-            else:
-                logger.error(f"Ollama API error: HTTP {response.status_code}")
-                raise Exception(f"Ollama API error: {response.status_code}")
-                
+                return response.json().get('response', '')
+            raise Exception(f"Ollama API error: HTTP {response.status_code}")
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to call Ollama API: {e}")
             raise
+
+    def _call_gemini(self, prompt: str) -> str:
+        """Call Gemini Flash via google-generativeai SDK (sync wrapper)."""
+        try:
+            import google.generativeai as genai  # noqa: PLC0415
+        except ImportError:
+            raise ImportError("google-generativeai is required for the Gemini backend. "
+                              "Run: pip install google-generativeai")
+
+        genai.configure(api_key=self.gemini_api_key)
+        model = genai.GenerativeModel(self.gemini_model)
+
+        async def _async_call():
+            response = await model.generate_content_async(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=0.2,
+                    response_mime_type="application/json",
+                ),
+            )
+            return response.text
+
+        try:
+            # Re-use a running loop if one exists (e.g. Jupyter), else create one.
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                import concurrent.futures
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(asyncio.run, _async_call())
+                    return future.result(timeout=300)
+            else:
+                return loop.run_until_complete(_async_call())
         except Exception as e:
-            logger.error(f"Error in Ollama API call: {e}")
+            logger.error(f"Gemini API call failed: {e}")
             raise
     
     def _parse_llm_response(self, response_text: str) -> Dict[str, Any]:
@@ -457,32 +594,44 @@ Extract the people and locations:"""
             
             # Call LLM for context analysis
             logger.info("Performing multi-page context analysis...")
-            context_response = self._call_ollama(context_prompt)
+            context_response = self._call_llm(context_prompt)
             context_analysis = self._parse_llm_response(context_response)
             
             # Extract people and locations from combined text
             combined_text = " ".join([
-                page_data.get('full_main_text', '') + " " + 
+                page_data.get('full_main_text', '') + " " +
                 " ".join(page_data.get('footnotes', {}).values())
                 for page_data in pages_data
             ])
-            
+
             people_locations_prompt = self._create_people_locations_prompt(combined_text)
             logger.info("Extracting people and locations...")
-            people_locations_response = self._call_ollama(people_locations_prompt)
+            people_locations_response = self._call_llm(people_locations_prompt)
             people_locations = self._parse_llm_response(people_locations_response)
-            
+
+            # Extract KG triplets using identified entities as anchors
+            logger.info("Extracting knowledge graph triplets...")
+            kg_triplets_prompt = self._create_kg_triplets_prompt(
+                combined_text,
+                people_locations.get('people', []),
+                people_locations.get('locations', []),
+            )
+            kg_triplets_response = self._call_llm(kg_triplets_prompt)
+            kg_triplets = self._parse_llm_response(kg_triplets_response)
+
             # Combine results
             enhanced_data = {
-                'original_pages': pages_data,
+                'original_pages':   pages_data,
                 'pattern_analysis': pattern_analysis,
                 'context_analysis': context_analysis,
                 'people_locations': people_locations,
+                'kg_triplets':      kg_triplets.get('triplets', []),
                 'processing_metadata': {
-                    'total_pages': len(pages_data),
-                    'model_used': self.model_name,
+                    'total_pages':          len(pages_data),
+                    'model_used':           self.model_name,
                     'context_window_pages': self.context_window_pages,
-                    'processing_timestamp': str(Path().cwd())
+                    'processing_timestamp': str(Path().cwd()),
+                    'triplet_count':        len(kg_triplets.get('triplets', [])),
                 }
             }
             
@@ -493,8 +642,94 @@ Extract the people and locations:"""
             logger.error(f"Failed to process multiple pages: {e}")
             raise
     
-    def save_enhanced_data(self, enhanced_data: Dict[str, Any], 
-                          output_path: Union[str, Path]) -> None:
+    def push_triplets_to_neo4j(
+        self,
+        triplets: List[Dict[str, Any]],
+        neo4j_uri: str,
+        neo4j_user: str,
+        neo4j_password: str,
+        database: str = "neo4j",
+    ) -> int:
+        """
+        Push extracted KG triplets into Neo4j.
+
+        Merges nodes and relationships so it is safe to call multiple times
+        on the same data (idempotent).  Only triplets with confidence
+        'high' or 'medium' are written.
+
+        Args:
+            triplets:       List of triplet dicts from kg_triplets output.
+            neo4j_uri:      Bolt URI, e.g. "bolt://localhost:7687".
+            neo4j_user:     Neo4j username.
+            neo4j_password: Neo4j password.
+            database:       Target database name.
+
+        Returns:
+            Number of triplets written.
+        """
+        from neo4j import GraphDatabase as _GDB  # local import to keep neo4j optional
+
+        # Relation → Cypher pattern  (subject_label)-[rel]->(object_label)
+        REL_MAP = {
+            'LIVED_IN':        ('Person',      'Place'),
+            'TRAVELED_TO':     ('Person',      'Place'),
+            'WROTE':           ('Person',      None),      # object type varies
+            'MENTIONED_IN':    (None,          'Fragment'),
+            'ORIGINATED_FROM': (None,          'Place'),
+            'SENT_TO':         ('Fragment',    None),
+            'CITES':           ('BookArticle', 'BookArticle'),
+        }
+
+        driver = _GDB.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
+        written = 0
+        try:
+            with driver.session(database=database) as session:
+                for t in triplets:
+                    if t.get('confidence', 'low') == 'low':
+                        continue
+
+                    rel      = t.get('relation', '').upper()
+                    subj     = t.get('subject', '').strip()
+                    obj      = t.get('object', '').strip()
+                    s_label  = t.get('subject_type', 'Person')
+                    o_label  = t.get('object_type',  'Place')
+
+                    if not (rel and subj and obj):
+                        continue
+
+                    # Use LLM-provided labels, falling back to REL_MAP hints
+                    if rel in REL_MAP:
+                        hint_s, hint_o = REL_MAP[rel]
+                        if hint_s:
+                            s_label = hint_s
+                        if hint_o:
+                            o_label = hint_o
+
+                    # name property differs by label
+                    s_prop = 'canonical_shelfmark' if s_label == 'Fragment' else 'name'
+                    o_prop = 'canonical_shelfmark' if o_label == 'Fragment' else 'name'
+
+                    cypher = (
+                        f"MERGE (s:{s_label} {{{s_prop}: $subj}}) "
+                        f"MERGE (o:{o_label} {{{o_prop}: $obj}}) "
+                        f"MERGE (s)-[r:{rel}]->(o) "
+                        f"SET r.evidence = $evidence, r.confidence = $confidence"
+                    )
+                    try:
+                        session.run(cypher, subj=subj, obj=obj,
+                                    evidence=t.get('evidence', ''),
+                                    confidence=t.get('confidence', 'medium'))
+                        written += 1
+                    except Exception as e:
+                        logger.warning(f"Triplet write failed ({subj} -{rel}-> {obj}): {e}")
+        finally:
+            driver.close()
+
+        logger.info(f"✓ Pushed {written}/{len(triplets)} triplets to Neo4j ({database})")
+        return written
+
+    def save_enhanced_data(self, enhanced_data: Dict[str, Any],
+                           output_path: Union[str, Path]) -> None:
         """
         Save enhanced data to file.
         
@@ -548,30 +783,56 @@ def main():
     
     parser = argparse.ArgumentParser(description="Secondary LLM processing for enhanced bibliography analysis")
     parser.add_argument("structured_dir", help="Directory containing structured JSON files")
-    parser.add_argument("--output", help="Output path for enhanced data")
-    parser.add_argument("--model", default="llama3.1:8b", help="Ollama model name")
-    parser.add_argument("--ollama-url", default="http://localhost:11434", help="Ollama API URL")
-    
+    parser.add_argument("--output",       help="Output path for enhanced data JSON")
+    # Backend toggle
+    parser.add_argument("--backend",      default=BACKEND_OLLAMA,
+                        choices=[BACKEND_OLLAMA, BACKEND_GEMINI],
+                        help="LLM backend to use (default: ollama)")
+    # Ollama / LM Studio options
+    parser.add_argument("--model",        default="c4ai-command-r-v01", help="Ollama model name")
+    parser.add_argument("--ollama-url",   default="http://localhost:1234/v1", help="Ollama/LM Studio API URL")
+    # Gemini options
+    parser.add_argument("--gemini-model", default=GEMINI_FLASH_MODEL,
+                        help=f"Gemini model name (default: {GEMINI_FLASH_MODEL})")
+    # Neo4j options — if provided, triplets are pushed automatically
+    parser.add_argument("--neo4j-uri",      default=None, help="Neo4j bolt URI (enables KG push)")
+    parser.add_argument("--neo4j-user",     default="neo4j")
+    parser.add_argument("--neo4j-password", default=None)
+    parser.add_argument("--neo4j-database", default="neo4j")
+
     args = parser.parse_args()
-    
+
     try:
-        # Initialize service
         processor = SecondaryLLMProcessor(
+            backend=args.backend,
             model_name=args.model,
-            ollama_url=args.ollama_url
+            ollama_url=args.ollama_url,
+            gemini_model=args.gemini_model,
         )
-        
-        # Process structured data
+
         enhanced_data = processor.process_from_structured_dir(
             args.structured_dir,
-            args.output
+            args.output,
         )
-        
-        print(f"Secondary processing completed:")
-        print(f"  - Pages processed: {enhanced_data.get('processing_metadata', {}).get('total_pages', 0)}")
-        print(f"  - Enhanced shelf mark transcriptions: {len(enhanced_data.get('context_analysis', {}).get('enhanced_shelf_mark_transcriptions', {}))}")
-        print(f"  - People extracted: {len(enhanced_data.get('people_locations', {}).get('people', []))}")
-        print(f"  - Locations extracted: {len(enhanced_data.get('people_locations', {}).get('locations', []))}")
+
+        meta = enhanced_data.get('processing_metadata', {})
+        print(f"\nSecondary processing completed:")
+        print(f"  Pages processed:               {meta.get('total_pages', 0)}")
+        print(f"  Enhanced SM transcriptions:    {len(enhanced_data.get('context_analysis', {}).get('enhanced_shelf_mark_transcriptions', {}))}")
+        print(f"  People extracted:              {len(enhanced_data.get('people_locations', {}).get('people', []))}")
+        print(f"  Locations extracted:           {len(enhanced_data.get('people_locations', {}).get('locations', []))}")
+        print(f"  KG triplets extracted:         {len(enhanced_data.get('kg_triplets', []))}")
+
+        # Optionally push triplets to Neo4j
+        if args.neo4j_uri and args.neo4j_password:
+            written = processor.push_triplets_to_neo4j(
+                triplets=enhanced_data.get('kg_triplets', []),
+                neo4j_uri=args.neo4j_uri,
+                neo4j_user=args.neo4j_user,
+                neo4j_password=args.neo4j_password,
+                database=args.neo4j_database,
+            )
+            print(f"  Triplets written to Neo4j:     {written}")
         
     except Exception as e:
         logger.error(f"Processing failed: {e}")
