@@ -94,7 +94,9 @@ CREATE INDEX person_period               IF NOT EXISTS FOR (p:Person)      ON (p
 //   Scholar      -[:WROTE]->          BookArticle
 //   BookArticle  -[:CITES]->          BookArticle
 //   BookArticle  -[:REFERENCES {pages, mention_type, has_transcription,
-//                               has_translation}]-> Fragment
+//                               has_translation, location, doc_relation,
+//                               notes, has_discussion,
+//                               transcription_extent}]-> Fragment
 //   Fragment     -[:MENTIONS]->       Person
 //   Person       -[:LIVED_IN]->       Place
 //   Fragment     -[:MENTIONS_PLACE]-> Place
