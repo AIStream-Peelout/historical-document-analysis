@@ -232,107 +232,153 @@ class BookOCRService:
         
         return list(set(languages))  # Remove duplicates
     
-    def process_pdf(self, pdf_path: str, start_page: int = 0, end_page: Optional[int] = None, 
-                   save_images: bool = True, output_dir: Optional[str] = None) -> Dict[str, Any]:
+    def process_pdf(self, pdf_path: str, start_page: int = 0, end_page: Optional[int] = None,
+                   save_images: bool = True, output_dir: Optional[str] = None,
+                   checkpoint_path: Optional[str] = None) -> Dict[str, Any]:
         """
         Process a PDF document page by page using OCR.
-        
+
+        Supports incremental checkpointing: if *checkpoint_path* points to an
+        existing partial-results file, pages already recorded there are skipped
+        and the file is updated after every new page so a crash never loses
+        more than one page of (expensive) Vision API work.
+
         Args:
             pdf_path: Path to the PDF file
             start_page: Starting page number (0-indexed)
             end_page: Ending page number (0-indexed, None for all pages)
             save_images: Whether to save page images for later LLM processing
             output_dir: Directory to save images (optional, defaults to self.raw_data_dir)
-            
+            checkpoint_path: Path to write/read incremental JSON results. When
+                supplied, completed pages survive a crash and are not re-processed.
+
         Returns:
             Dictionary containing OCR results for all processed pages
         """
+        import json as _json
+
         pdf_path = Path(pdf_path)
-        
+
         try:
             # Load PDF
             doc = self.load_pdf(str(pdf_path))
-            
+
             # Determine page range
             total_pages = len(doc)
             if end_page is None:
                 end_page = total_pages - 1
             else:
                 end_page = min(end_page, total_pages - 1)
-            
+
             logger.info(f"Processing PDF: {pdf_path.name} (pages {start_page}-{end_page} of {total_pages})")
-            
+
+            # ------------------------------------------------------------------
+            # Load existing checkpoint (if any) so we can resume
+            # ------------------------------------------------------------------
+            cp_path = Path(checkpoint_path) if checkpoint_path else None
+            existing_page_results: Dict[int, Any] = {}  # page_number (1-indexed) -> result
+            if cp_path and cp_path.exists():
+                try:
+                    with open(cp_path, encoding='utf-8') as f:
+                        existing = _json.load(f)
+                    for p in existing.get('pages', []):
+                        # Only treat as done if it has valid OCR (not an error stub)
+                        if p.get('ocr_result') and not p.get('error'):
+                            existing_page_results[p['page_number']] = p
+                    logger.info(f"Checkpoint loaded — {len(existing_page_results)} pages already done, resuming…")
+                except Exception as load_err:
+                    logger.warning(f"Could not load checkpoint {cp_path}: {load_err} — starting fresh")
+
+            # ------------------------------------------------------------------
             # Create images directory if saving images
+            # ------------------------------------------------------------------
             images_dir = None
             if save_images:
-                # Use output_dir if provided, otherwise use self.raw_data_dir
                 base_dir = Path(output_dir) if output_dir else self.raw_data_dir
                 images_dir = base_dir / f"{pdf_path.stem}_images"
                 images_dir.mkdir(parents=True, exist_ok=True)
                 logger.info(f"Images will be saved to: {images_dir}")
-            
-            # Process each page
-            results = {
+
+            # ------------------------------------------------------------------
+            # Build results structure (seed with existing checkpoint pages)
+            # ------------------------------------------------------------------
+            results: Dict[str, Any] = {
                 'pdf_path': str(pdf_path),
                 'total_pages': total_pages,
                 'processed_pages': end_page - start_page + 1,
                 'images_dir': str(images_dir) if images_dir else None,
-                'pages': []
+                'pages': list(existing_page_results.values()),  # carry forward done pages
             }
-            
+
+            def _write_checkpoint():
+                if cp_path:
+                    try:
+                        cp_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(cp_path, 'w', encoding='utf-8') as _f:
+                            _json.dump(results, _f, indent=2, ensure_ascii=False)
+                    except Exception as _e:
+                        logger.warning(f"Failed to write checkpoint after page: {_e}")
+
+            # ------------------------------------------------------------------
+            # Process each page
+            # ------------------------------------------------------------------
             for page_num in range(start_page, end_page + 1):
+                page_number = page_num + 1  # 1-indexed
+
+                if page_number in existing_page_results:
+                    logger.info(f"Skipping page {page_number}/{total_pages} (already in checkpoint)")
+                    continue
+
                 try:
-                    logger.info(f"Processing page {page_num + 1}/{total_pages}")
-                    
-                    # Get page
+                    logger.info(f"Processing page {page_number}/{total_pages}")
+
                     page = doc[page_num]
-                    
-                    # Convert to image
                     image_bytes = self.pdf_page_to_image(page)
-                    
+
                     # Save image if requested
                     image_path = None
                     if save_images and images_dir:
-                        image_filename = f"page_{page_num + 1:03d}.png"
+                        image_filename = f"page_{page_number:03d}.png"
                         image_path = images_dir / image_filename
                         with open(image_path, 'wb') as f:
                             f.write(image_bytes)
                         logger.debug(f"Saved image: {image_path}")
-                    
-                    # Extract text
+
+                    # Extract text via Vision API
                     ocr_result = self.extract_text_from_image(image_bytes)
-                    
-                    # Add page metadata
+
                     page_result = {
-                        'page_number': page_num + 1,  # 1-indexed for user convenience
+                        'page_number': page_number,
                         'ocr_result': ocr_result,
                         'image_path': str(image_path) if image_path else None,
                         'image_size': {
                             'width': page.rect.width,
-                            'height': page.rect.height
+                            'height': page.rect.height,
                         }
                     }
-                    
-                    results['pages'].append(page_result)
-                    
+
                 except Exception as e:
-                    logger.error(f"Failed to process page {page_num + 1}: {e}")
-                    # Add error page result
-                    results['pages'].append({
-                        'page_number': page_num + 1,
+                    logger.error(f"Failed to process page {page_number}: {e}")
+                    page_result = {
+                        'page_number': page_number,
                         'error': str(e),
                         'ocr_result': None,
-                        'image_path': None
-                    })
-            
-            # Close document
+                        'image_path': None,
+                    }
+
+                results['pages'].append(page_result)
+                _write_checkpoint()  # persist after every page — crash-safe
+
+            # Keep pages sorted by page number for consistency
+            results['pages'].sort(key=lambda p: p['page_number'])
+
             doc.close()
-            
+
             logger.info(f"Completed processing PDF: {pdf_path.name}")
             if save_images:
                 logger.info(f"Page images saved to: {images_dir}")
             return results
-            
+
         except Exception as e:
             logger.error(f"Failed to process PDF {pdf_path}: {e}")
             raise
@@ -371,10 +417,14 @@ class BookOCRService:
                 output_path.parent.mkdir(parents=True, exist_ok=True)
                 output_path = output_path / f"{pdf_path.stem}_ocr_results.json"
         
-        # Process PDF
-        # Use the parent directory of output_path for images if output_path is provided
+        # Process PDF — pass output_path as the checkpoint so results are written
+        # incrementally and a crash can be resumed without re-doing any pages.
         output_dir = output_path.parent if output_path else None
-        results = self.process_pdf(str(pdf_path), start_page, end_page, save_images, str(output_dir) if output_dir else None)
+        results = self.process_pdf(
+            str(pdf_path), start_page, end_page, save_images,
+            str(output_dir) if output_dir else None,
+            checkpoint_path=str(output_path),
+        )
         
         # Add metadata
         results['processing_info'] = {
@@ -405,36 +455,26 @@ class BookOCRService:
             raise
 
     def process_pdf_text_only(self, pdf_path: str, start_page: int = 0, end_page: Optional[int] = None,
-                              save_images: bool = True, output_dir: Optional[str] = None) -> Dict[str, Any]:
+                              save_images: bool = True, output_dir: Optional[str] = None,
+                              checkpoint_path: Optional[str] = None) -> Dict[str, Any]:
         """
         Extract raw text from a (born-digital) PDF using PyMuPDF, optionally saving page images.
 
-        This alternative flow skips external OCR and relies on embedded PDF text extraction.
+        Supports the same incremental checkpointing as :meth:`process_pdf`: if
+        *checkpoint_path* points to an existing partial-results file, already-
+        completed pages are skipped and the file is updated after every page.
 
         :param pdf_path: Path to the PDF file to process.
-        :type pdf_path: str
         :param start_page: Starting page number (0-indexed).
-        :type start_page: int
         :param end_page: Ending page number (0-indexed). If None, processes to last page.
-        :type end_page: Optional[int]
         :param save_images: Whether to render and save page images for later multimodal LLM use.
-        :type save_images: bool
         :param output_dir: Directory to save images; defaults to `self.raw_data_dir` if None.
-        :type output_dir: Optional[str]
-        :returns: Dictionary containing extraction results compatible with `StructuredJSONLLM.process_ocr_results`.
-        :rtype: Dict[str, Any]
-
-        Example::
-
-            service = BookOCRService()
-            results = service.process_pdf_text_only(
-                pdf_path="/path/to/file.pdf",
-                start_page=0,
-                end_page=None,
-                save_images=True,
-                output_dir="/tmp/output"
-            )
+        :param checkpoint_path: Path to write/read incremental JSON results.
+        :returns: Dictionary containing extraction results compatible with
+                  `StructuredJSONLLM.process_ocr_results`.
         """
+        import json as _json
+
         pdf_path = Path(pdf_path)
 
         try:
@@ -448,6 +488,25 @@ class BookOCRService:
 
             logger.info(f"Text-only processing PDF: {pdf_path.name} (pages {start_page}-{end_page} of {total_pages})")
 
+            # ------------------------------------------------------------------
+            # Load existing checkpoint (if any)
+            # ------------------------------------------------------------------
+            cp_path = Path(checkpoint_path) if checkpoint_path else None
+            existing_page_results: Dict[int, Any] = {}
+            if cp_path and cp_path.exists():
+                try:
+                    with open(cp_path, encoding='utf-8') as f:
+                        existing = _json.load(f)
+                    for p in existing.get('pages', []):
+                        if p.get('ocr_result') and not p.get('error'):
+                            existing_page_results[p['page_number']] = p
+                    logger.info(f"Checkpoint loaded — {len(existing_page_results)} pages already done, resuming…")
+                except Exception as load_err:
+                    logger.warning(f"Could not load checkpoint {cp_path}: {load_err} — starting fresh")
+
+            # ------------------------------------------------------------------
+            # Set up images directory
+            # ------------------------------------------------------------------
             images_dir: Optional[Path] = None
             if save_images:
                 base_dir = Path(output_dir) if output_dir else self.raw_data_dir
@@ -460,45 +519,60 @@ class BookOCRService:
                 'total_pages': total_pages,
                 'processed_pages': end_page - start_page + 1,
                 'images_dir': str(images_dir) if images_dir else None,
-                'pages': []
+                'pages': list(existing_page_results.values()),
             }
 
-            for page_num in range(start_page, end_page + 1):
-                logger.info(f"Extracting text (no OCR) from page {page_num + 1}/{total_pages}")
-                page = doc[page_num]
+            def _write_checkpoint():
+                if cp_path:
+                    try:
+                        cp_path.parent.mkdir(parents=True, exist_ok=True)
+                        with open(cp_path, 'w', encoding='utf-8') as _f:
+                            _json.dump(results, _f, indent=2, ensure_ascii=False)
+                    except Exception as _e:
+                        logger.warning(f"Failed to write checkpoint: {_e}")
 
-                # Extract embedded text from the PDF page
-                # Using "text" preserves a readable flow in most cases; alternatives include "blocks" or "page"
+            # ------------------------------------------------------------------
+            # Process each page
+            # ------------------------------------------------------------------
+            for page_num in range(start_page, end_page + 1):
+                page_number = page_num + 1
+
+                if page_number in existing_page_results:
+                    logger.info(f"Skipping page {page_number}/{total_pages} (already in checkpoint)")
+                    continue
+
+                logger.info(f"Extracting text (no OCR) from page {page_number}/{total_pages}")
+                page = doc[page_num]
                 page_text: str = page.get_text("text") or ""
 
-                # Optionally render page image for consistent downstream multimodal processing
                 image_path: Optional[Path] = None
                 if save_images and images_dir is not None:
                     img_bytes = self.pdf_page_to_image(page)
-                    image_filename = f"page_{page_num + 1:03d}.png"
+                    image_filename = f"page_{page_number:03d}.png"
                     image_path = images_dir / image_filename
                     with open(image_path, 'wb') as f:
                         f.write(img_bytes)
 
-                # Build page entry compatible with OCR schema expected by StructuredJSONLLM
                 page_result: Dict[str, Any] = {
-                    'page_number': page_num + 1,
+                    'page_number': page_number,
                     'ocr_result': {
                         'full_text': page_text,
                         'text_blocks': [],
                         'page_text': page_text,
                         'confidence_score': 1.0,
-                        'language_hints': []
+                        'language_hints': [],
                     },
                     'image_path': str(image_path) if image_path else None,
                     'image_size': {
                         'width': page.rect.width,
-                        'height': page.rect.height
+                        'height': page.rect.height,
                     }
                 }
 
                 results['pages'].append(page_result)
+                _write_checkpoint()  # persist after every page
 
+            results['pages'].sort(key=lambda p: p['page_number'])
             doc.close()
             logger.info(f"Completed text-only processing: {pdf_path.name}")
             return results
@@ -556,7 +630,8 @@ class BookOCRService:
             start_page=start_page,
             end_page=end_page,
             save_images=save_images,
-            output_dir=str(output_dir) if output_dir else None
+            output_dir=str(output_dir) if output_dir else None,
+            checkpoint_path=str(output_path_obj),
         )
 
         # Tag processing mode for clarity

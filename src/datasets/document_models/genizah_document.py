@@ -5,10 +5,11 @@ import logging
 import re
 import hashlib
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple, Union, ClassVar
+from typing import Dict, List, Optional, Any, Tuple, Union
 import numpy as np
 from pydantic import BaseModel, Field, validator
 from enum import Enum
+from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
 
 logger = logging.getLogger(__name__)
 def convert_cambridge_lang_format(the_language):
@@ -209,119 +210,12 @@ class GenizahDocument(BaseModel):
         extra = "forbid"
         validate_assignment = True
 
-    # ================= Shelf-mark derived institutional mapping =================
-    # These mappings provide canonical institution/collection/sub-collection from common
-    # Genizah shelf-mark families. Parsing aims to be robust but conservative; fall back
-    # to existing heuristics where a mapping cannot be confidently determined.
-
-    GENIZAH_SHELFMARK_MAPPING: ClassVar[Dict[str, Dict[str, Optional[str]]]] = {
-        # Cambridge University Library (Taylor-Schechter)
-        "T-S": {"institution": "Cambridge University Library", "collection": "Taylor-Schechter", "subcollection": None},
-        "T-S AS": {"institution": "Cambridge University Library", "collection": "Taylor-Schechter", "subcollection": "Additional Series"},
-        "T-S NS": {"institution": "Cambridge University Library", "collection": "Taylor-Schechter", "subcollection": "New Series"},
-        "T-S Ar": {"institution": "Cambridge University Library", "collection": "Taylor-Schechter", "subcollection": "Arabic"},
-        "T-S K": {"institution": "Cambridge University Library", "collection": "Taylor-Schechter", "subcollection": "Miscellaneous"},
-        "CUL Add": {"institution": "Cambridge University Library", "collection": "Additional Manuscripts", "subcollection": None},
-        "ULC Add": {"institution": "Cambridge University Library", "collection": "Additional Manuscripts", "subcollection": None},
-        "CUL Or": {"institution": "Cambridge University Library", "collection": "Oriental Manuscripts", "subcollection": None},
-        "Mosseri": {"institution": "Cambridge University Library", "collection": "Mosseri", "subcollection": None},
-        "L-G": {"institution": "Cambridge University Library / Bodleian Library Oxford", "collection": "Lewis-Gibson", "subcollection": None},
-
-        # JTS / ENA
-        "ENA": {"institution": "Jewish Theological Seminary", "collection": "Elkan Nathan Adler", "subcollection": "Main series"},
-        "ENA NS": {"institution": "Jewish Theological Seminary", "collection": "Elkan Nathan Adler", "subcollection": "New Series"},
-        "ENA II": {"institution": "Jewish Theological Seminary", "collection": "Elkan Nathan Adler", "subcollection": "Second Adler acquisition"},
-        "JTS MS": {"institution": "Jewish Theological Seminary", "collection": "General Manuscripts", "subcollection": None},
-        "JTS MS Rabbinica": {"institution": "Jewish Theological Seminary", "collection": "General Manuscripts", "subcollection": "Rabbinic literature from ENA"},
-        "JTS MS Lutzki": {"institution": "Jewish Theological Seminary", "collection": "General Manuscripts", "subcollection": "Biblical texts from ENA"},
-        "JTS Scroll": {"institution": "Jewish Theological Seminary", "collection": "General Manuscripts", "subcollection": "Scrolls from ENA"},
-        "KE": {"institution": "Jewish Theological Seminary", "collection": "Kahle Acquisition", "subcollection": None},
-
-        # Manchester / Rylands (Gaster)
-        "Gaster A": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Series A"},
-        "Gaster B": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Series B"},
-        "Gaster P": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Series P"},
-        "Gaster L": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Series L"},
-        "Gaster C": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Series C"},
-        "Gaster Ar": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Arabic Series"},
-        "Gaster Hebrew MS": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Hebrew Manuscripts"},
-        "Gaster Hebrew MS Add": {"institution": "John Rylands Library, University of Manchester", "collection": "Gaster", "subcollection": "Hebrew Manuscripts Additional"},
-        "Rylands Genizah": {"institution": "John Rylands Library, University of Manchester", "collection": "Pre-Gaster Acquisitions", "subcollection": None},
-        "JRL": {"institution": "John Rylands Library, University of Manchester", "collection": "General designation", "subcollection": None},
-
-        # Bodleian
-        "MS. Heb.": {"institution": "Bodleian Library, Oxford", "collection": "Hebrew Manuscripts", "subcollection": None},
-        "Bodl.": {"institution": "Bodleian Library, Oxford", "collection": "Bodleian Manuscripts", "subcollection": None},
-
-        # Penn
-        "Halper": {"institution": "University of Pennsylvania, Katz Center", "collection": "Dropsie College", "subcollection": None},
-        "CAJS": {"institution": "University of Pennsylvania, Center for Advanced Judaic Studies", "collection": "CAJS", "subcollection": None},
-        "Penn CAJS": {"institution": "University of Pennsylvania, Center for Advanced Judaic Studies", "collection": "CAJS", "subcollection": None},
-
-        # AIU Paris
-        "AIU": {"institution": "Alliance Israélite Universelle, Paris", "collection": "Cairo Genizah", "subcollection": None},
-
-        # Budapest
-        "Kaufmann": {"institution": "Hungarian Academy of Sciences, Budapest", "collection": "David Kaufmann", "subcollection": None},
-        "MS Kaufmann A": {"institution": "Hungarian Academy of Sciences, Budapest", "collection": "David Kaufmann", "subcollection": "Codices"},
-        "DKG": {"institution": "Hungarian Academy of Sciences, Budapest", "collection": "David Kaufmann", "subcollection": None},
-
-        # British Library
-        "BL Or": {"institution": "British Library, London", "collection": "Oriental Manuscripts", "subcollection": None},
-        "BL Add": {"institution": "British Library, London", "collection": "Additional Manuscripts", "subcollection": None},
-
-        # Russia / St. Petersburg
-        "RNL": {"institution": "Russian National Library, St. Petersburg", "collection": "Genizah", "subcollection": None},
-        "Yevr.": {"institution": "Russian National Library, St. Petersburg", "collection": "Evreiskii (Jewish)", "subcollection": None},
-        
-        # Dropsie alias
-        "Dropsie": {"institution": "University of Pennsylvania (formerly Dropsie College)", "collection": "Dropsie", "subcollection": None},
-    }
-
-    @staticmethod
-    def _normalize_shelf_mark_for_match(shelf_mark: str) -> str:
-        """Normalize a shelf mark string for prefix matching.
-
-        :param shelf_mark: Raw shelf mark (e.g., "MS-TS-AS-00001-00001", "Manchester: A 639")
-        :type shelf_mark: str
-        :return: A simplified representation suitable for startswith checks
-        :rtype: str
-        """
-        if not shelf_mark:
-            return ""
-        sm = shelf_mark.strip()
-        # Common Cambridge TEI encodings
-        sm = sm.replace("MS-TS-AS", "T-S AS")
-        sm = sm.replace("MS-TS-NS", "T-S NS")
-        sm = sm.replace("MS-TS-K", "T-S K")
-        sm = sm.replace("MS-TS-AR", "T-S Ar")
-        sm = sm.replace("MS-TS-", "T-S ")
-        sm = sm.replace("MS-MOSSERI", "Mosseri")
-        sm = sm.replace("MS-L-G", "L-G")
-        sm = sm.replace("MS-OR-", "CUL Or ")
-        sm = sm.replace("MS-ADD-", "CUL Add ")
-        # Manchester style
-        if sm.startswith("Manchester:") or sm.startswith("Manchester "):
-            # Example: "Manchester: A 639" -> map to Gaster A
-            parts = sm.split(":", 1)
-            tail = parts[1].strip() if len(parts) > 1 else sm
-            if tail.startswith("A "):
-                return "Gaster A"
-            if tail.startswith("B "):
-                return "Gaster B"
-            if tail.startswith("P "):
-                return "Gaster P"
-            if tail.startswith("L "):
-                return "Gaster L"
-            if tail.startswith("C "):
-                return "Gaster C"
-        return sm
-
     def _apply_shelfmark_mapping(self) -> None:
-        """Populate institution, collection, and sub-collection from shelf mark when possible.
+        """Populate institution, collection, and sub-collection from shelf mark.
 
-        This method is idempotent and safe to call multiple times. It will only set fields
-        that are currently unset to avoid clobbering explicit assignments.
+        Delegates to ShelfmarkNormalizer.get_institution_info so the mapping
+        logic lives in one place and can be reused across indexing targets and
+        query parsing.  Only sets fields that are currently unset.
 
         Example:
             doc = GenizahDocument(image_urls=[], description="", shelf_mark="MS-TS-AS-00033-00006")
@@ -332,45 +226,13 @@ class GenizahDocument(BaseModel):
         """
         if not self.shelf_mark:
             return
-        
-        shelf_mark = self.shelf_mark.strip()
-        
-        # Special handling for Paris/AIU shelf marks with Roman numeral sub-collections
-        # Examples: "Paris X.10", "Paris VI.120", "Paris AIU: I.A.10", etc.
-        if 'Paris' in shelf_mark or 'AIU' in shelf_mark:
-            # Set base institution and collection if not already set
-            if self.institution is None:
-                self.institution = "Alliance Israélite Universelle, Paris"
-            if self.collection is None:
-                self.collection = "Cairo Genizah"
-            
-            # Extract Roman numeral sub-collection (I, II, III, IV, V, VI, X, XI, etc.)
-            if self.sub_collection is None:
-                # Remove "Paris" and "AIU" to get the series identifier
-                rest = shelf_mark.replace("Paris", "").replace("AIU", "").strip(' ,:')
-                
-                # Try to extract Roman numeral at the start (e.g., "X.10", "VI.120", "IV.A.206")
-                roman_match = re.match(r'^([IVX]+)', rest)
-                if roman_match:
-                    roman_numeral = roman_match.group(1)
-                    self.sub_collection = f"Series {roman_numeral}"
-        
-        candidate = self._normalize_shelf_mark_for_match(shelf_mark)
-        # Prefer the most specific keys first by sorting keys by length desc
-        best_key = None
-        for key in sorted(self.GENIZAH_SHELFMARK_MAPPING.keys(), key=len, reverse=True):
-            if candidate.startswith(key):
-                best_key = key
-                break
-        if not best_key:
-            return
-        mapped = self.GENIZAH_SHELFMARK_MAPPING[best_key]
-        if self.institution is None and mapped.get("institution"):
-            self.institution = mapped["institution"]
-        if self.collection is None and mapped.get("collection"):
-            self.collection = mapped["collection"]
-        if self.sub_collection is None and mapped.get("subcollection"):
-            self.sub_collection = mapped["subcollection"]
+        info = ShelfmarkNormalizer.get_institution_info(self.shelf_mark)
+        if self.institution is None and info.get("institution"):
+            self.institution = info["institution"]
+        if self.collection is None and info.get("collection"):
+            self.collection = info["collection"]
+        if self.sub_collection is None and info.get("subcollection"):
+            self.sub_collection = info["subcollection"]
 
     @validator('description', pre=True)
     def clean_description(cls, v: str) -> str:
