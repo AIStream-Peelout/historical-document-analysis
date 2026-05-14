@@ -219,9 +219,11 @@ class PrincetonGenizahKG:
                             MATCH (f:Fragment {{canonical_shelfmark: $csm}})
                             MERGE (pl:Place {{name: $place}})
                             MERGE (f)-[r:{rel_type}]->(pl)
+                            SET r += $rel_props
                             """,
                             csm=canonical,
                             place=place_name,
+                            rel_props=rel_props,
                         )
 
         batch_size = 100
