@@ -7,8 +7,8 @@ Reads biblio.json (keyed by canonical shelfmark) and creates:
   - Fragment nodes (merged by canonical_shelfmark)
   - BookArticle nodes (merged by deterministic article_id)
   - Scholar nodes (merged by author name)
-  - Scholar  -[:WROTE]->       BookArticle
-  - BookArticle -[:REFERENCES {pages, mention_type, has_transcription,
+  - Scholar ->[:WROTE]-> BookArticle
+  - BookArticle ->[:REFERENCES {pages, mention_type, has_transcription,
                                has_translation, has_discussion}]-> Fragment
 
 Shelfmarks in biblio.json are already in canonical underscore form
