@@ -32,7 +32,7 @@ import json
 import hashlib
 import logging
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
@@ -59,6 +59,15 @@ def _make_article_id(title: str, author: str, year: str) -> str:
     """Deterministic 16-char hex ID for a BookArticle node."""
     key = f"{title}|{author}|{year}".lower().strip()
     return hashlib.sha1(key.encode()).hexdigest()[:16]
+
+
+def _split_authors(raw: str) -> List[str]:
+    """Split a semicolon-delimited author string into individual names.
+
+    e.g. "French, Mary ;Goldie, Rebecca ;Nichols, Emma"
+         → ["French, Mary", "Goldie, Rebecca", "Nichols, Emma"]
+    """
+    return [part.strip() for part in raw.split(';') if part.strip()]
 
 
 def _canonical_to_display(canonical: str) -> str:
@@ -258,16 +267,17 @@ class GenizahBiblioImporter:
                     'language':   language or None,
                 })
 
-            # 4. Ensure Scholar node and WROTE relationship
+            # 4. Ensure Scholar nodes (one per author) and WROTE relationships
             if author and title:
-                tx.run("""
-                    MERGE (s:Scholar {name: $author})
-                    MERGE (b:BookArticle {article_id: $article_id})
-                    MERGE (s)-[:WROTE]->(b)
-                """, {
-                    'author':     author,
-                    'article_id': article_id,
-                })
+                for individual_author in _split_authors(author):
+                    tx.run("""
+                        MERGE (s:Scholar {name: $author})
+                        MERGE (b:BookArticle {article_id: $article_id})
+                        MERGE (s)-[:WROTE]->(b)
+                    """, {
+                        'author':     individual_author,
+                        'article_id': article_id,
+                    })
 
             # 5. BookArticle -[:REFERENCES]-> Fragment
             if title:

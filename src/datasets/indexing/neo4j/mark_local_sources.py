@@ -66,6 +66,23 @@ def _normalise_title(title: str) -> str:
     return re.sub(r'[^\w\s]', '', title.lower()).strip()
 
 
+def _split_authors(raw: Any) -> List[str]:
+    """Return a flat list of individual author names.
+
+    Handles both a list of strings and a single semicolon-delimited string,
+    e.g. "French, Mary ;Goldie, Rebecca ;Nichols, Emma".
+    """
+    if isinstance(raw, str):
+        raw = [raw]
+    authors: List[str] = []
+    for item in raw:
+        for part in str(item).split(';'):
+            name = part.strip()
+            if name:
+                authors.append(name)
+    return authors
+
+
 def _processing_level(source_dir: Path) -> str:
     """Return the highest processing level achieved for a source directory."""
     if list(source_dir.rglob('*_enhanced.json')):
@@ -104,6 +121,8 @@ def _source_stats(source_dir: Path) -> Dict[str, Any]:
         'total_pages':      total_pages or len(structured_pages),
         'processing_level': _processing_level(source_dir),
         'local_path':       str(source_dir.relative_to(source_dir.parents[3])),
+        'folder_name':      source_dir.name,
+        'pdf_filenames':    ';'.join(p.name for p in sorted(pdfs)),
     }
 
 
@@ -120,7 +139,7 @@ def _extract_fields(meta: Dict[str, Any]) -> Dict[str, Any]:
     """Flatten metadata into simple fields."""
     pub  = meta.get('publication', {})
     ids  = meta.get('identifiers', {})
-    authors = meta.get('authors', [])
+    authors = _split_authors(meta.get('authors', []))
 
     return {
         'title':       meta.get('title', ''),
@@ -218,6 +237,8 @@ class LocalSourceMarker:
         local_props = {
             'has_local_copy':    True,
             'local_path':        stats['local_path'],
+            'folder_name':       stats['folder_name'],
+            'pdf_filenames':     stats['pdf_filenames'],
             'pdf_count':         stats['pdf_count'],
             'has_ocr':           stats['has_ocr'],
             'has_enhanced':      stats['has_enhanced'],
@@ -243,6 +264,8 @@ class LocalSourceMarker:
                 SET
                     b.has_local_copy   = $has_local_copy,
                     b.local_path       = $local_path,
+                    b.folder_name      = $folder_name,
+                    b.pdf_filenames    = $pdf_filenames,
                     b.pdf_count        = $pdf_count,
                     b.has_ocr          = $has_ocr,
                     b.has_enhanced     = $has_enhanced,
