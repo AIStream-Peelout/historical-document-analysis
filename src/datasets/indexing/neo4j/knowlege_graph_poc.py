@@ -156,7 +156,11 @@ class PrincetonGenizahKG:
                     f.has_transcription    = $has_transcription,
                     f.has_translation      = $has_translation,
                     f.region               = $region,
-                    f.side                 = $side
+                    f.side                 = $side,
+                    f.data_sources         = CASE
+                        WHEN 'pgp' IN coalesce(f.data_sources, []) THEN coalesce(f.data_sources, [])
+                        ELSE coalesce(f.data_sources, []) + ['pgp']
+                    END
 
                 WITH f
                 WHERE $tags IS NOT NULL
@@ -218,6 +222,10 @@ class PrincetonGenizahKG:
                             f"""
                             MATCH (f:Fragment {{canonical_shelfmark: $csm}})
                             MERGE (pl:Place {{name: $place}})
+                            SET pl.data_sources = CASE
+                                WHEN 'pgp' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
+                                ELSE coalesce(pl.data_sources, []) + ['pgp']
+                            END
                             MERGE (f)-[r:{rel_type}]->(pl)
                             SET r += $rel_props
                             """,
@@ -257,7 +265,11 @@ class PrincetonGenizahKG:
                     f.url              = $url,
                     f.iiif_url         = $iiif_url,
                     f.collection_name  = $collection_name,
-                    f.provenance_display = $provenance_display
+                    f.provenance_display = $provenance_display,
+                    f.data_sources     = CASE
+                        WHEN 'pgp' IN coalesce(f.data_sources, []) THEN coalesce(f.data_sources, [])
+                        ELSE coalesce(f.data_sources, []) + ['pgp']
+                    END
                 """
                 tx.run(base_query, {
                     'canonical_shelfmark': canonical,
@@ -275,8 +287,16 @@ class PrincetonGenizahKG:
                     MERGE (f:Fragment {canonical_shelfmark: $canonical_shelfmark})
                     MERGE (i:Institution {name: $institution})
                     ON CREATE SET i.collection = $collection
+                    SET i.data_sources = CASE
+                        WHEN 'pgp' IN coalesce(i.data_sources, []) THEN coalesce(i.data_sources, [])
+                        ELSE coalesce(i.data_sources, []) + ['pgp']
+                    END
                     MERGE (f)-[r:HELD_AT]->(i)
-                    SET r.sub_collection = $subcollection
+                    SET r.sub_collection = $subcollection,
+                        r.data_sources   = CASE
+                            WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + ['pgp']
+                        END
                     """
                     tx.run(inst_query, {
                         'canonical_shelfmark': canonical,
@@ -330,7 +350,11 @@ class PrincetonGenizahKG:
                     p.description             = $description,
                     p.home_base               = $home_base,
                     p.related_documents_count = $related_documents_count,
-                    p.url                     = $url
+                    p.url                     = $url,
+                    p.data_sources            = CASE
+                        WHEN 'pgp' IN coalesce(p.data_sources, []) THEN coalesce(p.data_sources, [])
+                        ELSE coalesce(p.data_sources, []) + ['pgp']
+                    END
                 """, {
                     'name':                    name,
                     'name_variants':           doc_data.get('name_variants'),
@@ -347,7 +371,11 @@ class PrincetonGenizahKG:
                     tx.run("""
                         MERGE (p:Person {name: $name})
                         MERGE (pl:Place {name: $place})
-                        MERGE (p)-[:LIVED_IN]->(pl)
+                        MERGE (p)-[r:LIVED_IN]->(pl)
+                        SET r.data_sources = CASE
+                            WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + ['pgp']
+                        END
                     """, name=name, place=doc_data['home_base'].strip())
 
                 # Person -[:TRAVELED_TO]-> Place  (traveled_to is comma-separated)
@@ -358,7 +386,11 @@ class PrincetonGenizahKG:
                             tx.run("""
                                 MERGE (p:Person {name: $name})
                                 MERGE (pl:Place {name: $place})
-                                MERGE (p)-[:TRAVELED_TO]->(pl)
+                                MERGE (p)-[r:TRAVELED_TO]->(pl)
+                                SET r.data_sources = CASE
+                                    WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                                    ELSE coalesce(r.data_sources, []) + ['pgp']
+                                END
                             """, name=name, place=place)
 
         batch_size = 100
@@ -385,7 +417,11 @@ class PrincetonGenizahKG:
                     pl.geographic_area         = $geographic_area,
                     pl.notes                   = $notes,
                     pl.related_documents_count = $related_documents_count,
-                    pl.url                     = $url
+                    pl.url                     = $url,
+                    pl.data_sources            = CASE
+                        WHEN 'pgp' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
+                        ELSE coalesce(pl.data_sources, []) + ['pgp']
+                    END
                 """
                 tx.run(query, {
                     'name':                    doc_data['name'],
@@ -430,7 +466,11 @@ class PrincetonGenizahKG:
                     b.pages        = $page_range,
                     b.url          = $url,
                     b.citation     = $citation,
-                    b.source_type  = $source_type
+                    b.source_type  = $source_type,
+                    b.data_sources = CASE
+                        WHEN 'pgp' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
+                        ELSE coalesce(b.data_sources, []) + ['pgp']
+                    END
 
                 WITH b
                 WHERE $authors IS NOT NULL
@@ -439,7 +479,15 @@ class PrincetonGenizahKG:
                 WITH b, trim(author_name) AS author_name
                 WHERE author_name <> ''
                 MERGE (s:Scholar {name: author_name})
-                MERGE (s)-[:WROTE]->(b)
+                SET s.data_sources = CASE
+                    WHEN 'pgp' IN coalesce(s.data_sources, []) THEN coalesce(s.data_sources, [])
+                    ELSE coalesce(s.data_sources, []) + ['pgp']
+                END
+                MERGE (s)-[r:WROTE]->(b)
+                SET r.data_sources = CASE
+                    WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                    ELSE coalesce(r.data_sources, []) + ['pgp']
+                END
                 """
                 tx.run(query, {
                     'article_id':   article_id,
@@ -481,7 +529,11 @@ class PrincetonGenizahKG:
                 MERGE (b)-[r:REFERENCES]->(f)
                 SET r.location     = $location,
                     r.doc_relation = $doc_relation,
-                    r.notes        = $notes
+                    r.notes        = $notes,
+                    r.data_sources = CASE
+                        WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                        ELSE coalesce(r.data_sources, []) + ['pgp']
+                    END
                 """
                 try:
                     tx.run(query, {

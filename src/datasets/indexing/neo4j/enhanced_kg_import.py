@@ -270,6 +270,38 @@ class EnhancedKGImporter:
         return {**base, "write_fn": "_write_generic"}
 
     # ------------------------------------------------------------------
+    # Place-name resolver
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _resolve_place_name(tx, raw_name: str) -> str:
+        """Return the canonical Place.name for *raw_name*.
+
+        Princeton stores diacriticized/formal names (e.g. "Fusṭāṭ") and keeps
+        plain-ASCII variants in the comma-delimited name_variants string
+        (e.g. "Fustat, Old Cairo").  The LLM typically extracts the simplified
+        ASCII form, so we need to check both exact name and each variant token
+        (case-insensitive) before falling back to creating a new node.
+
+        Returns raw_name unchanged when no existing Place matches.
+        """
+        result = tx.run("""
+            OPTIONAL MATCH (pl:Place)
+            WHERE toLower(pl.name) = toLower($name)
+               OR ANY(v IN split(coalesce(pl.name_variants, ''), ',')
+                      WHERE toLower(trim(v)) = toLower($name))
+            RETURN pl.name AS canonical_name
+            LIMIT 1
+        """, name=raw_name)
+        record = result.single()
+        if record and record["canonical_name"]:
+            canonical = record["canonical_name"]
+            if canonical != raw_name:
+                logger.debug(f"  Place '{raw_name}' → resolved to canonical '{canonical}'")
+            return canonical
+        return raw_name
+
+    # ------------------------------------------------------------------
     # Write handlers (all called inside execute_write)
     # ------------------------------------------------------------------
 
@@ -283,12 +315,24 @@ class EnhancedKGImporter:
 
         tx.run(f"""
             MERGE (a:{label} {{name: $name}})
+            SET a.data_sources = CASE
+                WHEN 'extracted' IN coalesce(a.data_sources, []) THEN coalesce(a.data_sources, [])
+                ELSE coalesce(a.data_sources, []) + ['extracted']
+            END
             MERGE (b:BookArticle {{article_id: $article_id}})
               ON CREATE SET b.title = $title
+            SET b.data_sources = CASE
+                WHEN 'extracted' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
+                ELSE coalesce(b.data_sources, []) + ['extracted']
+            END
             MERGE (a)-[r:WROTE]->(b)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
                             r.evidence   = $evidence
+            SET r.data_sources = CASE
+                WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                ELSE coalesce(r.data_sources, []) + ['extracted']
+            END
         """, name=author_name, article_id=article_id, title=title,
              source=row["source_book"], confidence=row["confidence"],
              evidence=row["evidence"])
@@ -302,12 +346,24 @@ class EnhancedKGImporter:
         tx.run("""
             MERGE (a:BookArticle {article_id: $src_id})
               ON CREATE SET a.title = $src_title
+            SET a.data_sources = CASE
+                WHEN 'extracted' IN coalesce(a.data_sources, []) THEN coalesce(a.data_sources, [])
+                ELSE coalesce(a.data_sources, []) + ['extracted']
+            END
             MERGE (b:BookArticle {article_id: $tgt_id})
               ON CREATE SET b.title = $tgt_title
+            SET b.data_sources = CASE
+                WHEN 'extracted' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
+                ELSE coalesce(b.data_sources, []) + ['extracted']
+            END
             MERGE (a)-[r:CITES]->(b)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
                             r.evidence   = $evidence
+            SET r.data_sources = CASE
+                WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                ELSE coalesce(r.data_sources, []) + ['extracted']
+            END
         """, src_id=src_id, src_title=row["subject"],
              tgt_id=tgt_id, tgt_title=row["object"],
              source=row["source_book"], confidence=row["confidence"],
@@ -317,14 +373,27 @@ class EnhancedKGImporter:
     def _write_person_lived_in(tx, row: Dict):
         """Person/Scholar -[:LIVED_IN]-> Place"""
         label = row["subject_label"]
+        place = EnhancedKGImporter._resolve_place_name(tx, row["object"])
         tx.run(f"""
             MERGE (p:{label} {{name: $name}})
+            SET p.data_sources = CASE
+                WHEN 'extracted' IN coalesce(p.data_sources, []) THEN coalesce(p.data_sources, [])
+                ELSE coalesce(p.data_sources, []) + ['extracted']
+            END
             MERGE (pl:Place {{name: $place}})
+            SET pl.data_sources = CASE
+                WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
+                ELSE coalesce(pl.data_sources, []) + ['extracted']
+            END
             MERGE (p)-[r:LIVED_IN]->(pl)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
                             r.evidence   = $evidence
-        """, name=row["subject"], place=row["object"],
+            SET r.data_sources = CASE
+                WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                ELSE coalesce(r.data_sources, []) + ['extracted']
+            END
+        """, name=row["subject"], place=place,
              source=row["source_book"], confidence=row["confidence"],
              evidence=row["evidence"])
 
@@ -332,14 +401,27 @@ class EnhancedKGImporter:
     def _write_person_traveled_to(tx, row: Dict):
         """Person/Scholar -[:TRAVELED_TO]-> Place"""
         label = row["subject_label"]
+        place = EnhancedKGImporter._resolve_place_name(tx, row["object"])
         tx.run(f"""
             MERGE (p:{label} {{name: $name}})
+            SET p.data_sources = CASE
+                WHEN 'extracted' IN coalesce(p.data_sources, []) THEN coalesce(p.data_sources, [])
+                ELSE coalesce(p.data_sources, []) + ['extracted']
+            END
             MERGE (pl:Place {{name: $place}})
+            SET pl.data_sources = CASE
+                WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
+                ELSE coalesce(pl.data_sources, []) + ['extracted']
+            END
             MERGE (p)-[r:TRAVELED_TO]->(pl)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
                             r.evidence   = $evidence
-        """, name=row["subject"], place=row["object"],
+            SET r.data_sources = CASE
+                WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                ELSE coalesce(r.data_sources, []) + ['extracted']
+            END
+        """, name=row["subject"], place=place,
              source=row["source_book"], confidence=row["confidence"],
              evidence=row["evidence"])
 
@@ -347,15 +429,28 @@ class EnhancedKGImporter:
     def _write_place_mentioned_in(tx, row: Dict):
         """Place -[:MENTIONED_IN]-> BookArticle"""
         article_id = _make_article_id(row["object"])
+        place = EnhancedKGImporter._resolve_place_name(tx, row["subject"])
         tx.run("""
             MERGE (pl:Place {name: $place})
+            SET pl.data_sources = CASE
+                WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
+                ELSE coalesce(pl.data_sources, []) + ['extracted']
+            END
             MERGE (b:BookArticle {article_id: $article_id})
               ON CREATE SET b.title = $title
+            SET b.data_sources = CASE
+                WHEN 'extracted' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
+                ELSE coalesce(b.data_sources, []) + ['extracted']
+            END
             MERGE (pl)-[r:MENTIONED_IN]->(b)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
                             r.evidence   = $evidence
-        """, place=row["subject"], article_id=article_id, title=row["object"],
+            SET r.data_sources = CASE
+                WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                ELSE coalesce(r.data_sources, []) + ['extracted']
+            END
+        """, place=place, article_id=article_id, title=row["object"],
              source=row["source_book"], confidence=row["confidence"],
              evidence=row["evidence"])
 
@@ -364,15 +459,28 @@ class EnhancedKGImporter:
         """BookArticle -[:ORIGINATED_FROM / :MENTIONS_PLACE]-> Place"""
         rel        = row["relation"]
         article_id = _make_article_id(row["subject"])
+        place      = EnhancedKGImporter._resolve_place_name(tx, row["object"])
         tx.run(f"""
             MERGE (b:BookArticle {{article_id: $article_id}})
               ON CREATE SET b.title = $title
+            SET b.data_sources = CASE
+                WHEN 'extracted' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
+                ELSE coalesce(b.data_sources, []) + ['extracted']
+            END
             MERGE (pl:Place {{name: $place}})
+            SET pl.data_sources = CASE
+                WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
+                ELSE coalesce(pl.data_sources, []) + ['extracted']
+            END
             MERGE (b)-[r:{rel}]->(pl)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
                             r.evidence   = $evidence
-        """, article_id=article_id, title=row["subject"], place=row["object"],
+            SET r.data_sources = CASE
+                WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                ELSE coalesce(r.data_sources, []) + ['extracted']
+            END
+        """, article_id=article_id, title=row["subject"], place=place,
              source=row["source_book"], confidence=row["confidence"],
              evidence=row["evidence"])
 
@@ -383,11 +491,23 @@ class EnhancedKGImporter:
         tgt_label = row["object_label"]
         tx.run(f"""
             MERGE (a:{src_label} {{name: $src_name}})
+            SET a.data_sources = CASE
+                WHEN 'extracted' IN coalesce(a.data_sources, []) THEN coalesce(a.data_sources, [])
+                ELSE coalesce(a.data_sources, []) + ['extracted']
+            END
             MERGE (b:{tgt_label} {{name: $tgt_name}})
+            SET b.data_sources = CASE
+                WHEN 'extracted' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
+                ELSE coalesce(b.data_sources, []) + ['extracted']
+            END
             MERGE (a)-[r:MENTIONS]->(b)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
                             r.evidence   = $evidence
+            SET r.data_sources = CASE
+                WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                ELSE coalesce(r.data_sources, []) + ['extracted']
+            END
         """, src_name=row["subject"], tgt_name=row["object"],
              source=row["source_book"], confidence=row["confidence"],
              evidence=row["evidence"])
@@ -397,16 +517,31 @@ class EnhancedKGImporter:
         """Fragment -[:MENTIONS / :MENTIONS_PLACE]-> Person/Place"""
         rel        = row["relation"]
         tgt_label  = row["object_label"]
+        # Resolve place names against Princeton variants; leave Person names as-is.
+        obj_name = (EnhancedKGImporter._resolve_place_name(tx, row["object"])
+                    if tgt_label == "Place" else row["object"])
         # Fragment nodes are keyed by canonical_shelfmark; if we only have a
         # display form here, just store it — it may already exist from Princeton.
         tx.run(f"""
             MERGE (f:Fragment {{shelfmark: $shelfmark}})
+            SET f.data_sources = CASE
+                WHEN 'extracted' IN coalesce(f.data_sources, []) THEN coalesce(f.data_sources, [])
+                ELSE coalesce(f.data_sources, []) + ['extracted']
+            END
             MERGE (t:{tgt_label} {{name: $name}})
+            SET t.data_sources = CASE
+                WHEN 'extracted' IN coalesce(t.data_sources, []) THEN coalesce(t.data_sources, [])
+                ELSE coalesce(t.data_sources, []) + ['extracted']
+            END
             MERGE (f)-[r:{rel}]->(t)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
                             r.evidence   = $evidence
-        """, shelfmark=row["subject"], name=row["object"],
+            SET r.data_sources = CASE
+                WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                ELSE coalesce(r.data_sources, []) + ['extracted']
+            END
+        """, shelfmark=row["subject"], name=obj_name,
              source=row["source_book"], confidence=row["confidence"],
              evidence=row["evidence"])
 
@@ -416,14 +551,31 @@ class EnhancedKGImporter:
         subj_label = row["subject_label"] or "Entity"
         obj_label  = row["object_label"]  or "Entity"
         rel        = row["relation"].replace(" ", "_")
+        # Resolve place names for subject/object when applicable
+        subj = (EnhancedKGImporter._resolve_place_name(tx, row["subject"])
+                if subj_label == "Place" else row["subject"])
+        obj  = (EnhancedKGImporter._resolve_place_name(tx, row["object"])
+                if obj_label == "Place" else row["object"])
         tx.run(f"""
             MERGE (a:{subj_label} {{name: $subj}})
+            SET a.data_sources = CASE
+                WHEN 'extracted' IN coalesce(a.data_sources, []) THEN coalesce(a.data_sources, [])
+                ELSE coalesce(a.data_sources, []) + ['extracted']
+            END
             MERGE (b:{obj_label}  {{name: $obj}})
+            SET b.data_sources = CASE
+                WHEN 'extracted' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
+                ELSE coalesce(b.data_sources, []) + ['extracted']
+            END
             MERGE (a)-[r:{rel}]->(b)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
                             r.evidence   = $evidence
-        """, subj=row["subject"], obj=row["object"],
+            SET r.data_sources = CASE
+                WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                ELSE coalesce(r.data_sources, []) + ['extracted']
+            END
+        """, subj=subj, obj=obj,
              source=row["source_book"], confidence=row["confidence"],
              evidence=row["evidence"])
 

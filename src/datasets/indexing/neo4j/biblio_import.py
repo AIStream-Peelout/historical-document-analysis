@@ -230,6 +230,10 @@ class GenizahBiblioImporter:
             tx.run("""
                 MERGE (f:Fragment {canonical_shelfmark: $canonical_shelfmark})
                 ON CREATE SET f.shelfmark = $display_shelfmark
+                SET f.data_sources = CASE
+                    WHEN 'biblio' IN coalesce(f.data_sources, []) THEN coalesce(f.data_sources, [])
+                    ELSE coalesce(f.data_sources, []) + ['biblio']
+                END
             """, {
                 'canonical_shelfmark': row['canonical_shelfmark'],
                 'display_shelfmark':   row['display_shelfmark'],
@@ -241,8 +245,16 @@ class GenizahBiblioImporter:
                     MERGE (f:Fragment {canonical_shelfmark: $canonical_shelfmark})
                     MERGE (i:Institution {name: $institution})
                     ON CREATE SET i.collection = $collection
+                    SET i.data_sources = CASE
+                        WHEN 'biblio' IN coalesce(i.data_sources, []) THEN coalesce(i.data_sources, [])
+                        ELSE coalesce(i.data_sources, []) + ['biblio']
+                    END
                     MERGE (f)-[r:HELD_AT]->(i)
-                    SET r.sub_collection = $subcollection
+                    SET r.sub_collection = $subcollection,
+                        r.data_sources   = CASE
+                            WHEN 'biblio' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + ['biblio']
+                        END
                 """, {
                     'canonical_shelfmark': row['canonical_shelfmark'],
                     'institution':         row['institution'],
@@ -259,7 +271,11 @@ class GenizahBiblioImporter:
                                   b.language = $language
                     SET b.title    = $title,
                         b.year     = $year,
-                        b.language = $language
+                        b.language = $language,
+                        b.data_sources = CASE
+                            WHEN 'biblio' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
+                            ELSE coalesce(b.data_sources, []) + ['biblio']
+                        END
                 """, {
                     'article_id': article_id,
                     'title':      title,
@@ -272,8 +288,16 @@ class GenizahBiblioImporter:
                 for individual_author in _split_authors(author):
                     tx.run("""
                         MERGE (s:Scholar {name: $author})
+                        SET s.data_sources = CASE
+                            WHEN 'biblio' IN coalesce(s.data_sources, []) THEN coalesce(s.data_sources, [])
+                            ELSE coalesce(s.data_sources, []) + ['biblio']
+                        END
                         MERGE (b:BookArticle {article_id: $article_id})
-                        MERGE (s)-[:WROTE]->(b)
+                        MERGE (s)-[r:WROTE]->(b)
+                        SET r.data_sources = CASE
+                            WHEN 'biblio' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + ['biblio']
+                        END
                     """, {
                         'author':     individual_author,
                         'article_id': article_id,
@@ -290,7 +314,11 @@ class GenizahBiblioImporter:
                         r.has_transcription    = $has_transcription,
                         r.has_translation      = $has_translation,
                         r.transcription_extent = $transcription_extent,
-                        r.translation_extent   = $translation_extent
+                        r.translation_extent   = $translation_extent,
+                        r.data_sources         = CASE
+                            WHEN 'biblio' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + ['biblio']
+                        END
                 """, {
                     'article_id':            article_id,
                     'canonical_shelfmark':   row['canonical_shelfmark'],
