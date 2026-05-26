@@ -140,17 +140,33 @@ class EnhancedKGImporter:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
 
+        people_locs = data.get("people_locations", {})
+
         # Build a quick lookup of person role by name so triplet processing
         # can decide Scholar vs Person without re-scanning each time.
         people_by_name: Dict[str, Dict] = {}
-        for person in data.get("people_locations", {}).get("people", []):
+        for person in people_locs.get("people", []):
             name = person.get("name", "").strip()
             if name:
                 people_by_name[name] = person
-                # Index name variants too
                 for variant in person.get("name_variants", []):
                     if variant:
                         people_by_name[variant.strip()] = person
+
+        # Build a lookup of geographic place metadata (city/country/region)
+        # extracted by the LLM so we can enrich Place nodes on creation.
+        places_by_name: Dict[str, Dict] = {}
+        for loc in people_locs.get("locations", []):
+            loc_type = loc.get("type", "").lower()
+            # Skip institutions — they are not geographic places
+            if loc_type in ("institution", "library", "university", "synagogue"):
+                continue
+            name = loc.get("name", "").strip()
+            if name:
+                places_by_name[name] = loc
+                for variant in loc.get("name_variants", []):
+                    if variant:
+                        places_by_name[variant.strip()] = loc
 
         triplets: List[Dict[str, Any]] = data.get("kg_triplets", [])
         if not triplets:
@@ -164,7 +180,7 @@ class EnhancedKGImporter:
         # Build batches of normalised triplet dicts
         rows = []
         for t in triplets:
-            row = self._normalise_triplet(t, people_by_name, source_book)
+            row = self._normalise_triplet(t, people_by_name, places_by_name, source_book)
             if row:
                 rows.append(row)
 
@@ -189,6 +205,14 @@ class EnhancedKGImporter:
                     except Exception as e:
                         logger.warning(f"  Failed {fn} for {row}: {e}")
 
+            # Enrich Place nodes with city/country/region from locations data
+            for loc_meta in places_by_name.values():
+                if any(loc_meta.get(k) for k in ("city", "country", "region")):
+                    try:
+                        session.execute_write(self._enrich_place_node, loc_meta)
+                    except Exception as e:
+                        logger.debug(f"  Place enrich failed for {loc_meta.get('name')}: {e}")
+
         return dict(counts)
 
     # ------------------------------------------------------------------
@@ -198,6 +222,7 @@ class EnhancedKGImporter:
         self,
         triplet: Dict[str, Any],
         people_by_name: Dict[str, Dict],
+        places_by_name: Dict[str, Dict],
         source_book: str,
     ) -> Optional[Dict[str, Any]]:
         """Convert a raw triplet dict into a canonical write-instruction dict."""
@@ -211,6 +236,42 @@ class EnhancedKGImporter:
 
         if not (subj and relation and obj):
             return None
+
+        # ------------------------------------------------------------------
+        # Data-quality filters
+        # ------------------------------------------------------------------
+        # Filter out pseudo-place names that are archives/collections/concepts
+        _NON_GEOGRAPHIC = {
+            "cairo genizah", "genizah", "jewish theological seminary",
+            "cambridge university library", "bodleian library", "british library",
+            "taylor-schechter", "t-s collection", "dropsie college",
+        }
+        for place_field, place_type_field in ((obj, obj_type), (subj, subj_type)):
+            if place_type_field.lower() == "place":
+                if place_field.lower() in _NON_GEOGRAPHIC:
+                    logger.debug(f"  Skipping non-geographic place '{place_field}'")
+                    return None
+                # Reject vague compound constructs like "Egypt-Palestine"
+                if "-" in place_field and place_type_field.lower() == "place":
+                    parts = [p.strip() for p in place_field.split("-")]
+                    if len(parts) == 2 and all(len(p) > 3 for p in parts):
+                        logger.debug(f"  Skipping compound place '{place_field}'")
+                        return None
+
+        # Filter out BookArticle nodes with missing/trivial titles (single word,
+        # shelf-mark pattern, or matches a known non-title pattern).
+        import re as _re
+        _SHELFMARK_RE = _re.compile(r'^[A-Z][\w./-]+ \d+[\w./-]*$')
+        for title_field, type_field in ((obj, obj_type), (subj, subj_type)):
+            if type_field.lower() == "bookarticle":
+                if not title_field:
+                    return None
+                if len(title_field.split()) < 2:
+                    logger.debug(f"  Skipping single-word BookArticle '{title_field}'")
+                    return None
+                if _SHELFMARK_RE.match(title_field):
+                    logger.debug(f"  Skipping shelf-mark as BookArticle '{title_field}'")
+                    return None
 
         # ------------------------------------------------------------------
         # Resolve actual Neo4j labels, upgrading Person→Scholar where needed
@@ -227,15 +288,26 @@ class EnhancedKGImporter:
         subj_label = _resolve_label(subj, subj_type)
         obj_label  = _resolve_label(obj, obj_type)
 
+        # Attach place metadata (city/country/region) so write methods can store it
+        def _place_meta(name: str) -> Dict[str, str]:
+            meta = places_by_name.get(name, {})
+            return {
+                "city":    meta.get("city",    "") or "",
+                "country": meta.get("country", "") or "",
+                "region":  meta.get("region",  "") or "",
+            }
+
         base = {
-            "subject":      subj,
-            "subject_label": subj_label,
-            "relation":     relation,
-            "object":       obj,
-            "object_label": obj_label,
-            "evidence":     evidence[:500],   # cap length
-            "confidence":   confidence,
-            "source_book":  source_book,
+            "subject":        subj,
+            "subject_label":  subj_label,
+            "subject_place":  _place_meta(subj) if subj_label == "Place" else {},
+            "relation":       relation,
+            "object":         obj,
+            "object_label":   obj_label,
+            "object_place":   _place_meta(obj) if obj_label == "Place" else {},
+            "evidence":       evidence[:500],   # cap length
+            "confidence":     confidence,
+            "source_book":    source_book,
         }
 
         # Map to a write handler based on the (subject_label, relation, object_label) triple
@@ -374,6 +446,7 @@ class EnhancedKGImporter:
         """Person/Scholar -[:LIVED_IN]-> Place"""
         label = row["subject_label"]
         place = EnhancedKGImporter._resolve_place_name(tx, row["object"])
+        pm    = row.get("object_place", {})
         tx.run(f"""
             MERGE (p:{label} {{name: $name}})
             SET p.data_sources = CASE
@@ -384,7 +457,10 @@ class EnhancedKGImporter:
             SET pl.data_sources = CASE
                 WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                 ELSE coalesce(pl.data_sources, []) + ['extracted']
-            END
+            END,
+                pl.city    = CASE WHEN $city    <> '' AND pl.city    IS NULL THEN $city    ELSE pl.city    END,
+                pl.country = CASE WHEN $country <> '' AND pl.country IS NULL THEN $country ELSE pl.country END,
+                pl.region  = CASE WHEN $region  <> '' AND pl.region  IS NULL THEN $region  ELSE pl.region  END
             MERGE (p)-[r:LIVED_IN]->(pl)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
@@ -394,6 +470,7 @@ class EnhancedKGImporter:
                 ELSE coalesce(r.data_sources, []) + ['extracted']
             END
         """, name=row["subject"], place=place,
+             city=pm.get("city",""), country=pm.get("country",""), region=pm.get("region",""),
              source=row["source_book"], confidence=row["confidence"],
              evidence=row["evidence"])
 
@@ -402,6 +479,7 @@ class EnhancedKGImporter:
         """Person/Scholar -[:TRAVELED_TO]-> Place"""
         label = row["subject_label"]
         place = EnhancedKGImporter._resolve_place_name(tx, row["object"])
+        pm    = row.get("object_place", {})
         tx.run(f"""
             MERGE (p:{label} {{name: $name}})
             SET p.data_sources = CASE
@@ -412,7 +490,10 @@ class EnhancedKGImporter:
             SET pl.data_sources = CASE
                 WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                 ELSE coalesce(pl.data_sources, []) + ['extracted']
-            END
+            END,
+                pl.city    = CASE WHEN $city    <> '' AND pl.city    IS NULL THEN $city    ELSE pl.city    END,
+                pl.country = CASE WHEN $country <> '' AND pl.country IS NULL THEN $country ELSE pl.country END,
+                pl.region  = CASE WHEN $region  <> '' AND pl.region  IS NULL THEN $region  ELSE pl.region  END
             MERGE (p)-[r:TRAVELED_TO]->(pl)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
@@ -422,6 +503,7 @@ class EnhancedKGImporter:
                 ELSE coalesce(r.data_sources, []) + ['extracted']
             END
         """, name=row["subject"], place=place,
+             city=pm.get("city",""), country=pm.get("country",""), region=pm.get("region",""),
              source=row["source_book"], confidence=row["confidence"],
              evidence=row["evidence"])
 
@@ -430,12 +512,16 @@ class EnhancedKGImporter:
         """Place -[:MENTIONED_IN]-> BookArticle"""
         article_id = _make_article_id(row["object"])
         place = EnhancedKGImporter._resolve_place_name(tx, row["subject"])
+        pm    = row.get("subject_place", {})
         tx.run("""
             MERGE (pl:Place {name: $place})
             SET pl.data_sources = CASE
                 WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                 ELSE coalesce(pl.data_sources, []) + ['extracted']
-            END
+            END,
+                pl.city    = CASE WHEN $city    <> '' AND pl.city    IS NULL THEN $city    ELSE pl.city    END,
+                pl.country = CASE WHEN $country <> '' AND pl.country IS NULL THEN $country ELSE pl.country END,
+                pl.region  = CASE WHEN $region  <> '' AND pl.region  IS NULL THEN $region  ELSE pl.region  END
             MERGE (b:BookArticle {article_id: $article_id})
               ON CREATE SET b.title = $title
             SET b.data_sources = CASE
@@ -451,6 +537,7 @@ class EnhancedKGImporter:
                 ELSE coalesce(r.data_sources, []) + ['extracted']
             END
         """, place=place, article_id=article_id, title=row["object"],
+             city=pm.get("city",""), country=pm.get("country",""), region=pm.get("region",""),
              source=row["source_book"], confidence=row["confidence"],
              evidence=row["evidence"])
 
@@ -460,6 +547,7 @@ class EnhancedKGImporter:
         rel        = row["relation"]
         article_id = _make_article_id(row["subject"])
         place      = EnhancedKGImporter._resolve_place_name(tx, row["object"])
+        pm         = row.get("object_place", {})
         tx.run(f"""
             MERGE (b:BookArticle {{article_id: $article_id}})
               ON CREATE SET b.title = $title
@@ -471,7 +559,10 @@ class EnhancedKGImporter:
             SET pl.data_sources = CASE
                 WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                 ELSE coalesce(pl.data_sources, []) + ['extracted']
-            END
+            END,
+                pl.city    = CASE WHEN $city    <> '' AND pl.city    IS NULL THEN $city    ELSE pl.city    END,
+                pl.country = CASE WHEN $country <> '' AND pl.country IS NULL THEN $country ELSE pl.country END,
+                pl.region  = CASE WHEN $region  <> '' AND pl.region  IS NULL THEN $region  ELSE pl.region  END
             MERGE (b)-[r:{rel}]->(pl)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
@@ -481,6 +572,7 @@ class EnhancedKGImporter:
                 ELSE coalesce(r.data_sources, []) + ['extracted']
             END
         """, article_id=article_id, title=row["subject"], place=place,
+             city=pm.get("city",""), country=pm.get("country",""), region=pm.get("region",""),
              source=row["source_book"], confidence=row["confidence"],
              evidence=row["evidence"])
 
@@ -578,6 +670,22 @@ class EnhancedKGImporter:
         """, subj=subj, obj=obj,
              source=row["source_book"], confidence=row["confidence"],
              evidence=row["evidence"])
+
+    @staticmethod
+    def _enrich_place_node(tx, loc_meta: Dict):
+        """Stamp city/country/region onto an existing Place node (idempotent)."""
+        name    = loc_meta.get("name", "").strip()
+        city    = loc_meta.get("city",    "") or ""
+        country = loc_meta.get("country", "") or ""
+        region  = loc_meta.get("region",  "") or ""
+        if not name:
+            return
+        tx.run("""
+            MATCH (pl:Place {name: $name})
+            SET pl.city    = CASE WHEN $city    <> '' AND pl.city    IS NULL THEN $city    ELSE pl.city    END,
+                pl.country = CASE WHEN $country <> '' AND pl.country IS NULL THEN $country ELSE pl.country END,
+                pl.region  = CASE WHEN $region  <> '' AND pl.region  IS NULL THEN $region  ELSE pl.region  END
+        """, name=name, city=city, country=country, region=region)
 
     # ------------------------------------------------------------------
     # Bulk import
