@@ -361,8 +361,9 @@ Text to analyze (excerpt):
 {text_content[:4000]}
 
 Extract knowledge-graph triplets connecting these entities. Use ONLY these relation types:
-  - LIVED_IN        : person permanently resided in a place
-  - TRAVELED_TO     : person traveled to or visited a place
+  - LIVED_IN        : historical person permanently resided in a geographic place
+  - AFFILIATED_WITH : modern scholar holds a position at a university, library, or institution
+  - TRAVELED_TO     : person traveled to or visited a place or institution
   - WROTE           : person wrote a manuscript (use shelf mark) or book/article (use title)
   - MENTIONED_IN    : person or place is mentioned in a manuscript (use shelf mark)
   - ORIGINATED_FROM : document or person originated from a place
@@ -689,7 +690,8 @@ Extract the triplets:"""
         # Relation → Cypher pattern  (subject_label)-[rel]->(object_label)
         REL_MAP = {
             'LIVED_IN':        ('Person',      'Place'),
-            'TRAVELED_TO':     ('Person',      'Place'),
+            'AFFILIATED_WITH': ('Person',      'Institution'),
+            'TRAVELED_TO':     ('Person',      None),      # Place or Institution
             'WROTE':           ('Person',      None),      # object type varies
             'MENTIONED_IN':    (None,          'Fragment'),
             'ORIGINATED_FROM': (None,          'Place'),

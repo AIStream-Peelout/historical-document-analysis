@@ -78,6 +78,17 @@ logger = logging.getLogger(__name__)
 
 SCHOLAR_ROLES = {"author", "scholar", "editor", "translator", "co-author"}
 
+# Keywords that indicate a name is an institution, not a geographic place.
+_INSTITUTION_KEYWORDS = {
+    "university", "college", "library", "seminary", "institute", "museum",
+    "academy", "archive", "school", "foundation", "society", "centre", "center",
+}
+
+def _is_institution_name(name: str) -> bool:
+    """Return True if the name looks like a modern institution rather than a place."""
+    lower = name.lower()
+    return any(kw in lower for kw in _INSTITUTION_KEYWORDS)
+
 
 def _make_article_id(title: str, author: str = "", year: str = "") -> str:
     """Deterministic 16-char hex ID for a BookArticle node.
@@ -288,6 +299,12 @@ class EnhancedKGImporter:
         subj_label = _resolve_label(subj, subj_type)
         obj_label  = _resolve_label(obj, obj_type)
 
+        # Reclassify institution names that the LLM incorrectly tagged as Place
+        if subj_label == "Place" and _is_institution_name(subj):
+            subj_label = "Institution"
+        if obj_label == "Place" and _is_institution_name(obj):
+            obj_label = "Institution"
+
         # Attach place metadata (city/country/region) so write methods can store it
         def _place_meta(name: str) -> Dict[str, str]:
             meta = places_by_name.get(name, {})
@@ -322,7 +339,12 @@ class EnhancedKGImporter:
         if key in (("Person", "LIVED_IN", "Place"), ("Scholar", "LIVED_IN", "Place")):
             return {**base, "write_fn": "_write_person_lived_in"}
 
-        if key in (("Person", "TRAVELED_TO", "Place"), ("Scholar", "TRAVELED_TO", "Place")):
+        if key in (("Person", "AFFILIATED_WITH", "Institution"), ("Scholar", "AFFILIATED_WITH", "Institution"),
+                   ("Person", "AFFILIATED_WITH", "Place"),        ("Scholar", "AFFILIATED_WITH", "Place")):
+            return {**base, "write_fn": "_write_person_affiliated_with"}
+
+        if key in (("Person", "TRAVELED_TO", "Place"), ("Scholar", "TRAVELED_TO", "Place"),
+                   ("Person", "TRAVELED_TO", "Institution"), ("Scholar", "TRAVELED_TO", "Institution")):
             return {**base, "write_fn": "_write_person_traveled_to"}
 
         if key == ("Place", "MENTIONED_IN", "BookArticle"):
@@ -443,8 +465,15 @@ class EnhancedKGImporter:
 
     @staticmethod
     def _write_person_lived_in(tx, row: Dict):
-        """Person/Scholar -[:LIVED_IN]-> Place"""
+        """Person/Scholar -[:LIVED_IN]-> Place  (historical residence only)
+
+        If the object resolves to an Institution name, silently redirects to
+        AFFILIATED_WITH so that academic affiliations don't pollute LIVED_IN.
+        """
         label = row["subject_label"]
+        if EnhancedKGImporter._is_institution_name(row["object"]):
+            # Reroute: person "lived in" a university → affiliation, not residence
+            return EnhancedKGImporter._write_person_affiliated_with(tx, row)
         place = EnhancedKGImporter._resolve_place_name(tx, row["object"])
         pm    = row.get("object_place", {})
         tx.run(f"""
@@ -454,7 +483,8 @@ class EnhancedKGImporter:
                 ELSE coalesce(p.data_sources, []) + ['extracted']
             END
             MERGE (pl:Place {{name: $place}})
-            SET pl.data_sources = CASE
+            SET pl.place_type  = 'historical',
+                pl.data_sources = CASE
                 WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                 ELSE coalesce(pl.data_sources, []) + ['extracted']
             END,
@@ -475,6 +505,39 @@ class EnhancedKGImporter:
              evidence=row["evidence"])
 
     @staticmethod
+    def _write_person_affiliated_with(tx, row: Dict):
+        """Person/Scholar -[:AFFILIATED_WITH]-> Institution
+
+        Used for modern scholars whose affiliation with a university/library/institute
+        is mentioned in a bibliography or author bio. Distinct from LIVED_IN which is
+        reserved for historical figures residing in a geographic place.
+        """
+        label = row["subject_label"]
+        institution = row["object"]
+        tx.run(f"""
+            MERGE (p:{label} {{name: $name}})
+            SET p.data_sources = CASE
+                WHEN 'extracted' IN coalesce(p.data_sources, []) THEN coalesce(p.data_sources, [])
+                ELSE coalesce(p.data_sources, []) + ['extracted']
+            END
+            MERGE (i:Institution {{name: $institution}})
+            SET i.data_sources = CASE
+                WHEN 'extracted' IN coalesce(i.data_sources, []) THEN coalesce(i.data_sources, [])
+                ELSE coalesce(i.data_sources, []) + ['extracted']
+            END
+            MERGE (p)-[r:AFFILIATED_WITH]->(i)
+              ON CREATE SET r.source     = $source,
+                            r.confidence = $confidence,
+                            r.evidence   = $evidence
+            SET r.data_sources = CASE
+                WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                ELSE coalesce(r.data_sources, []) + ['extracted']
+            END
+        """, name=row["subject"], institution=institution,
+             source=row["source_book"], confidence=row["confidence"],
+             evidence=row["evidence"])
+
+    @staticmethod
     def _write_person_traveled_to(tx, row: Dict):
         """Person/Scholar -[:TRAVELED_TO]-> Place"""
         label = row["subject_label"]
@@ -487,7 +550,8 @@ class EnhancedKGImporter:
                 ELSE coalesce(p.data_sources, []) + ['extracted']
             END
             MERGE (pl:Place {{name: $place}})
-            SET pl.data_sources = CASE
+            SET pl.place_type  = 'historical',
+                pl.data_sources = CASE
                 WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                 ELSE coalesce(pl.data_sources, []) + ['extracted']
             END,
@@ -515,7 +579,8 @@ class EnhancedKGImporter:
         pm    = row.get("subject_place", {})
         tx.run("""
             MERGE (pl:Place {name: $place})
-            SET pl.data_sources = CASE
+            SET pl.place_type  = 'historical',
+                pl.data_sources = CASE
                 WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                 ELSE coalesce(pl.data_sources, []) + ['extracted']
             END,
@@ -556,7 +621,8 @@ class EnhancedKGImporter:
                 ELSE coalesce(b.data_sources, []) + ['extracted']
             END
             MERGE (pl:Place {{name: $place}})
-            SET pl.data_sources = CASE
+            SET pl.place_type  = 'historical',
+                pl.data_sources = CASE
                 WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                 ELSE coalesce(pl.data_sources, []) + ['extracted']
             END,

@@ -222,7 +222,8 @@ class PrincetonGenizahKG:
                             f"""
                             MATCH (f:Fragment {{canonical_shelfmark: $csm}})
                             MERGE (pl:Place {{name: $place}})
-                            SET pl.data_sources = CASE
+                            SET pl.place_type   = 'historical',
+                                pl.data_sources = CASE
                                 WHEN 'pgp' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                                 ELSE coalesce(pl.data_sources, []) + ['pgp']
                             END
@@ -371,6 +372,11 @@ class PrincetonGenizahKG:
                     tx.run("""
                         MERGE (p:Person {name: $name})
                         MERGE (pl:Place {name: $place})
+                        SET pl.place_type   = 'historical',
+                            pl.data_sources = CASE
+                            WHEN 'pgp' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
+                            ELSE coalesce(pl.data_sources, []) + ['pgp']
+                        END
                         MERGE (p)-[r:LIVED_IN]->(pl)
                         SET r.data_sources = CASE
                             WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
@@ -386,6 +392,11 @@ class PrincetonGenizahKG:
                             tx.run("""
                                 MERGE (p:Person {name: $name})
                                 MERGE (pl:Place {name: $place})
+                                SET pl.place_type   = 'historical',
+                                    pl.data_sources = CASE
+                                    WHEN 'pgp' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
+                                    ELSE coalesce(pl.data_sources, []) + ['pgp']
+                                END
                                 MERGE (p)-[r:TRAVELED_TO]->(pl)
                                 SET r.data_sources = CASE
                                     WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
@@ -418,6 +429,7 @@ class PrincetonGenizahKG:
                     pl.notes                   = $notes,
                     pl.related_documents_count = $related_documents_count,
                     pl.url                     = $url,
+                    pl.place_type              = 'historical',
                     pl.data_sources            = CASE
                         WHEN 'pgp' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                         ELSE coalesce(pl.data_sources, []) + ['pgp']
