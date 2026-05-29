@@ -473,46 +473,18 @@ def _extract_institution_location(name: str) -> list[str]:
     "Brandeis University"                    → ["Brandeis University", "Waltham Massachusetts"]
     "Ben-Gurion University of the Negev"     → ["Ben-Gurion University of the Negev", "Beersheba Israel"]
     """
-    queries = [name]  # always try the full name first
+    # Strip parenthetical alternate names before geocoding.
+    # e.g. "Coptic Museum, Cairo (al-Matḥāf al-Qibṭī)" → "Coptic Museum, Cairo"
+    clean, _hint = _clean_place_name(name)
+    queries = [clean]
+    if clean != name:
+        queries.append(name)   # also try original as fallback
 
-    lower = name.lower()
+    lower = clean.lower()
 
-    # Handle comma-separated format: "Beeghly Library, University of Heidelberg"
-    # Try each comma segment as a separate query (most specific first).
-    if "," in name:
-        parts = [p.strip() for p in name.split(",") if p.strip()]
-        # Add the last segment (usually the parent institution / city) as fallback
-        if len(parts) >= 2:
-            queries.append(parts[-1])   # e.g. "University of Heidelberg"
-            queries.append(parts[0])    # e.g. "Beeghly Library"
-
-    # "University of X" anywhere in the name  →  try "X" as the city
-    m = _re.search(r'university of ([^,]+)', lower)
-    if m:
-        city_part = name[m.start(1):m.start(1) + len(m.group(1))]
-        city_part = _re.sub(r'\s*\([^)]*\)', '', city_part).strip()
-        if city_part not in queries:
-            queries.append(city_part)
-        return queries
-
-    # "X University"  →  Nominatim usually knows "X University" for famous ones
-    # but also try "X" alone as fallback
-    m = _re.search(r'(.+?)\s+university\b', lower)
-    if m:
-        prefix = name[:m.end(1)].strip()
-        if prefix.lower() not in ("the", "a") and prefix not in queries:
-            queries.append(prefix)
-        return queries
-
-    # Named place at the start: "Oxford Centre for...", "Cambridge Institute of..."
-    # Extract first token(s) if they look like a place name (capitalised, not "The/A/An")
-    first_word = name.split()[0]
-    if first_word not in ("The", "A", "An", "New", "Jewish", "Hebrew", "Islamic",
-                          "Center", "Centre", "Institute", "National", "International"):
-        if first_word not in queries:
-            queries.append(first_word)
-
-    # Well-known institution → city overrides
+    # ── _KNOWN overrides checked FIRST — before any regex that might return early ──
+    # This ensures e.g. "Yale University Press" hits the Yale override rather than
+    # the "X University" regex extracting "Yale" and geocoding it to Yale, Canada.
     _KNOWN: dict[str, str] = {
         "jewish theological seminary":          "New York City",
         "jts":                                  "New York City",
@@ -532,17 +504,61 @@ def _extract_institution_location(name: str) -> list[str]:
         "ben-gurion university":                "Beersheba Israel",
         "bar-ilan":                             "Ramat Gan Israel",
         "genazim institute":                    "Tel Aviv",
-        # Hebrew Union College — Genizah fragments are at the Klau Library,
-        # Cincinnati campus. HUC also has campuses in Jerusalem, NY, and LA
-        # so geocoders default to Jerusalem without this override.
+        # Hebrew Union College — fragments at Klau Library, Cincinnati campus.
+        # HUC also has campuses in Jerusalem, NY, and LA so geocoders default to Jerusalem.
         "hebrew union college":                 "Klau Library, Cincinnati Ohio",
         "klau library":                         "Klau Library, Cincinnati Ohio",
         "huc-jir":                              "Klau Library, Cincinnati Ohio",
+        # Yale University Press — geocodes to Yale, British Columbia, Canada without this.
+        # The "X University" regex also fires early and extracts bare "Yale" as fallback.
+        "yale university press":                "Yale University, New Haven, Connecticut",
+        "yale university":                      "Yale University, New Haven, Connecticut",
+        "yale":                                 "Yale University, New Haven, Connecticut",
+        # Coptic Museum — parenthetical Arabic confuses Google into finding Limestone County, Alabama
+        "coptic museum":                        "Coptic Museum, Cairo, Egypt",
+        "coptic museum, cairo":                 "Coptic Museum, Cairo, Egypt",
+        # Columbia University — geocodes to Colombia, South America without this
+        "columbia university":                  "Columbia University, New York City",
+        "columbia university library":          "Columbia University, New York City",
+        "butler library":                       "Columbia University, New York City",
     }
     for key, city in _KNOWN.items():
         if key in lower:
+            # Return immediately — don't let the regex branches below override this
             queries.append(city)
-            break
+            return queries
+
+    # Handle comma-separated format: "Beeghly Library, University of Heidelberg"
+    # Try each comma segment as a separate query (most specific first).
+    if "," in clean:
+        parts = [p.strip() for p in clean.split(",") if p.strip()]
+        if len(parts) >= 2:
+            queries.append(parts[-1])   # e.g. "University of Heidelberg"
+            queries.append(parts[0])    # e.g. "Beeghly Library"
+
+    # "University of X" anywhere in the name  →  try "X" as the city
+    m = _re.search(r'university of ([^,]+)', lower)
+    if m:
+        city_part = clean[m.start(1):m.start(1) + len(m.group(1))]
+        city_part = _re.sub(r'\s*\([^)]*\)', '', city_part).strip()
+        if city_part not in queries:
+            queries.append(city_part)
+        return queries
+
+    # "X University"  →  also try "X" alone as fallback
+    m = _re.search(r'(.+?)\s+university\b', lower)
+    if m:
+        prefix = clean[:m.end(1)].strip()
+        if prefix.lower() not in ("the", "a") and prefix not in queries:
+            queries.append(prefix)
+        return queries
+
+    # Named place at the start: "Oxford Centre for...", "Cambridge Institute of..."
+    first_word = clean.split()[0]
+    if first_word not in ("The", "A", "An", "New", "Jewish", "Hebrew", "Islamic",
+                          "Center", "Centre", "Institute", "National", "International"):
+        if first_word not in queries:
+            queries.append(first_word)
 
     return queries
 

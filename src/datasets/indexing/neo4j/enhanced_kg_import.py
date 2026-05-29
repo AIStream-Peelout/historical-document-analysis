@@ -90,6 +90,21 @@ def _is_institution_name(name: str) -> bool:
     return any(kw in lower for kw in _INSTITUTION_KEYWORDS)
 
 
+def _src_books(alias: str) -> str:
+    """Cypher snippet: append $book to <alias>.source_books if not already present.
+
+    Usage in a SET clause:
+        SET n.source_books = _src_books('n')
+    Requires $book parameter to be passed to tx.run().
+    """
+    return (
+        f"{alias}.source_books = CASE "
+        f"WHEN $book IN coalesce({alias}.source_books, []) "
+        f"THEN coalesce({alias}.source_books, []) "
+        f"ELSE coalesce({alias}.source_books, []) + [$book] END"
+    )
+
+
 def _make_article_id(title: str, author: str = "", year: str = "") -> str:
     """Deterministic 16-char hex ID for a BookArticle node.
     Identical algorithm to biblio_import.py — same publication → same ID."""
@@ -151,42 +166,75 @@ class EnhancedKGImporter:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
 
-        people_locs = data.get("people_locations", {})
+        people_locs    = data.get("people_locations", {})
+        context_analysis = data.get("context_analysis", {})
 
         # Build a quick lookup of person role by name so triplet processing
         # can decide Scholar vs Person without re-scanning each time.
+        #
+        # The JSON has TWO separate people lists that must both be imported:
+        #   people_locations.people      — modern scholars (authors, editors …)
+        #   context_analysis.people_mentioned — historical figures (Sherirah Gaon,
+        #                                       Rachel the Byzantine, Obadiah …)
+        # Without merging both, all historical persons are silently dropped.
         people_by_name: Dict[str, Dict] = {}
-        for person in people_locs.get("people", []):
+        _all_people = (
+            people_locs.get("people", [])
+            + context_analysis.get("people_mentioned", [])
+        )
+        for person in _all_people:
             name = person.get("name", "").strip()
-            if name:
+            if name and name not in people_by_name:   # people_locations wins on conflict
                 people_by_name[name] = person
                 for variant in person.get("name_variants", []):
-                    if variant:
+                    if variant and variant.strip() not in people_by_name:
                         people_by_name[variant.strip()] = person
 
         # Build a lookup of geographic place metadata (city/country/region)
         # extracted by the LLM so we can enrich Place nodes on creation.
+        # Same two-list pattern applies: merge people_locations.locations and
+        # context_analysis.locations_mentioned.
         places_by_name: Dict[str, Dict] = {}
-        for loc in people_locs.get("locations", []):
+        _all_locs = (
+            people_locs.get("locations", [])
+            + context_analysis.get("locations_mentioned", [])
+        )
+        for loc in _all_locs:
             loc_type = loc.get("type", "").lower()
             # Skip institutions — they are not geographic places
             if loc_type in ("institution", "library", "university", "synagogue"):
                 continue
             name = loc.get("name", "").strip()
-            if name:
+            if name and name not in places_by_name:
                 places_by_name[name] = loc
                 for variant in loc.get("name_variants", []):
-                    if variant:
+                    if variant and variant.strip() not in places_by_name:
                         places_by_name[variant.strip()] = loc
-
-        triplets: List[Dict[str, Any]] = data.get("kg_triplets", [])
-        if not triplets:
-            logger.info(f"  No triplets in {path.name}")
-            return {}
 
         # Derive the source book identifier from the file path
         # e.g. "Ashtor_1_1963_enhanced.json" → "Ashtor_1_1963"
         source_book = path.stem.replace("_enhanced", "")
+
+        triplets: List[Dict[str, Any]] = data.get("kg_triplets", [])
+
+        counts: Dict[str, int] = defaultdict(int)
+
+        # ── Always import people and places from people_locations ──────────
+        # People/places are extracted even when no triplets were generated.
+        # Without this, anyone mentioned in the text but not in a triplet
+        # (e.g. Sherirah Gaon, Rachel the Byzantine) is silently dropped.
+        if not dry_run and (people_by_name or places_by_name):
+            with self.driver.session(database=self.database) as session:
+                session.execute_write(
+                    self._write_people_locations,
+                    people_by_name, places_by_name, source_book
+                )
+            counts["people_upserted"] = len(people_by_name)
+            counts["places_upserted"] = len(places_by_name)
+
+        if not triplets:
+            logger.info(f"  No triplets in {path.name}")
+            return dict(counts)
 
         # Build batches of normalised triplet dicts
         rows = []
@@ -195,7 +243,6 @@ class EnhancedKGImporter:
             if row:
                 rows.append(row)
 
-        counts = defaultdict(int)
         counts["triplets_total"] = len(triplets)
         counts["triplets_valid"] = len(rows)
 
@@ -471,7 +518,7 @@ class EnhancedKGImporter:
         AFFILIATED_WITH so that academic affiliations don't pollute LIVED_IN.
         """
         label = row["subject_label"]
-        if EnhancedKGImporter._is_institution_name(row["object"]):
+        if _is_institution_name(row["object"]):
             # Reroute: person "lived in" a university → affiliation, not residence
             return EnhancedKGImporter._write_person_affiliated_with(tx, row)
         place = EnhancedKGImporter._resolve_place_name(tx, row["object"])
@@ -481,13 +528,15 @@ class EnhancedKGImporter:
             SET p.data_sources = CASE
                 WHEN 'extracted' IN coalesce(p.data_sources, []) THEN coalesce(p.data_sources, [])
                 ELSE coalesce(p.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('p')}
             MERGE (pl:Place {{name: $place}})
             SET pl.place_type  = 'historical',
                 pl.data_sources = CASE
                 WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                 ELSE coalesce(pl.data_sources, []) + ['extracted']
             END,
+                {_src_books('pl')},
                 pl.city    = CASE WHEN $city    <> '' AND pl.city    IS NULL THEN $city    ELSE pl.city    END,
                 pl.country = CASE WHEN $country <> '' AND pl.country IS NULL THEN $country ELSE pl.country END,
                 pl.region  = CASE WHEN $region  <> '' AND pl.region  IS NULL THEN $region  ELSE pl.region  END
@@ -498,11 +547,12 @@ class EnhancedKGImporter:
             SET r.data_sources = CASE
                 WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
                 ELSE coalesce(r.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('r')}
         """, name=row["subject"], place=place,
              city=pm.get("city",""), country=pm.get("country",""), region=pm.get("region",""),
              source=row["source_book"], confidence=row["confidence"],
-             evidence=row["evidence"])
+             evidence=row["evidence"], book=row["source_book"])
 
     @staticmethod
     def _write_person_affiliated_with(tx, row: Dict):
@@ -519,12 +569,14 @@ class EnhancedKGImporter:
             SET p.data_sources = CASE
                 WHEN 'extracted' IN coalesce(p.data_sources, []) THEN coalesce(p.data_sources, [])
                 ELSE coalesce(p.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('p')}
             MERGE (i:Institution {{name: $institution}})
             SET i.data_sources = CASE
                 WHEN 'extracted' IN coalesce(i.data_sources, []) THEN coalesce(i.data_sources, [])
                 ELSE coalesce(i.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('i')}
             MERGE (p)-[r:AFFILIATED_WITH]->(i)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
@@ -532,10 +584,11 @@ class EnhancedKGImporter:
             SET r.data_sources = CASE
                 WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
                 ELSE coalesce(r.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('r')}
         """, name=row["subject"], institution=institution,
              source=row["source_book"], confidence=row["confidence"],
-             evidence=row["evidence"])
+             evidence=row["evidence"], book=row["source_book"])
 
     @staticmethod
     def _write_person_traveled_to(tx, row: Dict):
@@ -548,13 +601,15 @@ class EnhancedKGImporter:
             SET p.data_sources = CASE
                 WHEN 'extracted' IN coalesce(p.data_sources, []) THEN coalesce(p.data_sources, [])
                 ELSE coalesce(p.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('p')}
             MERGE (pl:Place {{name: $place}})
             SET pl.place_type  = 'historical',
                 pl.data_sources = CASE
                 WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                 ELSE coalesce(pl.data_sources, []) + ['extracted']
             END,
+                {_src_books('pl')},
                 pl.city    = CASE WHEN $city    <> '' AND pl.city    IS NULL THEN $city    ELSE pl.city    END,
                 pl.country = CASE WHEN $country <> '' AND pl.country IS NULL THEN $country ELSE pl.country END,
                 pl.region  = CASE WHEN $region  <> '' AND pl.region  IS NULL THEN $region  ELSE pl.region  END
@@ -565,11 +620,12 @@ class EnhancedKGImporter:
             SET r.data_sources = CASE
                 WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
                 ELSE coalesce(r.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('r')}
         """, name=row["subject"], place=place,
              city=pm.get("city",""), country=pm.get("country",""), region=pm.get("region",""),
              source=row["source_book"], confidence=row["confidence"],
-             evidence=row["evidence"])
+             evidence=row["evidence"], book=row["source_book"])
 
     @staticmethod
     def _write_place_mentioned_in(tx, row: Dict):
@@ -577,22 +633,24 @@ class EnhancedKGImporter:
         article_id = _make_article_id(row["object"])
         place = EnhancedKGImporter._resolve_place_name(tx, row["subject"])
         pm    = row.get("subject_place", {})
-        tx.run("""
-            MERGE (pl:Place {name: $place})
+        tx.run(f"""
+            MERGE (pl:Place {{name: $place}})
             SET pl.place_type  = 'historical',
                 pl.data_sources = CASE
                 WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                 ELSE coalesce(pl.data_sources, []) + ['extracted']
             END,
+                {_src_books('pl')},
                 pl.city    = CASE WHEN $city    <> '' AND pl.city    IS NULL THEN $city    ELSE pl.city    END,
                 pl.country = CASE WHEN $country <> '' AND pl.country IS NULL THEN $country ELSE pl.country END,
                 pl.region  = CASE WHEN $region  <> '' AND pl.region  IS NULL THEN $region  ELSE pl.region  END
-            MERGE (b:BookArticle {article_id: $article_id})
+            MERGE (b:BookArticle {{article_id: $article_id}})
               ON CREATE SET b.title = $title
             SET b.data_sources = CASE
                 WHEN 'extracted' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
                 ELSE coalesce(b.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('b')}
             MERGE (pl)-[r:MENTIONED_IN]->(b)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
@@ -600,11 +658,12 @@ class EnhancedKGImporter:
             SET r.data_sources = CASE
                 WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
                 ELSE coalesce(r.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('r')}
         """, place=place, article_id=article_id, title=row["object"],
              city=pm.get("city",""), country=pm.get("country",""), region=pm.get("region",""),
              source=row["source_book"], confidence=row["confidence"],
-             evidence=row["evidence"])
+             evidence=row["evidence"], book=row["source_book"])
 
     @staticmethod
     def _write_article_place_rel(tx, row: Dict):
@@ -619,13 +678,15 @@ class EnhancedKGImporter:
             SET b.data_sources = CASE
                 WHEN 'extracted' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
                 ELSE coalesce(b.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('b')}
             MERGE (pl:Place {{name: $place}})
             SET pl.place_type  = 'historical',
                 pl.data_sources = CASE
                 WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
                 ELSE coalesce(pl.data_sources, []) + ['extracted']
             END,
+                {_src_books('pl')},
                 pl.city    = CASE WHEN $city    <> '' AND pl.city    IS NULL THEN $city    ELSE pl.city    END,
                 pl.country = CASE WHEN $country <> '' AND pl.country IS NULL THEN $country ELSE pl.country END,
                 pl.region  = CASE WHEN $region  <> '' AND pl.region  IS NULL THEN $region  ELSE pl.region  END
@@ -636,11 +697,12 @@ class EnhancedKGImporter:
             SET r.data_sources = CASE
                 WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
                 ELSE coalesce(r.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('r')}
         """, article_id=article_id, title=row["subject"], place=place,
              city=pm.get("city",""), country=pm.get("country",""), region=pm.get("region",""),
              source=row["source_book"], confidence=row["confidence"],
-             evidence=row["evidence"])
+             evidence=row["evidence"], book=row["source_book"])
 
     @staticmethod
     def _write_person_mentions_person(tx, row: Dict):
@@ -652,12 +714,14 @@ class EnhancedKGImporter:
             SET a.data_sources = CASE
                 WHEN 'extracted' IN coalesce(a.data_sources, []) THEN coalesce(a.data_sources, [])
                 ELSE coalesce(a.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('a')}
             MERGE (b:{tgt_label} {{name: $tgt_name}})
             SET b.data_sources = CASE
                 WHEN 'extracted' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
                 ELSE coalesce(b.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('b')}
             MERGE (a)-[r:MENTIONS]->(b)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
@@ -665,10 +729,11 @@ class EnhancedKGImporter:
             SET r.data_sources = CASE
                 WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
                 ELSE coalesce(r.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('r')}
         """, src_name=row["subject"], tgt_name=row["object"],
              source=row["source_book"], confidence=row["confidence"],
-             evidence=row["evidence"])
+             evidence=row["evidence"], book=row["source_book"])
 
     @staticmethod
     def _write_fragment_mentions(tx, row: Dict):
@@ -685,12 +750,14 @@ class EnhancedKGImporter:
             SET f.data_sources = CASE
                 WHEN 'extracted' IN coalesce(f.data_sources, []) THEN coalesce(f.data_sources, [])
                 ELSE coalesce(f.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('f')}
             MERGE (t:{tgt_label} {{name: $name}})
             SET t.data_sources = CASE
                 WHEN 'extracted' IN coalesce(t.data_sources, []) THEN coalesce(t.data_sources, [])
                 ELSE coalesce(t.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('t')}
             MERGE (f)-[r:{rel}]->(t)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
@@ -698,10 +765,11 @@ class EnhancedKGImporter:
             SET r.data_sources = CASE
                 WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
                 ELSE coalesce(r.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('r')}
         """, shelfmark=row["subject"], name=obj_name,
              source=row["source_book"], confidence=row["confidence"],
-             evidence=row["evidence"])
+             evidence=row["evidence"], book=row["source_book"])
 
     @staticmethod
     def _write_generic(tx, row: Dict):
@@ -719,12 +787,14 @@ class EnhancedKGImporter:
             SET a.data_sources = CASE
                 WHEN 'extracted' IN coalesce(a.data_sources, []) THEN coalesce(a.data_sources, [])
                 ELSE coalesce(a.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('a')}
             MERGE (b:{obj_label}  {{name: $obj}})
             SET b.data_sources = CASE
                 WHEN 'extracted' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
                 ELSE coalesce(b.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('b')}
             MERGE (a)-[r:{rel}]->(b)
               ON CREATE SET r.source     = $source,
                             r.confidence = $confidence,
@@ -732,10 +802,11 @@ class EnhancedKGImporter:
             SET r.data_sources = CASE
                 WHEN 'extracted' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
                 ELSE coalesce(r.data_sources, []) + ['extracted']
-            END
+            END,
+                {_src_books('r')}
         """, subj=subj, obj=obj,
              source=row["source_book"], confidence=row["confidence"],
-             evidence=row["evidence"])
+             evidence=row["evidence"], book=row["source_book"])
 
     @staticmethod
     def _enrich_place_node(tx, loc_meta: Dict):
@@ -752,6 +823,80 @@ class EnhancedKGImporter:
                 pl.country = CASE WHEN $country <> '' AND pl.country IS NULL THEN $country ELSE pl.country END,
                 pl.region  = CASE WHEN $region  <> '' AND pl.region  IS NULL THEN $region  ELSE pl.region  END
         """, name=name, city=city, country=country, region=region)
+
+    @staticmethod
+    def _write_people_locations(
+        tx,
+        people_by_name: Dict[str, Dict],
+        places_by_name: Dict[str, Dict],
+        source_book: str,
+    ) -> None:
+        """MERGE Person/Scholar and Place nodes from people_locations data.
+
+        Called for every enhanced JSON even when there are no KG triplets, so
+        that people and places extracted by the LLM are never silently dropped
+        (e.g. Sherirah Gaon who appears in people_locations but not in triplets).
+
+        people_by_name includes name-variant keys that point to the same person
+        dict, so we deduplicate on the canonical ``person['name']`` field.
+        """
+        # ── People ─────────────────────────────────────────────────────────
+        seen_people: set = set()
+        for person in people_by_name.values():
+            canonical = (person.get("name") or "").strip()
+            if not canonical or canonical in seen_people:
+                continue
+            seen_people.add(canonical)
+
+            role = (person.get("role") or "").lower().strip()
+            label = "Scholar" if _is_scholar_role(role) else "Person"
+
+            description  = (person.get("description") or "").strip()[:1000]
+            gender       = (person.get("gender")      or "").strip()
+            social_roles = person.get("social_roles", [])
+            if not isinstance(social_roles, list):
+                social_roles = []
+            social_roles = [str(s) for s in social_roles if s]
+
+            tx.run(f"""
+                MERGE (p:{label} {{name: $name}})
+                ON CREATE SET
+                    p.role         = CASE WHEN $role        <> '' THEN $role        ELSE null END,
+                    p.description  = CASE WHEN $description <> '' THEN $description ELSE null END,
+                    p.gender       = CASE WHEN $gender      <> '' THEN $gender      ELSE null END,
+                    p.social_roles = CASE WHEN size($social_roles) > 0 THEN $social_roles ELSE null END
+                SET p.data_sources = CASE
+                        WHEN 'extracted' IN coalesce(p.data_sources, []) THEN coalesce(p.data_sources, [])
+                        ELSE coalesce(p.data_sources, []) + ['extracted']
+                    END,
+                    {_src_books('p')}
+            """, name=canonical, role=role, description=description,
+                 gender=gender, social_roles=social_roles, book=source_book)
+
+        # ── Places ─────────────────────────────────────────────────────────
+        seen_places: set = set()
+        for place in places_by_name.values():
+            canonical = (place.get("name") or "").strip()
+            if not canonical or canonical in seen_places:
+                continue
+            seen_places.add(canonical)
+
+            city    = (place.get("city",    "") or "").strip()
+            country = (place.get("country", "") or "").strip()
+            region  = (place.get("region",  "") or "").strip()
+
+            tx.run(f"""
+                MERGE (pl:Place {{name: $name}})
+                SET pl.place_type   = 'historical',
+                    pl.data_sources = CASE
+                        WHEN 'extracted' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
+                        ELSE coalesce(pl.data_sources, []) + ['extracted']
+                    END,
+                    {_src_books('pl')},
+                    pl.city    = CASE WHEN $city    <> '' AND pl.city    IS NULL THEN $city    ELSE pl.city    END,
+                    pl.country = CASE WHEN $country <> '' AND pl.country IS NULL THEN $country ELSE pl.country END,
+                    pl.region  = CASE WHEN $region  <> '' AND pl.region  IS NULL THEN $region  ELSE pl.region  END
+            """, name=canonical, city=city, country=country, region=region, book=source_book)
 
     # ------------------------------------------------------------------
     # Bulk import

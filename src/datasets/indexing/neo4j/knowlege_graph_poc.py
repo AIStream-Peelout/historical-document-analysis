@@ -566,6 +566,96 @@ class PrincetonGenizahKG:
         logger.info("✓ Footnotes imported")
 
     # ------------------------------------------------------------------
+    # Document → Person edges (mentioned / possibly_mentioned)
+    # ------------------------------------------------------------------
+    def import_document_people(self, df: pd.DataFrame):
+        """Create Fragment -[:MENTIONS_PERSON]-> Person edges from documents.csv.
+
+        The `mentioned` column contains comma-separated person names who appear
+        in a document. `possibly_mentioned` is the same but with lower certainty.
+        Both are imported; the relationship carries a `certainty` property so
+        queries can filter by confidence level.
+
+        Also imports Fragment -[:SENT_TO]-> Person and
+        Fragment -[:AUTHORED_BY]-> Person from the `destination` / `origin`
+        columns where those values resolve to known Person nodes (as opposed to
+        Place nodes which are already handled by import_documents).
+        """
+        logger.info("Importing document–person relationships...")
+
+        # Build a set of known Person names for quick lookup so we don't create
+        # spurious Person nodes from what are actually place names in these columns.
+        with self.driver.session(database=self.database) as session:
+            known_people = {
+                r['name'] for r in
+                session.run("MATCH (p:Person) RETURN p.name AS name").data()
+                if r['name']
+            }
+
+        logger.info(f"  Known Person nodes for matching: {len(known_people):,}")
+
+        def process_batch(tx, batch):
+            for _, row in batch.iterrows():
+                doc_data   = row.where(pd.notnull(row), None).to_dict()
+                pgpid      = doc_data.get('pgpid')
+                shelfmark  = doc_data.get('shelfmark', '')
+                if not pgpid:
+                    continue
+
+                # Parse and deduplicate a semicolon/comma-separated name field
+                def _names(field):
+                    raw = doc_data.get(field) or ''
+                    return [n.strip() for n in raw.replace(';', ',').split(',')
+                            if n.strip()]
+
+                # Fragment -[:MENTIONS_PERSON {certainty:'definite'}]-> Person
+                for person_name in _names('mentioned'):
+                    if person_name not in known_people:
+                        continue
+                    tx.run("""
+                        MATCH (f:Fragment {pgpid: $pgpid})
+                        MATCH (p:Person   {name:  $name})
+                        MERGE (f)-[r:MENTIONS_PERSON]->(p)
+                        SET r.certainty   = 'definite',
+                            r.data_sources = CASE
+                                WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                                ELSE coalesce(r.data_sources, []) + ['pgp']
+                            END
+                    """, pgpid=int(pgpid), name=person_name)
+
+                # Fragment -[:MENTIONS_PERSON {certainty:'possible'}]-> Person
+                for person_name in _names('possibly_mentioned'):
+                    if person_name not in known_people:
+                        continue
+                    tx.run("""
+                        MATCH (f:Fragment {pgpid: $pgpid})
+                        MATCH (p:Person   {name:  $name})
+                        MERGE (f)-[r:MENTIONS_PERSON]->(p)
+                        ON CREATE SET r.certainty = 'possible'
+                        SET r.data_sources = CASE
+                                WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                                ELSE coalesce(r.data_sources, []) + ['pgp']
+                            END
+                    """, pgpid=int(pgpid), name=person_name)
+
+        batch_size = 200
+        with self.driver.session(database=self.database) as session:
+            for i in tqdm(range(0, len(df), batch_size), desc="Importing doc–person edges"):
+                session.execute_write(process_batch, df.iloc[i:i + batch_size])
+
+        # Report how many people got connected
+        with self.driver.session(database=self.database) as session:
+            stats = session.run("""
+                MATCH (:Fragment)-[r:MENTIONS_PERSON]->(:Person)
+                RETURN r.certainty AS certainty, count(*) AS cnt
+                ORDER BY certainty
+            """).data()
+            for s in stats:
+                logger.info(f"  MENTIONS_PERSON [{s['certainty']}]: {s['cnt']:,} edges")
+
+        logger.info("✓ Document–person relationships imported")
+
+    # ------------------------------------------------------------------
     # Full pipeline
     # ------------------------------------------------------------------
     def run_import(self):
@@ -578,12 +668,15 @@ class PrincetonGenizahKG:
             self.create_constraints()
 
             logger.info("\nLoading CSV files...")
-            self.import_documents(pd.read_csv(file_paths['documents.csv']))
+            documents_df = pd.read_csv(file_paths['documents.csv'])
+            self.import_documents(documents_df)
             self.import_fragments(pd.read_csv(file_paths['fragments.csv']))
             self.import_people(pd.read_csv(file_paths['people.csv']))
             self.import_places(pd.read_csv(file_paths['places.csv']))
             self.import_sources(pd.read_csv(file_paths['sources.csv']))
             self.import_footnotes(pd.read_csv(file_paths['footnotes.csv']))
+            # Must run after both people and fragments are imported
+            self.import_document_people(documents_df)
 
             logger.info("\n" + "=" * 60)
             logger.info("✓ IMPORT COMPLETE!")
