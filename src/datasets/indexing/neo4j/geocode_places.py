@@ -538,10 +538,6 @@ def _extract_institution_location(name: str) -> list[str]:
         "hebrew union college":                 "Klau Library, Cincinnati Ohio",
         "klau library":                         "Klau Library, Cincinnati Ohio",
         "huc-jir":                              "Klau Library, Cincinnati Ohio",
-        # Columbia University — geocodes to Colombia, South America without this
-        "columbia university": "Columbia University, New York City",
-        "columbia university library": "Columbia University, New York City",
-        "butler library": "Columbia University, New York City",
     }
     for key, city in _KNOWN.items():
         if key in lower:
