@@ -19,6 +19,17 @@ from src.models.llm.genizah_fragment_agent import (
     download_image
 )
 
+# Shared benchmark metrics
+from src.datasets.evaluations.metrics import (
+    cer_levenshtein,
+    cer_pair,
+    wer_levenshtein,
+    wer_pair,
+    char_count_ratio,
+    flag_failure_modes,
+    strip_nikud,
+)
+
 
 # ============================================================================
 # Evaluation Configuration
@@ -50,56 +61,36 @@ class EvalConfig:
 # Metrics Calculation
 # ============================================================================
 
-def calculate_cer(reference: str, hypothesis: str) -> float:
-    """Calculate Character Error Rate"""
-    if not reference:
-        return 1.0 if hypothesis else 0.0
-
-    matcher = SequenceMatcher(None, reference, hypothesis)
-    operations = matcher.get_opcodes()
-    errors = sum(max(j2 - j1, i2 - i1) for op, i1, i2, j1, j2 in operations if op != 'equal')
-
-    return errors / len(reference)
-
-
-def calculate_wer(reference: str, hypothesis: str) -> float:
-    """Calculate Word Error Rate"""
-    ref_words = reference.split()
-    hyp_words = hypothesis.split()
-
-    if not ref_words:
-        return 1.0 if hyp_words else 0.0
-
-    matcher = SequenceMatcher(None, ref_words, hyp_words)
-    operations = matcher.get_opcodes()
-    errors = sum(max(j2 - j1, i2 - i1) for op, i1, i2, j1, j2 in operations if op != 'equal')
-
-    return errors / len(ref_words)
-
-
 def calculate_similarity(reference: str, hypothesis: str) -> float:
-    """Calculate character-level similarity ratio"""
+    """Character-level similarity ratio (kept for W&B diagnostics)."""
     return SequenceMatcher(None, reference, hypothesis).ratio()
 
 
 def evaluate_transcription(ground_truth: str, hypothesis: str, model_name: str) -> dict:
-    """Calculate all evaluation metrics for a transcription."""
-    # Clean whitespace for comparison
+    """Calculate all benchmark metrics for one model output.
+
+    Uses Levenshtein CER/WER (HTR community standard for published numbers).
+    NOT clamped at 1.0 — values > 1 document decoder collapse.
+    """
     gt_clean = ' '.join(ground_truth.split())
     hyp_clean = ' '.join(hypothesis.split())
 
-    metrics = {
+    cer_s, cer_l = cer_pair(hyp_clean, gt_clean)
+    wer_s, wer_l = wer_pair(hyp_clean, gt_clean)
+
+    return {
         'model': model_name,
-        'cer': calculate_cer(gt_clean, hyp_clean),
-        'wer': calculate_wer(gt_clean, hyp_clean),
+        'cer': cer_s,
+        'cer_lenient': cer_l,
+        'wer': wer_s,
+        'wer_lenient': wer_l,
+        'char_count_ratio': char_count_ratio(hypothesis, ground_truth),
         'similarity': calculate_similarity(gt_clean, hyp_clean),
         'exact_match': gt_clean == hyp_clean,
         'char_count': len(hypothesis),
         'gt_char_count': len(ground_truth),
-        'char_diff': abs(len(hypothesis) - len(ground_truth))
+        'char_diff': abs(len(hypothesis) - len(ground_truth)),
     }
-
-    return metrics
 
 
 # ============================================================================
@@ -360,32 +351,38 @@ Last processed: {self.progress['last_processed_doc']}
 def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
     """Log comprehensive metrics and return table rows for batch logging."""
 
-    # Log scalar metrics for time series
     metrics = {
         'doc_id': state['doc_id'],
         'processing_time_total': state['processing_time'],
+        # Benchmark context fields (always False — no metadata given to models)
+        'catalog_metadata_provided': False,
+        'corpus': state.get('_benchmark_corpus', 'genizah'),
+        'track': state.get('_benchmark_track', 'track1'),
+        'script_type': state.get('_benchmark_script_type', 'unknown'),
     }
 
-    # Log individual model metrics as scalars
+    # Per-model scalars (CER, WER, char_count_ratio, lenient variants)
     for model_key in ['vision_ocr', 'gemini_flash', 'gemini_pro']:
         model_metrics = state.get(f'{model_key}_metrics')
         if model_metrics:
             for key, value in model_metrics.items():
                 if isinstance(value, (int, float)):
                     metrics[f'{model_key}/{key}'] = value
+        # Failure mode flags as a comma-separated string
+        flags = state.get(f'_{model_key}_failure_flags', [])
+        if flags:
+            metrics[f'{model_key}/failure_mode_flags'] = ','.join(flags)
 
-    # Log consensus metrics
+    # Consensus metrics
     if state.get('consensus_metrics'):
         for key, value in state['consensus_metrics'].items():
             if isinstance(value, (int, float)):
                 metrics[f'consensus/{key}'] = value
 
-    # Log strategy and metadata
     metrics['consensus/strategy'] = state['consensus_strategy']
     metrics['consensus/num_disagreements'] = len(state['disagreements'])
     metrics['consensus/needs_review'] = state['needs_review']
 
-    # Log timing
     for model, duration in state['model_times'].items():
         metrics[f'timing/{model}'] = duration
 
@@ -429,13 +426,17 @@ def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
                 state['doc_id'],
                 model_name,
                 model_metrics.get('cer'),
+                model_metrics.get('cer_lenient'),
                 model_metrics.get('wer'),
+                model_metrics.get('wer_lenient'),
+                model_metrics.get('char_count_ratio'),
                 model_metrics.get('similarity'),
                 model_metrics.get('char_count'),
                 model_metrics.get('gt_char_count'),
                 model_metrics.get('char_diff'),
                 model_metrics.get('processing_time'),
-                model_metrics.get('exact_match', False)
+                model_metrics.get('exact_match', False),
+                ','.join(state.get(f'_{model_key}_failure_flags', [])),
             ])
 
     # ========================================================================
@@ -519,19 +520,27 @@ async def evaluate_document(doc_id: str, metadata: dict, wandb_run, batch_num: i
     # Run transcription
     final_state = await transcribe_document(doc_id, metadata, image_path, ground_truth)
 
-    # Compute evaluation metrics for each model
+    # Add benchmark context fields
+    final_state['_benchmark_corpus'] = 'genizah'
+    final_state['_benchmark_track'] = 'track1'
+    final_state['_benchmark_script_type'] = metadata.get('script_type', 'unknown')
+
+    # Compute evaluation metrics and failure flags for each model
     for model_key in ['vision_ocr', 'gemini_flash', 'gemini_pro']:
         result = final_state.get(f'{model_key}_result')
         if result:
             metrics = evaluate_transcription(ground_truth, result['text'], result['model'])
             metrics['processing_time'] = result.get('processing_time', 0.0)
             final_state[f'{model_key}_metrics'] = metrics
+            final_state[f'_{model_key}_failure_flags'] = flag_failure_modes(
+                result['text'], ground_truth, catalog_metadata_provided=False
+            )
 
-            # Save raw output
             save_raw_output(doc_id, model_key, result['text'])
 
-            print(f"    {result['model']}: CER={metrics['cer']:.3f}, "
-                  f"Similarity={metrics['similarity']:.3f}")
+            print(f"    {result['model']}: CER={metrics['cer']:.3f} "
+                  f"(lenient={metrics['cer_lenient']:.3f}), "
+                  f"ratio={metrics['char_count_ratio']:.2f}")
 
     # Compute consensus metrics
     if final_state['final_transcription']:
@@ -752,9 +761,13 @@ async def main(
     if all_metrics_rows:
         metrics_table = wandb.Table(
             columns=[
-                "fragment_id", "model", "cer", "wer", "similarity",
+                "fragment_id", "model",
+                "cer", "cer_lenient",
+                "wer", "wer_lenient",
+                "char_count_ratio", "similarity",
                 "char_count", "gt_char_count", "char_diff",
-                "processing_time_sec", "exact_match"
+                "processing_time_sec", "exact_match",
+                "failure_mode_flags",
             ],
             data=all_metrics_rows
         )
