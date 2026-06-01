@@ -21,13 +21,10 @@ from src.models.llm.genizah_fragment_agent import (
 
 # Shared benchmark metrics
 from src.datasets.evaluations.metrics import (
-    cer_levenshtein,
     cer_pair,
-    wer_levenshtein,
     wer_pair,
     char_count_ratio,
     flag_failure_modes,
-    strip_nikud,
 )
 
 
@@ -37,7 +34,7 @@ from src.datasets.evaluations.metrics import (
 
 class EvalConfig:
     """Evaluation-specific configuration"""
-    catalog_path = "/Users/isaac1/Documents/historical-document-analysis/src/datasets/raw_data/merged_princeton_friedberger_all_documents_with_transcriptions.json"
+    catalog_path = "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_sample/merged_princeton_friedberger_first_25_with_transcriptions.json"
     IMAGES_DIR = Path("./genizah_images")
     RESULTS_DIR = Path("./transcription_results")
     RAW_OUTPUTS_DIR = Path("./transcription_raw_outputs")

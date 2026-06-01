@@ -185,12 +185,17 @@ async def call_gemini_with_retry(
         try:
             print(f"    🔄 Attempt {attempt + 1}/{max_retries} (timeout: {timeout}s)...")
 
+            max_tokens = (
+                AgentConfig.GEMINI_PRO_MAX_OUTPUT_TOKENS
+                if "pro" in model_name.lower()
+                else AgentConfig.GEMINI_FLASH_MAX_OUTPUT_TOKENS
+            )
             response = await asyncio.wait_for(
                 model.generate_content_async(
                     [prompt, uploaded_file],
                     generation_config=genai.GenerationConfig(
                         temperature=temperature,
-                        max_output_tokens=8192,
+                        max_output_tokens=max_tokens,
                     ),
                 ),
                 timeout=timeout,
@@ -297,12 +302,17 @@ async def call_gemini_text_only(
     model = genai.GenerativeModel(model_name)
 
     try:
+        max_tokens = (
+            AgentConfig.GEMINI_PRO_MAX_OUTPUT_TOKENS
+            if "pro" in model_name.lower()
+            else AgentConfig.GEMINI_FLASH_MAX_OUTPUT_TOKENS
+        )
         response = await asyncio.wait_for(
             model.generate_content_async(
                 prompt,
                 generation_config=genai.GenerationConfig(
                     temperature=temperature,
-                    max_output_tokens=8192,
+                    max_output_tokens=max_tokens,
                 ),
             ),
             timeout=timeout,
