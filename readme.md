@@ -154,7 +154,7 @@ located [here](multimodal-document-analysis.read-thedocs.com].
 
 We thank the following for providing much of the meta-data, transcriptions,
 ```
-Princeton Geniza Project, version [#]. Center for Digital Humanities at Princeton, [2025]. http://geniza.princeton.edu. Accessed 11/3/2025
+Princeton Geniza Project, version 4.20 Center for Digital Humanities at Princeton, [2025]. http://geniza.princeton.edu. Accessed 11/3/2025
 ```
 [Princeton Cairo Genizah Project on GitHub](https://geniza.princeton.edu/en/)
 
