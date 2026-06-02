@@ -375,11 +375,11 @@ Return ONLY valid JSON in this exact format:
 {{
     "triplets": [
         {{
-            "subject":       "Exact name of person, place, or shelf mark",
-            "subject_type":  "Person|Place|Fragment|BookArticle",
+            "subject":       "Exact name of person, place, institution, or shelf mark",
+            "subject_type":  "Person|Scholar|Place|Institution|Fragment|BookArticle",
             "relation":      "LIVED_IN",
-            "object":        "Exact name of person, place, or shelf mark",
-            "object_type":   "Person|Place|Fragment|BookArticle",
+            "object":        "Exact name of person, place, institution, or shelf mark",
+            "object_type":   "Person|Scholar|Place|Institution|Fragment|BookArticle",
             "evidence":      "The sentence or phrase that supports this triplet",
             "confidence":    "high|medium|low"
         }}
