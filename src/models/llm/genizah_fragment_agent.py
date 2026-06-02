@@ -43,9 +43,20 @@ class AgentConfig:
     USE_GEMINI_PRO = True
     USE_ANALYSIS = True
 
-    # Timeouts - Pro needs more time but should NOT take 15 minutes
-    GEMINI_FLASH_TIMEOUT = 180  # 3 minutes
-    GEMINI_PRO_TIMEOUT = 300    # 5 minutes (should be enough)
+    # Timeouts
+    GEMINI_FLASH_TIMEOUT = 180   # 3 minutes
+    GEMINI_PRO_TIMEOUT   = 300   # 5 minutes
+
+    # Output token budget.
+    # gemini-3.1-pro-preview is a thinking model — thinking tokens count against
+    # this limit.  With 8 192 the model exhausts the budget mid-transcription on
+    # large Gemara sections (finish_reason=2).  32 768 gives the thinking pass
+    # ~10-15k tokens and still leaves room for a full section output.
+    # NOTE: the deprecated google.generativeai SDK may not honour this correctly
+    # on newer models — proper fix is migrating to google.genai.
+    GEMINI_FLASH_MAX_OUTPUT_TOKENS = 16_384
+    GEMINI_PRO_MAX_OUTPUT_TOKENS   = 32_768
+
     MAX_RETRIES = 3
     RETRY_DELAY = 10  # seconds
 
@@ -143,121 +154,221 @@ async def call_gemini_with_retry(
     max_retries: int = None,
     timeout: int = None
 ) -> Optional[str]:
-    """Call Gemini API with robust retry logic and PROPER async timeout handling.
-
-    KEY FIX: Uses async API methods (generate_content_async) so timeout actually works!
-    """
+    """Call Gemini API with robust retry and proper async timeout handling."""
     if max_retries is None:
         max_retries = AgentConfig.MAX_RETRIES
 
     if timeout is None:
-        # Default timeout based on model
-        if "pro" in model_name.lower():
-            timeout = AgentConfig.GEMINI_PRO_TIMEOUT
-        else:
-            timeout = AgentConfig.GEMINI_FLASH_TIMEOUT
+        timeout = (
+            AgentConfig.GEMINI_PRO_TIMEOUT
+            if "pro" in model_name.lower()
+            else AgentConfig.GEMINI_FLASH_TIMEOUT
+        )
 
     genai.configure(api_key=AgentConfig.GEMINI_API_KEY)
     model = genai.GenerativeModel(model_name)
 
-    # Prepare image
+    # Resize image once before the retry loop
     prepared_image = prepare_image_for_gemini(image_path)
+
+    # Upload image ONCE before the retry loop.
+    # genai.upload_file is synchronous — run it in a thread so it doesn't
+    # block the event loop during parallel model execution.
+    print(f"    📤 Uploading image to Gemini Files API...")
+    try:
+        uploaded_file = await asyncio.to_thread(genai.upload_file, prepared_image)
+    except Exception as e:
+        print(f"    ❌ Upload failed: {type(e).__name__}: {str(e)[:200]}")
+        return None
 
     for attempt in range(max_retries):
         try:
-            print(f"    🔄 Attempt {attempt + 1}/{max_retries}")
+            print(f"    🔄 Attempt {attempt + 1}/{max_retries} (timeout: {timeout}s)...")
 
-            # Upload file - this is synchronous but fast, so it's ok
-            print(f"    📤 Uploading image...")
-            uploaded_file = genai.upload_file(prepared_image)
-
-            # Small delay after upload
-            await asyncio.sleep(2)
-
-            # Generate with PROPER async timeout
-            print(f"    🧠 Generating transcription (timeout: {timeout}s)...")
-
-            # THE KEY FIX: Use the ASYNC version of generate_content!
-            # This allows asyncio.wait_for to actually interrupt it
+            max_tokens = (
+                AgentConfig.GEMINI_PRO_MAX_OUTPUT_TOKENS
+                if "pro" in model_name.lower()
+                else AgentConfig.GEMINI_FLASH_MAX_OUTPUT_TOKENS
+            )
             response = await asyncio.wait_for(
                 model.generate_content_async(
                     [prompt, uploaded_file],
                     generation_config=genai.GenerationConfig(
                         temperature=temperature,
-                        max_output_tokens=8192,  # Ensure we don't get truncated
+                        max_output_tokens=max_tokens,
                     ),
                 ),
-                timeout=timeout
+                timeout=timeout,
             )
 
-            # Validate response
             if not response.candidates:
-                raise ValueError("No candidates returned")
+                raise ValueError("No candidates in response")
 
             candidate = response.candidates[0]
+            finish_reason = getattr(candidate, "finish_reason", None)
+            print(f"    📋 finish_reason={finish_reason}")
 
-            # Check for safety blocks
-            if candidate.finish_reason == 3:  # SAFETY
-                safety_info = "\n".join([
-                    f"        {rating.category}: {rating.probability}"
-                    for rating in candidate.safety_ratings
-                ]) if hasattr(candidate, 'safety_ratings') else "No safety info"
-                raise ValueError(f"Blocked by safety filters:\n{safety_info}")
+            # SAFETY block (finish_reason=3) — model won't change its mind on retry
+            if finish_reason == 3:
+                safety_info = (
+                    ", ".join(
+                        f"{r.category}:{r.probability}"
+                        for r in candidate.safety_ratings
+                    )
+                    if hasattr(candidate, "safety_ratings")
+                    else "no details"
+                )
+                print(f"    ⛔ SAFETY block ({safety_info}) — not retrying")
+                return None
 
-            # Check for content
+            # RECITATION block (finish_reason=4) — model recognised canonical text.
+            # Try to salvage partial content before giving up; don't retry.
+            if finish_reason == 4:
+                partial = ""
+                if candidate.content and candidate.content.parts:
+                    partial = "".join(
+                        p.text for p in candidate.content.parts
+                        if hasattr(p, "text") and p.text
+                    ).strip()
+                if partial:
+                    print(f"    ⚠️  RECITATION block — salvaged {len(partial)} chars")
+                    return partial
+                print(f"    ⛔ RECITATION block with no extractable content — not retrying")
+                return None
+
+            # Empty content for any other finish_reason — retry may help
             if not candidate.content or not candidate.content.parts:
-                raise ValueError(f"No content (finish_reason={candidate.finish_reason})")
+                raise ValueError(f"Empty content (finish_reason={finish_reason})")
 
-            first_part = candidate.content.parts[0]
-            if not hasattr(first_part, 'text') or not first_part.text:
-                raise ValueError("Content part has no text")
+            text = "".join(
+                p.text for p in candidate.content.parts
+                if hasattr(p, "text") and p.text
+            ).strip()
 
-            text = first_part.text.strip()
-            print(f"    ✅ Success! Extracted {len(text)} chars")
+            if not text:
+                raise ValueError(f"Empty text in content parts (finish_reason={finish_reason})")
+
+            print(f"    ✅ Success — {len(text)} chars")
             return text
 
         except asyncio.TimeoutError:
-            print(f"    ⏱️  Timeout after {timeout}s on attempt {attempt + 1}")
+            print(f"    ⏱️  Timeout after {timeout}s (attempt {attempt + 1})")
             if attempt < max_retries - 1:
                 wait_time = AgentConfig.RETRY_DELAY * (attempt + 1)
                 print(f"    ⏳ Waiting {wait_time}s before retry...")
                 await asyncio.sleep(wait_time)
             else:
-                print(f"    ❌ Failed after {max_retries} timeout attempts")
+                print(f"    ❌ All {max_retries} attempts timed out")
                 return None
 
         except Exception as e:
             error_str = str(e)
-            print(f"    ❌ Error: {type(e).__name__}: {error_str[:200]}")
+            print(f"    ❌ {type(e).__name__}: {error_str[:200]}")
 
-            # Check for rate limit
-            if "429" in error_str or "quota" in error_str.lower() or "rate limit" in error_str.lower():
+            if "429" in error_str or "rate limit" in error_str.lower():
                 if attempt < max_retries - 1:
-                    wait_time = 60  # Wait 1 minute for rate limits
-                    print(f"    ⏳ Rate limited, waiting {wait_time}s...")
-                    await asyncio.sleep(wait_time)
+                    print(f"    ⏳ Rate limited — waiting 60s...")
+                    await asyncio.sleep(60)
                     continue
 
-            # Check for quota exhausted
             if "quota" in error_str.lower() or "exhausted" in error_str.lower():
-                print(f"    ⛔ Quota exhausted - cannot retry")
+                print(f"    ⛔ Quota exhausted — not retrying")
                 return None
 
-            # Other errors - retry with delay
             if attempt < max_retries - 1:
                 wait_time = AgentConfig.RETRY_DELAY * (attempt + 1)
                 print(f"    ⏳ Waiting {wait_time}s before retry...")
                 await asyncio.sleep(wait_time)
             else:
-                print(f"    ❌ Failed after {max_retries} attempts")
+                print(f"    ❌ All {max_retries} attempts failed")
                 return None
 
     return None
 
 
+async def call_gemini_text_only(
+    model_name: str,
+    prompt: str,
+    temperature: float = 0.1,
+    timeout: int = 60,
+) -> Optional[str]:
+    """Call Gemini with a text-only prompt — no image upload.
+
+    Used for the OCR segmentation step where the input is already extracted
+    text, not an image.  Keeps the same finish_reason handling as the image
+    variant so RECITATION/SAFETY blocks are surfaced consistently.
+    """
+    genai.configure(api_key=AgentConfig.GEMINI_API_KEY)
+    model = genai.GenerativeModel(model_name)
+
+    try:
+        max_tokens = (
+            AgentConfig.GEMINI_PRO_MAX_OUTPUT_TOKENS
+            if "pro" in model_name.lower()
+            else AgentConfig.GEMINI_FLASH_MAX_OUTPUT_TOKENS
+        )
+        response = await asyncio.wait_for(
+            model.generate_content_async(
+                prompt,
+                generation_config=genai.GenerationConfig(
+                    temperature=temperature,
+                    max_output_tokens=max_tokens,
+                ),
+            ),
+            timeout=timeout,
+        )
+    except asyncio.TimeoutError:
+        print(f"    ⏱️  Text-only timeout after {timeout}s ({model_name})")
+        return None
+    except Exception as e:
+        print(f"    ❌ Text-only call failed: {type(e).__name__}: {str(e)[:200]}")
+        return None
+
+    if not response.candidates:
+        return None
+
+    candidate = response.candidates[0]
+    finish_reason = getattr(candidate, "finish_reason", None)
+
+    if finish_reason == 3:   # SAFETY
+        print(f"    ⛔ Text-only SAFETY block ({model_name})")
+        return None
+    if finish_reason == 4:   # RECITATION — try partial salvage
+        if candidate.content and candidate.content.parts:
+            partial = "".join(
+                p.text for p in candidate.content.parts
+                if hasattr(p, "text") and p.text
+            ).strip()
+            if partial:
+                return partial
+        return None
+
+    if not candidate.content or not candidate.content.parts:
+        return None
+
+    return "".join(
+        p.text for p in candidate.content.parts
+        if hasattr(p, "text") and p.text
+    ).strip() or None
+
+
 # ============================================================================
 # Helper Functions
 # ============================================================================
+
+def _series_from_doc_id(doc_id: str) -> str:
+    """Extract the collection series from a Genizah document ID.
+
+    Examples: 'T-S NS J295' → 'T-S NS', 'ENA 2727.3' → 'ENA', 'T-S 12.721' → 'T-S'
+    """
+    s = doc_id.strip()
+    if re.match(r"T-S\s+NS", s, re.IGNORECASE):
+        return "T-S NS"
+    if re.match(r"T-S", s, re.IGNORECASE):
+        return "T-S"
+    parts = s.split()
+    return parts[0] if parts else "Unknown"
+
 
 async def download_image(
     url_or_filename: str,
@@ -302,33 +413,27 @@ async def vision_ocr_node(state: TranscriptionState) -> TranscriptionState:
     print(f"  🔍 Vision OCR...")
     start_time = time.time()
 
-    try:
+    def _run_vision_ocr(image_path: str):
         client = vision.ImageAnnotatorClient()
+        with open(image_path, 'rb') as f:
+            img = vision.Image(content=f.read())
+        return client.text_detection(image=img)
 
-        with open(state['image_path'], 'rb') as f:
-            image = vision.Image(content=f.read())
+    try:
+        # Run synchronous Vision API call in a thread to avoid blocking the event loop
+        response = await asyncio.to_thread(_run_vision_ocr, state['image_path'])
 
-        response = client.text_detection(image=image)
-
-        if response.text_annotations:
-            text = response.text_annotations[0].description
-            confidence = 0.85
-        else:
-            text = ""
-            confidence = 0.0
-
+        text = response.text_annotations[0].description if response.text_annotations else ""
         elapsed = time.time() - start_time
 
         state['vision_ocr_result'] = {
             'text': text,
-            'confidence': confidence,
+            'confidence': 0.85 if text else 0.0,
             'model': 'google_vision_ocr',
             'char_count': len(text),
             'processing_time': elapsed
         }
-
         state['model_times']['vision_ocr'] = elapsed
-
         print(f"    ✓ Extracted {len(text)} chars in {elapsed:.1f}s")
 
     except Exception as e:
@@ -353,20 +458,15 @@ async def gemini_flash_node(state: TranscriptionState) -> TranscriptionState:
     start_time = time.time()
 
     try:
-        catalog_hint = state['catalog_metadata'].get('description', '')
+        series = _series_from_doc_id(state['doc_id'])
+        prompt = f"""This is a manuscript from the Cairo Genizah ({series} collection).
+The text may be in Hebrew, Aramaic, or Judaeo-Arabic (Arabic written in Hebrew script).
 
-        prompt = f"""Transcribe this Hebrew manuscript image.
+Transcribe the text in this image exactly as written. Do not normalize or correct the text.
+Preserve all vocalization marks (nikud) and line structure.
+Mark damaged or unclear characters with [?].
 
-Catalog context: {catalog_hint}
-
-CRITICAL INSTRUCTIONS:
-1. Transcribe EXACTLY what you see - character by character
-2. Do NOT "correct" text to match expected biblical versions
-3. Textual variants are valuable - preserve them exactly
-4. Include all vocalization marks if present
-5. Preserve spacing and line structure
-
-Return ONLY the Hebrew transcription with no commentary."""
+Return ONLY the transcription with no commentary."""
 
         text = await call_gemini_with_retry(
             AgentConfig.GEMINI_FLASH_MODEL,
@@ -469,27 +569,15 @@ async def gemini_pro_node(state: TranscriptionState) -> TranscriptionState:
     start_time = time.time()
 
     try:
-        catalog_hint = state['catalog_metadata'].get('description', '')
+        series = _series_from_doc_id(state['doc_id'])
+        prompt = f"""This is a manuscript from the Cairo Genizah ({series} collection).
+The text may be in Hebrew, Aramaic, or Judaeo-Arabic (Arabic written in Hebrew characters).
 
-        prompt = f"""The following is an image of a document from the Cairo Genizah. The text may be in Hebrew, Arabic, Aramaic, Judeo-Arabic or some combination thereof.
-
-Catalog context: {catalog_hint}
-
-CRITICAL INSTRUCTIONS:
-1. Transcribe EXACTLY what you see - character by character
-2. Pay careful attention to:
-   - Vocalization marks (nikud)
-   - Text direction and layout
-   - Damaged or faded sections (mark with [?] if unclear)
-   - Marginal notes and annotations
-3. Do NOT normalize or "correct" the text to match known versions
-4. Textual variants and scribal errors are valuable - preserve them exactly
-5. Preserve line breaks and spatial layout where significant
-
-Think step-by-step:
-1. First, identify the script(s) and language(s) present
-2. Then, transcribe methodically from right to left, top to bottom
-3. For ambiguous characters, note alternatives in brackets
+Step 1 — Identify the script type (square Hebrew, cursive Hebrew, Rashi script, etc.)
+Step 2 — Transcribe methodically, right to left, top to bottom.
+Step 3 — Preserve all details: vocalization marks (nikud), line breaks, marginal notes.
+         Mark damaged or unclear characters with [?].
+         Do NOT normalize or correct the text — every variant and scribal error is scholarly data.
 
 Return ONLY the transcription."""
 

@@ -7,8 +7,8 @@ Reads biblio.json (keyed by canonical shelfmark) and creates:
   - Fragment nodes (merged by canonical_shelfmark)
   - BookArticle nodes (merged by deterministic article_id)
   - Scholar nodes (merged by author name)
-  - Scholar  -[:WROTE]->       BookArticle
-  - BookArticle -[:REFERENCES {pages, mention_type, has_transcription,
+  - Scholar ->[:WROTE]-> BookArticle
+  - BookArticle ->[:REFERENCES {pages, mention_type, has_transcription,
                                has_translation, has_discussion}]-> Fragment
 
 Shelfmarks in biblio.json are already in canonical underscore form
@@ -32,7 +32,7 @@ import json
 import hashlib
 import logging
 from pathlib import Path
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple
 
 from neo4j import GraphDatabase
 from dotenv import load_dotenv
@@ -59,6 +59,15 @@ def _make_article_id(title: str, author: str, year: str) -> str:
     """Deterministic 16-char hex ID for a BookArticle node."""
     key = f"{title}|{author}|{year}".lower().strip()
     return hashlib.sha1(key.encode()).hexdigest()[:16]
+
+
+def _split_authors(raw: str) -> List[str]:
+    """Split a semicolon-delimited author string into individual names.
+
+    e.g. "French, Mary ;Goldie, Rebecca ;Nichols, Emma"
+         → ["French, Mary", "Goldie, Rebecca", "Nichols, Emma"]
+    """
+    return [part.strip() for part in raw.split(';') if part.strip()]
 
 
 def _canonical_to_display(canonical: str) -> str:
@@ -221,6 +230,10 @@ class GenizahBiblioImporter:
             tx.run("""
                 MERGE (f:Fragment {canonical_shelfmark: $canonical_shelfmark})
                 ON CREATE SET f.shelfmark = $display_shelfmark
+                SET f.data_sources = CASE
+                    WHEN 'biblio' IN coalesce(f.data_sources, []) THEN coalesce(f.data_sources, [])
+                    ELSE coalesce(f.data_sources, []) + ['biblio']
+                END
             """, {
                 'canonical_shelfmark': row['canonical_shelfmark'],
                 'display_shelfmark':   row['display_shelfmark'],
@@ -232,8 +245,16 @@ class GenizahBiblioImporter:
                     MERGE (f:Fragment {canonical_shelfmark: $canonical_shelfmark})
                     MERGE (i:Institution {name: $institution})
                     ON CREATE SET i.collection = $collection
+                    SET i.data_sources = CASE
+                        WHEN 'biblio' IN coalesce(i.data_sources, []) THEN coalesce(i.data_sources, [])
+                        ELSE coalesce(i.data_sources, []) + ['biblio']
+                    END
                     MERGE (f)-[r:HELD_AT]->(i)
-                    SET r.sub_collection = $subcollection
+                    SET r.sub_collection = $subcollection,
+                        r.data_sources   = CASE
+                            WHEN 'biblio' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + ['biblio']
+                        END
                 """, {
                     'canonical_shelfmark': row['canonical_shelfmark'],
                     'institution':         row['institution'],
@@ -250,7 +271,11 @@ class GenizahBiblioImporter:
                                   b.language = $language
                     SET b.title    = $title,
                         b.year     = $year,
-                        b.language = $language
+                        b.language = $language,
+                        b.data_sources = CASE
+                            WHEN 'biblio' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
+                            ELSE coalesce(b.data_sources, []) + ['biblio']
+                        END
                 """, {
                     'article_id': article_id,
                     'title':      title,
@@ -258,16 +283,25 @@ class GenizahBiblioImporter:
                     'language':   language or None,
                 })
 
-            # 4. Ensure Scholar node and WROTE relationship
+            # 4. Ensure Scholar nodes (one per author) and WROTE relationships
             if author and title:
-                tx.run("""
-                    MERGE (s:Scholar {name: $author})
-                    MERGE (b:BookArticle {article_id: $article_id})
-                    MERGE (s)-[:WROTE]->(b)
-                """, {
-                    'author':     author,
-                    'article_id': article_id,
-                })
+                for individual_author in _split_authors(author):
+                    tx.run("""
+                        MERGE (s:Scholar {name: $author})
+                        SET s.data_sources = CASE
+                            WHEN 'biblio' IN coalesce(s.data_sources, []) THEN coalesce(s.data_sources, [])
+                            ELSE coalesce(s.data_sources, []) + ['biblio']
+                        END
+                        MERGE (b:BookArticle {article_id: $article_id})
+                        MERGE (s)-[r:WROTE]->(b)
+                        SET r.data_sources = CASE
+                            WHEN 'biblio' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + ['biblio']
+                        END
+                    """, {
+                        'author':     individual_author,
+                        'article_id': article_id,
+                    })
 
             # 5. BookArticle -[:REFERENCES]-> Fragment
             if title:
@@ -280,7 +314,11 @@ class GenizahBiblioImporter:
                         r.has_transcription    = $has_transcription,
                         r.has_translation      = $has_translation,
                         r.transcription_extent = $transcription_extent,
-                        r.translation_extent   = $translation_extent
+                        r.translation_extent   = $translation_extent,
+                        r.data_sources         = CASE
+                            WHEN 'biblio' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + ['biblio']
+                        END
                 """, {
                     'article_id':            article_id,
                     'canonical_shelfmark':   row['canonical_shelfmark'],

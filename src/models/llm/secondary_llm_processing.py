@@ -269,7 +269,7 @@ Analyze the provided pages and return the enhanced structured data:"""
         Returns:
             Formatted prompt string for people/location extraction
         """
-        prompt = f"""You are an expert in Judaic studies and Middle Eastern history. Extract all people and locations mentioned in this text from Cairo Genizah bibliography documents.
+        prompt = f"""You are an expert in Judaic studies and Middle Eastern history. Extract all people and GEOGRAPHIC locations mentioned in this text from Cairo Genizah bibliography documents.
 
 Text to analyze:
 {text_content[:3000]}...
@@ -279,18 +279,21 @@ Extract and return in this exact JSON format:
 {{
     "people": [
         {{
-            "name": "Full name as it appears",
+            "name": "Full name — MUST include first and last name where possible (e.g. 'Shelomo Dov Goitein', not just 'Goitein')",
             "name_variants": ["Alternative spellings", "Transliterations"],
-            "role": "author|scribe|subject|scholar|other",
+            "role": "author|scribe|subject|scholar|editor|translator|other",
             "context": "Brief description of how they're mentioned",
             "confidence": "high|medium|low"
         }}
     ],
     "locations": [
         {{
-            "name": "Location name as it appears",
-            "name_variants": ["Alternative names", "Transliterations"],
-            "type": "city|region|country|institution|synagogue|other",
+            "name": "Canonical English place name (e.g. 'Fustat', 'Aden', 'Palermo')",
+            "name_variants": ["Arabic/Hebrew name", "Alternative spellings", "Historical names"],
+            "type": "city|town|village|port|region|country",
+            "city": "City this place belongs to, if it is a neighborhood/district/site (e.g. 'Old Cairo' for Fustat)",
+            "country": "Modern country name (e.g. 'Egypt', 'Tunisia', 'Iraq', 'Italy')",
+            "region": "Broad geographic region: 'North Africa'|'Middle East'|'Mediterranean'|'Europe'|'South Asia'|'East Africa'",
             "context": "Brief description of how it's mentioned",
             "confidence": "high|medium|low"
         }}
@@ -298,13 +301,24 @@ Extract and return in this exact JSON format:
 }}
 ```
 
-Guidelines:
-1. Include Hebrew, Arabic, and English names
-2. Capture all variants and transliterations
-3. Be specific about roles and types
-4. Include institutional names (libraries, universities, etc.)
-5. Only include entities you're confident about
-6. Return ONLY valid JSON
+LOCATION RULES — follow these strictly:
+1. Only include REAL GEOGRAPHIC PLACES that can be found on a map (cities, towns, ports, regions, countries).
+2. DO NOT include archives, libraries, collections, or institutions as locations — these are NOT places:
+   - WRONG: "Cairo Genizah", "Cambridge University Library", "Jewish Theological Seminary", "Bodleian Library"
+   - RIGHT: "Cairo", "Cambridge", "New York", "Oxford"
+3. DO NOT include vague compound constructs that span multiple countries: WRONG: "Egypt-Palestine", "Syria-Palestine"
+   Use the most specific single place mentioned instead.
+4. DO NOT include abstract concepts, historical periods, or document collections as places.
+5. Use the most specific place name available — prefer city over region over country.
+6. Always fill in `country` and `region` if you can determine them.
+7. Include Arabic, Hebrew, and English name variants in name_variants.
+8. Only include entities you're confident are real geographic places.
+
+PEOPLE RULES:
+1. Always extract full names — include given name + family name (e.g. "Menahem Ben-Sasson" not "Ben-Sasson").
+2. If only a surname is used in the text, note that in context but still extract it.
+
+Return ONLY valid JSON.
 
 Extract the people and locations:"""
 
@@ -347,8 +361,9 @@ Text to analyze (excerpt):
 {text_content[:4000]}
 
 Extract knowledge-graph triplets connecting these entities. Use ONLY these relation types:
-  - LIVED_IN        : person permanently resided in a place
-  - TRAVELED_TO     : person traveled to or visited a place
+  - LIVED_IN        : historical person permanently resided in a geographic place
+  - AFFILIATED_WITH : modern scholar holds a position at a university, library, or institution
+  - TRAVELED_TO     : person traveled to or visited a place or institution
   - WROTE           : person wrote a manuscript (use shelf mark) or book/article (use title)
   - MENTIONED_IN    : person or place is mentioned in a manuscript (use shelf mark)
   - ORIGINATED_FROM : document or person originated from a place
@@ -378,6 +393,9 @@ Rules:
 3. For shelf marks use the format as written (e.g. "T-S 13J7.4", "ENA 2713.17").
 4. Omit triplets with confidence "low" unless the evidence is a direct quote.
 5. Return ONLY valid JSON, no commentary.
+6. Place objects must be real mappable geographic places — NEVER use "Cairo Genizah", library names, or archive names as Place values.
+7. BookArticle objects must be full publication titles — NEVER use a single word, author name, or shelf mark as a title.
+8. Use full author names as Scholar/Person subjects, not just surnames.
 
 Extract the triplets:"""
 
@@ -672,7 +690,8 @@ Extract the triplets:"""
         # Relation → Cypher pattern  (subject_label)-[rel]->(object_label)
         REL_MAP = {
             'LIVED_IN':        ('Person',      'Place'),
-            'TRAVELED_TO':     ('Person',      'Place'),
+            'AFFILIATED_WITH': ('Person',      'Institution'),
+            'TRAVELED_TO':     ('Person',      None),      # Place or Institution
             'WROTE':           ('Person',      None),      # object type varies
             'MENTIONED_IN':    (None,          'Fragment'),
             'ORIGINATED_FROM': (None,          'Place'),

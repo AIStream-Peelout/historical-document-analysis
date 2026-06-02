@@ -46,15 +46,27 @@ from src.datasets.evaluations.fragment_evals import (
 )
 
 # Agent imports (same path as fragment eval)
-from src.models.llm.genizah_fragment_agent import AgentConfig, call_gemini_with_retry
+from src.models.llm.genizah_fragment_agent import (
+    AgentConfig,
+    call_gemini_with_retry,
+    call_gemini_text_only,
+)
 
 # Talmud GT parser
 from src.datasets.document_models.talmud_gt_parser import (
     load_gt_directory,
-    strip_nikud,
-    normalize_whitespace,
     get_section_summary,
     SECTION_KEYS,           # ('gemara', 'rashi', 'tosafot')
+)
+
+# Shared benchmark metrics (single source of truth for CER/WER)
+from src.datasets.evaluations.metrics import (
+    strip_nikud,
+    normalize_whitespace,
+    cer_levenshtein,
+    cer_pair,
+    char_count_ratio,
+    flag_failure_modes,
 )
 
 # Domain-specific HTR
@@ -111,81 +123,74 @@ def _lm_key(model_id: str) -> str:
 
 
 # ============================================================================
-# Dynamic W&B table column construction
+# W&B table column construction
 #
-# Columns depend on which LM Studio models are configured, so we build the
-# lists lazily after _lm_studio_models is set.  Both _section_columns() and
-# _full_page_columns() are pure functions — call them whenever you need a
-# fresh column list (e.g. when constructing a wandb.Table).
+# Three tables only: gemara / rashi / tosafot  (no full_page table).
+# Every table includes the full-page image so you can see what page a row
+# refers to.  Column order per table:
+#
+#   image | doc_id | ground_truth
+#   ── VLMs (text + CER per model) ──────────────────────────────────────────
+#   gemini_pro | pro_cer_strict | pro_cer_lenient
+#   gemini_flash | flash_cer_strict | flash_cer_lenient
+#   {lm_key} | {lm_key}_cer_strict | {lm_key}_cer_lenient   (per LM Studio model)
+#   ── OCR raw (flat full-page text — shown for inspection, no per-section CER) ──
+#   vision_ocr_raw | kraken_raw
+#   ── OCR segmented (text-LLM extracted section + CER) ─────────────────────
+#   vision_ocr_segmented | vision_ocr_seg_cer_strict | vision_ocr_seg_cer_lenient
+#   kraken_segmented     | kraken_seg_cer_strict     | kraken_seg_cer_lenient
+#   ── metadata ──────────────────────────────────────────────────────────────
+#   corpus | track | script_type | catalog_metadata_provided | gt_chars
 # ============================================================================
 
 def _section_columns() -> List[str]:
-    """Per-section table columns (gemara / rashi / tosafot tables)."""
-    cols = [
-        "doc_id",
-        "ground_truth",
-        "vision_ocr",
-        "gemini_flash",
-        "gemini_pro",
-        "vision_ocr_cer_strict",
-        "vision_ocr_cer_lenient",
-        "flash_cer_strict",
-        "flash_cer_lenient",
-        "pro_cer_strict",
-        "pro_cer_lenient",
-        "gt_chars",
-        "vision_ocr_chars",
-        "flash_chars",
-        "pro_chars",
-    ]
-    for model_id in _lm_studio_models:
-        k = _lm_key(model_id)
-        cols += [k, f"{k}_cer_strict", f"{k}_cer_lenient", f"{k}_chars"]
-    return cols
+    """Column list for each of the three section tables.
 
+    Layout: identity | ground_truth | all text outputs | all metrics | metadata
+    Text outputs are kept together so you can scan across and compare visually.
+    Metrics follow so they don't interrupt the reading flow.
+    """
+    lm_keys = [_lm_key(mid) for mid in _lm_studio_models]
 
-def _full_page_columns() -> List[str]:
-    """Full-page table columns — image first so it renders leftmost in W&B."""
-    cols = [
-        "image",           # wandb.Image — rendered inline in the W&B table
-        "doc_id",
-        "ground_truth",
-        "vision_ocr",
-        "gemini_flash",
-        "gemini_pro",
-        "kraken",
-        "vision_ocr_cer_strict",
-        "vision_ocr_cer_lenient",
-        "flash_cer_strict",
-        "flash_cer_lenient",
-        "pro_cer_strict",
-        "pro_cer_lenient",
-        "kraken_cer_strict",
-        "kraken_cer_lenient",
-        "gt_chars",
-        "vision_ocr_chars",
-        "flash_chars",
-        "pro_chars",
-        "kraken_chars",
+    # ── Identity ──────────────────────────────────────────────────────────────
+    cols = ["image", "doc_id", "ground_truth"]
+
+    # ── Text outputs (all models together) ───────────────────────────────────
+    cols += ["gemini_pro", "gemini_flash"]
+    cols += lm_keys                        # open-weight VLMs
+    cols += [
+        "vision_ocr_raw",                  # flat full-page OCR (no section split)
+        "kraken_raw",                      # flat full-page HTR
+        "vision_ocr_segmented",            # after text-LLM segmentation
+        "kraken_segmented",
     ]
-    for model_id in _lm_studio_models:
-        k = _lm_key(model_id)
-        cols += [k, f"{k}_cer_strict", f"{k}_cer_lenient", f"{k}_chars"]
+
+    # ── Metrics (all models together, same order as text above) ──────────────
+    cols += ["pro_cer_strict", "pro_cer_lenient"]
+    cols += ["flash_cer_strict", "flash_cer_lenient"]
+    for k in lm_keys:
+        cols += [f"{k}_cer_strict", f"{k}_cer_lenient"]
+    cols += [
+        # raw OCR has no meaningful per-section CER (flat text vs section GT)
+        # so we skip raw metrics and go straight to segmented
+        "vision_ocr_seg_cer_strict", "vision_ocr_seg_cer_lenient",
+        "kraken_seg_cer_strict",     "kraken_seg_cer_lenient",
+    ]
+
+    # ── Metadata ──────────────────────────────────────────────────────────────
+    cols += ["corpus", "track", "script_type", "catalog_metadata_provided", "gt_chars"]
+
     return cols
 
 
 # ============================================================================
-# Accumulated W&B table rows
+# Accumulated W&B table rows  (three section tables only)
 # ============================================================================
 
-# Keyed by section name; "full_page" for the fourth table.
-# Each inner list holds rows whose column order matches _section_columns() /
-# _full_page_columns() at the time the rows were built.
 _table_rows: Dict[str, List[List]] = {
-    "gemara": [],
-    "rashi": [],
+    "gemara":  [],
+    "rashi":   [],
     "tosafot": [],
-    "full_page": [],
 }
 
 
@@ -200,230 +205,212 @@ def _append_section_table_rows(
         doc_id: str,
         image_path: str,
         gt_sections: Dict[str, str],
-        vision_ocr_text: Optional[str],
-        vision_ocr_section_metrics: Optional[Dict],
-        flash_sections: Optional[Dict[str, str]],
+        # VLM outputs — plain text per section, one call per section
         pro_sections: Optional[Dict[str, str]],
-        flash_section_metrics: Optional[Dict],
+        flash_sections: Optional[Dict[str, str]],
         pro_section_metrics: Optional[Dict],
-        kraken_text: Optional[str],
-        kraken_metrics: Optional[Dict],
-        full_gt: str,
-        vision_ocr_full: str,
-        flash_full: str,
-        pro_full: str,
+        flash_section_metrics: Optional[Dict],
+        # LM Studio VLMs
         lm_studio_sections: Optional[Dict[str, Dict[str, str]]] = None,
         lm_studio_section_metrics: Optional[Dict[str, Dict]] = None,
-        lm_studio_full_texts: Optional[Dict[str, str]] = None,
+        # Traditional OCR — flat (raw) text from full page
+        vision_ocr_raw: str = "",
+        kraken_raw: str = "",
+        # Traditional OCR — after text-LLM segmentation
+        vision_sections: Optional[Dict[str, str]] = None,
+        vision_section_metrics: Optional[Dict] = None,
+        kraken_sections: Optional[Dict[str, str]] = None,
+        kraken_section_metrics: Optional[Dict] = None,
+        script_type: str = "talmud_vilna",
 ) -> None:
-    """Build one row per section table and one full-page row, then append.
+    """Append one row to each of the three section tables.
 
-    vision_ocr_text:            flat string from Cloud Vision (no section structure)
-    vision_ocr_section_metrics: overall + per-section CER computed against full GT
-    lm_studio_sections:         {model_id: {section_key: text}}
-    lm_studio_section_metrics:  {model_id: {section_key: {cer_strict, cer_lenient}}}
-    lm_studio_full_texts:       {model_id: full_concatenated_text}
+    Column order: image | doc_id | ground_truth
+                  ── all text outputs ──
+                  gemini_pro | gemini_flash | {lm_keys} |
+                  vision_ocr_raw | kraken_raw |
+                  vision_ocr_segmented | kraken_segmented
+                  ── all metrics ──
+                  pro_cer | flash_cer | {lm_key}_cer |
+                  vision_ocr_seg_cer | kraken_seg_cer
+                  ── metadata ──
     """
-    lm_studio_sections = lm_studio_sections or {}
+    lm_studio_sections        = lm_studio_sections        or {}
     lm_studio_section_metrics = lm_studio_section_metrics or {}
-    lm_studio_full_texts = lm_studio_full_texts or {}
-    vom = vision_ocr_section_metrics or {}
+    vision_sections           = vision_sections           or {}
+    vision_section_metrics    = vision_section_metrics    or {}
+    kraken_sections           = kraken_sections           or {}
+    kraken_section_metrics    = kraken_section_metrics    or {}
 
-    def _cer(metrics, section, key):
-        if not metrics:
-            return None
-        return (metrics.get(section) or {}).get(key)
+    def _cer(metrics: Dict, section: str, key: str):
+        return (metrics.get(section) or {}).get(key) if metrics else None
 
-    # ── Per-section rows (gemara, rashi, tosafot) ──────────────────────────
-    # Vision OCR returns a flat string with no section awareness, so we show
-    # the full OCR text in every section row and use overall CER for each.
-    ocr_text = vision_ocr_text or ""
-    for section in SECTION_KEYS:
-        gt_text  = gt_sections.get(section, "")
-        fl_text  = (flash_sections or {}).get(section, "")
-        pro_text = (pro_sections or {}).get(section, "")
-
-        row = [
-            doc_id,
-            _cell(gt_text),
-            _cell(ocr_text),                                    # same flat text per section
-            _cell(fl_text),
-            _cell(pro_text),
-            _cer(vom, "overall", "cer_strict"),                 # overall OCR CER (no section split)
-            _cer(vom, "overall", "cer_lenient"),
-            _cer(flash_section_metrics, section, "cer_strict"),
-            _cer(flash_section_metrics, section, "cer_lenient"),
-            _cer(pro_section_metrics, section, "cer_strict"),
-            _cer(pro_section_metrics, section, "cer_lenient"),
-            len(gt_text),
-            len(ocr_text),
-            len(fl_text),
-            len(pro_text),
-        ]
-        # Append one group of columns per LM Studio model
-        for model_id in _lm_studio_models:
-            # Use `or {}` not `.get(id, {})` — the key may exist with value None
-            # (parse failed) and dict.get() returns None in that case, not the default.
-            lm_text = (lm_studio_sections.get(model_id) or {}).get(section, "")
-            lm_metrics = lm_studio_section_metrics.get(model_id) or {}
-            row += [
-                _cell(lm_text),
-                (lm_metrics.get(section) or {}).get("cer_strict"),
-                (lm_metrics.get(section) or {}).get("cer_lenient"),
-                len(lm_text),
-            ]
-        _table_rows[section].append(row)
-
-    # ── Full-page row ──────────────────────────────────────────────────────
-    km = kraken_metrics or {}
-
-    # wandb.Image renders the thumbnail inline; caption shown on hover.
     wb_image = wandb.Image(image_path, caption=doc_id) if Path(image_path).exists() else None
 
-    full_row = [
-        wb_image,
-        doc_id,
-        _cell(full_gt),
-        _cell(vision_ocr_full),
-        _cell(flash_full),
-        _cell(pro_full),
-        _cell(kraken_text or ""),
-        _cer(vom, "overall", "cer_strict"),
-        _cer(vom, "overall", "cer_lenient"),
-        _cer(flash_section_metrics, "overall", "cer_strict"),
-        _cer(flash_section_metrics, "overall", "cer_lenient"),
-        _cer(pro_section_metrics, "overall", "cer_strict"),
-        _cer(pro_section_metrics, "overall", "cer_lenient"),
-        km.get("cer_levenshtein"),
-        km.get("cer_levenshtein_lenient"),
-        len(full_gt),
-        len(vision_ocr_full),
-        len(flash_full),
-        len(pro_full),
-        len(kraken_text or ""),
-    ]
-    for model_id in _lm_studio_models:
-        lm_full = lm_studio_full_texts.get(model_id) or ""
-        lm_overall = (lm_studio_section_metrics.get(model_id) or {}).get("overall") or {}
-        full_row += [
-            _cell(lm_full),
-            lm_overall.get("cer_strict"),
-            lm_overall.get("cer_lenient"),
-            len(lm_full),
+    for section in SECTION_KEYS:
+        gt_text    = gt_sections.get(section, "")
+        pro_text   = (pro_sections   or {}).get(section, "")
+        flash_text = (flash_sections or {}).get(section, "")
+        vis_seg    = vision_sections.get(section, "")
+        krak_seg   = kraken_sections.get(section, "")
+
+        # ── TEXT block ────────────────────────────────────────────────────
+        row = [
+            wb_image,
+            doc_id,
+            _cell(gt_text),
+            # VLMs
+            _cell(pro_text),
+            _cell(flash_text),
         ]
-    _table_rows["full_page"].append(full_row)
+        for model_id in _lm_studio_models:
+            lm_text = (lm_studio_sections.get(model_id) or {}).get(section, "")
+            row.append(_cell(lm_text))
+        row += [
+            # OCR raw (flat full-page — shown for inspection only)
+            _cell(vision_ocr_raw),
+            _cell(kraken_raw),
+            # OCR segmented (section extracted by text LLM)
+            _cell(vis_seg),
+            _cell(krak_seg),
+        ]
+
+        # ── METRICS block ─────────────────────────────────────────────────
+        row += [
+            _cer(pro_section_metrics,   section, "cer_strict"),
+            _cer(pro_section_metrics,   section, "cer_lenient"),
+            _cer(flash_section_metrics, section, "cer_strict"),
+            _cer(flash_section_metrics, section, "cer_lenient"),
+        ]
+        for model_id in _lm_studio_models:
+            lm_mets = lm_studio_section_metrics.get(model_id) or {}
+            row += [
+                _cer(lm_mets, section, "cer_strict"),
+                _cer(lm_mets, section, "cer_lenient"),
+            ]
+        row += [
+            _cer(vision_section_metrics, section, "cer_strict"),
+            _cer(vision_section_metrics, section, "cer_lenient"),
+            _cer(kraken_section_metrics, section, "cer_strict"),
+            _cer(kraken_section_metrics, section, "cer_lenient"),
+        ]
+
+        # ── METADATA block ────────────────────────────────────────────────
+        row += ["talmud", "track2_fullpage", script_type, False, len(gt_text)]
+
+        _table_rows[section].append(row)
 
 
 def log_section_tables(step: int) -> None:
-    """Re-log all four section tables to W&B with the current accumulated rows.
+    """Re-log the three section tables to W&B after each document.
 
-    Called after every document so the tables update live in the W&B dashboard.
-    Table names are stable across calls so W&B replaces rather than duplicates.
+    Table names are stable so W&B replaces rather than appends.
     """
-    sec_cols = _section_columns()
+    cols = _section_columns()
     for section in SECTION_KEYS:
         rows = _table_rows[section]
         if rows:
             wandb.log(
-                {f"transcriptions/{section}": wandb.Table(
-                    columns=sec_cols,
-                    data=rows,
-                )},
+                {f"transcriptions/{section}": wandb.Table(columns=cols, data=rows)},
                 step=step,
             )
 
-    full_rows = _table_rows["full_page"]
-    if full_rows:
-        wandb.log(
-            {"transcriptions/full_page": wandb.Table(
-                columns=_full_page_columns(),
-                data=full_rows,
-            )},
-            step=step,
-        )
 
-
-# ============================================================================
-# Levenshtein CER — standard for HTR benchmark papers
-# ============================================================================
-
-def _levenshtein(a: str, b: str) -> int:
-    if not a:
-        return len(b)
-    if not b:
-        return len(a)
-    prev = list(range(len(b) + 1))
-    for ca in a:
-        curr = [prev[0] + 1]
-        for j, cb in enumerate(b):
-            curr.append(min(prev[j + 1] + 1, curr[j] + 1, prev[j] + (ca != cb)))
-        prev = curr
-    return prev[-1]
-
-
-def cer_levenshtein(hypothesis: str, reference: str) -> float:
-    """Standard Levenshtein CER: edit_distance / len(reference).
-
-    Use this for numbers reported in the paper — it matches OCRBench / MiDRASH
-    paper conventions.  The existing calculate_cer() uses SequenceMatcher which
-    gives slightly different values; we keep both for cross-run consistency.
-    """
-    ref = normalize_whitespace(reference)
-    hyp = normalize_whitespace(hypothesis)
-    if not ref:
-        return 1.0
-    return min(_levenshtein(hyp, ref) / len(ref), 1.0)
-
-
-def cer_pair(hypothesis: str, reference: str) -> Tuple[float, float]:
-    """Return (cer_strict, cer_lenient) — with and without nikud."""
-    return (
-        cer_levenshtein(hypothesis, reference),
-        cer_levenshtein(strip_nikud(hypothesis), strip_nikud(reference)),
-    )
+# cer_levenshtein, cer_pair, strip_nikud, normalize_whitespace
+# are imported from src.datasets.evaluations.metrics
 
 
 # ============================================================================
 # Section-aware Gemini prompts
 # ============================================================================
 
-_LAYOUT = """This is a page from the Babylonian Talmud (תלמוד בבלי).
+_LAYOUT = """This is a full page from the Babylonian Talmud (Vilna edition).
 The page has three spatially distinct sections:
-  • GEMARA (גמרא)   — center, large square script (Babylonian Aramaic / Hebrew)
-  • RASHI (רש"י)    — inner margin (right), smaller semi-cursive Rashi script
-  • TOSAFOT (תוספות) — outer margin (left), smaller square script"""
+  • GEMARA (גמרא)    — centre column, large square Hebrew/Aramaic script
+  • RASHI (רש"י)     — inner margin, smaller semi-cursive Rashi script
+  • TOSAFOT (תוספות) — outer margin, smaller square script"""
 
-_SCHEMA = """\
-Return ONLY valid JSON — no markdown, no commentary:
-{"gemara": "...", "rashi": "...", "tosafot": "..."}
-Use empty string for any absent or fully illegible section."""
+# ── Per-section extraction prompts (plain text, no JSON) ─────────────────────
+# Each prompt names only the target section.  The model must locate it on the
+# full page and return plain text — no JSON wrapper, no parsing failures, and
+# one section per call keeps output well within token limits.
 
-FLASH_PROMPT = f"""{_LAYOUT}
- 
-Transcribe each section EXACTLY as visible. Do NOT complete from memory — variants matter.
-Mark unclear characters with [?]. Preserve nikud and line breaks (\\n).
-{_SCHEMA}"""
+SECTION_EXTRACT_PROMPTS: Dict[str, str] = {
+    "gemara": f"""{_LAYOUT}
 
-PRO_PROMPT = f"""{_LAYOUT}
- 
-Step 1 — Locate each section by position and script style.
-Step 2 — Transcribe what you see, NOT what you know the text should say.
-  • Textual variants and scribal errors are the scholarly signal — preserve them.
-  • Mark damaged/unclear chars with [?].
-  • Preserve nikud and layout.
-Step 3 — Output the JSON below.
-{_SCHEMA}"""
+Extract ONLY the main Gemara text from the centre column.
+Do not include Rashi or Tosafot commentary.
+Transcribe exactly as written. Mark unclear characters with [?].
+Preserve nikud and line breaks. Do NOT correct or complete from memory.
 
-# Qwen3-VL and other open-weight VLMs sometimes struggle with nested JSON
-# inside complex RTL layouts, so the LM Studio prompt is slightly simplified
-# while preserving the core instruction about transcribing variants faithfully.
-LM_STUDIO_PROMPT = f"""{_LAYOUT}
- 
-Transcribe each section EXACTLY as it appears in the image.
-CRITICAL: Do NOT correct or complete text from memory — every variant and
-unusual spelling is intentional scholarly evidence.
-Mark unreadable characters with [?]. Preserve nikud and line breaks (\\n).
-{_SCHEMA}"""
+Return ONLY the Gemara transcription.""",
+
+    "rashi": f"""{_LAYOUT}
+
+Extract ONLY the Rashi commentary from the inner margin (semi-cursive Rashi script).
+Do not include the Gemara or Tosafot.
+Transcribe exactly as written. Mark unclear characters with [?].
+Preserve nikud and line breaks. Do NOT correct or complete from memory.
+
+Return ONLY the Rashi transcription.""",
+
+    "tosafot": f"""{_LAYOUT}
+
+Extract ONLY the Tosafot commentary from the outer margin (small square script).
+Do not include the Gemara or Rashi.
+Transcribe exactly as written. Mark unclear characters with [?].
+Preserve nikud and line breaks. Do NOT correct or complete from memory.
+
+Return ONLY the Tosafot transcription.""",
+}
+
+# ── OCR segmentation prompt (text-only — no image) ────────────────────────────
+# Fed to a configurable LLM after flat OCR output is obtained from Cloud Vision,
+# Kraken, or Tesseract.  The LLM identifies and separates the three sections
+# from the unsegmented OCR stream using its knowledge of Talmud page structure.
+
+_OCR_STRUCTURE = """\
+The OCR was run on a full Talmud page and reads COLUMN BY COLUMN.
+The output has this structure:
+
+  FIRST (~50–80 lines): Right column — the Rashi margin area, printed as
+  labelled sub-sections. These labels all belong to the Rashi column:
+    מסורת השיים, הגהות הב"ח, גליון השים, מוסף רש"י / מוסף ר'ש"י, רב ניסים גאון
+  (מוסף ר'ש"י = "Rashi's additions" — this IS Rashi's commentary proper.)
+
+  SEPARATOR: possibly a garbled/corrupted line at the column boundary.
+
+  REMAINDER: page header (פרק … ברכות etc.) then center + left columns —
+  continuous Gemara text (Aramaic/Hebrew discourse) mixed with Tosafot
+  entries (start with ד"ה, contain וא"ת / ויש לומר / ותימה)."""
+
+# One prompt per section — each call only needs to output ~1/3 of the text,
+# avoiding the finish_reason=2 truncation that kills the single-prompt approach.
+_SEGMENTATION_PROMPTS: Dict[str, str] = {
+    "gemara": f"""{_OCR_STRUCTURE}
+
+Extract ONLY the main Gemara text (continuous Talmudic Aramaic/Hebrew discourse).
+Do NOT include Rashi or Tosafot commentary.
+Return ONLY the raw text — no label, no explanation.""",
+
+    "rashi": f"""{_OCR_STRUCTURE}
+
+Extract ONLY the Rashi column content — that is, ALL text from the labelled
+sub-sections at the start of the OCR output:
+מסורת השיים, הגהות הב"ח, גליון השים, מוסף ר'ש"י / מוסף רש"י, רב ניסים גאון.
+Include all of those sub-sections verbatim, with their labels.
+Return ONLY the raw text — no extra explanation.""",
+
+    "tosafot": f"""{_OCR_STRUCTURE}
+
+Extract ONLY the Tosafot commentary entries from the OCR output.
+Tosafot entries start with ד"ה and contain analytical phrases like
+וא"ת (ואם תאמר), ויש לומר, ותימה.
+Return ONLY the raw text — no label, no explanation.""",
+}
+
+# Keep the old name as an alias so nothing else breaks if it's referenced
+_SEGMENTATION_PROMPT = _SEGMENTATION_PROMPTS["gemara"]
 
 
 # ============================================================================
@@ -473,13 +460,21 @@ def _parse_section_json(raw: str, model_label: str = "") -> Optional[Dict[str, s
     except json.JSONDecodeError:
         pass
 
-    # Strategy 2: JSON inside markdown fences
-    # Capture everything between the fences and let json.loads delimit the object —
-    # the previous {.*?} regex stopped at the first } which truncated mid-object.
-    fence_m = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL)
-    if fence_m:
+    # Strategy 2: JSON inside markdown fences (complete or truncated).
+    # First try a complete fence pair; if absent, try everything after an
+    # opening fence — handles finish_reason=2 (MAX_TOKENS) truncation where
+    # the model never writes the closing ```.
+    fence_body: Optional[str] = None
+    complete_fence = re.search(r"```(?:json)?\s*(.*?)\s*```", raw, re.DOTALL)
+    if complete_fence:
+        fence_body = complete_fence.group(1)
+    else:
+        open_fence = re.search(r"```(?:json)?\s*(.*)", raw, re.DOTALL)
+        if open_fence:
+            fence_body = open_fence.group(1)
+    if fence_body:
         try:
-            data = json.loads(fence_m.group(1))
+            data = json.loads(fence_body)
             if isinstance(data, dict):
                 result = _normalize_keys(data)
                 if result:
@@ -487,7 +482,7 @@ def _parse_section_json(raw: str, model_label: str = "") -> Optional[Dict[str, s
         except json.JSONDecodeError:
             pass
 
-    # Strategy 3: largest JSON object in response
+    # Strategy 3: largest balanced JSON object in response
     json_candidates = re.findall(r"\{[^{}]*(?:\{[^{}]*\}[^{}]*)?\}", raw, re.DOTALL)
     json_candidates.sort(key=len, reverse=True)
     for candidate in json_candidates:
@@ -516,6 +511,57 @@ def _parse_section_json(raw: str, model_label: str = "") -> Optional[Dict[str, s
             plain_sections[key] = m.group(2).strip()
     if plain_sections:
         return {k: plain_sections.get(k, "") for k in SECTION_KEYS}
+
+    # Strategy 5: partial JSON key extraction — salvages sections that completed
+    # (or partially completed) before a MAX_TOKENS truncation or decoder-collapse.
+    #
+    # Two sub-patterns per key:
+    #   5a — value string is properly closed:  "key": "value"
+    #   5b — value string is truncated at EOF:  "key": "[text without closing quote
+    #
+    # Cap value length at 20 000 chars to avoid catastrophic backtracking on
+    # collapsed outputs.
+    partial: Dict[str, str] = {}
+    for raw_key, canonical in _KEY_ALIASES.items():
+        if canonical in partial:
+            continue
+        esc_key = re.escape(raw_key)
+
+        # 5a: properly closed value
+        pat_closed = re.compile(
+            rf'"{esc_key}"\s*:\s*"((?:[^"\\]|\\.){{0,20000}})"',
+            re.DOTALL | re.IGNORECASE,
+        )
+        m = pat_closed.search(raw)
+        if m:
+            value = m.group(1)
+            try:
+                value = json.loads(f'"{value}"')
+            except (json.JSONDecodeError, ValueError):
+                pass
+            partial[canonical] = value.strip()
+            continue
+
+        # 5b: value string truncated — no closing quote, grab everything to EOF
+        pat_trunc = re.compile(
+            rf'"{esc_key}"\s*:\s*"((?:[^"\\]|\\.){{0,20000}})\Z',
+            re.DOTALL | re.IGNORECASE,
+        )
+        m = pat_trunc.search(raw)
+        if m:
+            value = m.group(1)
+            try:
+                value = json.loads(f'"{value}"')
+            except (json.JSONDecodeError, ValueError):
+                value = value.replace("\\n", "\n").replace('\\"', '"')
+            partial[canonical] = value.strip()
+
+    if partial:
+        print(
+            f"    ⚠️  [{model_label}] Partial JSON recovery — "
+            f"salvaged: {sorted(partial.keys())}"
+        )
+        return {k: partial.get(k, "") for k in SECTION_KEYS}
 
     label = f"[{model_label}] " if model_label else ""
     print(f"    ✗ {label}JSON parse failed on {len(raw)}-char response.")
@@ -622,101 +668,142 @@ async def _call_vision_ocr(image_path: str, full_gt: str) -> Tuple[Optional[str]
         return None, {}, elapsed
 
 
-async def _call_section_aware(
+async def _call_section_extraction(
     model_name: str,
     image_path: str,
-    prompt: str,
+    section: str,
     timeout: int,
-) -> Tuple[Optional[Dict[str, str]], float]:
-    """Call a Gemini model and return (parsed_sections, elapsed_s)."""
+) -> Tuple[str, float]:
+    """Extract one section from a full Talmud page using a VLM.
+
+    One call per section — plain text output, no JSON, no parsing failures.
+    Each call is ~1/3 the output tokens of the old all-sections approach,
+    eliminating finish_reason=2 (MAX_TOKENS) truncations on Flash.
+    """
     t0 = time.time()
-    raw = await call_gemini_with_retry(
-        model_name, image_path, prompt, temperature=0.1, timeout=timeout
+    text = await call_gemini_with_retry(
+        model_name, image_path,
+        SECTION_EXTRACT_PROMPTS[section],
+        temperature=0.1, timeout=timeout,
     )
-    label = model_name.split("-")[0]
-    return _parse_section_json(raw, model_label=label), time.time() - t0
+    return (text or "").strip(), time.time() - t0
 
 
-async def _call_lm_studio_models(
+async def _call_lms_section_extraction(
     image_path: str,
-    gt_sections: Dict[str, str],
-) -> Tuple[
-    Dict[str, Optional[Dict[str, str]]],   # model_id → parsed sections (None if parse failed)
-    Dict[str, Dict],                        # model_id → section metrics
-    Dict[str, str],                         # model_id → full text (raw fallback if parse failed)
-    Dict[str, float],                       # model_id → elapsed_s
-]:
-    """Run all configured LM Studio models on one image concurrently.
+    section: str,
+) -> Tuple[Dict[str, str], Dict[str, float]]:
+    """Run all LM Studio models extracting one section from the full page.
 
-    Even when JSON parsing fails (e.g. Qwen repetition loops, truncated output),
-    we preserve the raw response as the full text and compute CER/WER against it.
-    A parse failure with terrible CER is a valid benchmark result — it documents
-    the failure mode.  Models that return nothing at all get None full text and
-    no metrics.
+    Returns ({model_id: text}, {model_id: elapsed_s}).
+    Plain text — no JSON parsing required.
     """
     if not _lm_studio_models:
-        return {}, {}, {}, {}
+        return {}, {}
 
     t0 = time.time()
-    raw_results: Dict[str, Optional[str]] = await lm_studio_transcribe_batch(
+    raw_results = await lm_studio_transcribe_batch(
         model_ids=_lm_studio_models,
         image_path=image_path,
-        prompt=LM_STUDIO_PROMPT,
+        prompt=SECTION_EXTRACT_PROMPTS[section],
         base_url=_lm_studio_base_url,
     )
     elapsed = time.time() - t0
+    texts   = {mid: (txt or "").strip() for mid, txt in raw_results.items()}
+    timings = {mid: elapsed for mid in _lm_studio_models}
+    return texts, timings
 
-    full_gt = "\n".join(gt_sections.get(k, "") for k in SECTION_KEYS if gt_sections.get(k))
 
-    parsed: Dict[str, Optional[Dict[str, str]]] = {}
-    section_metrics: Dict[str, Dict] = {}
-    full_texts: Dict[str, str] = {}
-    timings: Dict[str, float] = {}
+async def _call_lms_text_only(
+    prompt: str,
+    model_id: str,
+    base_url: str,
+    timeout: float = 120.0,
+) -> Optional[str]:
+    """Text-only call to an LM Studio model — no image.
 
-    for model_id, raw in raw_results.items():
-        k = _lm_key(model_id)
-        timings[model_id] = elapsed
+    Used when an open-source text model is preferred over Gemini Flash
+    for the OCR segmentation step.
+    """
+    import aiohttp as _aiohttp
+    payload = {
+        "model": model_id,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 4096,
+        "temperature": 0.1,
+    }
+    try:
+        async with _aiohttp.ClientSession() as session:
+            async with session.post(
+                f"{base_url}/chat/completions",
+                json=payload,
+                timeout=_aiohttp.ClientTimeout(total=timeout),
+            ) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                return (data["choices"][0]["message"]["content"] or "").strip() or None
+    except Exception as e:
+        print(f"    ✗ LMS text-only failed ({model_id}): {e}")
+        return None
 
-        if not raw:
-            # Model returned nothing — no text, no metrics
-            parsed[model_id] = None
-            full_texts[model_id] = ""
-            section_metrics[model_id] = {}
-            print(f"    ✗ [{k}] No response from model")
-            continue
 
-        sections = _parse_section_json(raw, model_label=k)
-        parsed[model_id] = sections
+async def _call_ocr_segmentation(
+    flat_text: str,
+    segmentation_model: str,
+    segmentation_base_url: Optional[str],
+    gt_sections: Dict[str, str],
+) -> Tuple[Dict[str, str], Dict]:
+    """Segment flat OCR output into Gemara / Rashi / Tosafot.
 
-        if sections:
-            # Clean JSON parse — compute per-section metrics
-            full_texts[model_id] = "\n".join(
-                sections.get(s, "") for s in SECTION_KEYS if sections.get(s)
-            )
-            section_metrics[model_id] = compute_section_metrics(sections, gt_sections)
-            m = section_metrics[model_id]
-            print(
-                f"    ✓ [{k}] CER strict={m['overall']['cer_strict']:.3f} "
-                f"lenient={m['overall']['cer_lenient']:.3f}"
+    Makes THREE separate calls — one per section — so each call only needs to
+    output ~1/3 of the text.  This avoids the finish_reason=2 truncation that
+    kills the single-prompt approach with the deprecated SDK.
+
+    The segmentation model can be:
+      • A Gemini model name  (segmentation_base_url is None)
+      • An LM Studio model ID (segmentation_base_url points to the server)
+    """
+    ocr_input = flat_text[:15_000]
+    sections: Dict[str, str] = {}
+
+    async def _call_one(section: str) -> str:
+        prompt = _SEGMENTATION_PROMPTS[section] + f"\n\nOCR text:\n{ocr_input}"
+        if segmentation_base_url:
+            raw = await _call_lms_text_only(
+                prompt, segmentation_model, segmentation_base_url
             )
         else:
-            # Parse failed (malformed JSON, repetition loop, etc.) — use raw text.
-            # Section-level breakdown is unavailable, but we can still compute
-            # overall CER/WER against the full GT.  This is the data point that
-            # documents the failure mode in the benchmark.
-            full_texts[model_id] = raw
-            strict, lenient = cer_pair(raw, full_gt)
-            section_metrics[model_id] = {
-                "overall": {"cer_strict": strict, "cer_lenient": lenient},
-                # Per-section metrics are None — parse failed so we can't attribute
-                **{s: {"cer_strict": None, "cer_lenient": None} for s in SECTION_KEYS},
-            }
-            print(
-                f"    ⚠ [{k}] JSON parse failed — logging raw output as fallback "
-                f"({len(raw)} chars, CER strict={strict:.3f} lenient={lenient:.3f})"
+            raw = await call_gemini_text_only(
+                segmentation_model, prompt, timeout=90
             )
+        return (raw or "").strip()
 
-    return parsed, section_metrics, full_texts, timings
+    for section in SECTION_KEYS:
+        text = await _call_one(section)
+        sections[section] = text
+        gt_len = len(gt_sections.get(section, ""))
+        print(f"      [{section}] extracted {len(text)} chars  "
+              f"(gt={gt_len} chars)")
+        if section != SECTION_KEYS[-1]:
+            await asyncio.sleep(1)   # brief spacing between calls
+
+    metrics = compute_section_metrics(sections, gt_sections)
+    om = metrics.get("overall", {})
+    print(
+        f"    ✓ Segmented overall — "
+        f"CER strict={om.get('cer_strict', 0):.3f}  "
+        f"lenient={om.get('cer_lenient', 0):.3f}"
+    )
+    for sec in SECTION_KEYS:
+        sec_m = metrics.get(sec, {})
+        cer_s = sec_m.get("cer_strict")
+        cer_str = f"CER={cer_s:.3f}" if cer_s is not None else "CER=n/a"
+        gt_len  = len(gt_sections.get(sec, ""))
+        flag    = "  ⚠️  segmentation failure?" if (
+            cer_s is not None and cer_s >= 0.99 and gt_len > 50
+        ) else ""
+        print(f"      [{sec}] {cer_str}{flag}")
+    return sections, metrics
 
 
 # ============================================================================
@@ -734,8 +821,20 @@ async def evaluate_talmud_document(
         skip_lm_studio: bool = False,
         skip_vision_ocr: bool = False,
         batch_num: Optional[int] = None,
+        segmentation_model: str = AgentConfig.GEMINI_FLASH_MODEL,
+        segmentation_base_url: Optional[str] = None,
 ) -> Optional[Dict]:
-    """Run all models on one Talmud page and return a result dict."""
+    """Run all models on one Talmud page and return a result dict.
+
+    VLMs (Flash, Pro, LM Studio): three separate plain-text extraction calls,
+    one per section. No JSON output, no parsing failures, no token-limit
+    truncations.
+
+    Traditional OCR (Vision, Kraken): one flat-text call → one text-only
+    segmentation call to split the output into sections.  The segmentation
+    model is configurable (default: Gemini Flash; set segmentation_base_url
+    to use an open-source model via LM Studio instead).
+    """
     print(f"\n📄 {doc_id}")
     print(get_section_summary(gt_sections))
 
@@ -749,332 +848,214 @@ async def evaluate_talmud_document(
         )
         return None
 
-    state = {
+    state: Dict = {
         "doc_id": doc_id,
         "image_path": str(image_path),
-        "catalog_metadata": {"description": f"Talmud Bavli — {doc_id}"},
         "ground_truth": full_gt,
-        "vision_ocr_result": None,
-        "gemini_flash_result": None,
-        "gemini_pro_result": None,
-        "kraken_result": None,
-        "vision_ocr_metrics": None,
-        "gemini_flash_metrics": None,
-        "gemini_pro_metrics": None,
-        "kraken_metrics": None,
-        "all_results": [],
-        "disagreements": [],
-        "needs_review": False,
-        "final_transcription": "",
-        "confidence_score": 0.0,
-        "consensus_strategy": "pro_preferred",
-        "consensus_metrics": None,
-        "analysis_result": None,
         "processing_time": 0.0,
         "model_times": {},
-        # Section-level data (not in the base schema)
-        "_flash_sections": None,
-        "_pro_sections": None,
-        "_flash_section_metrics": None,
-        "_pro_section_metrics": None,
-        # LM Studio — {model_id: ...}
-        "_lm_sections": {},
-        "_lm_section_metrics": {},
-        "_lm_full_texts": {},
-        "_lm_results": {},
+        # Per-section outputs keyed by model
+        "_pro_sections":          {},   # {section: text}
+        "_flash_sections":        {},
+        "_lm_sections":           {},   # {model_id: {section: text}}
+        "_vision_sections":       {},   # after segmentation
+        "_kraken_sections":       {},   # after segmentation
+        # Section metrics
+        "_pro_section_metrics":   {},
+        "_flash_section_metrics": {},
+        "_lm_section_metrics":    {},   # {model_id: metrics_dict}
+        "_vision_section_metrics":{},
+        "_kraken_section_metrics":{},
+        # Flat texts for HTML / raw output
+        "_vision_flat":  "",
+        "_kraken_flat":  "",
+        # Consensus (Pro preferred, Flash fallback)
+        "final_transcription": "",
+        "consensus_strategy":  "none",
     }
 
     t_doc_start = time.time()
 
-    # ── Google Cloud Vision OCR ───────────────────────────────────────────────
+    # ── Google Cloud Vision (flat OCR → segmentation) ─────────────────────────
+    vision_text: Optional[str] = None
     if not skip_vision_ocr:
         print("  🔍 Vision OCR...")
-        vision_text, vision_section_metrics, vision_elapsed = await _call_vision_ocr(
-            str(image_path), full_gt
-        )
+        vision_text, _, vision_elapsed = await _call_vision_ocr(str(image_path), full_gt)
         state["model_times"]["vision_ocr"] = vision_elapsed
-        if vision_text is not None:
-            state["vision_ocr_result"] = {
-                "text": vision_text, "model": "google_vision_ocr",
-                "char_count": len(vision_text), "processing_time": vision_elapsed,
-            }
-            state["vision_ocr_metrics"] = evaluate_transcription(full_gt, vision_text, "vision_ocr")
-            state["vision_ocr_metrics"]["processing_time"] = vision_elapsed
-    else:
-        vision_text, vision_section_metrics, vision_elapsed = None, {}, 0.0
+        state["_vision_flat"] = vision_text or ""
+        if vision_text:
+            print(f"    → segmenting with {segmentation_model}...")
+            vsec, vmets = await _call_ocr_segmentation(
+                vision_text, segmentation_model, segmentation_base_url, gt_sections
+            )
+            state["_vision_sections"]        = vsec
+            state["_vision_section_metrics"] = vmets
 
-    # ── Gemini Pro ────────────────────────────────────────────────────────────
+    # ── Gemini Pro — 3 separate section-extraction calls ─────────────────────
     if not skip_pro:
-        print("  🎯 Gemini Pro (section-aware)...")
-        t0 = time.time()
-        raw_pro = await call_gemini_with_retry(
-            AgentConfig.GEMINI_PRO_MODEL, str(image_path),
-            PRO_PROMPT, temperature=0.1, timeout=AgentConfig.GEMINI_PRO_TIMEOUT,
-        )
-        elapsed = time.time() - t0
-        state["model_times"]["gemini_pro"] = elapsed
-
-        sections = _parse_section_json(raw_pro or "", model_label="pro") if raw_pro else None
-
-        if sections:
-            reconstructed = "\n".join(
-                sections.get(k, "") for k in SECTION_KEYS if sections.get(k)
+        print("  🎯 Gemini Pro (per-section extraction)...")
+        pro_t_total = 0.0
+        for section in SECTION_KEYS:
+            text, elapsed = await _call_section_extraction(
+                AgentConfig.GEMINI_PRO_MODEL, str(image_path),
+                section, AgentConfig.GEMINI_PRO_TIMEOUT,
             )
-        elif raw_pro:
-            reconstructed = raw_pro
-            print(f"    ⚠ [pro] JSON parse failed — using raw output for metrics ({len(raw_pro)} chars)")
-        else:
-            reconstructed = ""
-
-        if reconstructed:
-            state["gemini_pro_result"] = {
-                "text": reconstructed, "model": "gemini_pro_talmud_section",
-                "char_count": len(reconstructed), "processing_time": elapsed,
-                "parse_failed": sections is None,
-            }
-            state["gemini_pro_metrics"] = evaluate_transcription(
-                full_gt, reconstructed, "gemini_pro"
-            )
-            state["gemini_pro_metrics"]["processing_time"] = elapsed
-            state["final_transcription"] = reconstructed
-            state["consensus_metrics"] = evaluate_transcription(
-                full_gt, reconstructed, "consensus_pro_preferred"
-            )
-
-            if sections:
-                section_m = compute_section_metrics(sections, gt_sections)
-                state["_pro_sections"] = sections
-                state["_pro_section_metrics"] = section_m
-                print(
-                    f"    ✓ overall CER strict={section_m['overall']['cer_strict']:.3f} "
-                    f"lenient={section_m['overall']['cer_lenient']:.3f}"
-                )
+            state["_pro_sections"][section] = text
+            pro_t_total += elapsed
+            if text:
+                s, l = cer_pair(text, gt_sections.get(section, ""))
+                state["_pro_section_metrics"][section] = {"cer_strict": s, "cer_lenient": l}
+                print(f"    [{section}] {len(text)} chars  CER strict={s:.3f}  lenient={l:.3f}")
             else:
-                strict, lenient = cer_pair(reconstructed, full_gt)
-                state["_pro_section_metrics"] = {
-                    "overall": {"cer_strict": strict, "cer_lenient": lenient},
-                    **{s: {"cer_strict": None, "cer_lenient": None} for s in SECTION_KEYS},
-                }
-                print(f"    ⚠ overall CER strict={strict:.3f} lenient={lenient:.3f} (raw fallback)")
+                state["_pro_section_metrics"][section] = {"cer_strict": None, "cer_lenient": None}
+                print(f"    [{section}] no output")
+            await asyncio.sleep(2)
+        state["model_times"]["gemini_pro"] = pro_t_total
+        # Overall CER across all sections
+        pro_overall = compute_section_metrics(state["_pro_sections"], gt_sections)
+        state["_pro_section_metrics"]["overall"] = pro_overall.get("overall", {})
+        pro_full = "\n".join(state["_pro_sections"].get(k, "") for k in SECTION_KEYS)
+        state["final_transcription"] = pro_full
+        state["consensus_strategy"]  = "pro_preferred"
 
-    # Fallback consensus to Flash if Pro failed
-    if not state["final_transcription"] and state.get("gemini_flash_result"):
-        state["final_transcription"] = state["gemini_flash_result"]["text"]
-        state["consensus_strategy"] = "flash_fallback"
-        state["consensus_metrics"] = state["gemini_flash_metrics"]
-
-    # ── Gemini Flash ──────────────────────────────────────────────────────────
+    # ── Gemini Flash — 3 separate section-extraction calls ───────────────────
     if not skip_flash:
         await asyncio.sleep(3)
-        print("  ⚡ Gemini Flash (section-aware)...")
-        t0 = time.time()
-        raw_flash = await call_gemini_with_retry(
-            AgentConfig.GEMINI_FLASH_MODEL, str(image_path),
-            FLASH_PROMPT, temperature=0.1, timeout=AgentConfig.GEMINI_FLASH_TIMEOUT,
-        )
-        elapsed = time.time() - t0
-        state["model_times"]["gemini_flash"] = elapsed
-
-        sections = _parse_section_json(raw_flash or "", model_label="flash") if raw_flash else None
-
-        if sections:
-            reconstructed = "\n".join(
-                sections.get(k, "") for k in SECTION_KEYS if sections.get(k)
+        print("  ⚡ Gemini Flash (per-section extraction)...")
+        flash_t_total = 0.0
+        for section in SECTION_KEYS:
+            text, elapsed = await _call_section_extraction(
+                AgentConfig.GEMINI_FLASH_MODEL, str(image_path),
+                section, AgentConfig.GEMINI_FLASH_TIMEOUT,
             )
-        elif raw_flash:
-            # JSON parse failed — use raw response so we still get CER metrics
-            reconstructed = raw_flash
-            print(f"    ⚠ [flash] JSON parse failed — using raw output for metrics ({len(raw_flash)} chars)")
-        else:
-            reconstructed = ""
-
-        if reconstructed:
-            state["gemini_flash_result"] = {
-                "text": reconstructed, "model": "gemini_flash_talmud_section",
-                "char_count": len(reconstructed), "processing_time": elapsed,
-                "parse_failed": sections is None,
-            }
-            state["gemini_flash_metrics"] = evaluate_transcription(
-                full_gt, reconstructed, "gemini_flash"
-            )
-            state["gemini_flash_metrics"]["processing_time"] = elapsed
-
-            if sections:
-                section_m = compute_section_metrics(sections, gt_sections)
-                state["_flash_sections"] = sections
-                state["_flash_section_metrics"] = section_m
-                print(
-                    f"    ✓ overall CER strict={section_m['overall']['cer_strict']:.3f} "
-                    f"lenient={section_m['overall']['cer_lenient']:.3f}"
-                )
+            state["_flash_sections"][section] = text
+            flash_t_total += elapsed
+            if text:
+                s, l = cer_pair(text, gt_sections.get(section, ""))
+                state["_flash_section_metrics"][section] = {"cer_strict": s, "cer_lenient": l}
+                print(f"    [{section}] {len(text)} chars  CER strict={s:.3f}  lenient={l:.3f}")
             else:
-                # Compute overall-only metrics from raw text; sections stay None
-                strict, lenient = cer_pair(reconstructed, full_gt)
-                state["_flash_section_metrics"] = {
-                    "overall": {"cer_strict": strict, "cer_lenient": lenient},
-                    **{s: {"cer_strict": None, "cer_lenient": None} for s in SECTION_KEYS},
-                }
-                print(f"    ⚠ overall CER strict={strict:.3f} lenient={lenient:.3f} (raw fallback)")
+                state["_flash_section_metrics"][section] = {"cer_strict": None, "cer_lenient": None}
+                print(f"    [{section}] no output")
+            await asyncio.sleep(2)
+        state["model_times"]["gemini_flash"] = flash_t_total
+        flash_overall = compute_section_metrics(state["_flash_sections"], gt_sections)
+        state["_flash_section_metrics"]["overall"] = flash_overall.get("overall", {})
+        flash_full = "\n".join(state["_flash_sections"].get(k, "") for k in SECTION_KEYS)
+        if not state["final_transcription"]:
+            state["final_transcription"] = flash_full
+            state["consensus_strategy"]  = "flash_fallback"
 
-    # ── Kraken ────────────────────────────────────────────────────────────────
+    # ── Kraken (flat HTR → segmentation) ─────────────────────────────────────
+    kraken_flat = ""
     if not skip_kraken:
         print("  🐙 Kraken / MiDRASH...")
         t0 = time.time()
-        kraken_text = await transcribe_with_kraken(
+        kraken_flat = await transcribe_with_kraken(
             kraken_model_path, str(image_path), timeout=120.0
-        )
+        ) or ""
         elapsed = time.time() - t0
         state["model_times"]["kraken"] = elapsed
-        if kraken_text:
-            state["kraken_result"] = {
-                "text": kraken_text, "model": "kraken_midrash_gen_01",
-                "char_count": len(kraken_text), "processing_time": elapsed,
-            }
-            state["kraken_metrics"] = evaluate_transcription(
-                full_gt, kraken_text, "kraken"
+        state["_kraken_flat"] = kraken_flat
+        if kraken_flat:
+            print(f"    {len(kraken_flat)} chars — segmenting with {segmentation_model}...")
+            ksec, kmets = await _call_ocr_segmentation(
+                kraken_flat, segmentation_model, segmentation_base_url, gt_sections
             )
-            state["kraken_metrics"]["processing_time"] = elapsed
-            (
-                state["kraken_metrics"]["cer_levenshtein"],
-                state["kraken_metrics"]["cer_levenshtein_lenient"],
-            ) = cer_pair(kraken_text, full_gt)
-            print(
-                f"    ✓ {len(kraken_text)} chars  "
-                f"CER strict={state['kraken_metrics']['cer_levenshtein']:.3f}  "
-                f"lenient={state['kraken_metrics']['cer_levenshtein_lenient']:.3f}"
-            )
+            state["_kraken_sections"]        = ksec
+            state["_kraken_section_metrics"] = kmets
         else:
-            print("    ✗ Kraken failed")
+            print("    ✗ Kraken returned nothing")
 
-    # ── LM Studio models ──────────────────────────────────────────────────────
+    # ── LM Studio — 3 separate per-section calls ─────────────────────────────
     if not skip_lm_studio and _lm_studio_models:
         print(f"  🖥  LM Studio: {', '.join(_lm_key(m) for m in _lm_studio_models)}...")
-        try:
-            (
-                lm_sections,
-                lm_section_metrics,
-                lm_full_texts,
-                lm_timings,
-            ) = await _call_lm_studio_models(str(image_path), gt_sections)
-        except Exception as exc:
-            print(f"    ✗ LM Studio batch failed: {exc}")
-            lm_sections, lm_section_metrics, lm_full_texts, lm_timings = {}, {}, {}, {}
+        lm_sections_by_model: Dict[str, Dict[str, str]] = {mid: {} for mid in _lm_studio_models}
+        lm_timings: Dict[str, float] = {mid: 0.0 for mid in _lm_studio_models}
 
-        state["_lm_sections"] = lm_sections
-        state["_lm_section_metrics"] = lm_section_metrics
-        state["_lm_full_texts"] = lm_full_texts
+        for section in SECTION_KEYS:
+            texts, timings = await _call_lms_section_extraction(str(image_path), section)
+            for mid, text in texts.items():
+                lm_sections_by_model[mid][section] = text
+                lm_timings[mid] += timings.get(mid, 0.0)
+            await asyncio.sleep(2)
 
-        for model_id, elapsed in lm_timings.items():
-            state["model_times"][_lm_key(model_id)] = elapsed
-
-        # Build result dicts compatible with save_raw_output
-        for model_id, full_text in lm_full_texts.items():
-            if full_text:
-                k = _lm_key(model_id)
-                state["_lm_results"][model_id] = {
-                    "text": full_text,
-                    "model": model_id,
-                    "char_count": len(full_text),
-                    "processing_time": lm_timings.get(model_id, 0.0),
-                }
-                # Also store aggregate metrics for the existing log_to_wandb path
-                lm_agg = evaluate_transcription(full_gt, full_text, k)
-                lm_agg["processing_time"] = lm_timings.get(model_id, 0.0)
-                state["_lm_results"][model_id]["metrics"] = lm_agg
+        for mid, sections in lm_sections_by_model.items():
+            k = _lm_key(mid)
+            state["model_times"][k] = lm_timings[mid]
+            mets = compute_section_metrics(sections, gt_sections)
+            state["_lm_sections"][mid]        = sections
+            state["_lm_section_metrics"][mid] = mets
+            om = mets.get("overall", {})
+            print(
+                f"    [{k}] overall CER strict={om.get('cer_strict', '?'):.3f}  "
+                f"lenient={om.get('cer_lenient', '?'):.3f}"
+            )
 
     state["processing_time"] = time.time() - t_doc_start
 
     # ── W&B logging ───────────────────────────────────────────────────────────
-    _step = len(_table_rows["full_page"])   # before appending the new row
+    _step = len(_table_rows["gemara"])  # use gemara as the step counter
 
-    flash_sections = state.get("_flash_sections") or {}
-    pro_sections   = state.get("_pro_sections") or {}
-    # Fall back to the raw result text when JSON parse failed and _flash/_pro_sections
-    # are empty — otherwise the table shows an empty cell next to a real CER value.
-    flash_full = (
-        "\n".join(flash_sections.get(k, "") for k in SECTION_KEYS)
-        if flash_sections
-        else (state.get("gemini_flash_result") or {}).get("text", "")
-    )
-    pro_full = (
-        "\n".join(pro_sections.get(k, "") for k in SECTION_KEYS)
-        if pro_sections
-        else (state.get("gemini_pro_result") or {}).get("text", "")
-    )
-    kraken_text    = (state.get("kraken_result") or {}).get("text", "")
-    kraken_metrics = state.get("kraken_metrics")
+    pro_sections_d   = state["_pro_sections"]
+    flash_sections_d = state["_flash_sections"]
+    pro_full   = "\n".join(pro_sections_d.get(k, "")   for k in SECTION_KEYS)
+    flash_full = "\n".join(flash_sections_d.get(k, "") for k in SECTION_KEYS)
 
-    # 1. Append to section tables + re-log immediately for live W&B updates
+    # For the section tables we show the segmented OCR text per section;
+    # for the full-page table we show the raw flat text.
     _append_section_table_rows(
         doc_id=doc_id,
         image_path=str(image_path),
         gt_sections=gt_sections,
-        vision_ocr_text=vision_text,
-        vision_ocr_section_metrics=vision_section_metrics,
-        flash_sections=flash_sections or None,
-        pro_sections=pro_sections or None,
-        flash_section_metrics=state.get("_flash_section_metrics"),
-        pro_section_metrics=state.get("_pro_section_metrics"),
-        kraken_text=kraken_text or None,
-        kraken_metrics=kraken_metrics,
-        full_gt=full_gt,
-        vision_ocr_full=vision_text or "",
-        flash_full=flash_full,
-        pro_full=pro_full,
-        lm_studio_sections=state.get("_lm_sections"),
-        lm_studio_section_metrics=state.get("_lm_section_metrics"),
-        lm_studio_full_texts=state.get("_lm_full_texts"),
+        pro_sections=pro_sections_d or None,
+        flash_sections=flash_sections_d or None,
+        pro_section_metrics=state["_pro_section_metrics"] or None,
+        flash_section_metrics=state["_flash_section_metrics"] or None,
+        lm_studio_sections=state["_lm_sections"] or None,
+        lm_studio_section_metrics=state["_lm_section_metrics"] or None,
+        vision_ocr_raw=state["_vision_flat"],
+        kraken_raw=state["_kraken_flat"],
+        vision_sections=state["_vision_sections"] or None,
+        vision_section_metrics=state["_vision_section_metrics"] or None,
+        kraken_sections=state["_kraken_sections"] or None,
+        kraken_section_metrics=state["_kraken_section_metrics"] or None,
+        script_type="talmud_vilna",
     )
     log_section_tables(step=_step)
 
-    # 2. Scalar metrics for chart views
-    scalar_payload: Dict = {"doc_id": doc_id}
-    if vision_section_metrics:
-        scalar_payload.update(_wandb_section_payload("vision_ocr", vision_section_metrics))
-        scalar_payload["vision_ocr/processing_time_s"] = vision_elapsed
-    if state.get("_flash_section_metrics"):
-        scalar_payload.update(_wandb_section_payload("flash", state["_flash_section_metrics"]))
-    if state.get("_pro_section_metrics"):
-        scalar_payload.update(_wandb_section_payload("pro", state["_pro_section_metrics"]))
-    if kraken_metrics:
-        scalar_payload.update({
-            "kraken/overall/cer_strict": kraken_metrics.get("cer_levenshtein"),
-            "kraken/overall/cer_lenient": kraken_metrics.get("cer_levenshtein_lenient"),
-            "kraken/overall/wer": kraken_metrics.get("wer"),
-            "kraken/processing_time_s": kraken_metrics.get("processing_time"),
-        })
-    for model_id, m in state.get("_lm_section_metrics", {}).items():
-        k = _lm_key(model_id)
-        scalar_payload.update(_wandb_section_payload(k, m))
-        scalar_payload[f"{k}/processing_time_s"] = state["model_times"].get(k)
-
-    for model_key in ("vision_ocr", "gemini_flash", "gemini_pro", "kraken"):
-        t = state["model_times"].get(model_key)
-        if t is not None:
-            scalar_payload[f"timing/{model_key}_s"] = t
-
-    wandb.log({k: v for k, v in scalar_payload.items() if v is not None}, step=_step)
-
-    # 3. HTML comparison
-    if Path(state["image_path"]).exists():
-        _update_comparison_html(state)
-
-    # 4. Raw text files + incremental JSONL
-    for model_key, label in [
-        ("vision_ocr_result", "vision_ocr"),
-        ("gemini_flash_result", "gemini_flash"),
-        ("gemini_pro_result", "gemini_pro"),
-        ("kraken_result", "kraken"),
+    # Scalar metrics
+    scalar: Dict = {"doc_id": doc_id}
+    for label, mets in [
+        ("vision_ocr", state["_vision_section_metrics"]),
+        ("flash",      state["_flash_section_metrics"]),
+        ("pro",        state["_pro_section_metrics"]),
+        ("kraken",     state["_kraken_section_metrics"]),
     ]:
-        r = state.get(model_key)
-        if r:
-            save_raw_output(doc_id, label, r["text"])
+        if mets:
+            scalar.update(_wandb_section_payload(label, mets))
+    for mid, mets in state["_lm_section_metrics"].items():
+        scalar.update(_wandb_section_payload(_lm_key(mid), mets))
+    for key, t in state["model_times"].items():
+        scalar[f"timing/{key}_s"] = t
+    wandb.log({k: v for k, v in scalar.items() if v is not None}, step=_step)
 
-    for model_id, result in state.get("_lm_results", {}).items():
-        if result:
-            save_raw_output(doc_id, _lm_key(model_id), result["text"])
-
+    # Raw outputs + incremental JSONL
     save_raw_output(doc_id, "ground_truth", full_gt, full_gt)
+    if state["_vision_flat"]:
+        save_raw_output(doc_id, "vision_ocr_flat", state["_vision_flat"])
+    for section, text in state["_pro_sections"].items():
+        if text:
+            save_raw_output(doc_id, f"gemini_pro_{section}", text)
+    for section, text in state["_flash_sections"].items():
+        if text:
+            save_raw_output(doc_id, f"gemini_flash_{section}", text)
+    if state["_kraken_flat"]:
+        save_raw_output(doc_id, "kraken_flat", state["_kraken_flat"])
+    for mid, secs in state["_lm_sections"].items():
+        for section, text in secs.items():
+            if text:
+                save_raw_output(doc_id, f"{_lm_key(mid)}_{section}", text)
     save_incremental_result(state, batch_num)
 
     return state
@@ -1137,6 +1118,8 @@ async def run_talmud_eval(
         skip_pro: bool = False,
         skip_kraken: bool = False,
         skip_lm_studio: bool = False,
+        segmentation_model: str = AgentConfig.GEMINI_FLASH_MODEL,
+        segmentation_base_url: Optional[str] = None,
         wandb_project: str = EvalConfig.WANDB_PROJECT,
         wandb_run_name: Optional[str] = None,
 ) -> None:
@@ -1235,6 +1218,8 @@ async def run_talmud_eval(
                 skip_kraken=skip_kraken,
                 skip_lm_studio=not _lm_studio_models,
                 batch_num=1,
+                segmentation_model=segmentation_model,
+                segmentation_base_url=segmentation_base_url,
             )
             if result:
                 all_results.append(result)
@@ -1250,59 +1235,36 @@ async def run_talmud_eval(
 
 
 def _log_summary(results: List[Dict]) -> None:
-    """Mean CER per model/section across all documents → wandb.summary."""
+    """Mean CER per model/section across all documents → wandb.summary.
+
+    Reads directly from the accumulated _table_rows using the column index
+    map from _section_columns() so this stays in sync with the table schema.
+    """
     from collections import defaultdict
     accs: Dict[str, List[float]] = defaultdict(list)
 
-    sec_cols = _section_columns()
-    fp_cols  = _full_page_columns()
-    sec_col  = {c: i for i, c in enumerate(sec_cols)}
-    fp_col   = {c: i for i, c in enumerate(fp_cols)}
+    col_idx = {c: i for i, c in enumerate(_section_columns())}
+
+    # All models and their CER column names in the section tables
+    model_cer_cols = [
+        ("pro",            "pro_cer_strict",              "pro_cer_lenient"),
+        ("flash",          "flash_cer_strict",             "flash_cer_lenient"),
+        ("vision_ocr_seg", "vision_ocr_seg_cer_strict",    "vision_ocr_seg_cer_lenient"),
+        ("kraken_seg",     "kraken_seg_cer_strict",        "kraken_seg_cer_lenient"),
+    ]
+    for model_id in _lm_studio_models:
+        k = _lm_key(model_id)
+        model_cer_cols.append((k, f"{k}_cer_strict", f"{k}_cer_lenient"))
 
     for section in SECTION_KEYS:
         for row in _table_rows[section]:
-            for model, cer_key in [
-                ("vision_ocr", "vision_ocr_cer_strict"), ("vision_ocr", "vision_ocr_cer_lenient"),
-                ("flash", "flash_cer_strict"), ("flash", "flash_cer_lenient"),
-                ("pro",   "pro_cer_strict"),   ("pro",   "pro_cer_lenient"),
-            ]:
-                idx = sec_col.get(cer_key)
-                if idx is not None:
-                    v = row[idx]
-                    if v is not None:
-                        accs[f"mean/{model}/{section}/{cer_key.split('_', 1)[1]}"].append(v)
-
-            # LM Studio per-section means
-            for model_id in _lm_studio_models:
-                k = _lm_key(model_id)
-                for suffix in ("cer_strict", "cer_lenient"):
-                    col_name = f"{k}_{suffix}"
-                    idx = sec_col.get(col_name)
+            for model_label, col_strict, col_lenient in model_cer_cols:
+                for col, suffix in [(col_strict, "cer_strict"), (col_lenient, "cer_lenient")]:
+                    idx = col_idx.get(col)
                     if idx is not None:
                         v = row[idx]
                         if v is not None:
-                            accs[f"mean/{k}/{section}/{suffix}"].append(v)
-
-    for row in _table_rows["full_page"]:
-        for col_key in ("vision_ocr_cer_strict", "vision_ocr_cer_lenient",
-                        "kraken_cer_strict", "kraken_cer_lenient"):
-            idx = fp_col.get(col_key)
-            if idx is not None:
-                v = row[idx]
-                if v is not None:
-                    model_prefix = "vision_ocr" if col_key.startswith("vision") else "kraken"
-                    metric_suffix = col_key.replace(f"{model_prefix}_", "")
-                    accs[f"mean/{model_prefix}/overall/{metric_suffix}"].append(v)
-
-        for model_id in _lm_studio_models:
-            k = _lm_key(model_id)
-            for suffix in ("cer_strict", "cer_lenient"):
-                col_name = f"{k}_{suffix}"
-                idx = fp_col.get(col_name)
-                if idx is not None:
-                    v = row[idx]
-                    if v is not None:
-                        accs[f"mean/{k}/overall/{suffix}"].append(v)
+                            accs[f"mean/{model_label}/{section}/{suffix}"].append(v)
 
     summary = {k: sum(v) / len(v) for k, v in accs.items()}
     summary["num_documents"] = len(results)
@@ -1333,20 +1295,36 @@ if __name__ == "__main__":
     p.add_argument("--skip_kraken",      action="store_true")
     p.add_argument("--skip_lm_studio",   action="store_true")
 
-    # LM Studio: comma-separated list of model IDs exactly as shown in LM Studio
+    # LM Studio VLM models
     p.add_argument(
         "--lm_studio_models",
         type=lambda s: [m.strip() for m in s.split(",") if m.strip()],
         default=["qwen/qwen3-vl-8b"],
         metavar="MODEL[,MODEL,...]",
-        help="LM Studio model IDs to include.  Comma-separated. "
-             'Example: "qwen/qwen3-vl-8b,llava/llava-1.6-mistral-7b"',
+        help="LM Studio VLM model IDs (comma-separated).",
     )
     p.add_argument(
         "--lm_studio_base_url",
         default="http://localhost:1234/v1",
-        help="LM Studio API base URL (default: http://localhost:1234/v1)",
+        help="LM Studio API base URL for VLM inference.",
     )
+
+    # OCR segmentation model (text-only LLM step)
+    p.add_argument(
+        "--segmentation_model",
+        default=AgentConfig.GEMINI_FLASH_MODEL,
+        help="Model used to segment flat OCR output into Gemara/Rashi/Tosafot. "
+             "Default: Gemini Flash (text-only call). "
+             "Set to an LM Studio model ID and provide --segmentation_base_url "
+             "to use an open-source text model instead.",
+    )
+    p.add_argument(
+        "--segmentation_base_url",
+        default=None,
+        help="If set, the segmentation model is served via LM Studio at this URL. "
+             "Leave unset to use Gemini (default).",
+    )
+
     args = p.parse_args()
 
     asyncio.run(run_talmud_eval(
@@ -1364,6 +1342,8 @@ if __name__ == "__main__":
         skip_pro=args.skip_pro,
         skip_kraken=args.skip_kraken,
         skip_lm_studio=args.skip_lm_studio,
+        segmentation_model=args.segmentation_model,
+        segmentation_base_url=args.segmentation_base_url,
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run_name,
     ))

@@ -156,7 +156,11 @@ class PrincetonGenizahKG:
                     f.has_transcription    = $has_transcription,
                     f.has_translation      = $has_translation,
                     f.region               = $region,
-                    f.side                 = $side
+                    f.side                 = $side,
+                    f.data_sources         = CASE
+                        WHEN 'pgp' IN coalesce(f.data_sources, []) THEN coalesce(f.data_sources, [])
+                        ELSE coalesce(f.data_sources, []) + ['pgp']
+                    END
 
                 WITH f
                 WHERE $tags IS NOT NULL
@@ -218,6 +222,11 @@ class PrincetonGenizahKG:
                             f"""
                             MATCH (f:Fragment {{canonical_shelfmark: $csm}})
                             MERGE (pl:Place {{name: $place}})
+                            SET pl.place_type   = 'historical',
+                                pl.data_sources = CASE
+                                WHEN 'pgp' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
+                                ELSE coalesce(pl.data_sources, []) + ['pgp']
+                            END
                             MERGE (f)-[r:{rel_type}]->(pl)
                             SET r += $rel_props
                             """,
@@ -257,7 +266,11 @@ class PrincetonGenizahKG:
                     f.url              = $url,
                     f.iiif_url         = $iiif_url,
                     f.collection_name  = $collection_name,
-                    f.provenance_display = $provenance_display
+                    f.provenance_display = $provenance_display,
+                    f.data_sources     = CASE
+                        WHEN 'pgp' IN coalesce(f.data_sources, []) THEN coalesce(f.data_sources, [])
+                        ELSE coalesce(f.data_sources, []) + ['pgp']
+                    END
                 """
                 tx.run(base_query, {
                     'canonical_shelfmark': canonical,
@@ -275,8 +288,16 @@ class PrincetonGenizahKG:
                     MERGE (f:Fragment {canonical_shelfmark: $canonical_shelfmark})
                     MERGE (i:Institution {name: $institution})
                     ON CREATE SET i.collection = $collection
+                    SET i.data_sources = CASE
+                        WHEN 'pgp' IN coalesce(i.data_sources, []) THEN coalesce(i.data_sources, [])
+                        ELSE coalesce(i.data_sources, []) + ['pgp']
+                    END
                     MERGE (f)-[r:HELD_AT]->(i)
-                    SET r.sub_collection = $subcollection
+                    SET r.sub_collection = $subcollection,
+                        r.data_sources   = CASE
+                            WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + ['pgp']
+                        END
                     """
                     tx.run(inst_query, {
                         'canonical_shelfmark': canonical,
@@ -330,7 +351,11 @@ class PrincetonGenizahKG:
                     p.description             = $description,
                     p.home_base               = $home_base,
                     p.related_documents_count = $related_documents_count,
-                    p.url                     = $url
+                    p.url                     = $url,
+                    p.data_sources            = CASE
+                        WHEN 'pgp' IN coalesce(p.data_sources, []) THEN coalesce(p.data_sources, [])
+                        ELSE coalesce(p.data_sources, []) + ['pgp']
+                    END
                 """, {
                     'name':                    name,
                     'name_variants':           doc_data.get('name_variants'),
@@ -347,7 +372,16 @@ class PrincetonGenizahKG:
                     tx.run("""
                         MERGE (p:Person {name: $name})
                         MERGE (pl:Place {name: $place})
-                        MERGE (p)-[:LIVED_IN]->(pl)
+                        SET pl.place_type   = 'historical',
+                            pl.data_sources = CASE
+                            WHEN 'pgp' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
+                            ELSE coalesce(pl.data_sources, []) + ['pgp']
+                        END
+                        MERGE (p)-[r:LIVED_IN]->(pl)
+                        SET r.data_sources = CASE
+                            WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + ['pgp']
+                        END
                     """, name=name, place=doc_data['home_base'].strip())
 
                 # Person -[:TRAVELED_TO]-> Place  (traveled_to is comma-separated)
@@ -358,7 +392,16 @@ class PrincetonGenizahKG:
                             tx.run("""
                                 MERGE (p:Person {name: $name})
                                 MERGE (pl:Place {name: $place})
-                                MERGE (p)-[:TRAVELED_TO]->(pl)
+                                SET pl.place_type   = 'historical',
+                                    pl.data_sources = CASE
+                                    WHEN 'pgp' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
+                                    ELSE coalesce(pl.data_sources, []) + ['pgp']
+                                END
+                                MERGE (p)-[r:TRAVELED_TO]->(pl)
+                                SET r.data_sources = CASE
+                                    WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                                    ELSE coalesce(r.data_sources, []) + ['pgp']
+                                END
                             """, name=name, place=place)
 
         batch_size = 100
@@ -385,7 +428,12 @@ class PrincetonGenizahKG:
                     pl.geographic_area         = $geographic_area,
                     pl.notes                   = $notes,
                     pl.related_documents_count = $related_documents_count,
-                    pl.url                     = $url
+                    pl.url                     = $url,
+                    pl.place_type              = 'historical',
+                    pl.data_sources            = CASE
+                        WHEN 'pgp' IN coalesce(pl.data_sources, []) THEN coalesce(pl.data_sources, [])
+                        ELSE coalesce(pl.data_sources, []) + ['pgp']
+                    END
                 """
                 tx.run(query, {
                     'name':                    doc_data['name'],
@@ -430,7 +478,11 @@ class PrincetonGenizahKG:
                     b.pages        = $page_range,
                     b.url          = $url,
                     b.citation     = $citation,
-                    b.source_type  = $source_type
+                    b.source_type  = $source_type,
+                    b.data_sources = CASE
+                        WHEN 'pgp' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
+                        ELSE coalesce(b.data_sources, []) + ['pgp']
+                    END
 
                 WITH b
                 WHERE $authors IS NOT NULL
@@ -439,7 +491,15 @@ class PrincetonGenizahKG:
                 WITH b, trim(author_name) AS author_name
                 WHERE author_name <> ''
                 MERGE (s:Scholar {name: author_name})
-                MERGE (s)-[:WROTE]->(b)
+                SET s.data_sources = CASE
+                    WHEN 'pgp' IN coalesce(s.data_sources, []) THEN coalesce(s.data_sources, [])
+                    ELSE coalesce(s.data_sources, []) + ['pgp']
+                END
+                MERGE (s)-[r:WROTE]->(b)
+                SET r.data_sources = CASE
+                    WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                    ELSE coalesce(r.data_sources, []) + ['pgp']
+                END
                 """
                 tx.run(query, {
                     'article_id':   article_id,
@@ -481,7 +541,11 @@ class PrincetonGenizahKG:
                 MERGE (b)-[r:REFERENCES]->(f)
                 SET r.location     = $location,
                     r.doc_relation = $doc_relation,
-                    r.notes        = $notes
+                    r.notes        = $notes,
+                    r.data_sources = CASE
+                        WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                        ELSE coalesce(r.data_sources, []) + ['pgp']
+                    END
                 """
                 try:
                     tx.run(query, {
@@ -502,6 +566,96 @@ class PrincetonGenizahKG:
         logger.info("✓ Footnotes imported")
 
     # ------------------------------------------------------------------
+    # Document → Person edges (mentioned / possibly_mentioned)
+    # ------------------------------------------------------------------
+    def import_document_people(self, df: pd.DataFrame):
+        """Create Fragment -[:MENTIONS_PERSON]-> Person edges from documents.csv.
+
+        The `mentioned` column contains comma-separated person names who appear
+        in a document. `possibly_mentioned` is the same but with lower certainty.
+        Both are imported; the relationship carries a `certainty` property so
+        queries can filter by confidence level.
+
+        Also imports Fragment -[:SENT_TO]-> Person and
+        Fragment -[:AUTHORED_BY]-> Person from the `destination` / `origin`
+        columns where those values resolve to known Person nodes (as opposed to
+        Place nodes which are already handled by import_documents).
+        """
+        logger.info("Importing document–person relationships...")
+
+        # Build a set of known Person names for quick lookup so we don't create
+        # spurious Person nodes from what are actually place names in these columns.
+        with self.driver.session(database=self.database) as session:
+            known_people = {
+                r['name'] for r in
+                session.run("MATCH (p:Person) RETURN p.name AS name").data()
+                if r['name']
+            }
+
+        logger.info(f"  Known Person nodes for matching: {len(known_people):,}")
+
+        def process_batch(tx, batch):
+            for _, row in batch.iterrows():
+                doc_data   = row.where(pd.notnull(row), None).to_dict()
+                pgpid      = doc_data.get('pgpid')
+                shelfmark  = doc_data.get('shelfmark', '')
+                if not pgpid:
+                    continue
+
+                # Parse and deduplicate a semicolon/comma-separated name field
+                def _names(field):
+                    raw = doc_data.get(field) or ''
+                    return [n.strip() for n in raw.replace(';', ',').split(',')
+                            if n.strip()]
+
+                # Fragment -[:MENTIONS_PERSON {certainty:'definite'}]-> Person
+                for person_name in _names('mentioned'):
+                    if person_name not in known_people:
+                        continue
+                    tx.run("""
+                        MATCH (f:Fragment {pgpid: $pgpid})
+                        MATCH (p:Person   {name:  $name})
+                        MERGE (f)-[r:MENTIONS_PERSON]->(p)
+                        SET r.certainty   = 'definite',
+                            r.data_sources = CASE
+                                WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                                ELSE coalesce(r.data_sources, []) + ['pgp']
+                            END
+                    """, pgpid=int(pgpid), name=person_name)
+
+                # Fragment -[:MENTIONS_PERSON {certainty:'possible'}]-> Person
+                for person_name in _names('possibly_mentioned'):
+                    if person_name not in known_people:
+                        continue
+                    tx.run("""
+                        MATCH (f:Fragment {pgpid: $pgpid})
+                        MATCH (p:Person   {name:  $name})
+                        MERGE (f)-[r:MENTIONS_PERSON]->(p)
+                        ON CREATE SET r.certainty = 'possible'
+                        SET r.data_sources = CASE
+                                WHEN 'pgp' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                                ELSE coalesce(r.data_sources, []) + ['pgp']
+                            END
+                    """, pgpid=int(pgpid), name=person_name)
+
+        batch_size = 200
+        with self.driver.session(database=self.database) as session:
+            for i in tqdm(range(0, len(df), batch_size), desc="Importing doc–person edges"):
+                session.execute_write(process_batch, df.iloc[i:i + batch_size])
+
+        # Report how many people got connected
+        with self.driver.session(database=self.database) as session:
+            stats = session.run("""
+                MATCH (:Fragment)-[r:MENTIONS_PERSON]->(:Person)
+                RETURN r.certainty AS certainty, count(*) AS cnt
+                ORDER BY certainty
+            """).data()
+            for s in stats:
+                logger.info(f"  MENTIONS_PERSON [{s['certainty']}]: {s['cnt']:,} edges")
+
+        logger.info("✓ Document–person relationships imported")
+
+    # ------------------------------------------------------------------
     # Full pipeline
     # ------------------------------------------------------------------
     def run_import(self):
@@ -514,12 +668,15 @@ class PrincetonGenizahKG:
             self.create_constraints()
 
             logger.info("\nLoading CSV files...")
-            self.import_documents(pd.read_csv(file_paths['documents.csv']))
+            documents_df = pd.read_csv(file_paths['documents.csv'])
+            self.import_documents(documents_df)
             self.import_fragments(pd.read_csv(file_paths['fragments.csv']))
             self.import_people(pd.read_csv(file_paths['people.csv']))
             self.import_places(pd.read_csv(file_paths['places.csv']))
             self.import_sources(pd.read_csv(file_paths['sources.csv']))
             self.import_footnotes(pd.read_csv(file_paths['footnotes.csv']))
+            # Must run after both people and fragments are imported
+            self.import_document_people(documents_df)
 
             logger.info("\n" + "=" * 60)
             logger.info("✓ IMPORT COMPLETE!")
