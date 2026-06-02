@@ -699,6 +699,9 @@ Extract the triplets:"""
             'CITES':           ('BookArticle', 'BookArticle'),
         }
 
+        _VALID_LABELS = {'Person', 'Scholar', 'Place', 'Institution',
+                         'Fragment', 'BookArticle', 'Entity'}
+
         driver = _GDB.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         written = 0
         try:
@@ -710,8 +713,10 @@ Extract the triplets:"""
                     rel      = t.get('relation', '').upper()
                     subj     = t.get('subject', '').strip()
                     obj      = t.get('object', '').strip()
-                    s_label  = t.get('subject_type', 'Person')
-                    o_label  = t.get('object_type',  'Place')
+                    s_label  = t.get('subject_type', 'Person') or 'Person'
+                    o_label  = t.get('object_type',  'Place')  or 'Place'
+                    s_label  = s_label if s_label in _VALID_LABELS else 'Person'
+                    o_label  = o_label if o_label in _VALID_LABELS else 'Entity'
 
                     if not (rel and subj and obj):
                         continue

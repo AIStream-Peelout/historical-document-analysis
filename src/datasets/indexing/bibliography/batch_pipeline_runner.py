@@ -341,9 +341,9 @@ def main():
     )
     parser.add_argument(
         "--skip-unocred",
-        action="store_true",
-        help="Skip any PDF that hasn't been OCR'd yet (avoids GCP Vision API costs).",
-        default=True
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip any PDF that hasn't been OCR'd yet (avoids GCP Vision API costs). Use --no-skip-unocred to process all.",
     )
     parser.add_argument(
         "--no-gemini",

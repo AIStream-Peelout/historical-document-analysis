@@ -738,7 +738,9 @@ class EnhancedKGImporter:
     @staticmethod
     def _write_fragment_mentions(tx, row: Dict):
         """Fragment -[:MENTIONS / :MENTIONS_PLACE]-> Person/Place"""
-        rel        = row["relation"]
+        rel = re.sub(r'[^A-Z_]', '', (row.get("relation") or "").upper())
+        if not rel:
+            raise ValueError(f"Invalid relation in row: {row}")
         tgt_label  = row["object_label"]
         # Resolve place names against Princeton variants; leave Person names as-is.
         obj_name = (EnhancedKGImporter._resolve_place_name(tx, row["object"])

@@ -576,10 +576,9 @@ class PrincetonGenizahKG:
         Both are imported; the relationship carries a `certainty` property so
         queries can filter by confidence level.
 
-        Also imports Fragment -[:SENT_TO]-> Person and
-        Fragment -[:AUTHORED_BY]-> Person from the `destination` / `origin`
-        columns where those values resolve to known Person nodes (as opposed to
-        Place nodes which are already handled by import_documents).
+        Note: only `mentioned` and `possibly_mentioned` columns are currently
+        processed. The `destination` / `origin` columns (SENT_TO / AUTHORED_BY)
+        are not yet implemented here.
         """
         logger.info("Importing document–person relationships...")
 
@@ -605,8 +604,8 @@ class PrincetonGenizahKG:
                 # Parse and deduplicate a semicolon/comma-separated name field
                 def _names(field):
                     raw = doc_data.get(field) or ''
-                    return [n.strip() for n in raw.replace(';', ',').split(',')
-                            if n.strip()]
+                    names = [n.strip() for n in raw.replace(';', ',').split(',') if n.strip()]
+                    return list(dict.fromkeys(names))
 
                 # Fragment -[:MENTIONS_PERSON {certainty:'definite'}]-> Person
                 for person_name in _names('mentioned'):
