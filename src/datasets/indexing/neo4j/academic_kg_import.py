@@ -408,8 +408,10 @@ class AcademicKGImporter:
             self._write_person_affiliated_with(tx, row)
         elif sl in ("Person", "Scholar") and rel == "TRAVELED_TO" and ol in ("Place", "Institution"):
             self._write_person_traveled_to(tx, row)
-        elif sl == "Fragment" and ol in ("Person", "Place"):
-            self._write_fragment_mentions(tx, row)
+        elif sl == "Fragment" or ol == "Fragment":
+            # Covers Fragment→Person, Fragment→Place, Fragment→BookArticle,
+            # Person→Fragment (WROTE/SENT_TO/MENTIONED_IN), etc.
+            self._write_fragment_rel(tx, row)
         else:
             self._write_generic_enhanced(tx, row)
 
@@ -517,47 +519,138 @@ class AcademicKGImporter:
              book=book, conf=row["confidence"], ev=row["evidence"])
 
     @staticmethod
-    def _write_fragment_mentions(tx, row: Dict) -> None:
-        """Fragment node keyed by canonical_shelfmark to match PGP nodes."""
-        shelfmark = row["subject"]
-        canonical = ShelfmarkNormalizer.to_canonical_id(shelfmark) or shelfmark
-        tgt_label = row["object_label"]
-        obj_name  = (_resolve_place_name(tx, row["object"])
-                     if tgt_label == "Place" else row["object"])
-        rel  = re.sub(r'[^A-Z_]', '', (row.get("relation") or "").upper())
+    def _write_fragment_rel(tx, row: Dict) -> None:
+        """Any relationship where subject or object is a Fragment.
+
+        Always keys Fragment nodes on canonical_shelfmark (via ShelfmarkNormalizer)
+        so they merge correctly with PGP nodes.  Handles both directions:
+          Fragment → Person / Place / BookArticle / Institution
+          Person / Scholar → Fragment  (WROTE, SENT_TO, MENTIONED_IN, etc.)
+        """
+        sl  = row["subject_label"]
+        ol  = row["object_label"]
+        rel = re.sub(r'[^A-Z_]', '', (row.get("relation") or "").upper())
         book = row["source_book"]
-        tx.run(f"""
-            MERGE (f:Fragment {{canonical_shelfmark: $canonical}})
-              ON CREATE SET f.shelfmark = $display
-            SET {_add_source('f', 'extracted')}, {_src_books('f')}
-            MERGE (t:{tgt_label} {{name: $name}})
-            SET {_add_source('t', 'extracted')}, {_src_books('t')}
-            MERGE (f)-[r:{rel}]->(t)
-              ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev
-            SET {_add_source('r', 'extracted')}, {_src_books('r')}
-        """, canonical=canonical, display=shelfmark, name=obj_name,
-             book=book, conf=row["confidence"], ev=row["evidence"])
+
+        def _merge_fragment(tx, display: str, tag: str) -> str:
+            canonical = ShelfmarkNormalizer.to_canonical_id(display) or display
+            tx.run(f"""
+                MERGE (f:Fragment {{canonical_shelfmark: $canonical}})
+                  ON CREATE SET f.shelfmark = $display
+                SET {_add_source('f', tag)}, {_src_books('f')}
+            """, canonical=canonical, display=display, book=book)
+            return canonical
+
+        def _merge_other(tx, label: str, name: str, tag: str) -> str:
+            if label == "BookArticle":
+                aid = _find_or_make_article_id(tx, name)
+                tx.run(f"""
+                    MERGE (n:BookArticle {{article_id: $aid}})
+                      ON CREATE SET n.title = $name
+                    SET {_add_source('n', tag)}, {_src_books('n')}
+                """, aid=aid, name=name, book=book)
+                return f"BookArticle {{article_id: '{aid}'}}"
+            elif label == "Place":
+                resolved = _resolve_place_name(tx, name)
+                tx.run(f"""
+                    MERGE (n:Place {{name: $name}})
+                    SET n.place_type = 'historical',
+                        {_add_source('n', tag)}, {_src_books('n')}
+                """, name=resolved, book=book)
+                return f"Place {{name: '{resolved}'}}"
+            else:
+                tx.run(f"""
+                    MERGE (n:{label} {{name: $name}})
+                    SET {_add_source('n', tag)}, {_src_books('n')}
+                """, name=name, book=book)
+                return f"{label} {{name: '{name}'}}"
+
+        if sl == "Fragment":
+            canonical_s = _merge_fragment(tx, row["subject"], "extracted")
+            other_ref   = _merge_other(tx, ol, row["object"], "extracted")
+            tx.run(f"""
+                MATCH (f:Fragment {{canonical_shelfmark: $canonical}})
+                MATCH (o:{other_ref})
+                MERGE (f)-[r:{rel}]->(o)
+                  ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev
+                SET {_add_source('r', 'extracted')}, {_src_books('r')}
+            """, canonical=canonical_s,
+                 book=book, conf=row["confidence"], ev=row["evidence"])
+        else:
+            # subject is Person/Scholar/etc, object is Fragment
+            canonical_o = _merge_fragment(tx, row["object"], "extracted")
+            other_ref   = _merge_other(tx, sl, row["subject"], "extracted")
+            tx.run(f"""
+                MATCH (s:{other_ref})
+                MATCH (f:Fragment {{canonical_shelfmark: $canonical}})
+                MERGE (s)-[r:{rel}]->(f)
+                  ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev
+                SET {_add_source('r', 'extracted')}, {_src_books('r')}
+            """, canonical=canonical_o,
+                 book=book, conf=row["confidence"], ev=row["evidence"])
 
     @staticmethod
     def _write_generic_enhanced(tx, row: Dict) -> None:
+        """Fallback for relationships not covered by specific handlers.
+        Fragment nodes always use canonical_shelfmark — never name."""
         sl  = row["subject_label"] or "Entity"
         ol  = row["object_label"]  or "Entity"
         rel = row["relation"].replace(" ", "_")
-        subj = (_resolve_place_name(tx, row["subject"])
-                if sl == "Place" else row["subject"])
-        obj  = (_resolve_place_name(tx, row["object"])
-                if ol == "Place" else row["object"])
         book = row["source_book"]
+
+        # Build subject
+        if sl == "Fragment":
+            canonical_s = ShelfmarkNormalizer.to_canonical_id(row["subject"]) or row["subject"]
+            tx.run(f"""
+                MERGE (a:Fragment {{canonical_shelfmark: $canonical}})
+                  ON CREATE SET a.shelfmark = $display
+                SET {_add_source('a', 'extracted')}, {_src_books('a')}
+            """, canonical=canonical_s, display=row["subject"], book=book)
+            subj_clause = f"Fragment {{canonical_shelfmark: '{canonical_s}'}}"
+        elif sl == "Place":
+            subj = _resolve_place_name(tx, row["subject"])
+            tx.run(f"MERGE (a:Place {{name: $name}}) SET {_add_source('a','extracted')}, {_src_books('a')}",
+                   name=subj, book=book)
+            subj_clause = f"Place {{name: '{subj}'}}"
+        else:
+            tx.run(f"MERGE (a:{sl} {{name: $name}}) SET {_add_source('a','extracted')}, {_src_books('a')}",
+                   name=row["subject"], book=book)
+            subj_clause = f"{sl} {{name: '{row['subject']}'}}"
+
+        # Build object
+        if ol == "Fragment":
+            canonical_o = ShelfmarkNormalizer.to_canonical_id(row["object"]) or row["object"]
+            tx.run(f"""
+                MERGE (b:Fragment {{canonical_shelfmark: $canonical}})
+                  ON CREATE SET b.shelfmark = $display
+                SET {_add_source('b', 'extracted')}, {_src_books('b')}
+            """, canonical=canonical_o, display=row["object"], book=book)
+            obj_clause = f"Fragment {{canonical_shelfmark: '{canonical_o}'}}"
+        elif ol == "BookArticle":
+            aid = _find_or_make_article_id(tx, row["object"])
+            tx.run(f"""
+                MERGE (b:BookArticle {{article_id: $aid}})
+                  ON CREATE SET b.title = $title
+                SET {_add_source('b','extracted')}, {_src_books('b')}
+            """, aid=aid, title=row["object"], book=book)
+            obj_clause = f"BookArticle {{article_id: '{aid}'}}"
+        elif ol == "Place":
+            obj = _resolve_place_name(tx, row["object"])
+            tx.run(f"MERGE (b:Place {{name: $name}}) SET {_add_source('b','extracted')}, {_src_books('b')}",
+                   name=obj, book=book)
+            obj_clause = f"Place {{name: '{obj}'}}"
+        else:
+            tx.run(f"MERGE (b:{ol} {{name: $name}}) SET {_add_source('b','extracted')}, {_src_books('b')}",
+                   name=row["object"], book=book)
+            obj_clause = f"{ol} {{name: '{row['object']}'}}"
+
         tx.run(f"""
-            MERGE (a:{sl} {{name: $subj}})
-            SET {_add_source('a', 'extracted')}, {_src_books('a')}
-            MERGE (b:{ol} {{name: $obj}})
-            SET {_add_source('b', 'extracted')}, {_src_books('b')}
+            MATCH (a:{subj_clause})
+            MATCH (b:{obj_clause})
             MERGE (a)-[r:{rel}]->(b)
               ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev
             SET {_add_source('r', 'extracted')}, {_src_books('r')}
-        """, subj=subj, obj=obj,
-             book=book, conf=row["confidence"], ev=row["evidence"])
+        """, book=book, conf=row["confidence"], ev=row["evidence"])
 
     # ===================================================================
     # Write helpers — enriched triplets (Pass 3)
