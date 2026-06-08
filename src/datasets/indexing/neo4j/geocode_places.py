@@ -40,6 +40,9 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.append(str(project_root))
 dotenv.load_dotenv(project_root / ".env")
 
+from src.datasets.document_models.place_normalizer import PlaceNormalizer  # noqa: E402
+from src.datasets.document_models.institution_normalizer import InstitutionNormalizer  # noqa: E402
+
 from neo4j import GraphDatabase
 
 logging.basicConfig(
@@ -339,9 +342,12 @@ def _geocode_one(geolocator, name: str) -> Optional[dict]:
         except Exception:
             return None
 
-    # 1. Historical override — curated, always trusted
-    if name in HISTORICAL_OVERRIDES:
-        loc = _try(HISTORICAL_OVERRIDES[name])
+    # 1. Historical override — curated, always trusted.
+    # PlaceNormalizer.geocode_query() returns a modern geocoder-friendly string
+    # when the name has a known override, or the name itself otherwise.
+    geocode_override = PlaceNormalizer.geocode_query(name)
+    if geocode_override != name:
+        loc = _try(geocode_override)
         if loc:
             result = _build_result(loc, place_name=name)
             if result:
@@ -512,41 +518,13 @@ def _extract_institution_location(name: str) -> list[str]:
         if first_word not in queries:
             queries.append(first_word)
 
-    # Well-known institution → city overrides
-    _KNOWN: dict[str, str] = {
-        "jewish theological seminary":          "New York City",
-        "jts":                                  "New York City",
-        "bodleian":                             "Oxford",
-        "taylor-schechter":                     "Cambridge",
-        "cambridge university library":         "Cambridge",
-        "john rylands":                         "Manchester",
-        "british library":                      "London",
-        "bibliotheque nationale":               "Paris",
-        "national library of israel":           "Jerusalem",
-        "hebrew university":                    "Jerusalem",
-        "yad ben zvi":                          "Jerusalem",
-        "ben-zvi institute":                    "Jerusalem",
-        "dropsie college":                      "Philadelphia",
-        "mandel institute":                     "Jerusalem",
-        "brandeis":                             "Waltham Massachusetts",
-        "ben-gurion university":                "Beersheba Israel",
-        "bar-ilan":                             "Ramat Gan Israel",
-        "genazim institute":                    "Tel Aviv",
-        # Hebrew Union College — Genizah fragments are at the Klau Library,
-        # Cincinnati campus. HUC also has campuses in Jerusalem, NY, and LA
-        # so geocoders default to Jerusalem without this override.
-        "hebrew union college":                 "Klau Library, Cincinnati Ohio",
-        "klau library":                         "Klau Library, Cincinnati Ohio",
-        "huc-jir":                              "Klau Library, Cincinnati Ohio",
-        # Columbia University — geocodes to Colombia, South America without this
-        "columbia university": "Columbia University, New York City",
-        "columbia university library": "Columbia University, New York City",
-        "butler library": "Columbia University, New York City",
-    }
-    for key, city in _KNOWN.items():
-        if key in lower:
-            queries.append(city)
-            break
+    # Derive a geocoder-friendly city hint from InstitutionNormalizer metadata.
+    # This replaces the local _KNOWN dict — all city overrides now live in
+    # institution_normalizer.py so they stay in sync with the import pipeline.
+    meta = InstitutionNormalizer.get_metadata(name)
+    city_hint = meta.get("city", "")
+    if city_hint and city_hint not in queries:
+        queries.append(city_hint)
 
     return queries
 

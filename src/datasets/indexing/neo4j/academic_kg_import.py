@@ -78,6 +78,9 @@ sys.path.append(str(project_root))
 dotenv.load_dotenv(project_root / ".env")
 
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+from src.datasets.document_models.institution_normalizer import InstitutionNormalizer  # noqa: E402
+from src.datasets.document_models.place_normalizer import PlaceNormalizer  # noqa: E402
+from src.datasets.document_models.person_normalizer import PersonNormalizer  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -292,8 +295,12 @@ class AcademicKGImporter:
                 if _is_scholar_role(role):
                     return "Scholar"
             label = _LABEL_MAP.get(declared, declared)
+            # Only reclassify Place→Institution for modern institutions.
+            # Historical place-anchored academies (Sura, Pumbedita, etc.) must
+            # stay as Place nodes even though their names contain "academy".
             if label == "Place" and _is_institution_name(name):
-                label = "Institution"
+                if not PlaceNormalizer.is_historical_institution(name):
+                    label = "Institution"
             return label
 
         subj_label = _resolve_label(subj, subj_type)
@@ -438,7 +445,8 @@ class AcademicKGImporter:
 
     @staticmethod
     def _write_person_lived_in(tx, row: Dict) -> None:
-        if _is_institution_name(row["object"]):
+        obj_name = row["object"]
+        if _is_institution_name(obj_name) and not PlaceNormalizer.is_historical_institution(obj_name):
             AcademicKGImporter._write_person_affiliated_with(tx, row)
             return
         label = row["subject_label"]
@@ -465,6 +473,8 @@ class AcademicKGImporter:
     def _write_person_affiliated_with(tx, row: Dict) -> None:
         label = row["subject_label"]
         book  = row["source_book"]
+        subj  = PersonNormalizer.normalize(row["subject"])
+        inst  = InstitutionNormalizer.normalize(row["object"])
         tx.run(f"""
             MERGE (p:{label} {{name: $name}})
             SET {_add_source('p', 'extracted')}, {_src_books('p')}
@@ -473,7 +483,7 @@ class AcademicKGImporter:
             MERGE (p)-[r:AFFILIATED_WITH]->(i)
               ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev
             SET {_add_source('r', 'extracted')}, {_src_books('r')}
-        """, name=row["subject"], inst=row["object"],
+        """, name=subj, inst=inst,
              book=book, conf=row["confidence"], ev=row["evidence"])
 
     @staticmethod
@@ -578,6 +588,11 @@ class AcademicKGImporter:
         rel = row["relation"].replace(" ", "_")
         book = row["source_book"]
 
+        # Normalise to canonical KG names before building MERGE clauses.
+        row = {**row,
+               "subject": _normalise_entity(row["subject"], sl),
+               "object":  _normalise_entity(row["object"],  ol)}
+
         # Build subject
         if sl == "Fragment":
             canonical_s = ShelfmarkNormalizer.to_canonical_id(row["subject"]) or row["subject"]
@@ -643,8 +658,9 @@ class AcademicKGImporter:
         ol  = t["object_type"]  if t["object_type"]  in _VALID_LABELS else "Entity"
         rel = t["relation"].replace(" ", "_")
 
-        subj = t["subject"]
-        obj  = t["object"]
+        # Normalise entity names to canonical KG keys before any MERGE.
+        subj = _normalise_entity(t["subject"], sl)
+        obj  = _normalise_entity(t["object"],  ol)
 
         # Build subject node
         if sl == "Fragment":
@@ -742,12 +758,15 @@ class AcademicKGImporter:
     ) -> None:
         seen_people: set = set()
         for person in people_by_name.values():
-            canonical = (person.get("name") or "").strip()
-            if not canonical or canonical in seen_people:
+            raw_name = (person.get("name") or "").strip()
+            if not raw_name:
+                continue
+            role  = (person.get("role") or "").lower().strip()
+            label = "Scholar" if _is_scholar_role(role) else "Person"
+            canonical = PersonNormalizer.normalize(raw_name)
+            if canonical in seen_people:
                 continue
             seen_people.add(canonical)
-            role        = (person.get("role") or "").lower().strip()
-            label       = "Scholar" if _is_scholar_role(role) else "Person"
             description = (person.get("description") or "").strip()[:1000]
             tx.run(f"""
                 MERGE (p:{label} {{name: $name}})
@@ -761,8 +780,11 @@ class AcademicKGImporter:
 
         seen_places: set = set()
         for place in places_by_name.values():
-            canonical = (place.get("name") or "").strip()
-            if not canonical or canonical in seen_places:
+            raw_name = (place.get("name") or "").strip()
+            if not raw_name:
+                continue
+            canonical = PlaceNormalizer.normalize(raw_name)
+            if canonical in seen_places:
                 continue
             seen_places.add(canonical)
             city    = (place.get("city",    "") or "").strip()
@@ -879,6 +901,22 @@ class AcademicKGImporter:
 # ---------------------------------------------------------------------------
 # Module-level helpers (called inside transactions)
 # ---------------------------------------------------------------------------
+
+def _normalise_entity(name: str, label: str) -> str:
+    """Apply the appropriate EntityNormalizer for *label* to *name*.
+
+    :param name: Raw entity name from LLM output.
+    :param label: Neo4j label (Person, Scholar, Place, Institution, …).
+    :returns: Canonical name suitable for use as a Neo4j MERGE key.
+    """
+    if label in ("Person", "Scholar"):
+        return PersonNormalizer.normalize(name)
+    if label == "Institution":
+        return InstitutionNormalizer.normalize(name)
+    if label == "Place":
+        return PlaceNormalizer.normalize(name)
+    return name
+
 
 def _resolve_place_name(tx, raw_name: str) -> str:
     """Return canonical Place.name, checking Princeton name_variants."""

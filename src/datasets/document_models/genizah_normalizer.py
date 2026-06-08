@@ -16,11 +16,42 @@ Example:
 """
 
 import re
-from typing import Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set
+
+from src.datasets.document_models.entity_normalizer import EntityNormalizer
 
 
-class ShelfmarkNormalizer:
-    """Normalize shelfmarks to canonical IDs and generate search variants"""
+class ShelfmarkNormalizer(EntityNormalizer):
+    """Normalize shelfmarks to canonical IDs and generate search variants."""
+
+    # ── EntityNormalizer ABC implementation ───────────────────────────────────
+
+    @classmethod
+    def normalize(cls, raw: str) -> str:
+        """Return the canonical shelfmark ID for *raw*.
+
+        :param raw: Shelfmark in any known format.
+        :returns: Canonical underscore-separated ID (e.g. ``T_S_AS_18_170``).
+        """
+        return cls.to_canonical_id(raw)
+
+    @classmethod
+    def get_variants(cls, canonical: str) -> List[str]:
+        """Return known surface-form variants for a canonical shelfmark ID.
+
+        :param canonical: Canonical ID (e.g. ``T_S_AS_18_170``).
+        :returns: List of variant display strings.
+        """
+        return cls.generate_variants(canonical)
+
+    @classmethod
+    def get_metadata(cls, raw: str) -> Dict[str, Any]:
+        """Return institution / collection info for *raw*.
+
+        :param raw: Shelfmark in any known format.
+        :returns: Dict with ``institution``, ``collection``, ``subcollection``.
+        """
+        return cls.get_institution_info(raw)
 
     # Collection prefix mappings (variant → canonical)
     COLLECTION_PREFIXES = {
