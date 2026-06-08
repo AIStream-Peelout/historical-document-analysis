@@ -240,36 +240,16 @@ class AcademicKGImporter:
             counts["people_upserted"] += len(set(p.get("name","") for p in people_by_name.values()))
             counts["places_upserted"] += len(set(p.get("name","") for p in places_by_name.values()))
 
-        triplets: List[Dict] = data.get("kg_triplets", [])
-        if not triplets:
-            return dict(counts)
-
-        rows = []
-        for t in triplets:
-            row = self._normalise_enhanced_triplet(t, people_by_name, places_by_name, source_book)
-            if row:
-                rows.append(row)
-
-        counts["triplets_total"] += len(triplets)
-        counts["triplets_valid"] += len(rows)
-
-        if dry_run:
-            return dict(counts)
-
-        with self.driver.session(database=self.database) as session:
-            for row in rows:
-                try:
-                    session.execute_write(self._write_enhanced_triplet, row)
-                    counts["triplets_written"] += 1
-                except Exception as e:
-                    logger.warning(f"  Triplet write failed: {row}: {e}")
-
-            for loc_meta in places_by_name.values():
-                if any(loc_meta.get(k) for k in ("city", "country", "region")):
-                    try:
-                        session.execute_write(self._enrich_place_node, loc_meta)
-                    except Exception as e:
-                        logger.debug(f"  Place enrich failed for {loc_meta.get('name')}: {e}")
+        # kg_triplets from Pass 2 are no longer used — Pass 3 (enrich_node_relations.py)
+        # handles all relationship extraction. We still enrich place metadata if present.
+        if not dry_run:
+            with self.driver.session(database=self.database) as session:
+                for loc_meta in places_by_name.values():
+                    if any(loc_meta.get(k) for k in ("city", "country", "region")):
+                        try:
+                            session.execute_write(self._enrich_place_node, loc_meta)
+                        except Exception as e:
+                            logger.debug(f"  Place enrich failed for {loc_meta.get('name')}: {e}")
 
         return dict(counts)
 
