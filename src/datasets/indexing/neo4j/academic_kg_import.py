@@ -549,11 +549,15 @@ class AcademicKGImporter:
                 """, name=resolved, book=book)
                 return f"Place {{name: '{resolved}'}}"
             else:
+                # Normalise Person/Scholar/Institution names so variant forms
+                # (e.g. "Jewish Theological Seminary Library") always merge into
+                # the same canonical node as the primary form.
+                canonical_name = _normalise_entity(name, label)
                 tx.run(f"""
                     MERGE (n:{label} {{name: $name}})
                     SET {_add_source('n', tag)}, {_src_books('n')}
-                """, name=name, book=book)
-                return f"{label} {{name: '{name}'}}"
+                """, name=canonical_name, book=book)
+                return f"{label} {{name: '{canonical_name}'}}"
 
         if sl == "Fragment":
             canonical_s = _merge_fragment(tx, row["subject"], "extracted")

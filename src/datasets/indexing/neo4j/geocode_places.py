@@ -519,12 +519,30 @@ def _extract_institution_location(name: str) -> list[str]:
             queries.append(first_word)
 
     # Derive a geocoder-friendly city hint from InstitutionNormalizer metadata.
-    # This replaces the local _KNOWN dict — all city overrides now live in
-    # institution_normalizer.py so they stay in sync with the import pipeline.
+    # When we have a known city, insert a city-qualified query IMMEDIATELY after
+    # the full name so the geocoder uses it before any other fallback.
+    # This prevents multi-campus institutions (e.g. Hebrew Union College) from
+    # resolving to the wrong campus when the unqualified name is ambiguous.
+    #
+    # IMPORTANT: use the canonical name (not the raw DB name) as the query base.
+    # The DB may store names with Arabic subtitles, transliterations, or other
+    # decorations (e.g. "Coptic Museum, Cairo (al-Matḥāf al-Qibṭī)") that
+    # confuse the geocoder.  The canonical form is always the clean version.
     meta = InstitutionNormalizer.get_metadata(name)
     city_hint = meta.get("city", "")
-    if city_hint and city_hint not in queries:
-        queries.append(city_hint)
+    if city_hint:
+        canonical = InstitutionNormalizer.normalize(name)
+        # If the canonical differs from the raw name, insert it as a clean
+        # first-priority query so garbage suffixes don't poison the geocoder.
+        if canonical != name and canonical not in queries:
+            queries.insert(1, canonical)
+        # City-qualified canonical: "Coptic Museum, Cairo, Cairo" avoids the
+        # double-city redundancy — use canonical + city only when meaningful.
+        city_qualified = f"{canonical}, {city_hint}"
+        if city_qualified not in queries:
+            queries.insert(2 if canonical != name else 1, city_qualified)
+        if city_hint not in queries:
+            queries.append(city_hint)
 
     return queries
 
@@ -661,15 +679,26 @@ def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
 
     ok, failed = 0, []
     for name in institutions:
+        # Pre-seed city/country/region from InstitutionNormalizer metadata.
+        # This ensures well-known institutions get correct location metadata
+        # even when the geocoder would return a wrong campus or no result.
+        # The geocoder result can still override lat/lng but metadata values
+        # from the registry always win over geocoder-derived city/country/region.
+        known_meta = InstitutionNormalizer.get_metadata(name)
+
         if gmaps_client:
             result = _geocode_institution_google(name, gmaps_client)
-            # Google has no rate limit concern at this scale, but be polite
             time.sleep(0.1)
         else:
             result = _geocode_institution_nominatim(geolocator, name)
             time.sleep(args.delay)
 
         if result:
+            # Registry metadata takes precedence over geocoder-derived location
+            # strings to prevent e.g. HUC resolving to Jerusalem.
+            city    = known_meta.get("city")    or result.get("city",    "")
+            country = known_meta.get("country") or result.get("country", "")
+            region  = known_meta.get("region")  or result.get("region",  "")
             session.run("""
                 MATCH (i:Institution {name: $name})
                 SET i.lat              = $lat,
@@ -678,10 +707,26 @@ def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
                     i.country          = CASE WHEN $country <> '' AND i.country IS NULL THEN $country ELSE i.country END,
                     i.region           = CASE WHEN $region  <> '' AND i.region  IS NULL THEN $region  ELSE i.region  END,
                     i.osm_display_name = $osm_display_name
-            """, name=name, **result)
+            """, name=name, lat=result["lat"], lng=result["lng"],
+                 city=city, country=country, region=region,
+                 osm_display_name=result.get("osm_display_name", ""))
             ok += 1
             logger.info(f"  ✅ {name} → ({result['lat']:.4f}, {result['lng']:.4f}) "
-                        f"{result['city']}, {result['country']}")
+                        f"{city}, {country}")
+        elif known_meta.get("city"):
+            # No geocoder result but we have registry metadata — at least set
+            # the location text fields so the node isn't completely unplaced.
+            session.run("""
+                MATCH (i:Institution {name: $name})
+                SET i.city    = CASE WHEN i.city    IS NULL THEN $city    ELSE i.city    END,
+                    i.country = CASE WHEN i.country IS NULL THEN $country ELSE i.country END,
+                    i.region  = CASE WHEN i.region  IS NULL THEN $region  ELSE i.region  END
+            """, name=name,
+                 city=known_meta.get("city", ""),
+                 country=known_meta.get("country", ""),
+                 region=known_meta.get("region", ""))
+            failed.append(name)
+            logger.warning(f"  ⚠️  {name} — no geocoder result; seeded city/country from registry")
         else:
             failed.append(name)
             logger.warning(f"  ❌ {name} — no result")

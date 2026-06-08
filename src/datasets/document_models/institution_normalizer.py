@@ -45,9 +45,11 @@ _CANONICAL: dict[str, str] = {
     "taylor-schechter":                     "Cambridge University Library",
     "t-s collection":                       "Cambridge University Library",
     "cul genizah":                          "Cambridge University Library",
+    "cambridge university library genizah": "Cambridge University Library",
 
     # ── Jewish Theological Seminary ─────────────────────────────────────────
     "jewish theological seminary of america":   "Jewish Theological Seminary",
+    "jewish theological seminary library":      "Jewish Theological Seminary",
     "jewish theological seminary":              "Jewish Theological Seminary",
     "jtsa":                                     "Jewish Theological Seminary",
     "jts library":                              "Jewish Theological Seminary",
