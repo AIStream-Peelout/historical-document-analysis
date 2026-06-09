@@ -82,7 +82,7 @@ from typing import Dict, List, Optional, Tuple
 
 import dotenv
 
-_project_root = Path(__file__).parent.parent.parent.parent
+_project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.append(str(_project_root))
 dotenv.load_dotenv(_project_root / ".env")
 
@@ -97,6 +97,34 @@ _data_root = _project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" /
 # ---------------------------------------------------------------------------
 
 _ENTITY_FILE_SUFFIX = "_entities.json"
+
+
+# ---------------------------------------------------------------------------
+# Directory helpers
+# ---------------------------------------------------------------------------
+
+def _is_structured_dir(p: Path) -> bool:
+    """Return True if *p* is a structured-output directory.
+
+    Matches both single-level (``book_structured_gemini/``) and two-level
+    (``book_structured_qwen/qwen3_vl_8b/``) layouts.
+
+    :param p: Directory path to test.
+    :returns: True if the directory or its parent contains ``_structured``.
+    """
+    return "_structured" in p.name or "_structured" in p.parent.name
+
+
+def _book_dir_for_structured(p: Path) -> Path:
+    """Return the book root directory for a structured JSON file path.
+
+    :param p: Path to a ``page_NNN_structured.json`` file.
+    :returns: Book root directory (2 or 3 levels up depending on layout).
+    """
+    # p.parent = the structured dir (single-level) or model subdir (two-level)
+    if "_structured" in p.parent.name:
+        return p.parent.parent          # single-level: book/book_structured_*/
+    return p.parent.parent.parent       # two-level:    book/book_structured_*/model/
 
 # ---------------------------------------------------------------------------
 # Prompt
@@ -129,7 +157,8 @@ def _build_prompt(
     page_num = current_page.get("extracted_page_number", "unknown")
     main_text = (current_page.get("full_main_text") or "").strip()
     footnotes = current_page.get("footnotes") or {}
-    pass1_marks = list((current_page.get("shelf_marks_mentioned") or {}).keys())
+    _sm = current_page.get("shelf_marks_mentioned") or {}
+    pass1_marks = list(_sm.keys()) if isinstance(_sm, dict) else list(_sm)
     classification = current_page.get("classification", "general_academic")
 
     footnote_block = ""
@@ -272,23 +301,36 @@ class EntityTagger:
         :param overwrite: If True, re-tag pages that already have entity files.
         :returns: Counts dict with ``tagged``, ``skipped``, ``failed`` keys.
         """
+        source_book  = book_dir.name
+        entities_dir = book_dir / "entities"
+        _complete_marker = entities_dir / ".complete"
+
+        # Fast-path: book was fully tagged in a previous run
+        if _complete_marker.exists() and not overwrite:
+            logger.info(f"  {source_book}: already complete (delete entities/.complete to re-run)")
+            return {"tagged": 0, "skipped": 0, "failed": 0, "book_complete": True}
+
         structured_files = sorted(
             p for p in book_dir.rglob("page_*_structured.json")
-            if "_structured" in p.parent.name  # must be inside a *_structured_* subdir
+            if _is_structured_dir(p.parent)
         )
 
         if not structured_files:
             logger.warning(f"  No structured JSON files found in {book_dir}")
             return {"tagged": 0, "skipped": 0, "failed": 0}
 
-        source_book = book_dir.name
         counts = {"tagged": 0, "skipped": 0, "failed": 0}
-
-        # Pass 2 output goes into book_dir/entities/ — separate from Pass 1 structured dir
-        entities_dir = book_dir / "entities"
         entities_dir.mkdir(exist_ok=True)
 
-        logger.info(f"  {source_book}: {len(structured_files)} pages to process → {entities_dir}")
+        already_done = sum(
+            1 for p in structured_files
+            if (entities_dir / p.name.replace("_structured.json", _ENTITY_FILE_SUFFIX)).exists()
+        )
+        remaining = len(structured_files) - already_done
+        logger.info(
+            f"  {source_book}: {len(structured_files)} pages total, "
+            f"{already_done} done, {remaining} remaining"
+        )
 
         prev_data: Optional[Dict] = None
 
@@ -339,9 +381,11 @@ class EntityTagger:
                 continue
 
             # Merge pass1 shelf marks that the LLM may have missed
-            pass1_marks = set((current_data.get("shelf_marks_mentioned") or {}).keys())
+            _sm2 = current_data.get("shelf_marks_mentioned") or {}
+            pass1_marks = set(_sm2.keys()) if isinstance(_sm2, dict) else set(_sm2)
             tagged_marks = {sm["mark"] for sm in parsed["shelf_marks"]}
-            for mark, desc in (current_data.get("shelf_marks_mentioned") or {}).items():
+            for mark, desc in (_sm2.items() if isinstance(_sm2, dict) else {}):
+
                 if mark not in tagged_marks:
                     parsed["shelf_marks"].append({
                         "mark": mark,
@@ -373,6 +417,11 @@ class EntityTagger:
             counts["tagged"] += 1
             prev_data = current_data
 
+        # Write completion marker if all pages succeeded (none failed)
+        if not dry_run and counts["failed"] == 0 and remaining > 0:
+            _complete_marker.touch()
+            logger.info(f"  {source_book}: marked complete ✓")
+
         return counts
 
     def tag_all(
@@ -393,21 +442,25 @@ class EntityTagger:
         book_dirs: List[Path] = []
         seen: set = set()
         for p in root.rglob("page_*_structured.json"):
-            if "_structured" in p.parent.name:
-                book_dir = p.parent.parent  # e.g. india_trader_1_50/
+            if _is_structured_dir(p.parent):
+                book_dir = _book_dir_for_structured(p)
                 if book_dir not in seen:
                     book_dirs.append(book_dir)
                     seen.add(book_dir)
         book_dirs.sort()
 
-        totals = {"tagged": 0, "skipped": 0, "failed": 0}
+        totals = {"tagged": 0, "skipped": 0, "failed": 0, "books_complete": 0, "books_processed": 0}
         logger.info(f"Found {len(book_dirs)} book directories under {root}")
 
         for book_dir in book_dirs:
             logger.info(f"Book: {book_dir.relative_to(root)}")
             counts = self.tag_book(book_dir, dry_run=dry_run, overwrite=overwrite)
-            for k in totals:
+            for k in ("tagged", "skipped", "failed"):
                 totals[k] += counts.get(k, 0)
+            if counts.get("book_complete"):
+                totals["books_complete"] += 1
+            else:
+                totals["books_processed"] += 1
 
         return totals
 
@@ -484,9 +537,11 @@ def main() -> None:
     tag = "[DRY RUN] " if args.dry_run else ""
     print(f"\n{tag}Entity tagging complete")
     print("=" * 40)
-    print(f"  Tagged:  {totals['tagged']:,}")
-    print(f"  Skipped: {totals['skipped']:,} (already exist)")
-    print(f"  Failed:  {totals['failed']:,}")
+    print(f"  Books already complete: {totals['books_complete']:,} (fast-skipped)")
+    print(f"  Books processed:        {totals['books_processed']:,}")
+    print(f"  Pages tagged:           {totals['tagged']:,}")
+    print(f"  Pages skipped:          {totals['skipped']:,} (file exists)")
+    print(f"  Pages failed:           {totals['failed']:,}")
     print("=" * 40)
 
 

@@ -79,7 +79,7 @@ from typing import Dict, List, Optional, Tuple
 import requests
 import dotenv
 
-_project_root = Path(__file__).parent.parent.parent.parent
+_project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.append(str(_project_root))
 dotenv.load_dotenv(_project_root / ".env")
 

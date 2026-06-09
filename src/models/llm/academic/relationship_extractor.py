@@ -79,7 +79,7 @@ from typing import Dict, List, Optional, Set
 
 import dotenv
 
-_project_root = Path(__file__).parent.parent.parent.parent
+_project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.append(str(_project_root))
 dotenv.load_dotenv(_project_root / ".env")
 
@@ -87,8 +87,9 @@ from src.models.llm.academic.llm_client import LLMClient  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-_data_root    = _project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" / "academic_literature"
-_OUTPUT_FILE  = "book_relations.json"
+_data_root     = _project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" / "academic_literature"
+_RELATIONS_V2  = _data_root / "relations_v2"   # output root — separate from old enriched_relations/
+_OUTPUT_FILE   = "book_relations.json"
 _RESOLVED_FILE = "book_entities_resolved.json"
 
 # ---------------------------------------------------------------------------
@@ -192,11 +193,14 @@ Allowed relation types (subject_type → object_type):
 {relations_list}
 
 Rules:
-- subject or object must be "{name}" or one of its aliases
+- The subject of every triplet MUST be exactly "{name}" — never a short form, pronoun,
+  or alias even if that is what the text uses. Same for objects: always use the full
+  canonical name from the known entity lists above, not the short form in the text.
+  Example: if the text says "Abraham" but the known people list has "Abraham Ben Yiju",
+  use "Abraham Ben Yiju".
 - evidence must be a direct quote or close paraphrase from the text above
 - confidence: "high" = direct statement, "medium" = clear implication; omit "low"
 - evidence_page: the page number the evidence comes from
-- use the canonical names from the known entity lists above where possible
 - do NOT invent entities not mentioned in the text
 
 Return ONLY this JSON:
@@ -290,8 +294,10 @@ def _load_page_texts(book_dir: Path, page_numbers: List[int]) -> List[str]:
     # Build page_number → structured file map
     page_map: Dict[int, Path] = {}
     for p in book_dir.rglob("page_*_structured.json"):
-        if "_structured" not in p.parent.name:
-            continue  # structured files must be inside a *_structured_*/ subdir
+        # Accept both single-level (book_structured_*/page.json)
+        # and two-level (book_structured_*/model/page.json) layouts
+        if "_structured" not in p.parent.name and "_structured" not in p.parent.parent.name:
+            continue
         try:
             d = json.load(open(p, encoding="utf-8"))
             pn = d.get("extracted_page_number")
@@ -367,7 +373,12 @@ class RelationExtractor:
         :returns: Number of relations extracted.
         """
         resolved_path = book_dir / _RESOLVED_FILE
-        output_path   = book_dir / _OUTPUT_FILE
+
+        # Output goes to relations_v2/<book_name>/book_relations.json
+        # so it is clearly separated from the old enriched_relations/ pipeline
+        out_dir     = _RELATIONS_V2 / book_dir.name
+        out_dir.mkdir(parents=True, exist_ok=True)
+        output_path = out_dir / _OUTPUT_FILE
 
         if not resolved_path.exists():
             logger.warning(f"  {book_dir.name}: no {_RESOLVED_FILE} (run Pass 3 first)")
@@ -494,7 +505,7 @@ def main() -> None:
     parser.add_argument("--dry-run", "-n", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--backend", choices=["gemini", "lm_studio"], default="gemini")
-    parser.add_argument("--lms-model",    default="qwen3:8b")
+    parser.add_argument("--lms-model",    default="qwen3.5-35b-a3b")
     parser.add_argument("--lms-url",      default="http://localhost:1234/v1")
     parser.add_argument("--gemini-model", default="gemini-3.5-flash")
     args = parser.parse_args()

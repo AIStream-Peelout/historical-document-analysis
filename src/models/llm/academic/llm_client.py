@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Paths (resolved relative to this file)
 # ---------------------------------------------------------------------------
-_project_root = Path(__file__).parent.parent.parent.parent
+_project_root = Path(__file__).parent.parent.parent.parent.parent
 _data_root    = _project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" / "academic_literature"
 output_root   = _data_root / "enriched_relations"
 

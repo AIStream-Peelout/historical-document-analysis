@@ -280,8 +280,9 @@ class AcademicKGImporter:
         relation  = (triplet.get("relation")     or "").strip().upper()
         obj       = (triplet.get("object")       or "").strip()
         obj_type  = (triplet.get("object_type")  or "").strip()
-        evidence  = (triplet.get("evidence")     or "").strip()
-        confidence = (triplet.get("confidence")  or "medium").strip()
+        evidence     = (triplet.get("evidence")      or "").strip()
+        confidence   = (triplet.get("confidence")   or "medium").strip()
+        evidence_page = triplet.get("evidence_page")
 
         if not (subj and relation and obj):
             return None
@@ -331,10 +332,11 @@ class AcademicKGImporter:
             "object":        obj,
             "object_label":  obj_label,
             "object_place":  _place_meta(obj) if obj_label == "Place" else {},
-            "evidence":      evidence[:500],
-            "confidence":    confidence,
-            "source_book":   source_book,
-            "data_tag":      "extracted",
+            "evidence":       evidence[:500],
+            "evidence_page":  evidence_page,
+            "confidence":     confidence,
+            "source_book":    source_book,
+            "data_tag":       "extracted",
         }
 
     # ===================================================================
@@ -428,10 +430,10 @@ class AcademicKGImporter:
               ON CREATE SET b.title = $title
             SET {_add_source('b', 'extracted')}, {_src_books('b')}
             MERGE (a)-[r:WROTE]->(b)
-              ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev
+              ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev, r.evidence_page=$ev_page
             SET {_add_source('r', 'extracted')}, {_src_books('r')}
         """, name=author, article_id=article_id, title=title,
-             book=book, conf=row["confidence"], ev=row["evidence"])
+             book=book, conf=row["confidence"], ev=row["evidence"], ev_page=row.get("evidence_page"))
 
     @staticmethod
     def _write_article_cites_article(tx, row: Dict) -> None:
@@ -448,12 +450,12 @@ class AcademicKGImporter:
             SET b.data_sources = CASE WHEN 'extracted' IN coalesce(b.data_sources,[])
                 THEN coalesce(b.data_sources,[]) ELSE coalesce(b.data_sources,[]) + ['extracted'] END
             MERGE (a)-[r:CITES]->(b)
-              ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev
+              ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev, r.evidence_page=$ev_page
             SET r.data_sources = CASE WHEN 'extracted' IN coalesce(r.data_sources,[])
                 THEN coalesce(r.data_sources,[]) ELSE coalesce(r.data_sources,[]) + ['extracted'] END
         """, src_id=src_id, src_title=row["subject"],
              tgt_id=tgt_id, tgt_title=row["object"],
-             book=book, conf=row["confidence"], ev=row["evidence"])
+             book=book, conf=row["confidence"], ev=row["evidence"], ev_page=row.get("evidence_page"))
 
     @staticmethod
     def _write_person_lived_in(tx, row: Dict) -> None:
@@ -475,11 +477,11 @@ class AcademicKGImporter:
                 pl.country = CASE WHEN $country <> '' AND pl.country IS NULL THEN $country ELSE pl.country END,
                 pl.region  = CASE WHEN $region  <> '' AND pl.region  IS NULL THEN $region  ELSE pl.region  END
             MERGE (p)-[r:LIVED_IN]->(pl)
-              ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev
+              ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev, r.evidence_page=$ev_page
             SET {_add_source('r', 'extracted')}, {_src_books('r')}
         """, name=row["subject"], place=place,
              city=pm.get("city",""), country=pm.get("country",""), region=pm.get("region",""),
-             book=book, conf=row["confidence"], ev=row["evidence"])
+             book=book, conf=row["confidence"], ev=row["evidence"], ev_page=row.get("evidence_page"))
 
     @staticmethod
     def _write_person_affiliated_with(tx, row: Dict) -> None:
@@ -493,10 +495,10 @@ class AcademicKGImporter:
             MERGE (i:Institution {{name: $inst}})
             SET {_add_source('i', 'extracted')}, {_src_books('i')}
             MERGE (p)-[r:AFFILIATED_WITH]->(i)
-              ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev
+              ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev, r.evidence_page=$ev_page
             SET {_add_source('r', 'extracted')}, {_src_books('r')}
         """, name=subj, inst=inst,
-             book=book, conf=row["confidence"], ev=row["evidence"])
+             book=book, conf=row["confidence"], ev=row["evidence"], ev_page=row.get("evidence_page"))
 
     @staticmethod
     def _write_person_traveled_to(tx, row: Dict) -> None:
@@ -514,11 +516,11 @@ class AcademicKGImporter:
                 pl.country = CASE WHEN $country <> '' AND pl.country IS NULL THEN $country ELSE pl.country END,
                 pl.region  = CASE WHEN $region  <> '' AND pl.region  IS NULL THEN $region  ELSE pl.region  END
             MERGE (p)-[r:TRAVELED_TO]->(pl)
-              ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev
+              ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev, r.evidence_page=$ev_page
             SET {_add_source('r', 'extracted')}, {_src_books('r')}
         """, name=row["subject"], place=place,
              city=pm.get("city",""), country=pm.get("country",""), region=pm.get("region",""),
-             book=book, conf=row["confidence"], ev=row["evidence"])
+             book=book, conf=row["confidence"], ev=row["evidence"], ev_page=row.get("evidence_page"))
 
     @staticmethod
     def _write_fragment_rel(tx, row: Dict) -> None:
@@ -578,10 +580,10 @@ class AcademicKGImporter:
                 MATCH (f:Fragment {{canonical_shelfmark: $canonical}})
                 MATCH (o:{other_ref})
                 MERGE (f)-[r:{rel}]->(o)
-                  ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev
+                  ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev, r.evidence_page=$ev_page
                 SET {_add_source('r', 'extracted')}, {_src_books('r')}
             """, canonical=canonical_s,
-                 book=book, conf=row["confidence"], ev=row["evidence"])
+                 book=book, conf=row["confidence"], ev=row["evidence"], ev_page=row.get("evidence_page"))
         else:
             # subject is Person/Scholar/etc, object is Fragment
             canonical_o = _merge_fragment(tx, row["object"], "extracted")
@@ -590,10 +592,10 @@ class AcademicKGImporter:
                 MATCH (s:{other_ref})
                 MATCH (f:Fragment {{canonical_shelfmark: $canonical}})
                 MERGE (s)-[r:{rel}]->(f)
-                  ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev
+                  ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev, r.evidence_page=$ev_page
                 SET {_add_source('r', 'extracted')}, {_src_books('r')}
             """, canonical=canonical_o,
-                 book=book, conf=row["confidence"], ev=row["evidence"])
+                 book=book, conf=row["confidence"], ev=row["evidence"], ev_page=row.get("evidence_page"))
 
     @staticmethod
     def _write_generic_enhanced(tx, row: Dict) -> None:
@@ -659,9 +661,9 @@ class AcademicKGImporter:
             MATCH (a:{subj_clause})
             MATCH (b:{obj_clause})
             MERGE (a)-[r:{rel}]->(b)
-              ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev
+              ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev, r.evidence_page=$ev_page
             SET {_add_source('r', 'extracted')}, {_src_books('r')}
-        """, book=book, conf=row["confidence"], ev=row["evidence"])
+        """, book=book, conf=row["confidence"], ev=row["evidence"], ev_page=row.get("evidence_page"))
 
     # ===================================================================
     # Write helpers — enriched triplets (Pass 3)
