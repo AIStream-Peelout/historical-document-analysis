@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 _project_root = Path(__file__).parent.parent.parent.parent
 _data_root    = _project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" / "academic_literature"
-output_root   = _project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" / "enriched_relations"
+output_root   = _data_root / "enriched_relations"
 
 # ---------------------------------------------------------------------------
 # Backend constants
@@ -90,26 +90,29 @@ class LLMClient:
         lms_url:        str = "http://localhost:1234/v1",
         lms_model:      str = "qwen3:8b",
         gemini_api_key: Optional[str] = None,
-        gemini_model:   str = "gemini-2.0-flash",
+        gemini_model:   str = "gemini-3.5-flash",
         timeout:        int = 120,
     ):
-        self.backend   = backend
-        self.lms_url   = lms_url.rstrip("/")
-        self.lms_model = lms_model
-        self.timeout   = timeout
-        self._gemini   = None
+        self.backend      = backend
+        self.lms_url      = lms_url.rstrip("/")
+        self.lms_model    = lms_model
+        self.gemini_model = gemini_model
+        self.timeout      = timeout
+        self._gemini      = None
 
         if backend == BACKEND_GEMINI:
             try:
-                import google.generativeai as genai
+                from google import genai
+                from google.genai import types as genai_types
                 api_key = gemini_api_key or os.getenv("GEMINI_API_KEY")
                 if not api_key:
                     raise ValueError("GEMINI_API_KEY required for Gemini backend")
-                genai.configure(api_key=api_key)
-                self._gemini = genai.GenerativeModel(gemini_model)
+                self._gemini       = genai.Client(api_key=api_key)
+                self._gemini_model = gemini_model
+                self._genai_types  = genai_types
                 logger.info(f"Gemini client ready (model={gemini_model})")
             except ImportError:
-                raise ImportError("pip install google-generativeai for Gemini support")
+                raise ImportError("pip install google-genai for Gemini support")
         else:
             self._verify_lms()
 
@@ -125,7 +128,10 @@ class LLMClient:
 
     def complete(self, system: str, user: str, max_context_chars: int = 4000) -> str:
         if self.backend == BACKEND_GEMINI:
-            resp = self._gemini.generate_content(f"{system}\n\n{user}")
+            resp = self._gemini.models.generate_content(
+                model=self._gemini_model,
+                contents=f"{system}\n\n{user}",
+            )
             return resp.text
         return self._complete_lms_with_retry(system, user, max_context_chars)
 
@@ -275,11 +281,26 @@ def parse_triplets(raw: str, entity_name: str, entity_label: str) -> List[Dict]:
 # ---------------------------------------------------------------------------
 
 def _find_enhanced_json(source_book: str) -> Optional[Path]:
-    hits = list(_data_root.glob(f"**/{source_book}_enhanced.json"))
+    """Locate the canonical *_enhanced.json for a source book.
+
+    Files inside ``*_structured*/`` subdirectories are intermediate pipeline
+    artifacts.  We always prefer the copy that sits directly in the book
+    directory (i.e. whose parent directory name does NOT contain
+    ``_structured``).
+
+    :param source_book: Book stem without ``_enhanced.json`` suffix.
+    :returns: Path to canonical enhanced JSON, or None if not found.
+    """
+    hits = [
+        p for p in _data_root.glob(f"**/{source_book}_enhanced.json")
+        if "_structured" not in p.parent.name
+    ]
     if hits:
         return hits[0]
+    # Fallback: case-insensitive match, still skipping structured subdirs
     for p in _data_root.rglob("*_enhanced.json"):
-        if p.stem.replace("_enhanced", "").lower() == source_book.lower():
+        if "_structured" not in p.parent.name and \
+                p.stem.replace("_enhanced", "").lower() == source_book.lower():
             return p
     return None
 

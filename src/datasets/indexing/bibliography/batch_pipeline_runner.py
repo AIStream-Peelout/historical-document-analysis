@@ -285,7 +285,7 @@ def run_file(
             if gemini_key:
                 processor = SecondaryLLMProcessor(
                     backend        = "gemini",
-                    gemini_model   = "gemini-3-flash-preview",
+                    gemini_model   = "gemini-3.5-flash",
                     gemini_api_key = gemini_key,
                 )
             else:

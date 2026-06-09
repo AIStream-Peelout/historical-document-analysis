@@ -33,9 +33,9 @@ class AgentConfig:
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
     # Models
-    GEMINI_FLASH_MODEL = "gemini-3-flash-preview"
-    GEMINI_PRO_MODEL = "gemini-3.1-pro-preview"
-    GEMINI_ANALYSIS_MODEL = "gemini-2.0-flash-exp"
+    GEMINI_FLASH_MODEL = "gemini-3.5-flash"
+    GEMINI_PRO_MODEL = "gemini-3.5-pro"
+    GEMINI_ANALYSIS_MODEL = "gemini-3.5-flash"
 
     # Model selection
     USE_VISION_OCR = True
@@ -48,7 +48,7 @@ class AgentConfig:
     GEMINI_PRO_TIMEOUT   = 300   # 5 minutes
 
     # Output token budget.
-    # gemini-3.1-pro-preview is a thinking model — thinking tokens count against
+    # gemini-3.5-pro is a thinking model — thinking tokens count against
     # this limit.  With 8 192 the model exhausts the budget mid-transcription on
     # large Gemara sections (finish_reason=2).  32 768 gives the thinking pass
     # ~10-15k tokens and still leaves room for a full section output.

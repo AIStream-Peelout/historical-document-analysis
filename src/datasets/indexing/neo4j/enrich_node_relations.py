@@ -91,7 +91,7 @@ class NodeRelationEnricher:
         lms_url:          str = "http://localhost:1234/v1",
         lms_model:        str = "qwen3:8b",
         gemini_api_key:   Optional[str] = None,
-        gemini_model:     str = "gemini-2.0-flash",
+        gemini_model:     str = "gemini-3.5-flash",
         min_source_books: int = 1,
         out_dir:          Optional[Path] = None,
     ):

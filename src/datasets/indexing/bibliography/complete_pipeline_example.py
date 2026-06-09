@@ -189,7 +189,7 @@ def run_specific_file(example_file: str, book_file: str, model_extension: str = 
         print("Step 3: Running secondary enhanced processing...")
         secondary_processor = SecondaryLLMProcessor(
             backend="gemini",
-            gemini_model="gemini-3-flash-preview",
+            gemini_model="gemini-3.5-flash",
             gemini_api_key=os.environ["GEMINI_API_KEY"],
         )
         enhanced_data = secondary_processor.process_from_structured_dir(

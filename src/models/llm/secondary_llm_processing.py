@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 BACKEND_OLLAMA  = "ollama"   # local LM Studio / Ollama endpoint
 BACKEND_GEMINI  = "gemini"   # Google Gemini via google-generativeai SDK
 
-GEMINI_FLASH_MODEL = "gemini-3-flash-preview"   # matches AgentConfig
+GEMINI_FLASH_MODEL = "gemini-3.5-flash"   # matches AgentConfig
 
 
 class SecondaryLLMProcessor:
@@ -81,7 +81,7 @@ class SecondaryLLMProcessor:
             ollama_url:          Base URL for the Ollama/LM Studio endpoint.
             model_name:          Model name used when backend="ollama".
             gemini_model:        Gemini model name when backend="gemini".
-                                 Defaults to gemini-3-flash-preview.
+                                 Defaults to gemini-3.5-flash.
             gemini_api_key:      Gemini API key. Falls back to GEMINI_API_KEY env var.
             context_window_pages: Number of pages included in each context window.
         """

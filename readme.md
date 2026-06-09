@@ -127,23 +127,19 @@ As we continue to fine-tune embeddings we will publicly release the weights here
 
 ### Model Finetuning
 
-### Secondary Source  Processing 
+### Secondary Source Processing Pipeline
 
-For secondary sources (e.g. journal articles, books, blog posts, etc) we apply a multi-step process to extract the data into a useful format for creating a searchable secondary source index. We believe this process can be reusable for a number of historical
-documents beyond the Cairo Genizah. 
+Academic books and journal articles go through a multi-stage LLM pipeline that feeds both Elasticsearch
+(full-text search) and Neo4j (knowledge graph). For full design documentation, pipeline stages, KG schema,
+and architectural decisions see [docs/secondary_source_pipeline.md](docs/secondary_source_pipeline.md).
 
+#### OCR
+Raw OCR can be done with:
+- **Google Cloud Vision API** — recommended, especially for Hebrew and non-Latin scripts
+- **Doctr**
+- **Unstructured**
 
-#### OCR 
-Raw OCR can either be done with the:
-
- - Google Cloud Vision API 
- - Doctr 
- - Unstructured
-
-For Hebrew and non-latin languages (especially Hebrew) we highly recommend the Google Cloud Vision API. It is one of the only ones where we have had reliable results.
-`[book_ocr_service.py](src/models/ocr/book_ocr_service.py)`
-
-###
+See `src/models/ocr/book_ocr_service.py`.
 
 ### Further Documentation
 We are currently in the process of building out Sphinx and ReadTheDocs. You can find information on specific APIs and services

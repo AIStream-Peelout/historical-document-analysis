@@ -86,7 +86,7 @@ from src.datasets.document_models.person_normalizer import PersonNormalizer  # n
 # Paths
 # ---------------------------------------------------------------------------
 _data_root      = project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" / "academic_literature"
-_enriched_root  = project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" / "enriched_relations"
+_enriched_root  = _data_root / "enriched_relations"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -200,7 +200,19 @@ class AcademicKGImporter:
 
     @staticmethod
     def find_enhanced_files(root: Path) -> List[Path]:
-        return sorted(root.rglob("*_enhanced.json"))
+        """Return canonical enhanced JSON files, excluding intermediate artifacts.
+
+        Files inside ``*_structured*/`` subdirectories are intermediate outputs
+        from the OCR/structuring pipeline.  The canonical copy sits directly in
+        the book directory (parent name does not contain ``_structured``).
+
+        :param root: Root directory to search recursively.
+        :returns: Sorted list of canonical enhanced JSON paths.
+        """
+        return sorted(
+            p for p in root.rglob("*_enhanced.json")
+            if "_structured" not in p.parent.name
+        )
 
     def import_enhanced_file(self, path: Path, dry_run: bool = False) -> Dict[str, int]:
         with open(path, encoding="utf-8") as f:
@@ -856,6 +868,88 @@ class AcademicKGImporter:
                 totals["import_errors"] += 1
         return dict(totals)
 
+    # ===================================================================
+    # Source 3: book_relations.json  (Pass 4 — relation_extractor.py)
+    # ===================================================================
+
+    @staticmethod
+    def find_relations_files(root: Path) -> List[Path]:
+        """Find all ``book_relations.json`` files produced by Pass 4.
+
+        :param root: Root directory to search recursively.
+        :returns: Sorted list of relation file paths.
+        """
+        return sorted(root.rglob("book_relations.json"))
+
+    def import_relations_file(self, path: Path, dry_run: bool = False) -> Dict[str, int]:
+        """Import one ``book_relations.json`` file into Neo4j.
+
+        :param path: Path to the relations file.
+        :param dry_run: Count without writing.
+        :returns: Counts dict.
+        """
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+
+        relations  = data.get("relations") or []
+        source_book = data.get("source_book", path.parent.name)
+
+        if not relations:
+            return {"skipped": 1}
+
+        counts: Dict[str, int] = defaultdict(int)
+        counts["relations_total"] += len(relations)
+
+        if dry_run:
+            counts["relations_valid"] += len(relations)
+            return dict(counts)
+
+        written = 0
+        with self.driver.session(database=self.database) as s:
+            for rel in relations:
+                # Convert Pass 4 schema to the enriched-triplet format
+                # that _write_enriched_triplet already handles correctly.
+                t = {
+                    "subject":      rel.get("subject", ""),
+                    "subject_type": rel.get("subject_type", "Entity"),
+                    "relation":     rel.get("relation", ""),
+                    "object":       rel.get("object", ""),
+                    "object_type":  rel.get("object_type", "Entity"),
+                    "evidence":     rel.get("evidence", ""),
+                    "confidence":   rel.get("confidence", "medium"),
+                }
+                if not (t["subject"] and t["relation"] and t["object"]):
+                    continue
+                try:
+                    s.execute_write(self._write_enriched_triplet, t, source_book)
+                    written += 1
+                except Exception as e:
+                    logger.warning(f"  Relation write failed {t}: {e}")
+
+        counts["relations_written"] += written
+        logger.info(f"  {path.parent.name}/book_relations.json: {written} relation(s)")
+        return dict(counts)
+
+    def import_all_relations(self, root: Path, dry_run: bool = False) -> Dict[str, int]:
+        """Import all ``book_relations.json`` files under *root*.
+
+        :param root: Root directory to search.
+        :param dry_run: Count without writing.
+        :returns: Aggregated counts.
+        """
+        files = self.find_relations_files(root)
+        logger.info(f"Found {len(files)} book_relations.json files under {root}")
+        totals: Dict[str, int] = defaultdict(int)
+        for path in tqdm(files, desc="Pass 4 relations"):
+            try:
+                counts = self.import_relations_file(path, dry_run=dry_run)
+                for k, v in counts.items():
+                    totals[k] += v
+            except Exception as e:
+                logger.error(f"  Failed {path}: {e}")
+                totals["import_errors"] += 1
+        return dict(totals)
+
     def import_all(
         self,
         enhanced_root: Path,
@@ -863,23 +957,30 @@ class AcademicKGImporter:
         dry_run: bool = False,
         enhanced_only: bool = False,
         enriched_only: bool = False,
+        relations_only: bool = False,
     ):
         if not dry_run:
             self.ensure_constraints()
 
         totals: Dict[str, int] = defaultdict(int)
 
-        if not enriched_only:
-            logger.info("━━━ Pass 2: enhanced JSON files ━━━")
+        if not enriched_only and not relations_only:
+            logger.info("━━━ Legacy Pass 2: enhanced JSON files ━━━")
             counts = self.import_all_enhanced(enhanced_root, dry_run=dry_run)
             for k, v in counts.items():
                 totals[f"enhanced_{k}"] += v
 
-        if not enhanced_only and enriched_root.exists():
-            logger.info("━━━ Pass 3: enriched relation files ━━━")
+        if not enhanced_only and not relations_only and enriched_root.exists():
+            logger.info("━━━ Legacy Pass 3: enriched relation files ━━━")
             counts = self.import_all_enriched(enriched_root, dry_run=dry_run)
             for k, v in counts.items():
                 totals[f"enriched_{k}"] += v
+
+        if not enhanced_only and not enriched_only:
+            logger.info("━━━ Pass 4: book_relations.json files ━━━")
+            counts = self.import_all_relations(enhanced_root, dry_run=dry_run)
+            for k, v in counts.items():
+                totals[f"relations_{k}"] += v
 
         self._print_summary(totals, dry_run)
 
@@ -974,11 +1075,13 @@ def main():
     parser.add_argument("--dry-run", "-n", action="store_true",
                         help="Count what would be imported without writing.")
     parser.add_argument("--enhanced-only", action="store_true",
-                        help="Import enhanced JSONs only (skip enriched triplets).")
+                        help="Import legacy enhanced JSONs only.")
     parser.add_argument("--enriched-only", action="store_true",
-                        help="Import enriched triplets only (skip enhanced JSONs).")
+                        help="Import legacy enriched relation files only.")
+    parser.add_argument("--relations-only", action="store_true",
+                        help="Import Pass 4 book_relations.json files only.")
     parser.add_argument("--dir", "-d", metavar="SUBDIR", default=None,
-                        help="Limit enhanced JSONs to a subdirectory under academic_literature/.")
+                        help="Limit to a subdirectory under academic_literature/.")
     parser.add_argument("--enriched-dir", metavar="DIR", default=None,
                         help="Path to enriched_relations/ directory (default: auto-detected).")
     args = parser.parse_args()
@@ -1009,6 +1112,7 @@ def main():
             dry_run=args.dry_run,
             enhanced_only=args.enhanced_only,
             enriched_only=args.enriched_only,
+            relations_only=args.relations_only,
         )
     finally:
         importer.close()

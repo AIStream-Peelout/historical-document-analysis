@@ -88,7 +88,7 @@ class StructuredJSONLLM:
                  model_name: str = "qwen3-vl:8b",
                  use_gemini: bool = False,
                  gemini_api_key: Optional[str] = None,
-                 gemini_model: str = "gemini-2.0-flash-exp",
+                 gemini_model: str = "gemini-3.5-flash",
                  gemini_safety_settings: Optional[List[Dict[str, str]]] = None,
                  book_metadata: Optional[Dict[str, Any]] = None):
         """
@@ -99,7 +99,7 @@ class StructuredJSONLLM:
         :param model_name: Name of the model to use (default: qwen3-vl:8b)
         :param use_gemini: Whether to use Gemini instead of LM Studio (default: False)
         :param gemini_api_key: Gemini API key (if None, will try to get from environment)
-        :param gemini_model: Gemini model name (default: gemini-2.0-flash-exp)
+        :param gemini_model: Gemini model name (default: gemini-3.5-flash)
         :param gemini_safety_settings: Custom safety settings for Gemini
         :param book_metadata: Optional dictionary containing book metadata
         """
@@ -1011,7 +1011,7 @@ def main():
     parser.add_argument("--model", default="qwen3-vl:8b", help="Model name")
     parser.add_argument("--lm-studio-url", default="http://localhost:1234/v1", help="LM Studio API URL")
     parser.add_argument("--use-gemini", action="store_true", help="Use Gemini instead of LM Studio")
-    parser.add_argument("--gemini-model", default="gemini-2.0-flash-exp", help="Gemini model name")
+    parser.add_argument("--gemini-model", default="gemini-3.5-flash", help="Gemini model name")
     parser.add_argument("--gemini-api-key", help="Gemini API key (or set GEMINI_API_KEY env var)")
     parser.add_argument("--starting-page", type=int, default=1, help="Starting page number")
 

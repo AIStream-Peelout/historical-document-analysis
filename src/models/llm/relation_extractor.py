@@ -1,0 +1,531 @@
+#!/usr/bin/env python3
+"""
+Pass 4 — Relation Extractor
+=============================
+
+Reads the resolved entity list (Pass 3 output) and the structured page text
+(Pass 1 output) for each book, then extracts typed relationships between
+entities.  Relation extraction is scoped to the pages where each entity
+actually appears (from Pass 3), keeping prompts focused and evidence-grounded.
+
+This pass is **pure file I/O** — no Neo4j dependency.  The output JSON is
+consumed by ``academic_kg_import.py`` during the Neo4j import step.
+
+Input
+-----
+- ``book_entities_resolved.json``  (Pass 3 output, one per book)
+- ``page_NNN_structured.json``     (Pass 1 output, used for page text)
+
+Output
+------
+``book_relations.json`` in the book directory::
+
+    {
+        "source_book": "india_trader_1_50",
+        "extracted_at": "2026-06-08T12:00:00Z",
+        "model_used":   "gemini-3.5-flash",
+        "relations": [
+            {
+                "subject":       "Joseph b. David Lebdi",
+                "subject_type":  "Person",
+                "relation":      "TRAVELED_TO",
+                "object":        "Aden",
+                "object_type":   "Place",
+                "evidence":      "Joseph Lebdi set out from Egypt via Aden to India",
+                "evidence_page": 9,
+                "source_book":   "india_trader_1_50",
+                "confidence":    "high"
+            }
+        ]
+    }
+
+Allowed relations
+-----------------
+LIVED_IN          Person      → Place         (historical residence)
+TRAVELED_TO       Person      → Place         (attested journey)
+ORIGINATED_FROM   Person      → Place         (provenance / birthplace)
+ORIGINATED_FROM   Fragment    → Place         (document origin)
+AFFILIATED_WITH   Scholar     → Institution   (academic affiliation)
+WROTE             Scholar     → BookArticle   (authorship)
+TRANSCRIBED       Scholar     → Fragment      (produced transcription)
+STUDIED           Scholar     → Fragment      (scholarly focus)
+COLLABORATED_WITH Scholar     → Scholar       (co-authorship / acknowledgment)
+MARRIED_TO        Person      → Person        (attested in documents)
+RELATED_TO        Person      → Person        (family relation)
+MENTIONS_PERSON   Fragment    → Person        (person named in document)
+MENTIONS_PLACE    Fragment    → Place         (place named in document)
+ORIGINATED_IN     Fragment    → Place         (document origin location)
+HELD_AT           Fragment    → Institution   (current holding institution)
+CITED_IN          Fragment    → BookArticle   (fragment discussed in article)
+
+Usage
+-----
+python relation_extractor.py --dir academic_literature/india_traders/india_trader_1_50
+python relation_extractor.py             # all books
+python relation_extractor.py --dry-run   # count without calling LLM
+python relation_extractor.py --overwrite
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Optional, Set
+
+import dotenv
+
+_project_root = Path(__file__).parent.parent.parent.parent
+sys.path.append(str(_project_root))
+dotenv.load_dotenv(_project_root / ".env")
+
+from src.models.llm.entity_relation_extractor import LLMClient  # noqa: E402
+
+logger = logging.getLogger(__name__)
+
+_data_root    = _project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" / "academic_literature"
+_OUTPUT_FILE  = "book_relations.json"
+_RESOLVED_FILE = "book_entities_resolved.json"
+
+# ---------------------------------------------------------------------------
+# Allowed relation types and their expected subject/object types
+# ---------------------------------------------------------------------------
+
+ALLOWED_RELATIONS: Dict[str, tuple] = {
+    "LIVED_IN":          ("Person",   "Place"),
+    "TRAVELED_TO":       ("Person",   "Place"),
+    "ORIGINATED_FROM":   (None,       "Place"),        # Person or Fragment
+    "AFFILIATED_WITH":   ("Scholar",  "Institution"),
+    "WROTE":             ("Scholar",  "BookArticle"),
+    "TRANSCRIBED":       ("Scholar",  "Fragment"),
+    "STUDIED":           ("Scholar",  "Fragment"),
+    "COLLABORATED_WITH": ("Scholar",  "Scholar"),
+    "MARRIED_TO":        ("Person",   "Person"),
+    "RELATED_TO":        ("Person",   "Person"),
+    "MENTIONS_PERSON":   ("Fragment", "Person"),
+    "MENTIONS_PLACE":    ("Fragment", "Place"),
+    "ORIGINATED_IN":     ("Fragment", "Place"),
+    "HELD_AT":           ("Fragment", "Institution"),
+    "CITED_IN":          ("Fragment", "BookArticle"),
+}
+
+# ---------------------------------------------------------------------------
+# Prompt
+# ---------------------------------------------------------------------------
+
+_SYSTEM_PROMPT = """\
+You are an expert in medieval Jewish history, the Cairo Genizah, and academic
+scholarship on the medieval Mediterranean world.
+
+Extract factual relationships from academic text.  Only extract what is directly
+supported by the text — do not infer or speculate.
+
+Output ONLY valid JSON. No markdown, no code fences, no explanation.
+"""
+
+
+def _build_entity_prompt(
+    entity: Dict,
+    entity_type: str,
+    page_texts: List[str],
+    all_entities: Dict,
+    source_book: str,
+) -> str:
+    """Build a relation extraction prompt scoped to one entity.
+
+    :param entity: Resolved entity dict (name, role/type, pages, aliases, description).
+    :param entity_type: KG label (Person, Scholar, Place, Institution, Fragment).
+    :param page_texts: List of page text snippets where this entity appears.
+    :param all_entities: Full resolved entity dict (for object lookup hints).
+    :param source_book: Book stem name.
+    :returns: Prompt string.
+    """
+    name = entity.get("name") or entity.get("mark", "")
+    aliases = entity.get("aliases", [])
+    description = entity.get("description", "")
+    pages = entity.get("pages", [])
+
+    # Build a hint list of known entities for the LLM to use as objects
+    known_people  = [p["name"] for p in all_entities.get("people", [])][:30]
+    known_places  = [p["name"] for p in all_entities.get("places", [])][:30]
+    known_insts   = [p["name"] for p in all_entities.get("institutions", [])][:20]
+    known_marks   = [p["mark"] for p in all_entities.get("shelf_marks", [])][:30]
+
+    relations_list = "\n".join(
+        f"  {rel:25s} {(st or 'any'):10s} → {ot or 'any'}"
+        for rel, (st, ot) in ALLOWED_RELATIONS.items()
+    )
+
+    text_block = "\n\n---\n\n".join(page_texts[:8])  # cap at 8 page excerpts
+
+    alias_str = f" (also: {', '.join(aliases)})" if aliases else ""
+
+    known_block = ""
+    if known_people:
+        known_block += f"Known people in this book: {', '.join(known_people[:15])}\n"
+    if known_places:
+        known_block += f"Known places in this book: {', '.join(known_places[:15])}\n"
+    if known_marks:
+        known_block += f"Known shelf marks: {', '.join(known_marks[:15])}\n"
+
+    return f"""\
+Book: {source_book}
+Entity: "{name}"{alias_str}
+Type: {entity_type}
+Description: {description}
+Pages where this entity appears: {pages}
+
+{known_block}
+Text passages from pages where "{name}" appears:
+
+{text_block}
+
+---
+Extract ALL factual relationships involving "{name}" that are directly supported
+by the text above.
+
+Allowed relation types (subject_type → object_type):
+{relations_list}
+
+Rules:
+- subject or object must be "{name}" or one of its aliases
+- evidence must be a direct quote or close paraphrase from the text above
+- confidence: "high" = direct statement, "medium" = clear implication; omit "low"
+- evidence_page: the page number the evidence comes from
+- use the canonical names from the known entity lists above where possible
+- do NOT invent entities not mentioned in the text
+
+Return ONLY this JSON:
+{{
+  "relations": [
+    {{
+      "subject":       "...",
+      "subject_type":  "Person|Scholar|Place|Institution|Fragment|BookArticle",
+      "relation":      "LIVED_IN",
+      "object":        "...",
+      "object_type":   "Person|Scholar|Place|Institution|Fragment|BookArticle",
+      "evidence":      "direct quote or paraphrase",
+      "evidence_page": 27,
+      "confidence":    "high|medium"
+    }}
+  ]
+}}
+
+If no relationships can be extracted: {{"relations": []}}
+"""
+
+
+# ---------------------------------------------------------------------------
+# JSON parser
+# ---------------------------------------------------------------------------
+
+_JSON_RE = re.compile(r'\{.*\}', re.DOTALL)
+
+
+def _parse_response(raw: str, source_book: str) -> List[Dict]:
+    """Parse and validate relation triples from LLM output.
+
+    :param raw: Raw LLM output.
+    :param source_book: Book name to stamp on each relation.
+    :returns: List of validated relation dicts.
+    """
+    raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
+    match = _JSON_RE.search(raw)
+    if not match:
+        return []
+    try:
+        data = json.loads(match.group())
+    except json.JSONDecodeError:
+        return []
+
+    valid = []
+    for r in (data.get("relations") or []):
+        subj     = (r.get("subject")      or "").strip()
+        rel      = (r.get("relation")     or "").strip().upper()
+        obj      = (r.get("object")       or "").strip()
+        subj_t   = (r.get("subject_type") or "").strip()
+        obj_t    = (r.get("object_type")  or "").strip()
+        evidence = (r.get("evidence")     or "").strip()[:600]
+        conf     = (r.get("confidence")   or "medium").strip()
+        ev_page  = r.get("evidence_page")
+
+        if not (subj and rel and obj):
+            continue
+        if rel not in ALLOWED_RELATIONS:
+            logger.debug(f"  Unknown relation '{rel}' — skipped")
+            continue
+        if conf == "low":
+            continue
+
+        valid.append({
+            "subject":       subj,
+            "subject_type":  subj_t,
+            "relation":      rel,
+            "object":        obj,
+            "object_type":   obj_t,
+            "evidence":      evidence,
+            "evidence_page": ev_page,
+            "source_book":   source_book,
+            "confidence":    conf,
+        })
+
+    return valid
+
+
+# ---------------------------------------------------------------------------
+# Page text loader
+# ---------------------------------------------------------------------------
+
+def _load_page_texts(book_dir: Path, page_numbers: List[int]) -> List[str]:
+    """Load full_main_text for the specified pages from structured JSONs.
+
+    :param book_dir: Book directory containing structured JSON files.
+    :param page_numbers: List of page numbers to load.
+    :returns: List of formatted text snippets, one per page.
+    """
+    # Build page_number → structured file map
+    page_map: Dict[int, Path] = {}
+    for p in book_dir.rglob("page_*_structured.json"):
+        if "_structured" not in p.parent.name:
+            continue  # structured files must be inside a *_structured_*/ subdir
+        try:
+            d = json.load(open(p, encoding="utf-8"))
+            pn = d.get("extracted_page_number")
+            if isinstance(pn, int) and pn not in page_map:
+                page_map[pn] = p
+            elif isinstance(pn, list):
+                for n in pn:
+                    if isinstance(n, int) and n not in page_map:
+                        page_map[n] = p
+        except Exception:
+            continue
+
+    texts = []
+    for pg in sorted(set(page_numbers)):
+        path = page_map.get(pg)
+        if not path:
+            continue
+        try:
+            d = json.load(open(path, encoding="utf-8"))
+            text = (d.get("full_main_text") or "").strip()
+            if text:
+                texts.append(f"[Page {pg}]\n{text[:1200]}")
+        except Exception:
+            continue
+
+    return texts
+
+
+# ---------------------------------------------------------------------------
+# Core extractor
+# ---------------------------------------------------------------------------
+
+class RelationExtractor:
+    """Extracts typed relationships from resolved entities + page text (Pass 4).
+
+    :param client: Initialised LLMClient.
+    """
+
+    def __init__(self, client: LLMClient):
+        self.client = client
+
+    def _entity_kg_type(self, entity: Dict, category: str) -> str:
+        """Map a resolved entity category + role to a Neo4j label.
+
+        :param entity: Resolved entity dict.
+        :param category: Category from resolved file: people/places/institutions/shelf_marks.
+        :returns: Neo4j label string.
+        """
+        if category == "people":
+            role = (entity.get("role") or "historical_person").lower()
+            if role == "scholar":
+                return "Scholar"
+            return "Person"   # historical_person and collector both → Person
+        if category == "places":
+            return "Place"
+        if category == "institutions":
+            return "Institution"
+        if category == "shelf_marks":
+            return "Fragment"
+        return "Entity"
+
+    def extract_book(
+        self,
+        book_dir: Path,
+        dry_run: bool = False,
+        overwrite: bool = False,
+    ) -> int:
+        """Extract relations for one book directory.
+
+        :param book_dir: Directory containing ``book_entities_resolved.json``.
+        :param dry_run: Count entities without calling the LLM.
+        :param overwrite: Re-extract even if output already exists.
+        :returns: Number of relations extracted.
+        """
+        resolved_path = book_dir / _RESOLVED_FILE
+        output_path   = book_dir / _OUTPUT_FILE
+
+        if not resolved_path.exists():
+            logger.warning(f"  {book_dir.name}: no {_RESOLVED_FILE} (run Pass 3 first)")
+            return 0
+
+        if output_path.exists() and not overwrite:
+            logger.info(f"  {book_dir.name}: output exists, skipping (use --overwrite)")
+            return 0
+
+        resolved = json.load(open(resolved_path, encoding="utf-8"))
+        source_book = resolved.get("source_book", book_dir.name)
+
+        # Build the flat entity list: (entity_dict, category)
+        candidates = []
+        for category in ("people", "places", "institutions", "shelf_marks"):
+            for entity in resolved.get(category, []):
+                pages = entity.get("pages", [])
+                if pages:  # only entities with page attribution
+                    candidates.append((entity, category))
+
+        logger.info(f"  {source_book}: {len(candidates)} entities with page attribution")
+
+        if dry_run:
+            return len(candidates)
+
+        all_relations: List[Dict] = []
+
+        for entity, category in candidates:
+            name  = entity.get("name") or entity.get("mark", "")
+            pages = entity.get("pages", [])
+            kg_type = self._entity_kg_type(entity, category)
+
+            # Load page text scoped to this entity's pages
+            page_texts = _load_page_texts(book_dir, pages)
+            if not page_texts:
+                logger.debug(f"  {name}: no page text found, skipping")
+                continue
+
+            prompt = _build_entity_prompt(
+                entity, kg_type, page_texts, resolved, source_book
+            )
+
+            try:
+                raw       = self.client.complete(_SYSTEM_PROMPT, prompt)
+                relations = _parse_response(raw, source_book)
+            except Exception as e:
+                logger.error(f"  LLM error for '{name}': {e}")
+                continue
+
+            if relations:
+                all_relations.extend(relations)
+                logger.info(f"  {name} ({kg_type}): {len(relations)} relation(s)")
+            else:
+                logger.debug(f"  {name}: no relations found")
+
+        output = {
+            "source_book":  source_book,
+            "extracted_at": datetime.now(timezone.utc).isoformat(),
+            "model_used":   self.client.lms_model
+                            if self.client.backend == "lm_studio"
+                            else "gemini",
+            "relation_count": len(all_relations),
+            "relations":    all_relations,
+        }
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(output, f, indent=2, ensure_ascii=False)
+
+        logger.info(f"  {source_book}: wrote {len(all_relations)} relations → {output_path.name}")
+        return len(all_relations)
+
+    def extract_all(
+        self,
+        root: Path,
+        dry_run: bool = False,
+        overwrite: bool = False,
+    ) -> Dict[str, int]:
+        """Extract relations for all books under *root*.
+
+        :param root: Root directory to search.
+        :param dry_run: Count without calling the LLM.
+        :param overwrite: Re-extract books that already have output.
+        :returns: Counts dict.
+        """
+        book_dirs = sorted(set(
+            p.parent for p in root.rglob(_RESOLVED_FILE)
+        ))
+
+        counts = {"books": len(book_dirs), "relations": 0, "skipped": 0}
+        logger.info(f"Found {len(book_dirs)} books with resolved entities")
+
+        for book_dir in book_dirs:
+            logger.info(f"Book: {book_dir.relative_to(root)}")
+            n = self.extract_book(book_dir, dry_run=dry_run, overwrite=overwrite)
+            if n == 0 and not dry_run:
+                counts["skipped"] += 1
+            else:
+                counts["relations"] += n
+
+        return counts
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+def main() -> None:
+    import argparse
+
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s - %(levelname)s - %(message)s",
+        handlers=[
+            logging.FileHandler("relation_extractor.log"),
+            logging.StreamHandler(sys.stdout),
+        ],
+    )
+
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--dir", "-d", metavar="SUBDIR", default=None)
+    parser.add_argument("--dry-run", "-n", action="store_true")
+    parser.add_argument("--overwrite", action="store_true")
+    parser.add_argument("--backend", choices=["gemini", "lm_studio"], default="gemini")
+    parser.add_argument("--lms-model",    default="qwen3:8b")
+    parser.add_argument("--lms-url",      default="http://localhost:1234/v1")
+    parser.add_argument("--gemini-model", default="gemini-3.5-flash")
+    args = parser.parse_args()
+
+    client = LLMClient(
+        backend=args.backend,
+        lms_url=args.lms_url,
+        lms_model=args.lms_model,
+        gemini_api_key=os.getenv("GEMINI_API_KEY"),
+        gemini_model=args.gemini_model,
+    )
+
+    extractor = RelationExtractor(client)
+
+    root = _data_root
+    if args.dir:
+        root = _data_root / args.dir
+        if not root.exists():
+            logger.error(f"Directory not found: {root}")
+            sys.exit(1)
+
+    counts = extractor.extract_all(root, dry_run=args.dry_run, overwrite=args.overwrite)
+
+    tag = "[DRY RUN] " if args.dry_run else ""
+    print(f"\n{tag}Relation extraction complete")
+    print("=" * 40)
+    print(f"  Books processed: {counts['books']:,}")
+    print(f"  Relations found: {counts['relations']:,}")
+    print(f"  Skipped:         {counts['skipped']:,}")
+    print("=" * 40)
+
+
+if __name__ == "__main__":
+    main()
