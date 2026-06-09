@@ -54,7 +54,7 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.append(str(project_root))
 dotenv.load_dotenv(project_root / ".env")
 
-from src.models.llm.entity_relation_extractor import (  # noqa: E402
+from src.models.llm.academic.llm_client import (  # noqa: E402
     BACKEND_GEMINI,
     BACKEND_LMS,
     LLMClient,

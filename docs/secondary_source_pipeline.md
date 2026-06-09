@@ -294,7 +294,7 @@ python src/models/llm/entity_tagger.py --dir academic_literature/my_book
 python src/models/llm/coreference_resolver.py --dir academic_literature/my_book
 
 # Step 4: Relation extraction  (planned)
-python src/models/llm/relation_extractor.py --dir academic_literature/my_book
+python src/models/llm/relationship_extractor.py --dir academic_literature/my_book
 
 # Index to Elasticsearch (can run after Step 1)
 python src/datasets/indexing/elasticsearch/elastic_index_genizah.py

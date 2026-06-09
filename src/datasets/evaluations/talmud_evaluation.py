@@ -46,7 +46,7 @@ from src.datasets.evaluations.fragment_evals import (
 )
 
 # Agent imports (same path as fragment eval)
-from src.models.llm.genizah_fragment_agent import (
+from src.models.llm.transcription.genizah_fragment_agent import (
     AgentConfig,
     call_gemini_with_retry,
     call_gemini_text_only,

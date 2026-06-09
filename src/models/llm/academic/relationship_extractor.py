@@ -60,10 +60,10 @@ CITED_IN          Fragment    → BookArticle   (fragment discussed in article)
 
 Usage
 -----
-python relation_extractor.py --dir academic_literature/india_traders/india_trader_1_50
-python relation_extractor.py             # all books
-python relation_extractor.py --dry-run   # count without calling LLM
-python relation_extractor.py --overwrite
+python relationship_extractor.py --dir academic_literature/india_traders/india_trader_1_50
+python relationship_extractor.py             # all books
+python relationship_extractor.py --dry-run   # count without calling LLM
+python relationship_extractor.py --overwrite
 """
 
 from __future__ import annotations
@@ -83,7 +83,7 @@ _project_root = Path(__file__).parent.parent.parent.parent
 sys.path.append(str(_project_root))
 dotenv.load_dotenv(_project_root / ".env")
 
-from src.models.llm.entity_relation_extractor import LLMClient  # noqa: E402
+from src.models.llm.academic.llm_client import LLMClient  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

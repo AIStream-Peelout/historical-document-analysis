@@ -18,7 +18,7 @@ sys.path.append(str(project_root))
 # Load environment variables from project root
 dotenv.load_dotenv(project_root / ".env")
 
-from src.models.llm.secondary_llm_processing import SecondaryLLMProcessor
+from src.models.llm.academic.deprecated.secondary_llm_processing import SecondaryLLMProcessor
 
 
 def run_secondary_processing_example():

@@ -13,7 +13,7 @@ import logging
 from pathlib import Path
 import dotenv
 from typing import List
-from src.models.llm.add_full_text_to_structured import add_full_text_to_structured
+from src.models.llm.academic.add_full_text_to_structured import add_full_text_to_structured
 
 # Add the src directory to the Python path
 project_root = Path(__file__).parent.parent.parent.parent.parent
@@ -25,9 +25,9 @@ dotenv.load_dotenv(project_root / ".env")
 
 
 from src.models.ocr.book_ocr_service import BookOCRService
-from src.models.llm.structured_json_llm import StructuredJSONLLM
-from src.models.llm.secondary_llm_processing import SecondaryLLMProcessor
-from src.models.llm.add_full_text_to_structured import add_full_text_to_structured
+from src.models.llm.academic.structured_json_llm import StructuredJSONLLM
+from src.models.llm.academic.deprecated.secondary_llm_processing import SecondaryLLMProcessor
+from src.models.llm.academic.add_full_text_to_structured import add_full_text_to_structured
 
 # Set up logging
 logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')

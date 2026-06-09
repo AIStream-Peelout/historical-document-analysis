@@ -86,7 +86,7 @@ _project_root = Path(__file__).parent.parent.parent.parent
 sys.path.append(str(_project_root))
 dotenv.load_dotenv(_project_root / ".env")
 
-from src.models.llm.entity_relation_extractor import LLMClient  # noqa: E402
+from src.models.llm.academic.llm_client import LLMClient  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

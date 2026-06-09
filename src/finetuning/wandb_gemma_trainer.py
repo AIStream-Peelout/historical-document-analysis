@@ -10,7 +10,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 from transformers.trainer_callback import TrainerCallback
 from src.finetuning_scripts.diagnostic_scripts.gemma_trainer_diagnostic import complete_diagnostic_and_fix
-from src.models.llm.gemma_three import Gemma3Provider, TrainingParameters, LoraTrainingConfig
+from src.models.llm.transcription.gemma_three import Gemma3Provider, TrainingParameters, LoraTrainingConfig
 from src.datasets.talmud_dataset import StructuredTalmudDataLoader
 dotenv.load_dotenv()
 

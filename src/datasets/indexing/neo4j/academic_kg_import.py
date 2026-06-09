@@ -869,7 +869,7 @@ class AcademicKGImporter:
         return dict(totals)
 
     # ===================================================================
-    # Source 3: book_relations.json  (Pass 4 — relation_extractor.py)
+    # Source 3: book_relations.json  (Pass 4 — relationship_extractor.py)
     # ===================================================================
 
     @staticmethod

@@ -12,7 +12,7 @@ from difflib import SequenceMatcher
 import wandb
 
 # Import core agent
-from src.models.llm.genizah_fragment_agent import (
+from src.models.llm.transcription.genizah_fragment_agent import (
     AgentConfig,
     TranscriptionState,
     transcribe_document,
