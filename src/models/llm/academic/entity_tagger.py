@@ -99,6 +99,16 @@ _data_root = _project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" /
 _ENTITY_FILE_SUFFIX = "_entities.json"
 
 
+def _safe_tag(model_name: str) -> str:
+    """Convert a model name into a filesystem-safe tag string.
+
+    :param model_name: Raw model name (e.g. ``qwen/qwen3-32b-instruct``).
+    :returns: Sanitized tag (e.g. ``lms_qwen3-32b-instruct``).
+    """
+    safe = re.sub(r'[^\w\-]', '_', model_name).strip('_')
+    return f"lms_{safe}"
+
+
 # ---------------------------------------------------------------------------
 # Directory helpers
 # ---------------------------------------------------------------------------
@@ -281,8 +291,9 @@ class EntityTagger:
     :param client: Initialised LLMClient to use for generation.
     """
 
-    def __init__(self, client: LLMClient):
-        self.client = client
+    def __init__(self, client: LLMClient, run_tag: str = ""):
+        self.client  = client
+        self.run_tag = run_tag  # e.g. "lms_qwen3-32b"; empty = default Gemini output
 
     def tag_book(
         self,
@@ -302,7 +313,10 @@ class EntityTagger:
         :returns: Counts dict with ``tagged``, ``skipped``, ``failed`` keys.
         """
         source_book  = book_dir.name
-        entities_dir = book_dir / "entities"
+        # If a run_tag is set (e.g. lms_qwen3-32b), write to a separate subdir
+        # so LMS and Gemini outputs coexist for comparison.
+        entities_dirname = f"entities_{self.run_tag}" if self.run_tag else "entities"
+        entities_dir = book_dir / entities_dirname
         _complete_marker = entities_dir / ".complete"
 
         # Fast-path: book was fully tagged in a previous run
@@ -513,7 +527,18 @@ def main() -> None:
         "--gemini-model", default="gemini-3.5-flash",
         help="Gemini model name (default: gemini-3.5-flash.",
     )
+    parser.add_argument(
+        "--run-tag", default=None,
+        help="Tag for output subdir (e.g. 'lms_qwen3-32b'). "
+             "Auto-derived from --lms-model when --backend lm_studio if omitted.",
+    )
     args = parser.parse_args()
+
+    # Auto-derive run_tag from model name when using LM Studio
+    run_tag = args.run_tag
+    if run_tag is None and args.backend == "lm_studio":
+        safe_model = args.lms_model.replace("/", "_").replace(":", "_")
+        run_tag = f"lms_{safe_model}"
 
     client = LLMClient(
         backend=args.backend,
@@ -523,7 +548,7 @@ def main() -> None:
         gemini_model=args.gemini_model,
     )
 
-    tagger = EntityTagger(client)
+    tagger = EntityTagger(client, run_tag=run_tag or "")
 
     root = _data_root
     if args.dir:

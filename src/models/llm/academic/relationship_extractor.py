@@ -336,8 +336,9 @@ class RelationExtractor:
     :param client: Initialised LLMClient.
     """
 
-    def __init__(self, client: LLMClient):
-        self.client = client
+    def __init__(self, client: LLMClient, run_tag: str = ""):
+        self.client  = client
+        self.run_tag = run_tag  # e.g. "lms_qwen3-32b"; empty = default Gemini output
 
     def _entity_kg_type(self, entity: Dict, category: str) -> str:
         """Map a resolved entity category + role to a Neo4j label.
@@ -372,11 +373,19 @@ class RelationExtractor:
         :param overwrite: Re-extract even if output already exists.
         :returns: Number of relations extracted.
         """
-        resolved_path = book_dir / _RESOLVED_FILE
+        # Read tagged resolved file if available, fall back to default
+        resolved_filename = (_RESOLVED_FILE.replace(".json", f"_{self.run_tag}.json")
+                             if self.run_tag else _RESOLVED_FILE)
+        resolved_path = book_dir / resolved_filename
+        if not resolved_path.exists() and self.run_tag:
+            resolved_path = book_dir / _RESOLVED_FILE
+            logger.info(f"  {book_dir.name}: no tagged resolved file, using default")
 
-        # Output goes to relations_v2/<book_name>/book_relations.json
-        # so it is clearly separated from the old enriched_relations/ pipeline
-        out_dir     = _RELATIONS_V2 / book_dir.name
+        # Output: relations_v2/<book_name>/ for Gemini,
+        #         relations_v2/<book_name>/<run_tag>/ for LMS runs
+        out_dir = _RELATIONS_V2 / book_dir.name
+        if self.run_tag:
+            out_dir = out_dir / self.run_tag
         out_dir.mkdir(parents=True, exist_ok=True)
         output_path = out_dir / _OUTPUT_FILE
 
@@ -505,10 +514,21 @@ def main() -> None:
     parser.add_argument("--dry-run", "-n", action="store_true")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--backend", choices=["gemini", "lm_studio"], default="gemini")
-    parser.add_argument("--lms-model",    default="qwen3.5-35b-a3b")
+    parser.add_argument("--lms-model",    default="qwen/qwen3.6-35b-a3b")
     parser.add_argument("--lms-url",      default="http://localhost:1234/v1")
     parser.add_argument("--gemini-model", default="gemini-3.5-flash")
+    parser.add_argument(
+        "--run-tag", default=None,
+        help="Tag for output subdir (e.g. 'lms_qwen3-32b'). "
+             "Auto-derived from --lms-model when --backend lm_studio if omitted.",
+    )
     args = parser.parse_args()
+
+    # Auto-derive run_tag from model name when using LM Studio
+    run_tag = args.run_tag
+    if run_tag is None and args.backend == "lm_studio":
+        safe_model = args.lms_model.replace("/", "_").replace(":", "_")
+        run_tag = f"lms_{safe_model}"
 
     client = LLMClient(
         backend=args.backend,
@@ -518,7 +538,7 @@ def main() -> None:
         gemini_model=args.gemini_model,
     )
 
-    extractor = RelationExtractor(client)
+    extractor = RelationExtractor(client, run_tag=run_tag or "")
 
     root = _data_root
     if args.dir:

@@ -419,11 +419,13 @@ class CoreferenceResolver:
         lms_model:   str  = _LMS_MODEL,
         lms_timeout: int  = _LMS_TIMEOUT,
         use_llm:     bool = True,
+        run_tag:     str  = "",
     ):
         self.lms_url     = lms_url
         self.lms_model   = lms_model
         self.lms_timeout = lms_timeout
         self.use_llm     = use_llm
+        self.run_tag     = run_tag  # e.g. "lms_qwen3-32b"; empty = default output
 
         if use_llm:
             self._verify_lms()
@@ -506,12 +508,21 @@ class CoreferenceResolver:
         :param overwrite: If True, re-resolve even if output already exists.
         :returns: True if output was written, False otherwise.
         """
-        output_path = book_dir / _OUTPUT_FILE
+        # Tagged output file for LMS runs so Gemini and LMS results coexist
+        output_filename = (_OUTPUT_FILE.replace(".json", f"_{self.run_tag}.json")
+                           if self.run_tag else _OUTPUT_FILE)
+        output_path = book_dir / output_filename
         if output_path.exists() and not overwrite:
             logger.info(f"  {book_dir.name}: output exists, skipping (use --overwrite)")
             return False
 
-        entity_files = sorted((book_dir / "entities").glob("page_*_entities.json"))
+        # Read from tagged entities dir if set, fall back to default
+        entities_dirname = f"entities_{self.run_tag}" if self.run_tag else "entities"
+        entities_dir = book_dir / entities_dirname
+        if not entities_dir.exists() and self.run_tag:
+            entities_dir = book_dir / "entities"
+            logger.info(f"  {book_dir.name}: no tagged entities dir, using default")
+        entity_files = sorted(entities_dir.glob("page_*_entities.json"))
         if not entity_files:
             logger.warning(f"  {book_dir.name}: no entity files found (run Pass 2 first)")
             return False
@@ -654,12 +665,24 @@ def main() -> None:
         "--lms-model", default=_LMS_MODEL,
         help=f"LM Studio model name (default: {_LMS_MODEL}). Must match a loaded model ID.",
     )
+    parser.add_argument(
+        "--run-tag", default=None,
+        help="Tag appended to output filenames (e.g. 'lms_qwen3-32b'). "
+             "Auto-derived from --lms-model if omitted.",
+    )
     args = parser.parse_args()
+
+    # Auto-derive run_tag from model name
+    run_tag = args.run_tag
+    if run_tag is None and not args.no_llm:
+        safe_model = args.lms_model.replace("/", "_").replace(":", "_")
+        run_tag = f"lms_{safe_model}"
 
     resolver = CoreferenceResolver(
         lms_url=args.lms_url,
         lms_model=args.lms_model,
         use_llm=not args.no_llm,
+        run_tag=run_tag or "",
     )
 
     root = _data_root
