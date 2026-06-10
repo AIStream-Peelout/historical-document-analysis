@@ -690,7 +690,8 @@ class AcademicKGImporter:
                     a.source_books = CASE WHEN $book IN coalesce(a.source_books,[])
                         THEN coalesce(a.source_books,[]) ELSE coalesce(a.source_books,[]) + [$book] END
             """, canonical=canonical_s, display=subj, book=book)
-            subj_ref = f"Fragment {{canonical_shelfmark: '{canonical_s}'}}"
+            subj_match = "(a:Fragment {canonical_shelfmark: $subj_key})"
+            subj_key = canonical_s
         elif sl == "BookArticle":
             aid = _find_or_make_article_id(tx, subj)
             tx.run(f"""
@@ -700,7 +701,8 @@ class AcademicKGImporter:
                     a.source_books = CASE WHEN $book IN coalesce(a.source_books,[])
                         THEN coalesce(a.source_books,[]) ELSE coalesce(a.source_books,[]) + [$book] END
             """, aid=aid, title=subj, book=book)
-            subj_ref = f"BookArticle {{article_id: '{aid}'}}"
+            subj_match = "(a:BookArticle {article_id: $subj_key})"
+            subj_key = aid
         else:
             tx.run(f"""
                 MERGE (a:{sl} {{name: $name}})
@@ -708,7 +710,8 @@ class AcademicKGImporter:
                     a.source_books = CASE WHEN $book IN coalesce(a.source_books,[])
                         THEN coalesce(a.source_books,[]) ELSE coalesce(a.source_books,[]) + [$book] END
             """, name=subj, book=book)
-            subj_ref = f"{sl} {{name: '{subj}'}}"
+            subj_match = f"(a:{sl} {{name: $subj_key}})"
+            subj_key = subj
 
         # Build object node
         if ol == "Fragment":
@@ -720,7 +723,8 @@ class AcademicKGImporter:
                     b.source_books = CASE WHEN $book IN coalesce(b.source_books,[])
                         THEN coalesce(b.source_books,[]) ELSE coalesce(b.source_books,[]) + [$book] END
             """, canonical=canonical_o, display=obj, book=book)
-            obj_ref = f"Fragment {{canonical_shelfmark: '{canonical_o}'}}"
+            obj_match = "(b:Fragment {canonical_shelfmark: $obj_key})"
+            obj_key = canonical_o
         elif ol == "BookArticle":
             aid = _find_or_make_article_id(tx, obj)
             tx.run(f"""
@@ -730,7 +734,8 @@ class AcademicKGImporter:
                     b.source_books = CASE WHEN $book IN coalesce(b.source_books,[])
                         THEN coalesce(b.source_books,[]) ELSE coalesce(b.source_books,[]) + [$book] END
             """, aid=aid, title=obj, book=book)
-            obj_ref = f"BookArticle {{article_id: '{aid}'}}"
+            obj_match = "(b:BookArticle {article_id: $obj_key})"
+            obj_key = aid
         else:
             resolved_obj = _resolve_place_name(tx, obj) if ol == "Place" else obj
             tx.run(f"""
@@ -739,12 +744,13 @@ class AcademicKGImporter:
                     b.source_books = CASE WHEN $book IN coalesce(b.source_books,[])
                         THEN coalesce(b.source_books,[]) ELSE coalesce(b.source_books,[]) + [$book] END
             """, name=resolved_obj, book=book)
-            obj_ref = f"{ol} {{name: '{resolved_obj}'}}"
+            obj_match = f"(b:{ol} {{name: $obj_key}})"
+            obj_key = resolved_obj
 
         # Create the relationship
         tx.run(f"""
-            MATCH (a:{subj_ref})
-            MATCH (b:{obj_ref})
+            MATCH {subj_match}
+            MATCH {obj_match}
             MERGE (a)-[r:{rel}]->(b)
               ON CREATE SET r.source     = $book,
                             r.evidence   = $evidence,
@@ -753,7 +759,7 @@ class AcademicKGImporter:
                             r.source_books = [$book]
               ON MATCH SET r.source_books = CASE WHEN $book IN coalesce(r.source_books,[])
                   THEN coalesce(r.source_books,[]) ELSE coalesce(r.source_books,[]) + [$book] END
-        """, book=book, evidence=t.get("evidence",""), confidence=t.get("confidence","medium"))
+        """, subj_key=subj_key, obj_key=obj_key, book=book, evidence=t.get("evidence",""), confidence=t.get("confidence","medium"))
 
     @staticmethod
     def _mark_enriched(tx, name: str, label: str, books: List[str]) -> None:

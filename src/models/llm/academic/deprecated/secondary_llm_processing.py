@@ -446,6 +446,9 @@ Extract the triplets:"""
             http_options=genai_types.HttpOptions(timeout=300_000),  # 5 min, in ms
         )
 
+        if max_retries <= 0:
+            raise ValueError("max_retries must be greater than 0")
+
         last_exc = None
         for attempt in range(max_retries):
             try:
@@ -502,9 +505,19 @@ Extract the triplets:"""
                 json_text = response_text
             
             parsed_json = json.loads(json_text)
-            # Gemini occasionally returns a bare list instead of an object — wrap it
+            # Gemini occasionally returns a bare list instead of an object — preserve it.
             if isinstance(parsed_json, list):
-                return {}
+                if parsed_json and all(isinstance(item, dict) for item in parsed_json):
+                    first = parsed_json[0]
+                    if {"subject", "object"}.issubset(first) and (
+                        "relation" in first or "predicate" in first
+                    ):
+                        return {"triplets": parsed_json}
+                    if "location_type" in first:
+                        return {"locations": parsed_json}
+                    if "role" in first:
+                        return {"people": parsed_json}
+                return {"items": parsed_json}
             return parsed_json
             
         except json.JSONDecodeError as e:
@@ -639,7 +652,7 @@ Extract the triplets:"""
             # Analyze shelf mark patterns
             pattern_analysis = self._analyze_shelf_mark_patterns(pages_data)
 
-            # All LLM calls are chunked at 2 pages to stay well within Gemini's
+            # All LLM calls are chunked at 5 pages to stay well within Gemini's
             # timeout limits.  Results are merged across chunks.
             # 5 pages per chunk: enough to capture cross-page shelfmark/transcription
             # spans (typically 1–3 pages) while staying well within Gemini's timeout.
