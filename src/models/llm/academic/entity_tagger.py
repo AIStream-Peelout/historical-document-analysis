@@ -20,8 +20,7 @@ Input
 
 Output
 ------
-``page_NNN_entities.json`` alongside each structured JSON, with the schema::
-
+``page_NNN_entities.json`` in ``<book_dir>/entities/`` (one per page), with the schema::
     {
         "page_number": 28,
         "source_book": "india_trader_1_50",
