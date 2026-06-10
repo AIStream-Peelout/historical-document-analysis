@@ -179,14 +179,7 @@ def collect_stats(session) -> dict[str, Any]:
     :param session: Active Neo4j session.
     :returns: Dict with ``nodes`` and ``relationships`` count dicts.
     """
-    node_counts = {
-        r["label"]: r["count"]
-        for r in session.run(
-            "CALL db.labels() YIELD label "
-            "CALL apoc.cypher.run('MATCH (n:`' + label + '`) RETURN count(n) AS count', {}) "
-            "YIELD value RETURN label, value.count AS count"
-        )
-    } if False else {}  # APOC may not be available; fall back below
+    node_counts: dict[str, int] = {}
 
     # Safe fallback without APOC
     labels, rel_types = get_schema(session)
