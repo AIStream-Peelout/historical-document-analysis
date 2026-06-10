@@ -285,8 +285,7 @@ python src/datasets/indexing/neo4j/geocode_places.py
 python src/models/ocr/book_ocr_service.py --input path/to/book.pdf
 
 # Step 1: Structured extraction
-python src/models/llm/structured_json_llm.py --dir academic_literature/my_book
-
+python src/models/llm/academic/structured_json_llm.py --dir academic_literature/my_book
 # Step 2: Per-page entity tagging  (planned)
 python src/models/llm/entity_tagger.py --dir academic_literature/my_book
 
