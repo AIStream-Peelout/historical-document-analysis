@@ -236,6 +236,7 @@ def _build_resolved_entry(name: str, agg: Dict, category: str) -> Dict:
 # ---------------------------------------------------------------------------
 
 _DEDUP_SYSTEM = """\
+/no_think
 You are an expert in medieval Jewish history and the Cairo Genizah.
 Your task is to group name variants that refer to the same entity.
 Output ONLY valid JSON. No markdown, no code fences, no explanation.
@@ -292,6 +293,7 @@ def _call_lms(prompt: str, lms_url: str, lms_model: str, timeout: int) -> Option
         ],
         "temperature": 0.1,
         "max_tokens":  8192,
+        "response_format": {"type": "json_object"},
     }
     try:
         r = requests.post(

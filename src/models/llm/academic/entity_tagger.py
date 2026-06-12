@@ -92,10 +92,66 @@ logger = logging.getLogger(__name__)
 _data_root = _project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" / "academic_literature"
 
 # ---------------------------------------------------------------------------
-# Output schema
+# Output schema — used for LM Studio constrained decoding
 # ---------------------------------------------------------------------------
 
 _ENTITY_FILE_SUFFIX = "_entities.json"
+
+# JSON Schema passed to LM Studio's structured output API.
+# Constrained decoding guarantees the response matches this exactly.
+_ENTITY_JSON_SCHEMA: Dict = {
+    "type": "object",
+    "properties": {
+        "people": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name":    {"type": "string"},
+                    "role":    {"type": "string"},
+                    "context": {"type": "string"},
+                },
+                "required": ["name", "role", "context"],
+            },
+        },
+        "places": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name":    {"type": "string"},
+                    "type":    {"type": "string"},
+                    "context": {"type": "string"},
+                },
+                "required": ["name", "type", "context"],
+            },
+        },
+        "institutions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name":    {"type": "string"},
+                    "type":    {"type": "string"},
+                    "context": {"type": "string"},
+                },
+                "required": ["name", "type", "context"],
+            },
+        },
+        "shelf_marks": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "mark":    {"type": "string"},
+                    "context": {"type": "string"},
+                },
+                "required": ["mark", "context"],
+            },
+        },
+    },
+    "required": ["people", "places", "institutions", "shelf_marks"],
+}
 
 
 def _safe_tag(model_name: str) -> str:
@@ -140,6 +196,7 @@ def _book_dir_for_structured(p: Path) -> Path:
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
+/no_think
 You are an expert in medieval Jewish history, the Cairo Genizah, and academic
 scholarship on the medieval Mediterranean world.
 
@@ -165,14 +222,17 @@ def _build_prompt(
     """
     page_num = current_page.get("extracted_page_number", "unknown")
     main_text = (current_page.get("full_main_text") or "").strip()
-    footnotes = current_page.get("footnotes") or {}
+    _fn = current_page.get("footnotes") or {}
     _sm = current_page.get("shelf_marks_mentioned") or {}
     pass1_marks = list(_sm.keys()) if isinstance(_sm, dict) else list(_sm)
     classification = current_page.get("classification", "general_academic")
 
     footnote_block = ""
-    if footnotes:
-        lines = [f"  [{k}] {v}" for k, v in list(footnotes.items())[:10]]
+    if _fn:
+        if isinstance(_fn, dict):
+            lines = [f"  [{k}] {v}" for k, v in list(_fn.items())[:10]]
+        else:
+            lines = [f"  {item}" for item in list(_fn)[:10]]
         footnote_block = "Footnotes:\n" + "\n".join(lines)
 
     prev_block = ""
@@ -249,7 +309,8 @@ Rules:
 # JSON parser
 # ---------------------------------------------------------------------------
 
-_JSON_RE = re.compile(r'\{.*\}', re.DOTALL)
+_JSON_RE       = re.compile(r'\{.*\}', re.DOTALL)
+_CODE_FENCE_RE = re.compile(r'```(?:json)?\s*(\{.*?\})\s*```', re.DOTALL)
 
 
 def _parse_response(raw: str) -> Optional[Dict]:
@@ -259,11 +320,26 @@ def _parse_response(raw: str) -> Optional[Dict]:
     :returns: Parsed dict with people/places/institutions/shelf_marks keys,
               or None if parsing fails.
     """
-    # Strip thinking tags (some models emit <think>...</think>)
+    original_raw = raw
+    # Strip thinking tags (Qwen3 thinking mode emits <think>...</think>)
+    think_content = ""
+    think_match = re.search(r'<think>(.*?)</think>', raw, flags=re.DOTALL)
+    if think_match:
+        think_content = think_match.group(1)
     raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
-    match = _JSON_RE.search(raw)
+
+    # Try bare JSON / code-fenced JSON from the non-thinking part first
+    match = _JSON_RE.search(raw) or _CODE_FENCE_RE.search(raw)
+
+    # If nothing found outside think tags, the model put its answer inside them (Qwen3 bug)
+    # Search the think content as a last resort
+    if not match and think_content:
+        logger.warning("  Response was empty after stripping <think> — searching inside think block")
+        match = _JSON_RE.search(think_content) or _CODE_FENCE_RE.search(think_content)
+
     if not match:
         logger.warning("  No JSON found in LLM response")
+        logger.warning(f"  Raw response:\n{'='*60}\n{original_raw}\n{'='*60}")
         return None
     try:
         data = json.loads(match.group())
@@ -380,7 +456,11 @@ class EntityTagger:
             prompt = _build_prompt(current_data, prev_data, source_book)
 
             try:
-                raw = self.client.complete(_SYSTEM_PROMPT, prompt)
+                # Pass the JSON schema for constrained decoding (LM Studio SDK).
+                # Falls back to regex parsing via _parse_response if the backend
+                # doesn't support structured output (e.g. Gemini).
+                schema = _ENTITY_JSON_SCHEMA if self.client.backend == "lm_studio" else None
+                raw = self.client.complete(_SYSTEM_PROMPT, prompt, response_schema=schema)
                 parsed = _parse_response(raw)
             except Exception as e:
                 logger.error(f"  LLM error on {struct_path.name}: {e}")
@@ -395,7 +475,12 @@ class EntityTagger:
 
             # Merge pass1 shelf marks that the LLM may have missed
             _sm2 = current_data.get("shelf_marks_mentioned") or {}
-            pass1_marks = set(_sm2.keys()) if isinstance(_sm2, dict) else set(_sm2)
+            if isinstance(_sm2, dict):
+                pass1_marks = set(_sm2.keys())
+            elif _sm2 and isinstance(_sm2[0], dict):
+                pass1_marks = {item.get("mark", "") for item in _sm2 if item.get("mark")}
+            else:
+                pass1_marks = set(_sm2)
             tagged_marks = {sm["mark"] for sm in parsed["shelf_marks"]}
             for mark, desc in (_sm2.items() if isinstance(_sm2, dict) else {}):
 

@@ -68,6 +68,7 @@ _REL_OBJECT_HINTS: Dict[str, Tuple[Optional[str], Optional[str]]] = {
 }
 
 _SYSTEM_PROMPT = """\
+/no_think
 You are an expert in medieval Jewish history and the Cairo Genizah.
 Extract factual relationships for a specific entity from academic literature excerpts.
 The text may contain Hebrew, Aramaic, Judeo-Arabic, or other languages — treat all
@@ -126,36 +127,70 @@ class LLMClient:
         except Exception as e:
             logger.warning(f"Could not verify LM Studio: {e}")
 
-    def complete(self, system: str, user: str, max_context_chars: int = 4000) -> str:
+    def complete(self, system: str, user: str, max_context_chars: int = 4000,
+                 response_schema: Optional[Dict] = None) -> str:
+        """Run a completion, optionally enforcing a JSON schema for structured output.
+
+        :param system: System prompt.
+        :param user: User prompt.
+        :param max_context_chars: Soft limit on user prompt length before trimming.
+        :param response_schema: Optional JSON Schema dict; when provided the LM Studio
+            SDK enforces constrained decoding so output is guaranteed to match.
+        :returns: Model response as a string.
+        """
         if self.backend == BACKEND_GEMINI:
             resp = self._gemini.models.generate_content(
                 model=self._gemini_model,
                 contents=f"{system}\n\n{user}",
             )
             return resp.text
-        return self._complete_lms_with_retry(system, user, max_context_chars)
+        return self._complete_lms(system, user, max_context_chars, response_schema)
 
-    def _complete_lms_with_retry(self, system: str, user: str, max_context_chars: int) -> str:
-        """On 400 (context too large), halve the passages block and retry up to 3x."""
-        for attempt in range(3):
-            trimmed_user = _trim_passages(user, max_context_chars >> attempt)
-            payload = {
-                "model": self.lms_model,
-                "messages": [
-                    {"role": "system", "content": system},
-                    {"role": "user",   "content": trimmed_user},
-                ],
-                "temperature": 0.1,
-                "max_tokens":  2048,
-            }
-            r = requests.post(f"{self.lms_url}/chat/completions",
-                              json=payload, timeout=self.timeout)
-            if r.status_code == 400 and attempt < 2:
-                logger.warning(f"  400 on attempt {attempt+1} — halving context and retrying")
-                continue
-            r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"]
-        raise RuntimeError("LMS returned 400 after 3 retries")
+    def _complete_lms(self, system: str, user: str, max_context_chars: int,
+                      response_schema: Optional[Dict]) -> str:
+        """Call LM Studio via the native SDK with optional structured output.
+
+        Uses the ``lmstudio`` Python SDK which supports JSON-schema constrained
+        decoding (grammar sampling), guaranteeing the output matches the schema.
+        Falls back to halving the context on 400 errors.
+
+        :param system: System prompt.
+        :param user: User prompt.
+        :param max_context_chars: Soft limit; halved on each 400 retry.
+        :param response_schema: JSON Schema dict for constrained output, or None.
+        :returns: Model response content string.
+        """
+        import lmstudio as lms
+
+        # SDK connects via WebSocket; strip the /v1 REST suffix to get host:port
+        host_port = (self.lms_url
+                     .replace("http://", "")
+                     .replace("https://", "")
+                     .rstrip("/")
+                     .removesuffix("/v1"))
+
+        pred_config = lms.LlmPredictionConfig(temperature=0.1, max_tokens=4096)
+
+        for ctx_shift in range(3):
+            trimmed_user = _trim_passages(user, max_context_chars >> ctx_shift)
+            chat = lms.Chat(system)
+            chat.add_user_message(trimmed_user)
+            try:
+                with lms.Client(host_port) as client:
+                    model = client.llm.model(self.lms_model)
+                    result = model.respond(
+                        chat,
+                        config=pred_config,
+                        response_format=response_schema,   # None = unstructured
+                    )
+                    return result.content
+            except Exception as e:
+                err = str(e).lower()
+                if ("context" in err or "token" in err or "length" in err) and ctx_shift < 2:
+                    logger.warning(f"  LMS context error (attempt {ctx_shift+1}) — halving and retrying: {e}")
+                    continue
+                raise
+        raise RuntimeError("LMS failed after all context-reduction retries")
 
 
 # ---------------------------------------------------------------------------
