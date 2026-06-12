@@ -312,8 +312,131 @@ def parse_triplets(raw: str, entity_name: str, entity_label: str) -> List[Dict]:
 
 
 # ---------------------------------------------------------------------------
-# Context builder — assembles page text from _enhanced.json files
+# Context builder — assembles page text from the current pipeline outputs
+# (Pass 1 structured pages + Pass 3 book_entities_resolved.json).
+# Legacy *_enhanced.json fallback requires ALLOW_LEGACY_ENHANCED=1.
 # ---------------------------------------------------------------------------
+
+def _find_book_dir(source_book: str) -> Optional[Path]:
+    """Locate the book directory for a source-book stem.
+
+    A book directory is the one whose name equals *source_book* and which
+    contains a ``*_structured*`` subdirectory of Pass 1 page files.
+
+    :param source_book: Book stem (e.g. ``"PosegayandArrantpdf"``).
+    :returns: Book directory path, or None when not found.
+    """
+    for d in _data_root.rglob(source_book):
+        if d.is_dir() and any("_structured" in c.name for c in d.iterdir() if c.is_dir()):
+            return d
+    # Case-insensitive fallback
+    target = source_book.lower()
+    for d in _data_root.rglob("*_structured*"):
+        if d.is_dir() and d.parent.name.lower() == target:
+            return d.parent
+    return None
+
+
+def _load_structured_pages(book_dir: Path) -> Dict[int, Dict]:
+    """Load Pass 1 structured page JSONs for a book, keyed by page number.
+
+    Handles both single-level (``book_structured_gemini/``) and two-level
+    (``book_structured_qwen/qwen3_vl_8b/``) layouts.
+
+    :param book_dir: Book root directory.
+    :returns: Mapping of page number → structured page dict.
+    """
+    pages: Dict[int, Dict] = {}
+    for p in sorted(book_dir.rglob("page_*_structured.json")):
+        if "_structured" not in p.parent.name and "_structured" not in p.parent.parent.name:
+            continue
+        try:
+            data = json.load(open(p, encoding="utf-8"))
+        except Exception as e:
+            logger.warning(f"  Could not load {p}: {e}")
+            continue
+        # Filename sequence index is the canonical page number pipeline-wide;
+        # extracted_page_number is the printed page and is unreliable.
+        m = re.search(r"page_(\d+)", p.name)
+        if m:
+            pages[int(m.group(1))] = data
+    return pages
+
+
+def _get_entity_pages_resolved(
+    book_dir: Path, entity_name: str, entity_label: str
+) -> List[int]:
+    """Look up an entity's page numbers in ``book_entities_resolved*.json``.
+
+    :param book_dir: Book root directory.
+    :param entity_name: Canonical or alias entity name.
+    :param entity_label: Neo4j label (Person/Scholar/Place/Institution).
+    :returns: Sorted page numbers, empty when no resolved file or no match.
+    """
+    resolved_files = sorted(book_dir.glob("book_entities_resolved*.json"),
+                            key=lambda p: p.stat().st_mtime, reverse=True)
+    if not resolved_files:
+        return []
+    try:
+        data = json.load(open(resolved_files[0], encoding="utf-8"))
+    except Exception as e:
+        logger.warning(f"  Could not load {resolved_files[0]}: {e}")
+        return []
+
+    if entity_label in ("Person", "Scholar"):
+        categories = ["people"]
+    elif entity_label == "Place":
+        categories = ["places"]
+    elif entity_label == "Institution":
+        categories = ["institutions"]
+    else:
+        categories = ["people", "places", "institutions"]
+
+    name_lower = entity_name.lower()
+    pages: List[int] = []
+    for cat in categories:
+        for item in (data.get(cat) or []):
+            names = [(item.get("name") or "").lower()] + [
+                (a or "").lower() for a in (item.get("aliases") or [])
+            ]
+            if name_lower in names:
+                pages.extend(item.get("pages") or [])
+    return sorted(set(pages))
+
+
+def _collect_structured_page_texts(
+    page_map: Dict[int, Dict],
+    target_pages: List[int],
+    max_chars_per_page: int = 800,
+    max_total_chars:    int = 3000,
+) -> str:
+    """Assemble excerpts from structured pages for the given page numbers.
+
+    :param page_map: Page number → structured page dict.
+    :param target_pages: Pages to include.
+    :param max_chars_per_page: Per-page text cap.
+    :param max_total_chars: Overall cap across pages.
+    :returns: Joined excerpt string.
+    """
+    chunks, total = [], 0
+    for pg in target_pages:
+        if total >= max_total_chars:
+            break
+        page = page_map.get(pg)
+        if not page:
+            continue
+        summary = (page.get("summary") or "").strip()
+        text    = (page.get("full_main_text") or "").strip()
+        excerpt = f"[Page {pg}]\n"
+        if summary:
+            excerpt += f"Summary: {summary}\n"
+        if text:
+            excerpt += f"Text: {text[:max_chars_per_page]}\n"
+        remaining = max_total_chars - total
+        chunks.append(excerpt[:remaining])
+        total += len(excerpt)
+    return "\n---\n".join(chunks)
+
 
 def _find_enhanced_json(source_book: str) -> Optional[Path]:
     """Locate the canonical *_enhanced.json for a source book.
@@ -410,50 +533,97 @@ def build_context_for_entity(
 ) -> Tuple[str, List[str]]:
     """Gather focused page text across all source books for one entity.
 
+    Reads the current pipeline outputs: Pass 1 structured page JSONs for
+    text and ``book_entities_resolved*.json`` (Pass 3) for page attribution.
+    Legacy ``*_enhanced.json`` files are only consulted when the env var
+    ``ALLOW_LEGACY_ENHANCED=1`` is set — never silently.
+
     Budget is divided evenly so entities in many books (e.g. Maimonides)
     don't exceed the model's context window.
     """
     chunks: List[str] = []
     contributing: List[str] = []
     per_book = max(500, total_char_budget // max(len(source_books), 1))
+    allow_legacy = os.getenv("ALLOW_LEGACY_ENHANCED", "") == "1"
 
     for book in source_books:
-        path = _find_enhanced_json(book)
-        if not path:
-            logger.debug(f"  No enhanced JSON for '{book}'")
-            continue
-        try:
-            data = json.load(open(path, encoding="utf-8"))
-        except Exception as e:
-            logger.warning(f"  Could not load {path}: {e}")
+        book_dir = _find_book_dir(book)
+        page_map = _load_structured_pages(book_dir) if book_dir else {}
+
+        if not page_map:
+            if allow_legacy:
+                chunk = _legacy_enhanced_context(book, entity_name, entity_label, per_book)
+                if chunk:
+                    logger.warning(f"  Using LEGACY enhanced JSON for '{book}' "
+                                   f"(ALLOW_LEGACY_ENHANCED=1)")
+                    chunks.append(f"=== Source: {book} ===\n{chunk}")
+                    contributing.append(book)
+            else:
+                logger.warning(
+                    f"  No Pass 1 structured pages found for '{book}' — skipping. "
+                    f"(Set ALLOW_LEGACY_ENHANCED=1 to permit legacy *_enhanced.json.)"
+                )
             continue
 
-        pages = _get_entity_pages(data, entity_name, entity_label)
+        pages = _get_entity_pages_resolved(book_dir, entity_name, entity_label)
 
         # Fallback: scan full_main_text directly
         if not pages:
             name_lower = entity_name.lower()
-            for page in (data.get("original_pages") or []):
-                if name_lower in (page.get("full_main_text") or "").lower():
-                    meta   = page.get("metadata") or {}
-                    pg_num = meta.get("page_number") or (
-                        (page.get("extracted_page_number") or [None])[0]
-                    )
-                    if pg_num:
-                        pages.append(pg_num)
-            pages = sorted(set(pages))
+            pages = sorted(
+                pg for pg, page in page_map.items()
+                if name_lower in (page.get("full_main_text") or "").lower()
+            )
 
         if not pages:
             continue
 
-        chunk = _collect_page_texts(data, pages,
-                                     max_chars_per_page=per_book // 2,
-                                     max_total_chars=per_book)
+        chunk = _collect_structured_page_texts(page_map, pages,
+                                               max_chars_per_page=per_book // 2,
+                                               max_total_chars=per_book)
         if chunk:
             chunks.append(f"=== Source: {book} ===\n{chunk}")
             contributing.append(book)
 
     return "\n\n".join(chunks), contributing
+
+
+def _legacy_enhanced_context(
+    book: str, entity_name: str, entity_label: str, per_book: int
+) -> str:
+    """Build context from a legacy *_enhanced.json file (opt-in only).
+
+    :param book: Source book stem.
+    :param entity_name: Entity name to locate.
+    :param entity_label: Neo4j label.
+    :param per_book: Character budget for this book.
+    :returns: Excerpt string, empty when unavailable.
+    """
+    path = _find_enhanced_json(book)
+    if not path:
+        return ""
+    try:
+        data = json.load(open(path, encoding="utf-8"))
+    except Exception as e:
+        logger.warning(f"  Could not load {path}: {e}")
+        return ""
+    pages = _get_entity_pages(data, entity_name, entity_label)
+    if not pages:
+        name_lower = entity_name.lower()
+        for page in (data.get("original_pages") or []):
+            if name_lower in (page.get("full_main_text") or "").lower():
+                meta   = page.get("metadata") or {}
+                pg_num = meta.get("page_number") or (
+                    (page.get("extracted_page_number") or [None])[0]
+                )
+                if pg_num:
+                    pages.append(pg_num)
+        pages = sorted(set(pages))
+    if not pages:
+        return ""
+    return _collect_page_texts(data, pages,
+                               max_chars_per_page=per_book // 2,
+                               max_total_chars=per_book)
 
 
 # ---------------------------------------------------------------------------

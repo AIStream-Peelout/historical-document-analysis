@@ -81,6 +81,7 @@ from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer 
 from src.datasets.document_models.institution_normalizer import InstitutionNormalizer  # noqa: E402
 from src.datasets.document_models.place_normalizer import PlaceNormalizer  # noqa: E402
 from src.datasets.document_models.person_normalizer import PersonNormalizer  # noqa: E402
+from src.datasets.document_models.scholar_normalizer import ScholarRegistry  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -159,6 +160,55 @@ def _add_source(alias: str, source_tag: str) -> str:
         f"THEN coalesce({alias}.data_sources, []) "
         f"ELSE coalesce({alias}.data_sources, []) + ['{source_tag}'] END"
     )
+
+
+def _person_label(name: str, declared: str) -> str:
+    """Resolve the final node label for a person-like entity.
+
+    Scholar is preferred for anyone matching a ground-truth metadata author:
+    Person is reserved for historical figures from the Genizah documents
+    themselves, while modern researchers always belong under Scholar.
+
+    :param name: Canonical (already-normalised) person name.
+    :param declared: Label declared by the extraction (Person/Scholar/Entity).
+    :returns: Final label to use for the MERGE.
+    """
+    if declared in ("Person", "Scholar", "Entity") and \
+            ScholarRegistry.instance().is_known_scholar(name):
+        return "Scholar"
+    return declared
+
+
+def _merge_person(tx, raw_name: str, declared: str, tag: str, book: str):
+    """Normalise a person name, resolve its label, and MERGE the node.
+
+    Enforces the one-node-per-person policy: if a Person node already
+    exists for a name being written as Scholar it is promoted in place
+    (Scholar wins), and a Person write reuses an existing Scholar node
+    rather than creating a duplicate under the other label.
+
+    :param tx: Neo4j transaction.
+    :param raw_name: Raw name from extraction output.
+    :param declared: Declared label (Person/Scholar/Entity).
+    :param tag: data_sources tag for provenance.
+    :param book: Source book name.
+    :returns: Tuple of (final_label, canonical_name).
+    """
+    canonical = _normalise_entity(raw_name, declared)
+    label = _person_label(canonical, declared)
+    if label == "Scholar":
+        tx.run("MATCH (p:Person {name: $name}) SET p:Scholar REMOVE p:Person",
+               name=canonical)
+    elif label == "Person":
+        if tx.run("MATCH (s:Scholar {name: $name}) RETURN 1 LIMIT 1",
+                  name=canonical).single():
+            label = "Scholar"
+    tx.run(
+        f"MERGE (n:{label} {{name: $name}}) "
+        f"SET {_add_source('n', tag)}, {_src_books('n')}",
+        name=canonical, book=book,
+    )
+    return label, canonical
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +355,7 @@ class AcademicKGImporter:
         def _resolve_label(name: str, declared: str) -> str:
             if declared.lower() == "person":
                 role = (people_by_name.get(name, {}).get("role") or "").lower()
-                if _is_scholar_role(role):
+                if _is_scholar_role(role) or ScholarRegistry.instance().is_known_scholar(name):
                     return "Scholar"
             label = _LABEL_MAP.get(declared, declared)
             # Only reclassify Place→Institution for modern institutions.
@@ -418,14 +468,13 @@ class AcademicKGImporter:
 
     @staticmethod
     def _write_person_wrote_article(tx, row: Dict) -> None:
-        label      = row["subject_label"]
-        author     = row["subject"]
         title      = row["object"]
         article_id = _find_or_make_article_id(tx, title)
         book       = row["source_book"]
+        label, author = _merge_person(tx, row["subject"], row["subject_label"],
+                                      "extracted", book)
         tx.run(f"""
-            MERGE (a:{label} {{name: $name}})
-            SET {_add_source('a', 'extracted')}, {_src_books('a')}
+            MATCH (a:{label} {{name: $name}})
             MERGE (b:BookArticle {{article_id: $article_id}})
               ON CREATE SET b.title = $title
             SET {_add_source('b', 'extracted')}, {_src_books('b')}
@@ -463,13 +512,13 @@ class AcademicKGImporter:
         if _is_institution_name(obj_name) and not PlaceNormalizer.is_historical_institution(obj_name):
             AcademicKGImporter._write_person_affiliated_with(tx, row)
             return
-        label = row["subject_label"]
         place = _resolve_place_name(tx, row["object"])
         pm    = row.get("object_place", {})
         book  = row["source_book"]
+        label, subj = _merge_person(tx, row["subject"], row["subject_label"],
+                                    "extracted", book)
         tx.run(f"""
-            MERGE (p:{label} {{name: $name}})
-            SET {_add_source('p', 'extracted')}, {_src_books('p')}
+            MATCH (p:{label} {{name: $name}})
             MERGE (pl:Place {{name: $place}})
             SET pl.place_type='historical',
                 {_add_source('pl', 'extracted')}, {_src_books('pl')},
@@ -479,19 +528,18 @@ class AcademicKGImporter:
             MERGE (p)-[r:LIVED_IN]->(pl)
               ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev, r.evidence_page=$ev_page
             SET {_add_source('r', 'extracted')}, {_src_books('r')}
-        """, name=row["subject"], place=place,
+        """, name=subj, place=place,
              city=pm.get("city",""), country=pm.get("country",""), region=pm.get("region",""),
              book=book, conf=row["confidence"], ev=row["evidence"], ev_page=row.get("evidence_page"))
 
     @staticmethod
     def _write_person_affiliated_with(tx, row: Dict) -> None:
-        label = row["subject_label"]
         book  = row["source_book"]
-        subj  = PersonNormalizer.normalize(row["subject"])
         inst  = InstitutionNormalizer.normalize(row["object"])
+        label, subj = _merge_person(tx, row["subject"], row["subject_label"],
+                                    "extracted", book)
         tx.run(f"""
-            MERGE (p:{label} {{name: $name}})
-            SET {_add_source('p', 'extracted')}, {_src_books('p')}
+            MATCH (p:{label} {{name: $name}})
             MERGE (i:Institution {{name: $inst}})
             SET {_add_source('i', 'extracted')}, {_src_books('i')}
             MERGE (p)-[r:AFFILIATED_WITH]->(i)
@@ -502,13 +550,13 @@ class AcademicKGImporter:
 
     @staticmethod
     def _write_person_traveled_to(tx, row: Dict) -> None:
-        label = row["subject_label"]
         place = _resolve_place_name(tx, row["object"])
         pm    = row.get("object_place", {})
         book  = row["source_book"]
+        label, subj = _merge_person(tx, row["subject"], row["subject_label"],
+                                    "extracted", book)
         tx.run(f"""
-            MERGE (p:{label} {{name: $name}})
-            SET {_add_source('p', 'extracted')}, {_src_books('p')}
+            MATCH (p:{label} {{name: $name}})
             MERGE (pl:Place {{name: $place}})
             SET pl.place_type='historical',
                 {_add_source('pl', 'extracted')}, {_src_books('pl')},
@@ -518,7 +566,7 @@ class AcademicKGImporter:
             MERGE (p)-[r:TRAVELED_TO]->(pl)
               ON CREATE SET r.source=$book, r.confidence=$conf, r.evidence=$ev, r.evidence_page=$ev_page
             SET {_add_source('r', 'extracted')}, {_src_books('r')}
-        """, name=row["subject"], place=place,
+        """, name=subj, place=place,
              city=pm.get("city",""), country=pm.get("country",""), region=pm.get("region",""),
              book=book, conf=row["confidence"], ev=row["evidence"], ev_page=row.get("evidence_page"))
 
@@ -562,8 +610,11 @@ class AcademicKGImporter:
                         {_add_source('n', tag)}, {_src_books('n')}
                 """, name=resolved, book=book)
                 return f"Place {{name: '{resolved}'}}"
+            elif label in ("Person", "Scholar", "Entity"):
+                final_label, canonical_name = _merge_person(tx, name, label, tag, book)
+                return f"{final_label} {{name: '{canonical_name}'}}"
             else:
-                # Normalise Person/Scholar/Institution names so variant forms
+                # Normalise Institution names so variant forms
                 # (e.g. "Jewish Theological Seminary Library") always merge into
                 # the same canonical node as the primary form.
                 canonical_name = _normalise_entity(name, label)
@@ -625,6 +676,9 @@ class AcademicKGImporter:
             tx.run(f"MERGE (a:Place {{name: $name}}) SET {_add_source('a','extracted')}, {_src_books('a')}",
                    name=subj, book=book)
             subj_clause = f"Place {{name: '{subj}'}}"
+        elif sl in ("Person", "Scholar", "Entity"):
+            final_sl, subj_name = _merge_person(tx, row["subject"], sl, "extracted", book)
+            subj_clause = f"{final_sl} {{name: '{subj_name}'}}"
         else:
             tx.run(f"MERGE (a:{sl} {{name: $name}}) SET {_add_source('a','extracted')}, {_src_books('a')}",
                    name=row["subject"], book=book)
@@ -652,6 +706,9 @@ class AcademicKGImporter:
             tx.run(f"MERGE (b:Place {{name: $name}}) SET {_add_source('b','extracted')}, {_src_books('b')}",
                    name=obj, book=book)
             obj_clause = f"Place {{name: '{obj}'}}"
+        elif ol in ("Person", "Scholar", "Entity"):
+            final_ol, obj_name = _merge_person(tx, row["object"], ol, "extracted", book)
+            obj_clause = f"{final_ol} {{name: '{obj_name}'}}"
         else:
             tx.run(f"MERGE (b:{ol} {{name: $name}}) SET {_add_source('b','extracted')}, {_src_books('b')}",
                    name=row["object"], book=book)
@@ -703,6 +760,10 @@ class AcademicKGImporter:
             """, aid=aid, title=subj, book=book)
             subj_match = "(a:BookArticle {article_id: $subj_key})"
             subj_key = aid
+        elif sl in ("Person", "Scholar", "Entity"):
+            final_sl, subj = _merge_person(tx, t["subject"], sl, "enriched", book)
+            subj_match = f"(a:{final_sl} {{name: $subj_key}})"
+            subj_key = subj
         else:
             tx.run(f"""
                 MERGE (a:{sl} {{name: $name}})
@@ -736,6 +797,10 @@ class AcademicKGImporter:
             """, aid=aid, title=obj, book=book)
             obj_match = "(b:BookArticle {article_id: $obj_key})"
             obj_key = aid
+        elif ol in ("Person", "Scholar", "Entity"):
+            final_ol, obj = _merge_person(tx, t["object"], ol, "enriched", book)
+            obj_match = f"(b:{final_ol} {{name: $obj_key}})"
+            obj_key = obj
         else:
             resolved_obj = _resolve_place_name(tx, obj) if ol == "Place" else obj
             tx.run(f"""
@@ -780,18 +845,38 @@ class AcademicKGImporter:
         places_by_name: Dict[str, Dict],
         source_book: str,
     ) -> None:
+        registry = ScholarRegistry.instance()
         seen_people: set = set()
         for person in people_by_name.values():
             raw_name = (person.get("name") or "").strip()
             if not raw_name:
                 continue
             role  = (person.get("role") or "").lower().strip()
-            label = "Scholar" if _is_scholar_role(role) else "Person"
-            canonical = PersonNormalizer.normalize(raw_name)
+
+            # Validate extracted authors against ground-truth metadata to
+            # block hallucinated names (e.g. an invented first name attached
+            # to a real author's surname).
+            if _is_scholar_role(role):
+                validation = registry.validate_author(raw_name, source_book)
+                if validation.status == "conflict":
+                    logger.warning(
+                        f"  Dropping hallucinated author in {source_book}: "
+                        f"{validation.detail}"
+                    )
+                    continue
+                canonical = validation.canonical or PersonNormalizer.normalize(raw_name)
+                label = "Scholar"
+            else:
+                canonical = registry.resolve(raw_name) or PersonNormalizer.normalize(raw_name)
+                label = _person_label(canonical, "Person")
+
             if canonical in seen_people:
                 continue
             seen_people.add(canonical)
             description = (person.get("description") or "").strip()[:1000]
+            if label == "Scholar":
+                tx.run("MATCH (p:Person {name: $name}) SET p:Scholar REMOVE p:Person",
+                       name=canonical)
             tx.run(f"""
                 MERGE (p:{label} {{name: $name}})
                 ON CREATE SET
@@ -966,20 +1051,26 @@ class AcademicKGImporter:
         enhanced_only: bool = False,
         enriched_only: bool = False,
         relations_only: bool = False,
+        include_legacy: bool = False,
     ):
         if not dry_run:
             self.ensure_constraints()
 
         totals: Dict[str, int] = defaultdict(int)
 
-        if not enriched_only and not relations_only:
-            logger.info("━━━ Legacy Pass 2: enhanced JSON files ━━━")
+        # Legacy Pass 2/3 outputs (secondary_llm_processing.py era) are kept
+        # on disk for historical reference but are NOT imported unless
+        # explicitly requested — the current pipeline is Pass 4 only.
+        run_legacy = include_legacy or enhanced_only or enriched_only
+
+        if run_legacy and not enriched_only and not relations_only:
+            logger.warning("━━━ Legacy Pass 2: enhanced JSON files (deprecated source) ━━━")
             counts = self.import_all_enhanced(enhanced_root, dry_run=dry_run)
             for k, v in counts.items():
                 totals[f"enhanced_{k}"] += v
 
-        if not enhanced_only and not relations_only and enriched_root.exists():
-            logger.info("━━━ Legacy Pass 3: enriched relation files ━━━")
+        if run_legacy and not enhanced_only and not relations_only and enriched_root.exists():
+            logger.warning("━━━ Legacy Pass 3: enriched relation files (deprecated source) ━━━")
             counts = self.import_all_enriched(enriched_root, dry_run=dry_run)
             for k, v in counts.items():
                 totals[f"enriched_{k}"] += v
@@ -1023,6 +1114,11 @@ def _normalise_entity(name: str, label: str) -> str:
     :returns: Canonical name suitable for use as a Neo4j MERGE key.
     """
     if label in ("Person", "Scholar"):
+        # Ground-truth metadata authors take precedence: snaps name-order
+        # variants ("Arrant, Estara J", "Arrant E J") to one canonical form.
+        snapped = ScholarRegistry.instance().resolve(name)
+        if snapped:
+            return snapped
         return PersonNormalizer.normalize(name)
     if label == "Institution":
         return InstitutionNormalizer.normalize(name)
@@ -1088,6 +1184,10 @@ def main():
                         help="Import legacy enriched relation files only.")
     parser.add_argument("--relations-only", action="store_true",
                         help="Import Pass 4 book_relations.json files only.")
+    parser.add_argument("--include-legacy", action="store_true",
+                        help="Also import legacy Pass 2/3 outputs (*_enhanced.json, "
+                             "enriched_relations/). Off by default — the current "
+                             "pipeline imports only Pass 4 book_relations.json.")
     parser.add_argument("--dir", "-d", metavar="SUBDIR", default=None,
                         help="Limit to a subdirectory under academic_literature/.")
     parser.add_argument("--enriched-dir", metavar="DIR", default=None,
@@ -1121,6 +1221,7 @@ def main():
             enhanced_only=args.enhanced_only,
             enriched_only=args.enriched_only,
             relations_only=args.relations_only,
+            include_legacy=args.include_legacy,
         )
     finally:
         importer.close()

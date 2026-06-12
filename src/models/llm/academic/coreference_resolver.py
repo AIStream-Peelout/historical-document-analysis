@@ -126,8 +126,14 @@ def _aggregate_entities(entity_files: List[Path]) -> Dict:
             continue
 
         pg = data.get("page_number")
-        if pg is None:
-            continue
+        if not isinstance(pg, int):
+            # Older entity files stored the printed page (often a list or
+            # null) — fall back to the filename sequence index, which is
+            # the canonical page number for the pipeline.
+            m = re.search(r"page_(\d+)", ef.name)
+            if not m:
+                continue
+            pg = int(m.group(1))
 
         for p in (data.get("people") or []):
             name = (p.get("name") or "").strip()

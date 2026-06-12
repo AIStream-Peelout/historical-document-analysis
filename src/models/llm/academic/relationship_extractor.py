@@ -291,24 +291,19 @@ def _load_page_texts(book_dir: Path, page_numbers: List[int]) -> List[str]:
     :param page_numbers: List of page numbers to load.
     :returns: List of formatted text snippets, one per page.
     """
-    # Build page_number → structured file map
+    # Build page_number → structured file map.  The filename sequence index
+    # is the canonical page number pipeline-wide (entity files, resolved
+    # files, and relations all use it); extracted_page_number is the printed
+    # page and is unreliable.
     page_map: Dict[int, Path] = {}
     for p in book_dir.rglob("page_*_structured.json"):
         # Accept both single-level (book_structured_*/page.json)
         # and two-level (book_structured_*/model/page.json) layouts
         if "_structured" not in p.parent.name and "_structured" not in p.parent.parent.name:
             continue
-        try:
-            d = json.load(open(p, encoding="utf-8"))
-            pn = d.get("extracted_page_number")
-            if isinstance(pn, int) and pn not in page_map:
-                page_map[pn] = p
-            elif isinstance(pn, list):
-                for n in pn:
-                    if isinstance(n, int) and n not in page_map:
-                        page_map[n] = p
-        except Exception:
-            continue
+        m = re.search(r"page_(\d+)", p.name)
+        if m:
+            page_map.setdefault(int(m.group(1)), p)
 
     texts = []
     for pg in sorted(set(page_numbers)):

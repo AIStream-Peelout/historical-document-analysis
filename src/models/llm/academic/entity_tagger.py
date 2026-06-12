@@ -445,7 +445,12 @@ class EntityTagger:
                 prev_data = None
                 continue
 
-            page_num = current_data.get("extracted_page_number")
+            # The filename sequence index is the canonical page number for
+            # the whole pipeline — extracted_page_number is the printed page
+            # (journal pagination), which is often missing or duplicated.
+            _m = re.search(r"page_(\d+)", struct_path.name)
+            page_num = int(_m.group(1)) if _m else None
+            printed_page = current_data.get("extracted_page_number")
 
             if dry_run:
                 logger.debug(f"  [dry-run] Would tag {struct_path.name} (page {page_num})")
@@ -493,6 +498,7 @@ class EntityTagger:
 
             output = {
                 "page_number":   page_num,
+                "printed_page":  printed_page,
                 "source_book":   source_book,
                 "extracted_at":  datetime.now(timezone.utc).isoformat(),
                 "model_used":    self.client.lms_model
