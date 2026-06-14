@@ -119,6 +119,7 @@ ALLOWED_RELATIONS: Dict[str, tuple] = {
 # ---------------------------------------------------------------------------
 
 _SYSTEM_PROMPT = """\
+/no_think
 You are an expert in medieval Jewish history, the Cairo Genizah, and academic
 scholarship on the medieval Mediterranean world.
 
@@ -127,6 +128,39 @@ supported by the text — do not infer or speculate.
 
 Output ONLY valid JSON. No markdown, no code fences, no explanation.
 """
+
+# Valid KG node labels — constrains subject_type/object_type so the model
+# can't invent types like "Book", "Work", or "Shelf Mark" (which would be
+# coerced to Entity nodes at import).
+_ENTITY_LABELS = ["Person", "Scholar", "Place", "Institution", "Fragment", "BookArticle"]
+
+# JSON Schema passed to LM Studio's structured-output API for constrained
+# decoding.  Guarantees valid JSON and bypasses Qwen3 "thinking" mode, which
+# otherwise emits chain-of-thought prose instead of JSON.
+_RELATIONS_JSON_SCHEMA: Dict = {
+    "type": "object",
+    "properties": {
+        "relations": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "subject":       {"type": "string"},
+                    "subject_type":  {"type": "string", "enum": _ENTITY_LABELS},
+                    "relation":      {"type": "string", "enum": sorted(ALLOWED_RELATIONS)},
+                    "object":        {"type": "string"},
+                    "object_type":   {"type": "string", "enum": _ENTITY_LABELS},
+                    "evidence":      {"type": "string"},
+                    "evidence_page": {"type": "integer"},
+                    "confidence":    {"type": "string", "enum": ["high", "medium"]},
+                },
+                "required": ["subject", "subject_type", "relation", "object",
+                             "object_type", "evidence", "confidence"],
+            },
+        },
+    },
+    "required": ["relations"],
+}
 
 
 def _build_entity_prompt(
@@ -426,7 +460,12 @@ class RelationExtractor:
             )
 
             try:
-                raw       = self.client.complete(_SYSTEM_PROMPT, prompt)
+                # Constrained JSON schema for LM Studio (grammar-sampled);
+                # Gemini handles the JSON instruction via the prompt.
+                schema = (_RELATIONS_JSON_SCHEMA
+                          if self.client.backend == "lm_studio" else None)
+                raw       = self.client.complete(_SYSTEM_PROMPT, prompt,
+                                                 response_schema=schema)
                 relations = _parse_response(raw, source_book)
             except Exception as e:
                 logger.error(f"  LLM error for '{name}': {e}")

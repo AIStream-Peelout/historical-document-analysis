@@ -307,6 +307,16 @@ def _call_lms(prompt: str, lms_url: str, lms_model: str, timeout: int) -> Option
             json=payload,
             timeout=timeout,
         )
+        if r.status_code == 400 and "response_format" in payload:
+            # Some LM Studio builds reject response_format on the
+            # OpenAI-compat endpoint — retry without it (the regex
+            # extraction in _parse_dedup_groups handles loose output).
+            del payload["response_format"]
+            r = requests.post(
+                f"{lms_url.rstrip('/')}/chat/completions",
+                json=payload,
+                timeout=timeout,
+            )
         r.raise_for_status()
         return r.json()["choices"][0]["message"]["content"]
     except Exception as e:
