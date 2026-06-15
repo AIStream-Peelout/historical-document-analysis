@@ -16,6 +16,7 @@ Example:
 """
 
 import re
+import unicodedata
 from typing import Any, Dict, List, Optional, Set
 
 from src.datasets.document_models.entity_normalizer import EntityNormalizer
@@ -139,6 +140,108 @@ class ShelfmarkNormalizer(EntityNormalizer):
         'AIU',
     ]
 
+    # Residual noise tokens dropped at the token level. Kept deliberately small
+    # and multi-character: single letters (f, l, p) are NOT listed here because
+    # they collide with collection letters (Lewis-Gibson "L-G", Gaster "P"/"L").
+    # Folio designators are stripped earlier by regex (see FOLIO_RE).
+    NOISE_TOKENS: Set[str] = {'box', 'folio', 'shelfmark', 'unknown', 'alt'}
+
+    # Folio / leaf / page designators preceding a fragment number. The number is
+    # preserved. Single-letter designators require a trailing dot so collection
+    # letters survive ("BM Or 10110, f. 23" -> drop "f.", keep "23"; "L-G" kept).
+    FOLIO_RE = re.compile(
+        r"(?:\b(?:fols?|ff|pp|pag|page|lines?|lin)\b\.?\s)"
+        r"|(?:(?<=[\s,])[flp]\.\s*)",
+        flags=re.IGNORECASE,
+    )
+
+    # Institution / collection renames applied at the token level before
+    # canonicalisation. British Museum -> British Library is the historical
+    # rename behind every "BM Or ..." historic variant.
+    TOKEN_RENAMES: Dict[str, str] = {
+        'BM': 'BL',
+        'BRITISH': 'BL',
+        'MUSEUM': '',
+    }
+
+    @staticmethod
+    def _strip_institution(shelf_mark: str) -> str:
+        """Remove the leading institution / location prefix from *shelf_mark*.
+
+        Handles the three source conventions:
+
+        * **KTIV** ``"<Institution>, <City>, <Country> Ms. <core>"`` — everything
+          up to and including the last `` Ms. `` delimiter is dropped.
+        * **FJP** ``"<Institution>: <core>"`` — for a single shelfmark there is
+          exactly one ``:``; the text after the last ``:`` is the core.
+        * **Known leading institution words** from :attr:`INSTITUTION_PREFIXES`
+          (e.g. ``"Cambridge CUL "``) are peeled as a fallback.
+
+        :param shelf_mark: Raw shelfmark string (already unicode-normalised).
+        :returns: The shelfmark core with institution context removed.
+        """
+        s = shelf_mark
+
+        # KTIV: split on the " Ms. " delimiter (case-insensitive). Manchester's
+        # own "MS B 3567" style has no preceding institution+comma, so only fire
+        # when a comma (location list) precedes the delimiter.
+        ms_match = re.search(r"^.*,.*?\sMs\.\s+", s, flags=re.IGNORECASE)
+        if ms_match:
+            s = s[ms_match.end():]
+
+        # FJP: institution prefix terminated by a colon. Take the text after the
+        # last colon (single-shelfmark records have exactly one).
+        if ":" in s:
+            s = s.rsplit(":", 1)[1]
+
+        s = s.strip()
+
+        # Fallback: peel a known leading institution word (no colon present).
+        for inst_prefix in ShelfmarkNormalizer.INSTITUTION_PREFIXES:
+            pattern = rf'^{re.escape(inst_prefix)}\s*[:\s,]\s*'
+            new = re.sub(pattern, '', s, flags=re.IGNORECASE)
+            if new != s:
+                s = new
+                break
+
+        return s.strip()
+
+    @staticmethod
+    def _collapse_ts_classmark(tokens: List[str]) -> List[str]:
+        """Collapse spaced Taylor-Schechter class-marks to PGP's closed form.
+
+        PGP writes single-letter class-marks closed up (``T-S 10J5.6``,
+        ``T-S 8K20.2``, ``T-S K10.10``) while KTIV and many historic variants
+        space them out (``T-S 10 J 5.6``). This merges a single class-mark letter
+        with an immediately preceding and/or following digit run so both forms
+        produce the same id. Multi-letter subseries (``AS``, ``NS``, ``Ar``,
+        ``Misc``) are left untouched. Scoped to ``T-S`` only, since other
+        collections (e.g. St Petersburg ``EVR II A 11``) use different rules.
+
+        :param tokens: Canonical-id tokens (already cleaned, pre-join).
+        :returns: Tokens with T-S class-marks collapsed.
+        """
+        if len(tokens) < 3 or tokens[0] != "T" or tokens[1] != "S":
+            return tokens
+
+        out: List[str] = ["T", "S"]
+        rest = tokens[2:]
+        i = 0
+        while i < len(rest):
+            tok = rest[i]
+            if len(tok) == 1 and tok.isalpha():
+                merged = tok
+                if out and out[-1].isdigit():
+                    merged = out.pop() + merged
+                if i + 1 < len(rest) and rest[i + 1].isdigit():
+                    merged += rest[i + 1]
+                    i += 1
+                out.append(merged)
+            else:
+                out.append(tok)
+            i += 1
+        return out
+
     @staticmethod
     def to_canonical_id(shelfmark: str) -> str:
         """
@@ -163,29 +266,28 @@ class ShelfmarkNormalizer(EntityNormalizer):
         if not shelfmark:
             return ""
 
-        canonical = shelfmark.strip()
+        # Unicode-normalise and unify the various dash characters to ASCII '-'.
+        canonical = unicodedata.normalize("NFKC", shelfmark).strip()
+        canonical = re.sub(r"[‐-―−]", "-", canonical)
 
-        # Remove institution prefixes first
-        for inst_prefix in ShelfmarkNormalizer.INSTITUTION_PREFIXES:
-            # Match "Cambridge CUL: " or "Cambridge CUL " or "Cambridge CUL, "
-            pattern = rf'^{re.escape(inst_prefix)}\s*[:\s,]\s*'
-            canonical = re.sub(pattern, '', canonical, flags=re.IGNORECASE)
+        # Drop parentheticals ("(shelfmark unknown)", "(Alt: 1)") wholesale.
+        canonical = re.sub(r"\([^)]*\)", " ", canonical)
 
-        # Handle special Manchester format
-        if canonical.startswith("Manchester:") or canonical.startswith("Manchester "):
-            parts = canonical.split(":", 1) if ":" in canonical else canonical.split(" ", 1)
-            if len(parts) > 1:
-                tail = parts[1].strip()
-                if tail.startswith("A "):
-                    canonical = "Gaster_A_" + tail[2:]
-                elif tail.startswith("B "):
-                    canonical = "Gaster_B_" + tail[2:]
-                elif tail.startswith("P "):
-                    canonical = "Gaster_P_" + tail[2:]
-                elif tail.startswith("L "):
-                    canonical = "Gaster_L_" + tail[2:]
-                elif tail.startswith("C "):
-                    canonical = "Gaster_C_" + tail[2:]
+        # Strip institution / location context (KTIV "Ms.", FJP "X:", known
+        # leading institution words).
+        canonical = ShelfmarkNormalizer._strip_institution(canonical)
+
+        # Strip folio / leaf designators ("f.", "fol.", "Box"); fragment numbers
+        # that follow them are preserved.
+        canonical = ShelfmarkNormalizer.FOLIO_RE.sub(" ", canonical)
+        canonical = re.sub(r"\bBox\b", " ", canonical, flags=re.IGNORECASE)
+
+        # Manchester / Gaster: FJP writes "B 5411" / "A 12"; map the series
+        # letter to its Gaster designation. Runs *after* prefix stripping so the
+        # bare series form is what we see here.
+        gaster = re.match(r"^([ABPLC])\s+(.+)$", canonical)
+        if gaster and "Gaster" not in canonical:
+            canonical = f"Gaster_{gaster.group(1)}_{gaster.group(2)}"
 
         # Handle Cambridge TEI encodings
         canonical = canonical.replace("MS-TS-AS-", "T_S_AS_")
@@ -198,42 +300,35 @@ class ShelfmarkNormalizer(EntityNormalizer):
         canonical = canonical.replace("MS-OR-", "CUL_Or_")
         canonical = canonical.replace("MS-ADD-", "CUL_Add_")
 
-        # Normalize collection prefix
+        # Normalize collection prefix (T-S/TS/T S -> T_S, etc.)
         for variant, standard in sorted(ShelfmarkNormalizer.COLLECTION_PREFIXES.items(),
                                         key=lambda x: len(x[0]), reverse=True):
             if canonical.upper().startswith(variant.upper()):
-                # Replace the prefix
                 rest = canonical[len(variant):]
                 canonical = standard + rest
                 break
 
-        # Convert all separators to underscores
-        canonical = canonical.replace(' ', '_')
-        canonical = canonical.replace('.', '_')
-        canonical = canonical.replace('-', '_')
-        canonical = canonical.replace('/', '_')
-        canonical = canonical.replace(',', '_')
-        canonical = canonical.replace(':', '_')
+        # Tokenise on every separator (existing underscores from the prefix
+        # normalisation are preserved as token boundaries).
+        tokens = [t for t in re.split(r"[\s._\-/,:()\[\]]+", canonical) if t]
 
-        # Remove leading zeros from numbers (18.170 → 18_170, not 00018_00170)
-        parts = canonical.split('_')
-        normalized_parts = []
-        for part in parts:
-            if part.isdigit():
-                # Remove leading zeros but keep at least one digit
-                normalized_parts.append(str(int(part)))
-            else:
-                normalized_parts.append(part)
-        canonical = '_'.join(normalized_parts)
+        normalized_parts: List[str] = []
+        for tok in tokens:
+            renamed = ShelfmarkNormalizer.TOKEN_RENAMES.get(tok.upper(), tok)
+            if renamed == "":
+                continue
+            tok = renamed
+            # Drop folio / leaf designators (the following number is kept).
+            if tok.lower() in ShelfmarkNormalizer.NOISE_TOKENS:
+                continue
+            # Strip leading zeros from pure-digit tokens (00018 -> 18).
+            if tok.isdigit():
+                tok = str(int(tok))
+            normalized_parts.append(tok)
 
-        # Clean up multiple underscores
-        while '__' in canonical:
-            canonical = canonical.replace('__', '_')
+        normalized_parts = ShelfmarkNormalizer._collapse_ts_classmark(normalized_parts)
 
-        # Strip trailing underscores
-        canonical = canonical.strip('_')
-
-        return canonical
+        return "_".join(normalized_parts)
 
     @staticmethod
     def generate_variants(canonical_id: str) -> List[str]:
