@@ -75,7 +75,7 @@ import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 
 import dotenv
 
@@ -90,6 +90,7 @@ logger = logging.getLogger(__name__)
 _data_root     = _project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" / "academic_literature"
 _RELATIONS_V2  = _data_root / "relations_v2"   # output root — separate from old enriched_relations/
 _OUTPUT_FILE   = "book_relations.json"
+_REJECTED_FILE = "book_relations_rejected.json"
 _RESOLVED_FILE = "book_entities_resolved.json"
 
 # ---------------------------------------------------------------------------
@@ -315,6 +316,106 @@ def _parse_response(raw: str, source_book: str) -> List[Dict]:
 
 
 # ---------------------------------------------------------------------------
+# Heuristic compaction (deterministic — no LLM)
+# ---------------------------------------------------------------------------
+
+# Person-like labels are interchangeable for type-pairing: Pass 4 can't
+# reliably tell Person from Scholar (import resolves that), so we only check
+# the structural bucket.
+_PERSONISH = {"Person", "Scholar", "BiblicalPerson"}
+
+
+def _type_ok(actual: str, expected: Optional[str]) -> bool:
+    """Return True if *actual* type satisfies the *expected* slot type.
+
+    ``None`` expected means "any".  When a person-ish type is expected, any
+    of Person/Scholar/BiblicalPerson is accepted; otherwise the type must
+    match exactly (Fragment, Place, Institution, BookArticle).
+
+    :param actual: The type emitted for this subject/object.
+    :param expected: The type ``ALLOWED_RELATIONS`` expects, or ``None``.
+    :returns: True if the pairing is structurally valid.
+    """
+    if expected is None:
+        return True
+    if expected in _PERSONISH:
+        return actual in _PERSONISH
+    return actual == expected
+
+
+def _compact_relations(
+    relations: List[Dict],
+    person_labels: Dict[str, str],
+) -> Tuple[List[Dict], List[Dict]]:
+    """Split raw relations into accepted (clean) and rejected sets.
+
+    Applies deterministic rules before any Neo4j write:
+
+    0. **Authoritative retyping** — any endpoint whose name is a resolved
+       person is retyped to that person's canonical label (Scholar /
+       BiblicalPerson / Person), derived from Pass-3 ``person_class``.  This
+       is what fixes in-text scholars/collectors the LLM mislabelled as
+       "Person" — the node label no longer depends on the model's guess.
+    1. **Exact dedup** — collapse identical (subject, relation, object) triples.
+    2. **Type pairing** — drop triples whose ``(subject_type, object_type)``
+       violate :data:`ALLOWED_RELATIONS` (e.g. ``WROTE → Place``).  Person /
+       Scholar / BiblicalPerson are interchangeable here (structural shape
+       only); ``None`` means "any".
+    3. **Biblical scope** — a relation touching a ``BiblicalPerson`` is kept
+       only when the *other* endpoint is a ``Fragment`` (keep "fragment
+       discusses Abraham"; drop biblical person↔person edges).
+
+    :param relations: Raw validated relations from the LLM.
+    :param person_labels: Map of resolved person name → authoritative label
+        (``Scholar`` / ``BiblicalPerson`` / ``Person``).
+    :returns: ``(accepted, rejected)``.  Each rejected relation carries a
+        ``reject_reason`` field.
+    """
+    accepted: List[Dict] = []
+    rejected: List[Dict] = []
+    seen: set = set()
+
+    for r in relations:
+        subj, rel, obj = r["subject"], r["relation"], r["object"]
+
+        # 0. authoritative retyping by name (Pass-3 person_class)
+        if subj in person_labels:
+            r["subject_type"] = person_labels[subj]
+        if obj in person_labels:
+            r["object_type"] = person_labels[obj]
+
+        # 1. exact duplicate
+        key = (subj, rel, obj)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # 2. type-pairing validation against ALLOWED_RELATIONS.
+        # Person/Scholar/BiblicalPerson are interchangeable here: the
+        # Person-vs-Scholar distinction is resolved later at import time
+        # (ScholarRegistry), so we only enforce the structural shape
+        # (person-ish vs Fragment/Place/Institution/BookArticle).
+        exp_subj, exp_obj = ALLOWED_RELATIONS.get(rel, (None, None))
+        st, ot = r["subject_type"], r["object_type"]
+        if not _type_ok(st, exp_subj):
+            rejected.append({**r, "reject_reason": f"subject_type {st} != expected {exp_subj} for {rel}"})
+            continue
+        if not _type_ok(ot, exp_obj):
+            rejected.append({**r, "reject_reason": f"object_type {ot} != expected {exp_obj} for {rel}"})
+            continue
+
+        # 3b. biblical scope — only Fragment↔BiblicalPerson edges survive
+        touches_biblical = "BiblicalPerson" in (st, ot)
+        if touches_biblical and "Fragment" not in (st, ot):
+            rejected.append({**r, "reject_reason": "biblical_non_fragment"})
+            continue
+
+        accepted.append(r)
+
+    return accepted, rejected
+
+
+# ---------------------------------------------------------------------------
 # Page text loader
 # ---------------------------------------------------------------------------
 
@@ -477,21 +578,49 @@ class RelationExtractor:
             else:
                 logger.debug(f"  {name}: no relations found")
 
-        output = {
-            "source_book":  source_book,
-            "extracted_at": datetime.now(timezone.utc).isoformat(),
-            "model_used":   self.client.lms_model
-                            if self.client.backend == "lm_studio"
-                            else "gemini",
-            "relation_count": len(all_relations),
-            "relations":    all_relations,
+        # ------------------------------------------------------------------
+        # Heuristic compaction (deterministic): dedup + type-pairing + biblical
+        # scope.  Accepted → book_relations.json; rejected → a sidecar file
+        # for manual review (kept out of the automated import).
+        # ------------------------------------------------------------------
+        _class_to_label = {"biblical": "BiblicalPerson", "scholar": "Scholar",
+                           "historical": "Person"}
+        person_labels = {
+            p["name"]: _class_to_label.get(p.get("person_class", "historical"), "Person")
+            for p in resolved.get("people", [])
         }
+        accepted, rejected = _compact_relations(all_relations, person_labels)
 
+        model_used = (self.client.lms_model
+                      if self.client.backend == "lm_studio" else "gemini")
+        extracted_at = datetime.now(timezone.utc).isoformat()
+
+        output = {
+            "source_book":    source_book,
+            "extracted_at":   extracted_at,
+            "model_used":     model_used,
+            "relation_count": len(accepted),
+            "relations":      accepted,
+        }
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(output, f, indent=2, ensure_ascii=False)
 
-        logger.info(f"  {source_book}: wrote {len(all_relations)} relations → {output_path.name}")
-        return len(all_relations)
+        rejected_path = out_dir / _REJECTED_FILE
+        rejected_output = {
+            "source_book":    source_book,
+            "extracted_at":   extracted_at,
+            "model_used":     model_used,
+            "relation_count": len(rejected),
+            "relations":      rejected,
+        }
+        with open(rejected_path, "w", encoding="utf-8") as f:
+            json.dump(rejected_output, f, indent=2, ensure_ascii=False)
+
+        logger.info(
+            f"  {source_book}: wrote {len(accepted)} relations → {output_path.name} "
+            f"({len(all_relations) - len(accepted)} rejected → {rejected_path.name})"
+        )
+        return len(accepted)
 
     def extract_all(
         self,

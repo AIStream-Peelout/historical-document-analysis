@@ -109,7 +109,7 @@ _INSTITUTION_KEYWORDS = {
     "academy", "archive", "school", "foundation", "society", "centre", "center",
 }
 
-_VALID_LABELS = {"Person", "Scholar", "Place", "Institution", "Fragment", "BookArticle", "Entity"}
+_VALID_LABELS = {"Person", "Scholar", "BiblicalPerson", "Place", "Institution", "Fragment", "BookArticle", "Entity"}
 
 _NON_GEOGRAPHIC = {
     "cairo genizah", "genizah", "jewish theological seminary",
@@ -120,8 +120,8 @@ _NON_GEOGRAPHIC = {
 _SHELFMARK_RE = re.compile(r'^[A-Z][\w./-]+ \d+[\w./-]*$')
 
 _LABEL_MAP = {
-    "Person": "Person", "Scholar": "Scholar", "Place": "Place",
-    "Fragment": "Fragment", "BookArticle": "BookArticle",
+    "Person": "Person", "Scholar": "Scholar", "BiblicalPerson": "BiblicalPerson",
+    "Place": "Place", "Fragment": "Fragment", "BookArticle": "BookArticle",
     "Institution": "Institution", "Entity": "Entity",
 }
 
@@ -232,6 +232,7 @@ class AcademicKGImporter:
             "CREATE CONSTRAINT fragment_canonical   IF NOT EXISTS FOR (f:Fragment)    REQUIRE f.canonical_shelfmark IS UNIQUE",
             "CREATE CONSTRAINT scholar_name         IF NOT EXISTS FOR (s:Scholar)     REQUIRE s.name IS UNIQUE",
             "CREATE CONSTRAINT person_name          IF NOT EXISTS FOR (p:Person)      REQUIRE p.name IS UNIQUE",
+            "CREATE CONSTRAINT biblical_person_name IF NOT EXISTS FOR (bp:BiblicalPerson) REQUIRE bp.name IS UNIQUE",
             "CREATE CONSTRAINT place_name           IF NOT EXISTS FOR (pl:Place)      REQUIRE pl.name IS UNIQUE",
             "CREATE CONSTRAINT book_article_id      IF NOT EXISTS FOR (b:BookArticle) REQUIRE b.article_id IS UNIQUE",
             "CREATE CONSTRAINT institution_name     IF NOT EXISTS FOR (i:Institution) REQUIRE i.name IS UNIQUE",
@@ -610,7 +611,7 @@ class AcademicKGImporter:
                         {_add_source('n', tag)}, {_src_books('n')}
                 """, name=resolved, book=book)
                 return f"Place {{name: '{resolved}'}}"
-            elif label in ("Person", "Scholar", "Entity"):
+            elif label in ("Person", "Scholar", "BiblicalPerson", "Entity"):
                 final_label, canonical_name = _merge_person(tx, name, label, tag, book)
                 return f"{final_label} {{name: '{canonical_name}'}}"
             else:
@@ -676,7 +677,7 @@ class AcademicKGImporter:
             tx.run(f"MERGE (a:Place {{name: $name}}) SET {_add_source('a','extracted')}, {_src_books('a')}",
                    name=subj, book=book)
             subj_clause = f"Place {{name: '{subj}'}}"
-        elif sl in ("Person", "Scholar", "Entity"):
+        elif sl in ("Person", "Scholar", "BiblicalPerson", "Entity"):
             final_sl, subj_name = _merge_person(tx, row["subject"], sl, "extracted", book)
             subj_clause = f"{final_sl} {{name: '{subj_name}'}}"
         else:
@@ -706,7 +707,7 @@ class AcademicKGImporter:
             tx.run(f"MERGE (b:Place {{name: $name}}) SET {_add_source('b','extracted')}, {_src_books('b')}",
                    name=obj, book=book)
             obj_clause = f"Place {{name: '{obj}'}}"
-        elif ol in ("Person", "Scholar", "Entity"):
+        elif ol in ("Person", "Scholar", "BiblicalPerson", "Entity"):
             final_ol, obj_name = _merge_person(tx, row["object"], ol, "extracted", book)
             obj_clause = f"{final_ol} {{name: '{obj_name}'}}"
         else:
@@ -760,7 +761,7 @@ class AcademicKGImporter:
             """, aid=aid, title=subj, book=book)
             subj_match = "(a:BookArticle {article_id: $subj_key})"
             subj_key = aid
-        elif sl in ("Person", "Scholar", "Entity"):
+        elif sl in ("Person", "Scholar", "BiblicalPerson", "Entity"):
             final_sl, subj = _merge_person(tx, t["subject"], sl, "enriched", book)
             subj_match = f"(a:{final_sl} {{name: $subj_key}})"
             subj_key = subj
@@ -797,7 +798,7 @@ class AcademicKGImporter:
             """, aid=aid, title=obj, book=book)
             obj_match = "(b:BookArticle {article_id: $obj_key})"
             obj_key = aid
-        elif ol in ("Person", "Scholar", "Entity"):
+        elif ol in ("Person", "Scholar", "BiblicalPerson", "Entity"):
             final_ol, obj = _merge_person(tx, t["object"], ol, "enriched", book)
             obj_match = f"(b:{final_ol} {{name: $obj_key}})"
             obj_key = obj
@@ -1113,6 +1114,9 @@ def _normalise_entity(name: str, label: str) -> str:
     :param label: Neo4j label (Person, Scholar, Place, Institution, …).
     :returns: Canonical name suitable for use as a Neo4j MERGE key.
     """
+    if label == "BiblicalPerson":
+        # Biblical figures must not be snapped to scholar metadata names.
+        return PersonNormalizer.normalize(name)
     if label in ("Person", "Scholar"):
         # Ground-truth metadata authors take precedence: snaps name-order
         # variants ("Arrant, Estara J", "Arrant E J") to one canonical form.

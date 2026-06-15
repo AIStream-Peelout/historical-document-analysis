@@ -74,7 +74,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 import requests
 import dotenv
@@ -82,6 +82,18 @@ import dotenv
 _project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.append(str(_project_root))
 dotenv.load_dotenv(_project_root / ".env")
+
+from src.datasets.document_models import biblical_person_classifier as bib  # noqa: E402
+from src.datasets.document_models.scholar_normalizer import ScholarRegistry  # noqa: E402
+
+# Roles (from Pass 2 tagging) that mark a person as a modern, post-discovery
+# figure → Scholar.  Includes manuscript dealers/collectors, who align with
+# scholars rather than Genizah-era historical people.
+_SCHOLAR_ROLE_HINTS = {
+    "scholar", "author", "editor", "translator", "co-author", "coauthor",
+    "collector", "dealer", "bookseller", "philologist", "orientalist",
+    "librarian", "researcher", "historian", "academic", "professor",
+}
 
 logger = logging.getLogger(__name__)
 
@@ -327,6 +339,79 @@ def _call_lms(prompt: str, lms_url: str, lms_model: str, timeout: int) -> Option
 _JSON_RE = re.compile(r'\{.*\}', re.DOTALL)
 
 
+_CLASSIFY_SYSTEM = """\
+/no_think
+You are an expert in medieval Jewish history and the Hebrew Bible.
+
+You are given person names that appear in academic literature about the Cairo
+Genizah.  Each name matches a canonical biblical, Mishnaic, or Talmudic figure
+BUT the same name was also commonly borne by ordinary medieval people.
+
+For each name decide, using its description, whether it refers to the CANONICAL
+ancient figure (the patriarch, prophet, sage, biblical character) or to a
+historical medieval/early-modern individual who merely shares the name.
+
+When in doubt, choose "historical" — do not over-assign "biblical".
+
+Output ONLY valid JSON: {"biblical": ["<names that are the canonical figure>"]}
+No markdown, no explanation.
+"""
+
+
+def _classify_ambiguous_llm(
+    names_with_ctx: List[Tuple[str, str]],
+    lms_url: str,
+    lms_model: str,
+    timeout: int,
+) -> Set[str]:
+    """Ask the LLM which ambiguous names refer to the canonical biblical figure.
+
+    :param names_with_ctx: List of ``(name, description)`` tuples to classify.
+    :param lms_url: LM Studio base URL.
+    :param lms_model: Model name.
+    :param timeout: HTTP timeout in seconds.
+    :returns: Set of names judged to be the canonical biblical/ancient figure.
+        Empty on any failure (conservative — defaults everything to historical).
+    """
+    if not names_with_ctx:
+        return set()
+    lines = "\n".join(
+        f'- "{name}": {(desc or "no description").strip()[:200]}'
+        for name, desc in names_with_ctx
+    )
+    prompt = f"Names to classify:\n{lines}\n\nReturn JSON: {{\"biblical\": [...]}}"
+    payload = {
+        "model": lms_model,
+        "messages": [
+            {"role": "system", "content": _CLASSIFY_SYSTEM},
+            {"role": "user",   "content": prompt},
+        ],
+        "temperature": 0.1,
+        "max_tokens":  1024,
+        "response_format": {"type": "json_object"},
+    }
+    try:
+        r = requests.post(f"{lms_url.rstrip('/')}/chat/completions", json=payload, timeout=timeout)
+        if r.status_code == 400 and "response_format" in payload:
+            del payload["response_format"]
+            r = requests.post(f"{lms_url.rstrip('/')}/chat/completions", json=payload, timeout=timeout)
+        r.raise_for_status()
+        raw = r.json()["choices"][0]["message"]["content"]
+    except Exception as e:
+        logger.warning(f"  Biblical classification call failed (defaulting historical): {e}")
+        return set()
+
+    raw = re.sub(r'<think>.*?</think>', '', raw, flags=re.DOTALL).strip()
+    match = _JSON_RE.search(raw)
+    if not match:
+        return set()
+    try:
+        data = json.loads(match.group())
+    except json.JSONDecodeError:
+        return set()
+    return {n.strip() for n in (data.get("biblical") or []) if isinstance(n, str)}
+
+
 def _parse_dedup_response(raw: str) -> List[Dict]:
     """Extract the ``groups`` list from an LLM dedup response.
 
@@ -513,6 +598,57 @@ class CoreferenceResolver:
             logger.info(f"    {category_label}: {before} → {after} after dedup")
         return result
 
+    def _classify_people(self, people_list: List[Dict]) -> List[Dict]:
+        """Tag each resolved person with ``person_class``.
+
+        Three classes, in priority order:
+
+        * ``biblical``   — unambiguous canonical figure (Haman, Vespasian …),
+          or an ambiguous canonical name the LLM confirms in context.
+        * ``scholar``    — modern post-discovery figure: a scholar/author/
+          editor/translator role, a manuscript dealer/collector, or a known
+          ground-truth author.  Wins over the ambiguous-biblical guess so a
+          modern scholar named "David" is never demoted to biblical.
+        * ``historical`` — default: a Genizah-era individual.
+
+        :param people_list: Resolved people dicts (mutated in place).
+        :returns: The same list, each entry given a ``person_class`` field.
+        """
+        registry = ScholarRegistry.instance()
+        ambiguous: List[Dict] = []
+        for p in people_list:
+            verdict = bib.lookup(p["name"])
+            role = (p.get("role") or "").lower()
+            is_scholar = (any(h in role for h in _SCHOLAR_ROLE_HINTS)
+                          or registry.is_known_scholar(p["name"]))
+
+            if verdict == "biblical":
+                p["person_class"] = "biblical"
+            elif is_scholar:
+                p["person_class"] = "scholar"
+            elif verdict == "ambiguous":
+                p["person_class"] = "historical"     # provisional — LLM may upgrade
+                ambiguous.append(p)
+            else:
+                p["person_class"] = "historical"
+
+        if ambiguous and self.use_llm:
+            biblical_names = _classify_ambiguous_llm(
+                [(p["name"], p.get("description", "")) for p in ambiguous],
+                self.lms_url, self.lms_model, self.lms_timeout,
+            )
+            for p in ambiguous:
+                if p["name"] in biblical_names:
+                    p["person_class"] = "biblical"
+
+        counts = {"biblical": 0, "scholar": 0, "historical": 0}
+        for p in people_list:
+            counts[p["person_class"]] += 1
+        logger.info(f"    person_class: {counts['historical']} historical, "
+                    f"{counts['scholar']} scholar, {counts['biblical']} biblical "
+                    f"({len(ambiguous)} needed context)")
+        return people_list
+
     def resolve_book(
         self,
         book_dir: Path,
@@ -585,6 +721,12 @@ class CoreferenceResolver:
         places_list = self._dedup_category("places",       places_list, "name")
         insts_list  = self._dedup_category("institutions", insts_list,  "name")
         marks_list  = self._dedup_category("shelf marks",  marks_list,  "mark")
+
+        # ------------------------------------------------------------------
+        # Phase 3 — tag biblical/canonical figures (person_class) so they
+        # don't conflate with Genizah-era people or modern scholars.
+        # ------------------------------------------------------------------
+        people_list = self._classify_people(people_list)
 
         output = {
             "source_book":  source_book,
