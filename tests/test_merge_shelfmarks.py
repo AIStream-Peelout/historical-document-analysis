@@ -7,7 +7,10 @@ constituent shelfmark is captured rather than lost to a garbage canonical id.
 
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer as SN
 from src.datasets.merging.merge_shelfmarks import (
+    _ktiv_ena_alias,
+    build_merged_record,
     diff_against_snapshot,
+    index_ktiv_zips,
     looks_multi,
     record_has_image,
     record_is_rich,
@@ -65,6 +68,53 @@ def test_record_is_rich():
 
 
 # ── run-over-run diff ─────────────────────────────────────────────────────────
+
+# ── KTIV JTS dual-shelfmark (ENA) bridge ──────────────────────────────────────
+
+def test_ktiv_lutzki_keys_under_ena_from_additional():
+    # A Lutzki/MS item carries its old ENA number in shelfmarks.additional;
+    # it must re-key onto the ENA form so it joins PGP/FJP.
+    doc = {
+        "shelf_mark": "The Jewish Theological Seminary of America, New York Ms. Lutzki 825, fol. 55",
+        "shelfmarks": {"additional": "Adler, Elkan Nathan Ms. 1205.55"},
+    }
+    assert _ktiv_ena_alias(doc) == "New_York_JTS_ENA_1205_55"
+
+
+def test_ktiv_ena_alias_absent_without_adler():
+    assert _ktiv_ena_alias({"shelfmarks": {"additional": "Film MSS-D"}}) is None
+    assert _ktiv_ena_alias({"shelfmarks": {}}) is None
+
+
+# ── KTIV image-zip pointers ───────────────────────────────────────────────────
+
+def test_index_ktiv_zips_groups_by_sysnum(tmp_path):
+    for name in [
+        "ktiv_PNX_MANUSCRIPTS990051236050205171-1_images.zip",
+        "ktiv_PNX_MANUSCRIPTS990051236050205171-1_images(1).zip",
+        "ktiv_PNX_MANUSCRIPTS990039474250205171-1_images.zip",
+    ]:
+        (tmp_path / name).write_bytes(b"")
+    index = index_ktiv_zips(str(tmp_path / "*.zip"))
+    assert len(index["990051236050205171"]) == 2          # two downloads of one ms
+    assert index["990039474250205171"][0].endswith("images.zip")
+
+
+def test_merged_record_points_at_ktiv_zip():
+    ktiv = {"pnx_id": "PNX_1", "sys_num": "990051236050205171", "shelf_mark": "x"}
+    zips = {"990051236050205171": ["ktiv_PNX_MANUSCRIPTS990051236050205171-1_images.zip"]}
+    rec = build_merged_record("Cambridge_CUL_T_S_10J5_6", None, [], ktiv, zips)
+    assert rec["images"]["ktiv"]["zip_files"] == zips["990051236050205171"]
+    assert rec["images"]["ktiv"]["zip_downloaded"] is True
+    assert rec["images"]["preferred_source"] == "ktiv"
+
+
+def test_merged_record_ktiv_zip_absent_when_not_downloaded():
+    ktiv = {"pnx_id": "PNX_2", "sys_num": "999999999999999999", "shelf_mark": "x"}
+    rec = build_merged_record("X_1", None, [], ktiv, {})
+    assert rec["images"]["ktiv"]["zip_files"] == []
+    assert rec["images"]["ktiv"]["zip_downloaded"] is False
+
 
 def test_diff_baseline_when_no_previous():
     state = {"all_ids": ["A"], "pgp_covered_ids": [], "ktiv_only_ids": [], "no_image_ids": ["A"]}

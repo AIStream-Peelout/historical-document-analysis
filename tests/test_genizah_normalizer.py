@@ -58,6 +58,24 @@ def test_bm_renamed_to_bl():
     assert SN.are_equivalent("BM Or 10110.23", "BL OR 10110.23")
 
 
+@pytest.mark.parametrize("jrl,manchester", [
+    ("JRL C 121", "Manchester: C 121"),
+    ("JRL B 6785", "Manchester: B 6785"),
+    ("JRL A 1", "Manchester: A 1"),
+    ("JRL Gaster 1389", "Manchester: Gaster 1389"),
+    ("JRL Genizah 836", "Manchester: Genizah 836"),
+])
+def test_jrl_equals_manchester(jrl, manchester):
+    # John Rylands Library (PGP "JRL") is the same as Manchester (FJP/KTIV).
+    assert SN.to_canonical_id(jrl) == SN.to_canonical_id(manchester)
+    assert SN.to_canonical_id(jrl).startswith("JRL_")
+
+
+def test_jrl_ktiv_full_string():
+    ktiv = "The University of Manchester Library, Manchester, England Ms. B 3567"
+    assert SN.to_canonical_id(ktiv) == SN.to_canonical_id("JRL B 3567")
+
+
 def test_single_collection_letter_survives_folio_rule():
     # "L" (Lewis-Gibson) and "P"/"C" (Gaster) must not be mistaken for folio
     # designators, which require a trailing dot.

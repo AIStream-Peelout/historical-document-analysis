@@ -28,12 +28,20 @@ import csv
 import glob
 import json
 import os
+import sys
 from typing import Dict, List, Set, Tuple
 
-from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
+# Anchor everything to the repo root (three levels up from this file) so the
+# script works regardless of the current working directory, and add it to
+# sys.path so ``from src...`` resolves even when run by file path (e.g. the
+# PyCharm debugger) rather than as ``python -m``.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
-# Repo-root-relative location of the raw Cairo Genizah sources.
-RAW_DIR = os.path.join("src", "datasets", "raw_data", "cairo_genizah")
+from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+
+RAW_DIR = os.path.join(_REPO_ROOT, "src", "datasets", "raw_data", "cairo_genizah")
 PGP_FRAGMENTS = os.path.join(RAW_DIR, "pgp_raw", "data", "fragments.csv")
 FJP_FILE = os.path.join(
     RAW_DIR, "fjp_all", "merged_princeton_friedberger_all_documents_final.json"

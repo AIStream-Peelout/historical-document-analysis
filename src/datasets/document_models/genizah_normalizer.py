@@ -273,6 +273,18 @@ class ShelfmarkNormalizer(EntityNormalizer):
         # Drop parentheticals ("(shelfmark unknown)", "(Alt: 1)") wholesale.
         canonical = re.sub(r"\([^)]*\)", " ", canonical)
 
+        # John Rylands Library, Manchester. PGP uses "JRL <series>" while FJP and
+        # KTIV write "Manchester[:] <series>"; both name the same fragments
+        # (e.g. JRL C 121 == Manchester C 121, across all A/B/C/... and Gaster /
+        # Genizah series). Unify everything to the canonical "JRL <series>" form.
+        if re.search(r"\b(?:JRL|Rylands|Manchester)\b", canonical, flags=re.IGNORECASE):
+            core = ShelfmarkNormalizer._strip_institution(canonical)
+            core = re.sub(
+                r"^\s*(?:JRL|John\s+Rylands(?:\s+Library)?|Rylands|Manchester)\s*:?\s*",
+                "", core, flags=re.IGNORECASE,
+            )
+            canonical = "JRL " + core.strip()
+
         # Strip institution / location context (KTIV "Ms.", FJP "X:", known
         # leading institution words).
         canonical = ShelfmarkNormalizer._strip_institution(canonical)
@@ -281,13 +293,6 @@ class ShelfmarkNormalizer(EntityNormalizer):
         # that follow them are preserved.
         canonical = ShelfmarkNormalizer.FOLIO_RE.sub(" ", canonical)
         canonical = re.sub(r"\bBox\b", " ", canonical, flags=re.IGNORECASE)
-
-        # Manchester / Gaster: FJP writes "B 5411" / "A 12"; map the series
-        # letter to its Gaster designation. Runs *after* prefix stripping so the
-        # bare series form is what we see here.
-        gaster = re.match(r"^([ABPLC])\s+(.+)$", canonical)
-        if gaster and "Gaster" not in canonical:
-            canonical = f"Gaster_{gaster.group(1)}_{gaster.group(2)}"
 
         # Handle Cambridge TEI encodings
         canonical = canonical.replace("MS-TS-AS-", "T_S_AS_")

@@ -29,17 +29,32 @@ import glob
 import json
 import os
 import re
+import sys
 from typing import Dict, Iterable, List, Optional, Tuple
 
-from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
+# Anchor everything to the repo root (three levels up from this file) so the
+# script works regardless of the current working directory, and add it to
+# sys.path so ``from src...`` resolves even when run by file path (e.g. the
+# PyCharm debugger) rather than as ``python -m``.
+_REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
-RAW_DIR = os.path.join("src", "datasets", "raw_data", "cairo_genizah")
+from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+from src.datasets.merging.institution_tokens import (  # noqa: E402
+    combine,
+    institution_token,
+    resolve_token,
+)
+
+RAW_DIR = os.path.join(_REPO_ROOT, "src", "datasets", "raw_data", "cairo_genizah")
 PGP_FRAGMENTS = os.path.join(RAW_DIR, "pgp_raw", "data", "fragments.csv")
 PGP_DOCUMENTS = os.path.join(RAW_DIR, "pgp_raw", "data", "documents.csv")
 FJP_FILE = os.path.join(
     RAW_DIR, "fjp_all", "merged_princeton_friedberger_all_documents_final.json"
 )
 KTIV_GLOB = os.path.join(RAW_DIR, "ktiv", "*.json")
+KTIV_ZIP_GLOB = os.path.join(RAW_DIR, "ktiv", "*.zip")
 DEFAULT_OUT_DIR = os.path.join(RAW_DIR, "merged")
 
 MERGED_JSONL = "merged_shelfmarks.jsonl"
@@ -47,6 +62,7 @@ REPORT_FILE = "merge_report.json"
 STATE_FILE = "merge_state.json"          # snapshot of id-sets for run-over-run diff
 DIFF_FILE = "merge_diff.json"            # what changed since the previous run
 IMAGE_GAP_FILE = "image_gap_targets.jsonl"  # worklist of records lacking images
+IMAGE_GAP_CSV = "image_gap_targets.csv"     # same worklist, collection-sorted CSV
 
 # Collection anchors used to detect and split FJP multi-shelfmark strings.
 _ANCHOR_RE = re.compile(
@@ -156,14 +172,21 @@ def load_pgp() -> Tuple[Dict[str, dict], Dict[str, str]]:
     alias: Dict[str, str] = {}
     with open(PGP_FRAGMENTS, encoding="utf-8-sig", newline="") as fh:
         for row in csv.DictReader(fh):
-            primary = ShelfmarkNormalizer.to_canonical_id(row["shelfmark"])
-            if not primary:
+            # Institution token from PGP's clean library_abbrev (+ full name as a
+            # fallback signal). The same token is applied to every historic
+            # variant of this fragment so they all resolve to one canonical id.
+            token = institution_token(
+                f"{row.get('library_abbrev') or ''} {row.get('library') or ''}"
+            )
+            core = ShelfmarkNormalizer.to_canonical_id(row["shelfmark"])
+            if not core:
                 continue
+            primary = combine(token, core)
             alias[primary] = primary
             for variant in _split_semicolons(row.get("shelfmarks_historic")):
-                cid = ShelfmarkNormalizer.to_canonical_id(variant)
-                if cid:
-                    alias.setdefault(cid, primary)
+                vcore = ShelfmarkNormalizer.to_canonical_id(variant)
+                if vcore:
+                    alias.setdefault(combine(token, vcore), primary)
 
             pgpids = [p.strip() for p in (row.get("pgpids") or "").split(",") if p.strip()]
             documents = [docs_by_pgpid[p] for p in pgpids if p in docs_by_pgpid]
@@ -207,10 +230,16 @@ def load_fjp(alias: Dict[str, str]) -> Tuple[Dict[str, List[Tuple[str, dict]]], 
         if len(marks) > 1:
             stats["exploded"] += 1
         for mark in marks:
-            cid = ShelfmarkNormalizer.to_canonical_id(mark)
-            if not cid:
+            core = ShelfmarkNormalizer.to_canonical_id(mark)
+            if not core:
                 stats["empty_cid"] += 1
                 continue
+            # Token from the segment's own prefix first (a multi-shelfmark join
+            # can span institutions); fall back to the record's collection field.
+            token = resolve_token(mark) or institution_token(
+                f"{rec.get('collection') or ''} {rec.get('institution') or ''} {mark}"
+            )
+            cid = combine(token, core)
             stats["segments"] += 1
             key = alias.get(cid, cid)
             by_cid[key].append((mark, rec))
@@ -218,6 +247,28 @@ def load_fjp(alias: Dict[str, str]) -> Tuple[Dict[str, List[Tuple[str, dict]]], 
 
 
 # ────────────────────────────── KTIV source ────────────────────────────────
+
+# KTIV image archives are named e.g.
+# ``ktiv_PNX_MANUSCRIPTS990051236050205171-1_images.zip`` (with ``(N)`` repeats
+# for re-downloads). The 15+-digit run is the manuscript ``sys_num``.
+_KTIV_ZIP_SYSNUM_RE = re.compile(r"(\d{15,})")
+
+
+def index_ktiv_zips(pattern: str = KTIV_ZIP_GLOB) -> Dict[str, List[str]]:
+    """Index KTIV image-zip filenames by manuscript ``sys_num``.
+
+    :param pattern: Glob for KTIV ``*.zip`` archives.
+    :returns: Mapping ``sys_num -> sorted list of zip basenames`` (multiple when
+        the same manuscript was downloaded more than once, e.g. ``...(1).zip``).
+    """
+    by_sysnum: Dict[str, List[str]] = collections.defaultdict(list)
+    for zpath in glob.glob(pattern):
+        name = os.path.basename(zpath)
+        m = _KTIV_ZIP_SYSNUM_RE.search(name)
+        if m:
+            by_sysnum[m.group(1)].append(name)
+    return {k: sorted(v) for k, v in by_sysnum.items()}
+
 
 def load_ktiv(alias: Dict[str, str]) -> Tuple[Dict[str, dict], dict]:
     """Load KTIV manuscripts, de-duplicating ``(1)`` copies (keep richest).
@@ -238,10 +289,20 @@ def load_ktiv(alias: Dict[str, str]) -> Tuple[Dict[str, dict], dict]:
         except (json.JSONDecodeError, OSError):
             bad.append(os.path.basename(fpath))
             continue
-        cid = ShelfmarkNormalizer.to_canonical_id(doc.get("shelf_mark") or "")
-        if not cid:
+        sm = doc.get("shelf_mark") or ""
+        core = ShelfmarkNormalizer.to_canonical_id(sm)
+        if not core:
             empty_cid += 1
             continue
+        # The KTIV shelf_mark head names the holding library; resolve from it.
+        cid = combine(resolve_token(sm) or institution_token(sm), core)
+        # JTS dual-shelfmark bridge: KTIV records a new shelfmark (Lutzki / MS /
+        # Rabbinica) for items that also bear an old ENA number, carried in
+        # shelfmarks.additional as "Adler, Elkan Nathan Ms. <ENA-number>". ENA is
+        # the identifier PGP/FJP use, so re-key under it to make them join.
+        ena_cid = _ktiv_ena_alias(doc)
+        if ena_cid:
+            cid = ena_cid
         key = alias.get(cid, cid)
         incumbent = best.get(key)
         if incumbent is None or _ktiv_richness(doc) > _ktiv_richness(incumbent):
@@ -252,6 +313,30 @@ def load_ktiv(alias: Dict[str, str]) -> Tuple[Dict[str, dict], dict]:
         "empty_shelfmark": empty_cid,
         "unparseable_files": bad,
     }
+
+
+_KTIV_ADLER_RE = re.compile(r"(?:Adler|Elkan\s+Nathan).*?Ms\.?\s*(.+)$", re.IGNORECASE)
+
+
+def _ktiv_ena_alias(doc: dict) -> Optional[str]:
+    """Return the ENA canonical id for a KTIV JTS record, or ``None``.
+
+    JTS items moved into the general manuscript series (Lutzki / MS / Rabbinica /
+    Scroll) keep their old ENA number in ``shelfmarks.additional`` as
+    ``"Adler, Elkan Nathan Ms. <number>"`` ("Adler" = Elkan Nathan Adler = ENA).
+    PGP and FJP key these fragments on ENA, so we re-key the KTIV record on the
+    ENA form to make the three sources join.
+
+    :param doc: Parsed KTIV manuscript JSON.
+    :returns: Canonical id like ``New_York_JTS_ENA_1205_55``, or ``None`` when no
+        Adler/ENA alternate is present.
+    """
+    additional = (doc.get("shelfmarks") or {}).get("additional") or ""
+    m = _KTIV_ADLER_RE.search(additional)
+    if not m:
+        return None
+    ena_core = ShelfmarkNormalizer.to_canonical_id("ENA " + m.group(1).strip())
+    return combine(institution_token("New York JTS"), ena_core) if ena_core else None
 
 
 def _ktiv_richness(doc: dict) -> int:
@@ -285,6 +370,7 @@ def build_merged_record(
     pgp: Optional[dict],
     fjp: List[Tuple[str, dict]],
     ktiv: Optional[dict],
+    ktiv_zips: Optional[Dict[str, List[str]]] = None,
 ) -> dict:
     """Assemble one merged record from the per-source blocks for *cid*.
 
@@ -295,6 +381,8 @@ def build_merged_record(
     :param pgp: PGP block from :func:`load_pgp`, or ``None``.
     :param fjp: List of ``(matched_shelfmark, raw_record)`` tuples for this id.
     :param ktiv: Chosen KTIV record, or ``None``.
+    :param ktiv_zips: ``sys_num -> [zip basenames]`` index from
+        :func:`index_ktiv_zips`, used to point at the KTIV image archives.
     :returns: The merged record dict.
     """
     pgp_frag = (pgp or {}).get("fragment") or {}
@@ -326,18 +414,27 @@ def build_merged_record(
         fjp0.get("description"),
     )
 
-    # Image pointers (metadata only — nothing unzipped).
+    # Image pointers (metadata only — nothing unzipped). For KTIV we point at
+    # the downloaded image archive(s) by sys_num as well as the IIIF manifest.
     fjp_images = sorted({img for rec in fjp_recs for img in (rec.get("images") or [])})
     ktiv_pnx = ktiv.get("pnx_id")
+    ktiv_sysnum = ktiv.get("sys_num")
+    ktiv_zip_files = (ktiv_zips or {}).get(ktiv_sysnum or "", []) if ktiv else []
     images = {
         "fjp": fjp_images,
         "ktiv": {
             "pnx_id": ktiv_pnx,
+            "sys_num": ktiv_sysnum,
             "iiif_manifest_url": ktiv.get("iiif_manifest_url"),
             "friedberg_image_no": (ktiv.get("shelfmarks") or {}).get(
                 "friedberg_geniza_project_images_no"
             ),
+            "zip_files": ktiv_zip_files,
+            "zip_downloaded": bool(ktiv_zip_files),
         } if ktiv else None,
+        # KTIV is the preferred (higher-quality) imagery when a KTIV record
+        # exists; FJP's GCP images are the fallback. `zip_downloaded` says
+        # whether the KTIV archive is actually in hand yet.
         "preferred_source": "ktiv" if ktiv_pnx else ("fjp" if fjp_images else None),
     }
 
@@ -510,24 +607,24 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
     pgp_records, alias = load_pgp()
     fjp_by_cid, fjp_stats = load_fjp(alias)
     ktiv_by_cid, ktiv_stats = load_ktiv(alias)
+    ktiv_zips = index_ktiv_zips()
+    ktiv_stats["zip_archives"] = sum(len(v) for v in ktiv_zips.values())
+    ktiv_stats["zip_manuscripts"] = len(ktiv_zips)
 
     all_ids = set(pgp_records) | set(fjp_by_cid) | set(ktiv_by_cid)
     counts: collections.Counter = collections.Counter()
     no_image_ids: List[str] = []
-    no_image_rich = 0
-    gap_by_inst: collections.Counter = collections.Counter()
     pgp_covered_ids: List[str] = []
     ktiv_only_ids: List[str] = []
+    gap_rows: List[dict] = []
 
     out_path = os.path.join(out_dir, MERGED_JSONL)
-    gap_path = os.path.join(out_dir, IMAGE_GAP_FILE)
-    with open(out_path, "w", encoding="utf-8") as out, \
-            open(gap_path, "w", encoding="utf-8") as gap:
+    with open(out_path, "w", encoding="utf-8") as out:
         for cid in sorted(all_ids):
             pgp = pgp_records.get(cid)
             fjp = fjp_by_cid.get(cid, [])
             ktiv = ktiv_by_cid.get(cid)
-            record = build_merged_record(cid, pgp, fjp, ktiv)
+            record = build_merged_record(cid, pgp, fjp, ktiv, ktiv_zips)
             out.write(json.dumps(record, ensure_ascii=False) + "\n")
             counts[",".join(record["sources_present"])] += 1
 
@@ -538,18 +635,16 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
 
             if not record_has_image(record):
                 no_image_ids.append(cid)
-                rich = record_is_rich(record)
-                if rich:
-                    no_image_rich += 1
-                gap_by_inst[record.get("institution") or "(unknown)"] += 1
-                gap.write(json.dumps({
+                gap_rows.append({
+                    "institution": record["institution"] or "(unknown)",
+                    "collection": record["collection"] or "(unknown)",
                     "canonical_id": cid,
                     "shelfmark_display": record["shelfmark_display"],
-                    "institution": record["institution"],
-                    "collection": record["collection"],
-                    "sources_present": record["sources_present"],
-                    "has_rich_metadata": rich,
-                }, ensure_ascii=False) + "\n")
+                    "sources_present": "+".join(record["sources_present"]),
+                    "has_rich_metadata": record_is_rich(record),
+                })
+
+    image_gap = _write_image_gap(out_dir, gap_rows)
 
     state = {
         "all_ids": sorted(all_ids),
@@ -573,17 +668,63 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
         "ktiv_matched_to_pgp": sum(1 for c in ktiv_by_cid if c in pgp_records),
         "source_combinations": dict(counts),
         "coverage": compute_coverage(pgp_records, fjp_by_cid, ktiv_by_cid),
-        "image_gap": {
-            "records_without_image": len(no_image_ids),
-            "without_image_but_rich": no_image_rich,
-            "by_institution": dict(gap_by_inst.most_common()),
-            "worklist": gap_path,
-        },
+        "image_gap": image_gap,
         "diff_summary": diff.get("counts", {"baseline": True}),
         "output": out_path,
     }
     _write_json(os.path.join(out_dir, REPORT_FILE), report)
     return report
+
+
+def _write_image_gap(out_dir: str, gap_rows: List[dict]) -> dict:
+    """Write the image-gap worklist (JSONL + collection-sorted CSV) and roll it up.
+
+    Rows are sorted to group by collection and surface the high-value targets
+    first: by institution, then collection, then rich-metadata records ahead of
+    bare ones. The rollup ranks collections by their rich-but-imageless count —
+    the best candidates for a KTIV scrape run.
+
+    :param out_dir: Output directory.
+    :param gap_rows: One dict per imageless record (see :func:`merge`).
+    :returns: The ``image_gap`` report section.
+    """
+    rows = sorted(
+        gap_rows,
+        key=lambda r: (r["institution"], r["collection"],
+                       not r["has_rich_metadata"], r["canonical_id"]),
+    )
+    fields = ["institution", "collection", "canonical_id", "shelfmark_display",
+              "sources_present", "has_rich_metadata"]
+
+    with open(os.path.join(out_dir, IMAGE_GAP_FILE), "w", encoding="utf-8") as jl:
+        for r in rows:
+            jl.write(json.dumps(r, ensure_ascii=False) + "\n")
+    with open(os.path.join(out_dir, IMAGE_GAP_CSV), "w", encoding="utf-8", newline="") as cf:
+        writer = csv.DictWriter(cf, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    # Rank collections by rich-but-imageless count (the scrape-priority metric).
+    by_collection: Dict[Tuple[str, str], Dict[str, int]] = {}
+    for r in rows:
+        key = (r["institution"], r["collection"])
+        agg = by_collection.setdefault(key, {"total": 0, "rich": 0})
+        agg["total"] += 1
+        agg["rich"] += int(r["has_rich_metadata"])
+    top = sorted(by_collection.items(), key=lambda kv: kv[1]["rich"], reverse=True)
+    top_collections = [
+        {"institution": inst, "collection": coll, "rich": agg["rich"],
+         "total": agg["total"]}
+        for (inst, coll), agg in top
+    ]
+
+    return {
+        "records_without_image": len(rows),
+        "without_image_but_rich": sum(1 for r in rows if r["has_rich_metadata"]),
+        "top_collections": top_collections,
+        "worklist_jsonl": os.path.join(out_dir, IMAGE_GAP_FILE),
+        "worklist_csv": os.path.join(out_dir, IMAGE_GAP_CSV),
+    }
 
 
 def _load_json(path: str) -> Optional[dict]:
@@ -609,11 +750,29 @@ def _write_json(path: str, data: dict) -> None:
 
 
 def main() -> None:
-    """CLI entry point: run the merge and print the report."""
+    """CLI entry point: run the merge and print the report (or a top-collections rollup)."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, help="Output directory.")
+    parser.add_argument(
+        "--top",
+        type=int,
+        default=0,
+        metavar="N",
+        help="Print the top N collections by rich-but-imageless count and exit.",
+    )
     args = parser.parse_args()
     report = merge(args.out_dir)
+
+    if args.top:
+        ig = report["image_gap"]
+        print(f"Records without images: {ig['records_without_image']} "
+              f"({ig['without_image_but_rich']} with rich metadata)\n")
+        print(f"{'rich':>7} {'total':>7}  collection")
+        for c in ig["top_collections"][:args.top]:
+            label = f"{c['institution']} / {c['collection']}"
+            print(f"{c['rich']:>7} {c['total']:>7}  {label}")
+        return
+
     print(json.dumps(report, ensure_ascii=False, indent=2))
 
 
