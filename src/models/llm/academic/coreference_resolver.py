@@ -85,6 +85,8 @@ dotenv.load_dotenv(_project_root / ".env")
 
 from src.datasets.document_models import biblical_person_classifier as bib  # noqa: E402
 from src.datasets.document_models.scholar_normalizer import ScholarRegistry  # noqa: E402
+from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+from src.models.llm.academic.entity_tagger import _is_leaked_entity  # noqa: E402
 
 # Roles (from Pass 2 tagging) that mark a person as a modern, post-discovery
 # figure → Scholar.  Includes manuscript dealers/collectors, who align with
@@ -149,7 +151,7 @@ def _aggregate_entities(entity_files: List[Path]) -> Dict:
 
         for p in (data.get("people") or []):
             name = (p.get("name") or "").strip()
-            if not name:
+            if not name or _is_leaked_entity(p, "name"):
                 continue
             people[name]["pages"].add(pg)
             if p.get("context"):
@@ -159,7 +161,7 @@ def _aggregate_entities(entity_files: List[Path]) -> Dict:
 
         for pl in (data.get("places") or []):
             name = (pl.get("name") or "").strip()
-            if not name:
+            if not name or _is_leaked_entity(pl, "name"):
                 continue
             places[name]["pages"].add(pg)
             if pl.get("context"):
@@ -169,7 +171,7 @@ def _aggregate_entities(entity_files: List[Path]) -> Dict:
 
         for inst in (data.get("institutions") or []):
             name = (inst.get("name") or "").strip()
-            if not name:
+            if not name or _is_leaked_entity(inst, "name"):
                 continue
             institutions[name]["pages"].add(pg)
             if inst.get("context"):
@@ -179,7 +181,7 @@ def _aggregate_entities(entity_files: List[Path]) -> Dict:
 
         for sm in (data.get("shelf_marks") or []):
             mark = (sm.get("mark") or "").strip()
-            if not mark:
+            if not mark or _is_leaked_entity(sm, "mark"):
                 continue
             shelf_marks[mark]["pages"].add(pg)
             if sm.get("description"):
@@ -649,6 +651,32 @@ class CoreferenceResolver:
                     f"({len(ambiguous)} needed context)")
         return people_list
 
+    def _filter_shelfmarks(self, marks_list: List[Dict]) -> List[Dict]:
+        """Keep only genuine shelf-marks, tagging each with ``mark_class``.
+
+        Uses :meth:`ShelfmarkNormalizer.classify_shelfmark` (shared with the
+        merge pipeline) so the academic-book pipeline agrees with the merge
+        layer on what a real shelf-mark is.  ``standard`` and ``berlin`` are
+        kept; ``bibliographic`` (Davidson poem refs) and ``reject`` (prose /
+        echoes / vague descriptors) are dropped.
+
+        :param marks_list: Resolved shelf-mark dicts (each with a ``mark`` key).
+        :returns: Filtered list, each kept entry given a ``mark_class`` field.
+        """
+        kept: List[Dict] = []
+        dropped: Dict[str, int] = {}
+        for m in marks_list:
+            cls = ShelfmarkNormalizer.classify_shelfmark(m.get("mark", ""))
+            if cls in ("standard", "berlin"):
+                m["mark_class"] = cls
+                kept.append(m)
+            else:
+                dropped[cls] = dropped.get(cls, 0) + 1
+        if dropped:
+            logger.info(f"    shelf_marks: kept {len(kept)}, "
+                        f"dropped {sum(dropped.values())} ({dropped})")
+        return kept
+
     def resolve_book(
         self,
         book_dir: Path,
@@ -727,6 +755,11 @@ class CoreferenceResolver:
         # don't conflate with Genizah-era people or modern scholars.
         # ------------------------------------------------------------------
         people_list = self._classify_people(people_list)
+
+        # Drop shelf-marks that aren't genuine shelf-marks (LLM reasoning prose,
+        # prompt echoes, vague descriptors, Davidson poem citations) so junk
+        # Fragment nodes never reach Pass 4 or the KG.
+        marks_list = self._filter_shelfmarks(marks_list)
 
         output = {
             "source_book":  source_book,

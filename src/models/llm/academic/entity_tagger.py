@@ -267,33 +267,39 @@ Return ONLY this JSON structure (no markdown, no code fences):
 {{
   "people": [
     {{
-      "name": "Full name as it appears",
-      "role": "historical_person|scholar|collector",
-      "context": "One sentence describing who this person is in this context"
+      "name": "<full name as written on the page>",
+      "role": "<historical_person OR scholar OR collector>",
+      "context": "<one sentence on who this person is here>"
     }}
   ],
   "places": [
     {{
-      "name": "Place name",
-      "type": "city|region|country|body_of_water|trade_route|other",
-      "context": "Brief context"
+      "name": "<place name>",
+      "type": "<city OR region OR country OR body_of_water OR trade_route OR other>",
+      "context": "<brief context>"
     }}
   ],
   "institutions": [
     {{
-      "name": "Institution name",
-      "type": "library|university|archive|synagogue|court|other",
-      "context": "Brief context"
+      "name": "<institution name>",
+      "type": "<library OR university OR archive OR synagogue OR court OR other>",
+      "context": "<brief context>"
     }}
   ],
   "shelf_marks": [
     {{
-      "mark": "Shelf mark exactly as written",
-      "description": "What this fragment contains or discusses",
-      "source": "pass1|pass2"
+      "mark": "<shelf mark exactly as written>",
+      "description": "<what this fragment contains or discusses>",
+      "source": "<pass1 OR pass2>"
     }}
   ]
 }}
+
+The angle-bracket text above is a FORMAT EXAMPLE ONLY. Replace every <...>
+field with the real value extracted from the page. NEVER output the bracket
+text, the field labels, or the option lists ("historical_person|scholar|...")
+as if they were real entities — if there is nothing real to put in a field,
+omit that entity.
 
 Rules:
 - "historical_person": a person who lived before ~1900 and is discussed as a historical figure
@@ -311,6 +317,57 @@ Rules:
 
 _JSON_RE       = re.compile(r'\{.*\}', re.DOTALL)
 _CODE_FENCE_RE = re.compile(r'```(?:json)?\s*(\{.*?\})\s*```', re.DOTALL)
+
+# Literal example values from the prompt's JSON skeleton.  On low-signal pages
+# the model sometimes echoes the skeleton verbatim instead of extracting real
+# entities (e.g. a person literally named "Full name as it appears" with role
+# "historical_person|scholar|collector").  Any entity whose name/mark/role/type
+# exactly matches one of these is a template leak and is dropped.  Includes both
+# the current angle-bracket placeholders and the older literal ones so existing
+# entity files are cleaned on re-aggregation without re-running Pass 2.
+_TEMPLATE_PLACEHOLDERS = {
+    # older literal placeholders (present in already-written entity files)
+    "full name as it appears", "place name", "institution name",
+    "shelf mark exactly as written", "shelf mark as it appears",
+    "one sentence describing who this person is in this context",
+    "brief context", "what this fragment contains or discusses",
+    # enum-string placeholders (copied skeleton tell-tales)
+    "historical_person|scholar|collector",
+    "city|region|country|body_of_water|trade_route|other",
+    "library|university|archive|synagogue|court|other",
+    "pass1|pass2",
+    # current angle-bracket placeholders (see _build_prompt)
+    "<full name as written on the page>", "<place name>",
+    "<institution name>", "<shelf mark exactly as written>",
+    # bare field-name echoes
+    "name", "mark", "shelf mark", "person name", "place", "institution",
+}
+
+
+def _is_template_placeholder(value: Optional[str]) -> bool:
+    """Return True if *value* is a verbatim prompt-template placeholder.
+
+    :param value: An entity name, mark, role, or type string.
+    :returns: True when the value is a leaked template example, not real data.
+    """
+    return (value or "").strip().lower() in _TEMPLATE_PLACEHOLDERS
+
+
+def _is_leaked_entity(entity: Dict, name_key: str) -> bool:
+    """Return True if *entity* is a leaked prompt-template skeleton.
+
+    An entity is a leak when its name/mark is a placeholder, or when its
+    ``role``/``type`` is the literal enum string from the template (a strong
+    tell that the whole record was copied rather than extracted).
+
+    :param entity: A people/places/institutions/shelf_marks dict.
+    :param name_key: ``"name"`` or ``"mark"`` — the identifier field to check.
+    :returns: True if the entity should be dropped.
+    """
+    if _is_template_placeholder(entity.get(name_key)):
+        return True
+    return _is_template_placeholder(entity.get("role")) or \
+        _is_template_placeholder(entity.get("type"))
 
 
 def _parse_response(raw: str) -> Optional[Dict]:
@@ -347,12 +404,16 @@ def _parse_response(raw: str) -> Optional[Dict]:
         logger.warning(f"  JSON parse error: {e}")
         return None
 
-    # Normalise — ensure all expected lists exist
+    # Normalise — ensure all expected lists exist, dropping template leaks.
     return {
-        "people":       [p for p in (data.get("people")       or []) if p.get("name")],
-        "places":       [p for p in (data.get("places")       or []) if p.get("name")],
-        "institutions": [p for p in (data.get("institutions") or []) if p.get("name")],
-        "shelf_marks":  [p for p in (data.get("shelf_marks")  or []) if p.get("mark")],
+        "people":       [p for p in (data.get("people")       or [])
+                         if p.get("name") and not _is_leaked_entity(p, "name")],
+        "places":       [p for p in (data.get("places")       or [])
+                         if p.get("name") and not _is_leaked_entity(p, "name")],
+        "institutions": [p for p in (data.get("institutions") or [])
+                         if p.get("name") and not _is_leaked_entity(p, "name")],
+        "shelf_marks":  [p for p in (data.get("shelf_marks")  or [])
+                         if p.get("mark") and not _is_leaked_entity(p, "mark")],
     }
 
 

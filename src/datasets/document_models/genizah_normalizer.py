@@ -140,6 +140,75 @@ class ShelfmarkNormalizer(EntityNormalizer):
         'AIU',
     ]
 
+    # Collection anchors that mark a string as a genuine Genizah shelfmark.
+    # Mirrors the anchor set used by the merge pipeline (merge_shelfmarks._ANCHOR_RE)
+    # plus the COLLECTION_PREFIXES keys, so validation in the academic-book
+    # pipeline agrees with the merge layer on what a real shelfmark looks like.
+    _SHELFMARK_ANCHORS = [
+        'T-S', 'TS', 'Taylor-Schechter', 'ENA', 'L-G', 'Lewis-Gibson', 'Mosseri',
+        'Moss', 'CUL Or', 'CUL Add', 'CUL', 'Gaster', 'Bodl', 'MS heb', 'MS. heb',
+        'AIU', 'BL Or', 'BL Add', 'Halper', 'CAJS', 'JRL', 'Kaufmann', 'DK',
+        'DKG', 'Yevr', 'EVR', 'Or.', 'Westminster', 'Firkovich', 'Dropsie',
+    ]
+    _SHELFMARK_ANCHOR_RE = re.compile(
+        r'(?<![A-Za-z])(?:' + '|'.join(re.escape(a) for a in _SHELFMARK_ANCHORS) + r')(?![A-Za-z])',
+        flags=re.IGNORECASE,
+    )
+    # Davidson *Thesaurus of Mediaeval Hebrew Poetry* poem references
+    # ("D. I Nr. 1012", "D. II 127 Nr. 261") — bibliographic citations, NOT marks.
+    _DAVIDSON_REF_RE = re.compile(r'^D\.\s*[IVX]+\b', flags=re.IGNORECASE)
+    # Markers betraying LLM reasoning prose, OCR dumps, or prompt-template echoes
+    # leaking into the mark field.
+    _SHELFMARK_PROSE_MARKERS = (
+        '->', "let's", 'the prompt', 'page:', 'classification:', 'jstor',
+        'downloaded', 'extract', 'i will', 'looking at', 'actually,',
+        'description:', 'as it appears', 'place name', 'shelf mark exactly',
+        '\n', 'no description', 'likely', 'probably',
+    )
+
+    @classmethod
+    def classify_shelfmark(cls, raw: str) -> str:
+        """Conservatively classify a candidate shelfmark string.
+
+        Used to keep junk out of the KG when parsing academic books, where the
+        LLM may emit reasoning prose, prompt echoes, vague descriptors, or
+        bibliographic citations in the shelfmark slot.  Conservative by design:
+        an unrecognised string is rejected rather than admitted.
+
+        :param raw: Candidate shelfmark text.
+        :returns: One of:
+            * ``"standard"``     — a genuine Genizah shelfmark (recognised
+              collection anchor + a digit); safe to canonicalise and import.
+            * ``"berlin"``       — a Berlin Gemeindebibliothek reference; keep
+              with its explicit Berlin prefix (canonical linking deferred).
+            * ``"bibliographic"``— a Davidson *Thesaurus* poem citation; not a
+              manuscript, drop from shelfmarks.
+            * ``"reject"``       — prose, OCR dump, prompt echo, vague
+              descriptor, or otherwise not a shelfmark.
+        """
+        s = (raw or "").strip()
+        if not s or len(s) > 50:
+            return "reject"
+        low = s.lower()
+        if any(m in low for m in cls._SHELFMARK_PROSE_MARKERS):
+            return "reject"
+        if cls._DAVIDSON_REF_RE.match(s):
+            return "bibliographic"
+        if 'gemeindebibliothek' in low or re.match(r'^berlin\b', low):
+            return "berlin"
+        if cls._SHELFMARK_ANCHOR_RE.search(s) and any(c.isdigit() for c in s):
+            return "standard"
+        return "reject"
+
+    @classmethod
+    def is_probable_shelfmark(cls, raw: str) -> bool:
+        """Return True if *raw* is a genuine shelfmark worth a Fragment node.
+
+        :param raw: Candidate shelfmark text.
+        :returns: True for ``standard`` or ``berlin`` classifications.
+        """
+        return cls.classify_shelfmark(raw) in ("standard", "berlin")
+
     # Residual noise tokens dropped at the token level. Kept deliberately small
     # and multi-character: single letters (f, l, p) are NOT listed here because
     # they collide with collection letters (Lewis-Gibson "L-G", Gaster "P"/"L").
