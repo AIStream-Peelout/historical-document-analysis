@@ -82,6 +82,7 @@ from src.datasets.document_models.institution_normalizer import InstitutionNorma
 from src.datasets.document_models.place_normalizer import PlaceNormalizer  # noqa: E402
 from src.datasets.document_models.person_normalizer import PersonNormalizer  # noqa: E402
 from src.datasets.document_models.scholar_normalizer import ScholarRegistry  # noqa: E402
+from src.datasets.document_models import corpus_ids  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -160,6 +161,65 @@ def _add_source(alias: str, source_tag: str) -> str:
         f"THEN coalesce({alias}.data_sources, []) "
         f"ELSE coalesce({alias}.data_sources, []) + ['{source_tag}'] END"
     )
+
+
+_BOOK_DOI_MAP: Optional[Dict[str, str]] = None
+
+
+def _book_doi_map() -> Dict[str, str]:
+    """Map each book directory stem → its DOI (from sibling ``*metadata*.json``).
+
+    Lets the KG compute the same DOI-aware ``book_uuid`` the ES indexer does.
+    Cached after first scan.
+
+    :returns: ``{book_dir_stem: doi}`` for books whose metadata declares a DOI.
+    """
+    global _BOOK_DOI_MAP
+    if _BOOK_DOI_MAP is not None:
+        return _BOOK_DOI_MAP
+    mapping: Dict[str, str] = {}
+    for meta_path in _data_root.rglob("*metadata*.json"):
+        if meta_path.parent == _data_root:
+            continue
+        try:
+            with open(meta_path, encoding="utf-8") as f:
+                meta = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            continue
+        doi = corpus_ids.extract_doi(meta)
+        if not doi:
+            continue
+        for sibling in meta_path.parent.iterdir():
+            if sibling.is_dir():
+                mapping[sibling.name] = doi
+    _BOOK_DOI_MAP = mapping
+    return mapping
+
+
+def _book_uuid_for(source_book: str) -> str:
+    """Return the cross-store ``book_uuid`` for a source-book stem (DOI-aware).
+
+    :param source_book: Book directory stem (the KG ``source_book``).
+    :returns: Deterministic book UUID matching the ES indexer.
+    """
+    doi = _book_doi_map().get(source_book)
+    key = corpus_ids.book_key({"doi": doi} if doi else None, source_book)
+    return corpus_ids.book_uuid(key)
+
+
+def _page_uuid_for(source_book: str, evidence_page: Any) -> Optional[str]:
+    """Return the cross-store ``page_uuid`` for a relation's evidence page.
+
+    :param source_book: Book directory stem.
+    :param evidence_page: The relation's ``evidence_page`` (filename sequence
+        index, as the Pass-4 prompt labels pages ``[Page N]``).
+    :returns: Page UUID, or ``None`` when there is no usable page number.
+    """
+    if not isinstance(evidence_page, int):
+        return None
+    doi = _book_doi_map().get(source_book)
+    key = corpus_ids.book_key({"doi": doi} if doi else None, source_book)
+    return corpus_ids.page_uuid(key, evidence_page)
 
 
 def _person_label(name: str, declared: str) -> str:
@@ -728,8 +788,18 @@ class AcademicKGImporter:
     # ===================================================================
 
     @staticmethod
-    def _write_enriched_triplet(tx, t: Dict, book: str) -> None:
-        """Write one enriched triplet with correct merge keys per label type."""
+    def _write_enriched_triplet(tx, t: Dict, book: str,
+                                book_uuid: Optional[str] = None,
+                                page_uuid: Optional[str] = None) -> None:
+        """Write one enriched triplet with correct merge keys per label type.
+
+        :param tx: Neo4j transaction.
+        :param t: Triplet dict (subject/relation/object/types/evidence/…).
+        :param book: Source book stem.
+        :param book_uuid: Cross-store book UUID (shared with ES), stamped on the
+            relationship so triplets can be joined back to the ES page docs.
+        :param page_uuid: Cross-store page UUID for the relation's evidence page.
+        """
         sl  = t["subject_type"] if t["subject_type"] in _VALID_LABELS else "Entity"
         ol  = t["object_type"]  if t["object_type"]  in _VALID_LABELS else "Entity"
         rel = t["relation"].replace(" ", "_")
@@ -813,19 +883,28 @@ class AcademicKGImporter:
             obj_match = f"(b:{ol} {{name: $obj_key}})"
             obj_key = resolved_obj
 
-        # Create the relationship
+        # Create the relationship. book_uuid / page_uuid (shared with ES) let
+        # the web app jump from this triplet back to the page's full text.
         tx.run(f"""
             MATCH {subj_match}
             MATCH {obj_match}
             MERGE (a)-[r:{rel}]->(b)
               ON CREATE SET r.source     = $book,
                             r.evidence   = $evidence,
+                            r.evidence_page = $evidence_page,
                             r.confidence = $confidence,
+                            r.book_uuid  = $book_uuid,
+                            r.page_uuid  = $page_uuid,
                             r.data_sources = ['enriched'],
                             r.source_books = [$book]
               ON MATCH SET r.source_books = CASE WHEN $book IN coalesce(r.source_books,[])
-                  THEN coalesce(r.source_books,[]) ELSE coalesce(r.source_books,[]) + [$book] END
-        """, subj_key=subj_key, obj_key=obj_key, book=book, evidence=t.get("evidence",""), confidence=t.get("confidence","medium"))
+                  THEN coalesce(r.source_books,[]) ELSE coalesce(r.source_books,[]) + [$book] END,
+                  r.book_uuid = coalesce(r.book_uuid, $book_uuid),
+                  r.page_uuid = coalesce(r.page_uuid, $page_uuid)
+        """, subj_key=subj_key, obj_key=obj_key, book=book,
+             evidence=t.get("evidence", ""), evidence_page=t.get("evidence_page"),
+             confidence=t.get("confidence", "medium"),
+             book_uuid=book_uuid, page_uuid=page_uuid)
 
     @staticmethod
     def _mark_enriched(tx, name: str, label: str, books: List[str]) -> None:
@@ -998,6 +1077,7 @@ class AcademicKGImporter:
             counts["relations_valid"] += len(relations)
             return dict(counts)
 
+        book_uuid = _book_uuid_for(source_book)
         written = 0
         with self.driver.session(database=self.database) as s:
             for rel in relations:
@@ -1010,12 +1090,15 @@ class AcademicKGImporter:
                     "object":       rel.get("object", ""),
                     "object_type":  rel.get("object_type", "Entity"),
                     "evidence":     rel.get("evidence", ""),
+                    "evidence_page": rel.get("evidence_page"),
                     "confidence":   rel.get("confidence", "medium"),
                 }
                 if not (t["subject"] and t["relation"] and t["object"]):
                     continue
+                page_uuid = _page_uuid_for(source_book, t["evidence_page"])
                 try:
-                    s.execute_write(self._write_enriched_triplet, t, source_book)
+                    s.execute_write(self._write_enriched_triplet, t, source_book,
+                                    book_uuid, page_uuid)
                     written += 1
                 except Exception as e:
                     logger.warning(f"  Relation write failed {t}: {e}")
