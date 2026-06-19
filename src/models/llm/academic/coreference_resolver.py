@@ -217,6 +217,10 @@ def _build_resolved_entry(name: str, agg: Dict, category: str) -> Dict:
     pages = sorted(int(p) for p in agg["pages"] if str(p).lstrip("-").isdigit())
     desc  = agg["contexts"][0] if agg.get("contexts") else (
             agg["descriptions"][0] if agg.get("descriptions") else "")
+    # The tagger occasionally emits a non-string context/description (e.g. a
+    # JSON boolean); normalise so downstream len()/text ops never break.
+    if not isinstance(desc, str):
+        desc = str(desc)
 
     if category == "people":
         return {
@@ -482,8 +486,9 @@ def _apply_dedup(
             # Add raw_name as alias if it differs from canonical
             if raw_name != canon and raw_name not in existing.get("aliases", []):
                 existing.setdefault("aliases", []).append(raw_name)
-            # Prefer longer description
-            if len(entry.get("description", "")) > len(existing.get("description", "")):
+            # Prefer longer description (coerce: the tagger can emit a non-string
+            # description, e.g. a JSON boolean, which has no len()).
+            if len(str(entry.get("description") or "")) > len(str(existing.get("description") or "")):
                 existing["description"] = entry["description"]
 
     # Populate aliases from the LLM groups for canonicals that had no variants merged

@@ -84,6 +84,7 @@ sys.path.append(str(_project_root))
 dotenv.load_dotenv(_project_root / ".env")
 
 from src.models.llm.academic.llm_client import LLMClient  # noqa: E402
+from src.datasets.document_models.scholar_normalizer import ScholarRegistry  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -324,6 +325,67 @@ def _parse_response(raw: str, source_book: str) -> List[Dict]:
 # the structural bucket.
 _PERSONISH = {"Person", "Scholar", "BiblicalPerson"}
 
+# ORIGINATED_FROM means provenance — only a Person or Fragment has it. An
+# Institution/BookArticle/Scholar "originating from" a place is always a
+# publisher city, an institutional address, or a scholar's region (noise).
+_PROVENANCE_SUBJECTS = {"Person", "Fragment", "BiblicalPerson"}
+
+# Languages / scripts / linguistic phenomena that the tagger shoehorns into
+# Person/Place/Institution/Fragment. Relations whose endpoint is one of these
+# are dropped (we don't model languages as KG nodes).
+_LANGUAGE_TERMS = {
+    "hebrew", "arabic", "judaeo-arabic", "judeo-arabic", "classical arabic",
+    "aramaic", "syriac", "greek", "latin", "persian", "coptic", "yiddish",
+    "ladino", "judaeo-spanish", "middle arabic", "tiberian", "imala", "imāla",
+    "judaeo-arabic literature", "vernacular arabic", "rabbinic hebrew",
+}
+
+# Bare/generic entity names that are not real fragments or entities.
+_VAGUE_ENTITY_RE = re.compile(
+    r'^(the |a |an )?(fragment|manuscript|geniza fragments?|genizah fragments?|'
+    r'text|page|document|leaf|folio|item|the translator|the author|the scribe)s?$',
+    re.IGNORECASE,
+)
+
+# Evidence strings that betray a bibliography/reference-list citation rather
+# than substantive in-text content. These produce the bulk of the noise:
+# co-editor COLLABORATED_WITH cliques, WROTE-per-citation, publisher cities.
+_CITE_EDITOR_RE = re.compile(r'\b(ed|eds|edited by|trans|transl|translated by)\b\.?', re.IGNORECASE)
+_CITE_PUBLISHER_RE = re.compile(r'\bpublisher\b|location of|[A-Z][a-z]+:\s+[A-Z][a-z]', re.IGNORECASE)
+_CITE_AUTHOR_YEAR_RE = re.compile(r'[A-Z][A-Za-zäöüéè]+,\s+[A-Z]\.')
+_YEAR_RE = re.compile(r'\b(1[5-9]\d\d|20\d\d)\b')
+
+
+def _is_citation_evidence(evidence: str) -> bool:
+    """Return True if *evidence* looks like a bibliography/reference citation.
+
+    Catches editor/translator credits ("ed. X, Y, Z"), publisher-location
+    phrasing, and "Lastname, F. … <year>" citation shapes — the patterns that
+    drive the COLLABORATED_WITH co-editor clique and per-citation WROTE noise.
+
+    :param evidence: The relation's evidence string.
+    :returns: True if it is a citation rather than substantive content.
+    """
+    ev = (evidence or "").strip()
+    if not ev:
+        return False
+    if _CITE_EDITOR_RE.search(ev):
+        return True
+    if _CITE_PUBLISHER_RE.search(ev):
+        return True
+    if _CITE_AUTHOR_YEAR_RE.search(ev) and _YEAR_RE.search(ev):
+        return True
+    return False
+
+
+def _is_vague_entity(name: str) -> bool:
+    """Return True if *name* is a bare/generic entity (not a real one).
+
+    :param name: Subject or object name.
+    :returns: True for "Fragment", "the manuscript", "Geniza fragments", etc.
+    """
+    return bool(_VAGUE_ENTITY_RE.match((name or "").strip()))
+
 
 def _type_ok(actual: str, expected: Optional[str]) -> bool:
     """Return True if *actual* type satisfies the *expected* slot type.
@@ -343,37 +405,121 @@ def _type_ok(actual: str, expected: Optional[str]) -> bool:
     return actual == expected
 
 
+_EXTENDED_DISCUSSION_CHARS = 120   # description length implying real discussion
+_EXTENDED_DISCUSSION_PAGES = 3     # appearing on this many pages implies it too
+
+
+def _transcription_pages(book_dir: Path) -> Set[int]:
+    """Return the set of page sequence indices that edit/transcribe fragments.
+
+    A page counts when it is classified ``transcription`` or carries a
+    non-empty ``transcriptions`` block in its Pass-1 structured JSON.
+
+    :param book_dir: Book root directory.
+    :returns: Set of filename sequence indices.
+    """
+    pages: Set[int] = set()
+    for p in book_dir.rglob("page_*_structured.json"):
+        if "_structured" not in p.parent.name and "_structured" not in p.parent.parent.name:
+            continue
+        m = re.search(r"page_(\d+)", p.name)
+        if not m:
+            continue
+        try:
+            d = json.load(open(p, encoding="utf-8"))
+        except Exception:
+            continue
+        if d.get("classification") == "transcription" or (d.get("transcriptions") or {}):
+            pages.add(int(m.group(1)))
+    return pages
+
+
+def _augment_studied(book_dir: Path, source_book: str, resolved: Dict) -> List[Dict]:
+    """Emit deterministic ``author -STUDIED-> fragment`` relations.
+
+    For each ground-truth author of the book and each genuine shelf-mark the
+    book actually edits or discusses — gated on a transcription page OR
+    extended discussion (long description / multi-page presence) — add a
+    high-confidence STUDIED edge. These core scholarly relations are otherwise
+    inconsistently produced by the LLM.
+
+    :param book_dir: Book root directory.
+    :param source_book: Book directory stem.
+    :param resolved: The book's resolved entities dict.
+    :returns: List of synthetic STUDIED relation dicts.
+    """
+    authors = ScholarRegistry.instance().book_authors.get(source_book) or []
+    if not authors:
+        return []
+    transcription_pages = _transcription_pages(book_dir)
+
+    studied: List[Dict] = []
+    for sm in resolved.get("shelf_marks", []):
+        mark = (sm.get("mark") or "").strip()
+        if not mark:
+            continue
+        pages = sm.get("pages") or []
+        desc = sm.get("description") or ""
+        is_studied = (
+            any(pg in transcription_pages for pg in pages)
+            or len(desc) >= _EXTENDED_DISCUSSION_CHARS
+            or len(pages) >= _EXTENDED_DISCUSSION_PAGES
+        )
+        if not is_studied:
+            continue
+        ev_page = next((pg for pg in pages if pg in transcription_pages), pages[0] if pages else None)
+        for author in authors:
+            studied.append({
+                "subject":       author,
+                "subject_type":  "Scholar",
+                "relation":      "STUDIED",
+                "object":        mark,
+                "object_type":   "Fragment",
+                "evidence":      f"{author} edits/discusses {mark} in this work.",
+                "evidence_page": ev_page,
+                "confidence":    "high",
+                "source_book":   source_book,
+                "augmented":     True,
+            })
+    return studied
+
+
 def _compact_relations(
     relations: List[Dict],
     person_labels: Dict[str, str],
 ) -> Tuple[List[Dict], List[Dict]]:
     """Split raw relations into accepted (clean) and rejected sets.
 
-    Applies deterministic rules before any Neo4j write:
+    Applies deterministic rules before any Neo4j write (rejected relations are
+    quarantined with a ``reject_reason``, not deleted):
 
-    0. **Authoritative retyping** — any endpoint whose name is a resolved
-       person is retyped to that person's canonical label (Scholar /
-       BiblicalPerson / Person), derived from Pass-3 ``person_class``.  This
-       is what fixes in-text scholars/collectors the LLM mislabelled as
-       "Person" — the node label no longer depends on the model's guess.
-    1. **Exact dedup** — collapse identical (subject, relation, object) triples.
-    2. **Type pairing** — drop triples whose ``(subject_type, object_type)``
-       violate :data:`ALLOWED_RELATIONS` (e.g. ``WROTE → Place``).  Person /
-       Scholar / BiblicalPerson are interchangeable here (structural shape
-       only); ``None`` means "any".
-    3. **Biblical scope** — a relation touching a ``BiblicalPerson`` is kept
-       only when the *other* endpoint is a ``Fragment`` (keep "fragment
-       discusses Abraham"; drop biblical person↔person edges).
+    0. **Authoritative retyping** — endpoints that are resolved people get
+       their canonical label (Scholar/BiblicalPerson/Person) from Pass-3.
+    1. **Self-loops** — drop subject == object.
+    2. **Exact dedup** — collapse identical (subject, relation, object).
+    3. **Bibliography/citation noise** — drop relations whose evidence is a
+       reference-list citation (co-editor COLLABORATED_WITH cliques, per-citation
+       WROTE, publisher cities). The single biggest noise source.
+    4. **Language/concept endpoints** — drop relations whose endpoint is a
+       language/script/linguistic term (Judaeo-Arabic, imāla, Hebrew…).
+    5. **Vague endpoints** — drop bare "Fragment"/"the manuscript"/etc.
+    6. **Provenance** — ORIGINATED_FROM only from Person/Fragment (drops
+       publisher cities, institution addresses, scholar regions).
+    7. **Type pairing** — drop triples violating :data:`ALLOWED_RELATIONS`
+       (Person/Scholar/BiblicalPerson interchangeable; ``None`` = any).
+    8. **Biblical scope** — a BiblicalPerson edge survives only opposite a
+       Fragment.
 
     :param relations: Raw validated relations from the LLM.
-    :param person_labels: Map of resolved person name → authoritative label
-        (``Scholar`` / ``BiblicalPerson`` / ``Person``).
-    :returns: ``(accepted, rejected)``.  Each rejected relation carries a
-        ``reject_reason`` field.
+    :param person_labels: Map of resolved person name → authoritative label.
+    :returns: ``(accepted, rejected)``.
     """
     accepted: List[Dict] = []
     rejected: List[Dict] = []
     seen: set = set()
+
+    def reject(r: Dict, reason: str) -> None:
+        rejected.append({**r, "reject_reason": reason})
 
     for r in relations:
         subj, rel, obj = r["subject"], r["relation"], r["object"]
@@ -384,30 +530,51 @@ def _compact_relations(
         if obj in person_labels:
             r["object_type"] = person_labels[obj]
 
-        # 1. exact duplicate
+        # 1. self-loop
+        if subj.strip().lower() == obj.strip().lower():
+            reject(r, "self_loop")
+            continue
+
+        # 2. exact duplicate
         key = (subj, rel, obj)
         if key in seen:
             continue
         seen.add(key)
 
-        # 2. type-pairing validation against ALLOWED_RELATIONS.
-        # Person/Scholar/BiblicalPerson are interchangeable here: the
-        # Person-vs-Scholar distinction is resolved later at import time
-        # (ScholarRegistry), so we only enforce the structural shape
-        # (person-ish vs Fragment/Place/Institution/BookArticle).
-        exp_subj, exp_obj = ALLOWED_RELATIONS.get(rel, (None, None))
-        st, ot = r["subject_type"], r["object_type"]
-        if not _type_ok(st, exp_subj):
-            rejected.append({**r, "reject_reason": f"subject_type {st} != expected {exp_subj} for {rel}"})
-            continue
-        if not _type_ok(ot, exp_obj):
-            rejected.append({**r, "reject_reason": f"object_type {ot} != expected {exp_obj} for {rel}"})
+        # 3. bibliography / reference-list citation noise
+        if _is_citation_evidence(r.get("evidence", "")):
+            reject(r, "bibliography_citation")
             continue
 
-        # 3b. biblical scope — only Fragment↔BiblicalPerson edges survive
-        touches_biblical = "BiblicalPerson" in (st, ot)
-        if touches_biblical and "Fragment" not in (st, ot):
-            rejected.append({**r, "reject_reason": "biblical_non_fragment"})
+        # 4. language / linguistic-concept endpoint
+        if subj.strip().lower() in _LANGUAGE_TERMS or obj.strip().lower() in _LANGUAGE_TERMS:
+            reject(r, "language_concept")
+            continue
+
+        # 5. vague / generic endpoint
+        if _is_vague_entity(subj) or _is_vague_entity(obj):
+            reject(r, "vague_entity")
+            continue
+
+        st, ot = r["subject_type"], r["object_type"]
+
+        # 6. provenance: ORIGINATED_FROM only from Person/Fragment
+        if rel == "ORIGINATED_FROM" and st not in _PROVENANCE_SUBJECTS:
+            reject(r, f"originated_from_nonprovenance ({st})")
+            continue
+
+        # 7. type-pairing validation against ALLOWED_RELATIONS
+        exp_subj, exp_obj = ALLOWED_RELATIONS.get(rel, (None, None))
+        if not _type_ok(st, exp_subj):
+            reject(r, f"subject_type {st} != expected {exp_subj} for {rel}")
+            continue
+        if not _type_ok(ot, exp_obj):
+            reject(r, f"object_type {ot} != expected {exp_obj} for {rel}")
+            continue
+
+        # 8. biblical scope — only Fragment↔BiblicalPerson edges survive
+        if "BiblicalPerson" in (st, ot) and "Fragment" not in (st, ot):
+            reject(r, "biblical_non_fragment")
             continue
 
         accepted.append(r)
@@ -583,6 +750,14 @@ class RelationExtractor:
         # scope.  Accepted → book_relations.json; rejected → a sidecar file
         # for manual review (kept out of the automated import).
         # ------------------------------------------------------------------
+        # Deterministic augmentation: author -STUDIED-> fragment for fragments
+        # the book actually edits/discusses (these core edges are otherwise
+        # inconsistently produced by the LLM).
+        augmented = _augment_studied(book_dir, source_book, resolved)
+        if augmented:
+            logger.info(f"  {source_book}: +{len(augmented)} augmented STUDIED relation(s)")
+        all_relations.extend(augmented)
+
         _class_to_label = {"biblical": "BiblicalPerson", "scholar": "Scholar",
                            "historical": "Person"}
         person_labels = {

@@ -349,7 +349,7 @@ def main() -> None:
     for suffix in suffix_list:
         index_all_bibliography(
             root_dir="/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/academic_literature",
-            index_name="bibliography_text_only_0.5",
+            index_name="bibliography_text_only_0.6",
             embedding_mode="text_only",
             suffix= suffix,
             dry_run=False,
