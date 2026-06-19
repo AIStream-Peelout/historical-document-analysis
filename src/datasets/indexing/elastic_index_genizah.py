@@ -416,6 +416,12 @@ class ElasticsearchGenizahProcessor:
                 "properties": {
                     # Core fields
                     "doc_id": {"type": "keyword"},
+                    # Multi-source merge provenance (from merged_shelfmarks.jsonl).
+                    "canonical_id": {"type": "keyword"},
+                    "sources_present": {"type": "keyword"},
+                    "image_preferred_source": {"type": "keyword"},
+                    "has_ktiv_images": {"type": "boolean"},
+                    "ktiv_iiif_manifest_url": {"type": "keyword"},
                     # Cross-store join keys (shared with the Neo4j KG).
                     "book_uuid": {"type": "keyword"},
                     "page_uuid": {"type": "keyword"},

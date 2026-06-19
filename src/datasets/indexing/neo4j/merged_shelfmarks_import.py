@@ -57,9 +57,6 @@ logger = logging.getLogger(__name__)
 
 _MERGED = _REPO / "src" / "datasets" / "raw_data" / "cairo_genizah" / "merged" / "merged_shelfmarks.jsonl"
 
-# A description shorter than this (or these placeholders) is not "rich".
-_MIN_DESC = 8
-_EMPTY_DESCR = {"", "unknown", "piyyut"}  # 'Piyyut' alone is a bare genre label
 
 
 # ---------------------------------------------------------------------------
@@ -75,20 +72,21 @@ def _ktiv_record(record: Dict) -> Optional[Dict]:
 
 
 def is_rich(record: Dict) -> bool:
-    """Return True if a merged record carries KG-worthy enrichment.
+    """Return True if a merged record carries KG-worthy *relational* enrichment.
+
+    Rich = related people/places or KTIV scholarly catalog entries. A bare
+    description (often just a genre label like "Piyyut") is NOT rich on its
+    own — those fragments are only imported if already present in the KG
+    (where the description is attached as a property during enrichment).
 
     :param record: One merged_shelfmarks.jsonl record.
-    :returns: True if it has related people/places, KTIV scholarly entries, or
-        a substantive description.
+    :returns: True if the record warrants adding/relating in the KG.
     """
     for fr in _fjp_records(record):
         if fr.get("related_people") or fr.get("related_places"):
             return True
     ktiv = _ktiv_record(record)
-    if ktiv and ktiv.get("scholarly_entries"):
-        return True
-    desc = (record.get("description") or "").strip().lower()
-    return len(desc) >= _MIN_DESC and desc not in _EMPTY_DESCR
+    return bool(ktiv and ktiv.get("scholarly_entries"))
 
 
 def extract_record(record: Dict) -> Optional[Dict]:
@@ -143,9 +141,14 @@ def extract_record(record: Dict) -> Optional[Dict]:
         catalog_title = (ktiv.get("basic_catalog") or {}).get("title")
         for se in (ktiv.get("scholarly_entries") or []):
             for sub in (se.get("subsections") or {}).values():
-                dom = (sub.get("domain") or "").strip()
-                if dom and dom not in genres:
-                    genres.append(dom)
+                if not isinstance(sub, dict):
+                    continue
+                dom = sub.get("domain")
+                # domain may be a string or a list of strings
+                for d in (dom if isinstance(dom, list) else [dom]):
+                    d = (d or "").strip() if isinstance(d, str) else ""
+                    if d and d not in genres:
+                        genres.append(d)
 
     return {
         "canonical_shelfmark": canonical,

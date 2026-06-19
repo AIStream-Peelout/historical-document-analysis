@@ -25,6 +25,41 @@ def convert_cambridge_lang_format(the_language):
     else:
         return "Other"
 
+
+# FJP images live under this bucket path; the merge stores either a bare filename
+# or an already-absolute URL, so we normalise to full URLs for the index.
+_FJP_IMAGE_BASE = "https://storage.googleapis.com/cairo-genizah-es-json/images"
+
+
+def _split_names(value: Optional[str]) -> List[str]:
+    """Split a PGP ``;``-separated names field into trimmed, non-empty names.
+
+    Splits on semicolons only (commas appear inside names like "Adler, Elkan").
+
+    :param value: Raw field value or ``None``.
+    :returns: List of names.
+    """
+    if not value or not str(value).strip():
+        return []
+    return [n.strip() for n in str(value).split(";") if n.strip()]
+
+
+def _merged_image_urls(images: Dict[str, Any]) -> List[str]:
+    """Resolve a merged record's image pointers to full URLs, preferred source first.
+
+    :param images: The merged record's ``images`` block.
+    :returns: Ordered list of absolute image URLs (KTIV first when preferred).
+    """
+    fjp_urls = [
+        img if str(img).startswith("http") else f"{_FJP_IMAGE_BASE}/{img}"
+        for img in (images.get("fjp") or [])
+    ]
+    ktiv_urls = list(((images.get("ktiv") or {}).get("image_urls")) or [])
+    if images.get("preferred_source") == "ktiv":
+        return ktiv_urls + fjp_urls
+    return fjp_urls + ktiv_urls
+
+
 class ContentQuality(str, Enum):
     """Enumeration for content quality levels."""
     HIGH = "high"
@@ -1028,6 +1063,16 @@ class GenizahDocument(BaseModel):
         if es_doc["language"] == "Unknown":
             es_doc["language"] = convert_cambridge_lang_format(es_doc["main_language"])
 
+        # Multi-source provenance (populated by from_merged_format) as filterable
+        # top-level fields, so the index can be navigated by source / canonical id.
+        meta = self.full_metadata or {}
+        if meta.get("canonical_id"):
+            es_doc["canonical_id"] = meta.get("canonical_id")
+            es_doc["sources_present"] = meta.get("sources_present") or []
+            es_doc["image_preferred_source"] = meta.get("image_preferred_source")
+            es_doc["has_ktiv_images"] = bool(meta.get("ktiv_images"))
+            es_doc["ktiv_iiif_manifest_url"] = meta.get("ktiv_iiif_manifest_url")
+
         # Add embedding if provided
         if embedding is not None:
             es_doc["embedding_vector"] = embedding.flatten().tolist()
@@ -1424,6 +1469,106 @@ class GenizahDocument(BaseModel):
             text_parts.append(f"Additional Info: {misc_text}")
 
         return "\n".join(text_parts)
+
+    @classmethod
+    def from_merged_format(cls, merged: Dict[str, Any]) -> 'GenizahDocument':
+        """Create a GenizahDocument from a merged shelfmark record.
+
+        Consumes one line of ``merged_shelfmarks.jsonl`` (PGP + FJP + KTIV unioned
+        by canonical id). Identity comes from the merged top level; transcriptions,
+        translations, people, places and bibliography are aggregated across the
+        FJP block and enriched from PGP documents; image URLs are resolved from the
+        preferred source; multi-source provenance is kept in ``full_metadata``.
+
+        :param merged: A merged record dict (see merge_shelfmarks.build_merged_record).
+        :type merged: Dict[str, Any]
+        :return: GenizahDocument instance.
+        :rtype: GenizahDocument
+        """
+        sources = merged.get("sources") or {}
+        fjp_recs = sources.get("fjp") or []
+        pgp_block = sources.get("pgp") or {}
+        pgp_docs = (pgp_block or {}).get("documents") or []
+        ktiv = sources.get("ktiv") or {}
+
+        # Aggregate text + relationships across every FJP record on this fragment.
+        transcriptions: List[Any] = []
+        translations: List[str] = []
+        related_people: List[Dict[str, Any]] = []
+        related_places: List[Dict[str, Any]] = []
+        bibliography: List[Dict[str, Any]] = []
+        for rec in fjp_recs:
+            tr = rec.get("transcriptions") or {}
+            if isinstance(tr, dict):
+                for key, text in tr.items():
+                    if text and str(text).strip():
+                        lines = {str(i + 1): ln.strip()
+                                 for i, ln in enumerate(str(text).split("\n")) if ln.strip()}
+                        if lines:
+                            transcriptions.append(TranscriptionSection(
+                                name=f"FJP {key}", lines=lines))
+            elif isinstance(tr, list):
+                transcriptions.extend(tr)
+            tl = rec.get("translations") or {}
+            translations.extend(tl.values() if isinstance(tl, dict) else tl)
+            related_people.extend(rec.get("related_people") or [])
+            related_places.extend(rec.get("related_places") or [])
+            bibliography.extend(rec.get("bibliography") or [])
+
+        # Enrich people/places from PGP documents (the 'mentioned' / place columns).
+        for d in pgp_docs:
+            for nm in _split_names(d.get("mentioned")):
+                related_people.append({"name": nm, "role": "mentioned"})
+            for col in ("location", "origin", "destination"):
+                for nm in _split_names(d.get(col)):
+                    related_places.append({"name": nm, "role": col})
+            cite = (d.get("scholarship_records") or "").strip()
+            if cite:
+                bibliography.append({"citation": cite})
+
+        images = merged.get("images") or {}
+        image_urls = _merged_image_urls(images)
+
+        # Date / language: PGP document first, then FJP.
+        fjp0 = fjp_recs[0] if fjp_recs else {}
+        pgp0 = pgp_docs[0] if pgp_docs else {}
+        date = fjp0.get("date")
+        language = (pgp0.get("languages_primary") or fjp0.get("language") or "Unknown")
+        joins = fjp0.get("joins_data") or (
+            {"part_of_join": ktiv.get("full_catalog", {}).get("part_of_join")}
+            if (ktiv.get("full_catalog") or {}).get("part_of_join") else None
+        )
+
+        instance = cls(
+            doc_id=merged.get("canonical_id"),
+            shelf_mark=merged.get("shelfmark_display") or merged.get("canonical_id"),
+            description=merged.get("description") or "",
+            transcriptions=transcriptions,
+            translations=[t for t in translations if t and str(t).strip()],
+            related_people=related_people,
+            related_places=related_places,
+            bibliography=bibliography,
+            image_urls=image_urls,
+            primary_image_index=0 if image_urls else None,
+            actual_image_url=image_urls[0] if image_urls else None,
+            language=language,
+            date=date,
+            institution=merged.get("institution"),
+            collection=merged.get("collection"),
+            sub_collection=merged.get("subcollection"),
+            joins_data=joins,
+            attribution_url=fjp0.get("collection_attribution_url"),
+            full_metadata={
+                "canonical_id": merged.get("canonical_id"),
+                "sources_present": merged.get("sources_present") or [],
+                "pgpids": merged.get("pgpids") or [],
+                "image_preferred_source": images.get("preferred_source"),
+                "ktiv_images": (images.get("ktiv") or {}).get("image_urls") or [],
+                "ktiv_iiif_manifest_url": (images.get("ktiv") or {}).get("iiif_manifest_url"),
+                "ktiv_scholarly_entry_count": ktiv.get("scholarly_entry_count"),
+            },
+        )
+        return instance
 
     @classmethod
     def from_princeton_format(cls, princeton_data: Dict[str, Any]) -> 'GenizahDocument':
