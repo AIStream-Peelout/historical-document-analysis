@@ -1,4 +1,5 @@
 import logging
+from collections import Counter
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 import dotenv
@@ -7,6 +8,16 @@ dotenv.load_dotenv()
 from src.datasets.indexing.bibliography.index_bibliography import (
     index_bibliography_to_elasticsearch,
 )
+# Reuse the KG's book-dir discovery so ES indexes exactly the same set of books,
+# keyed the same way (book dir stem == KG source_book == book_uuid stem).
+from src.models.llm.academic.entity_tagger import (
+    _is_structured_dir,
+    _book_dir_for_structured,
+)
+
+# The template metadata sits at the academic_literature root and must never be
+# matched to real books (it has no real title/authors/DOI).
+_TEMPLATE_METADATA = "example_book_metadata.json"
 
 logging.basicConfig(
     level=logging.INFO,
@@ -160,67 +171,86 @@ def find_image_directory(structured_dir: Path) -> Optional[Path]:
     return None
 
 
+def find_book_metadata(book_dir: Path, root: Path) -> Optional[Path]:
+    """Find a book's real metadata file by walking up from its directory.
+
+    Looks for ``*_metadata.json`` / ``*_meta.json`` / ``meta.json`` in the book
+    dir and each ancestor up to (and including) *root*, skipping the template
+    :data:`_TEMPLATE_METADATA`. The nearest match wins, so a per-book metadata
+    file beats a shared collection-level one.
+
+    :param book_dir: The book directory (parent of its ``*_structured*`` dir).
+    :param root: The academic_literature root (search stops here).
+    :returns: Path to the metadata file, or ``None`` if none found.
+    """
+    d = book_dir
+    while True:
+        cands: List[Path] = []
+        for pattern in ("*_metadata.json", "*_meta.json", "meta.json"):
+            cands += [p for p in d.glob(pattern) if p.name != _TEMPLATE_METADATA]
+        if cands:
+            return sorted(cands)[0]
+        if d == root or root not in d.parents:
+            return None
+        d = d.parent
+
+
 def discover_indexing_tasks(
     root_dir: str,
-    suffix: str = "*_gemini_gemini_2.5_flash"
+    suffix: str = "",  # deprecated/ignored — kept for call-site compatibility
 ) -> List[Dict[str, Any]]:
-    """Discover all indexing tasks by finding metadata files and matching structured directories.
+    """Discover one indexing task per book, mirroring the KG's book selection.
 
-    :param root_dir: Root directory to search in.
-    :type root_dir: str
-    :param suffix: Suffix pattern for structured directories.
-                   Defaults to "*_gemini_gemini_2.5_flash".
-    :type suffix: str
-    :return: List of dictionaries containing indexing task information.
-             Each dict has keys: metadata_file, structured_dir, image_dir.
-    :rtype: List[Dict[str, Any]]
+    Walks book directories (the parent of any ``*_structured*`` dir containing
+    ``page_*_structured.json``) so ES indexes exactly the books the KG sees,
+    keyed by the same book-dir stem. For books with several structured-dir
+    variants (different Pass-1 models), the variant with the most pages is
+    chosen so each book is indexed once, deterministically. Each book's real
+    metadata is resolved via :func:`find_book_metadata`.
 
-    Example::
-
-        tasks = discover_indexing_tasks(
-            root_dir="/path/to/academic_literature",
-            suffix="*_gemini_gemini_2.5_flash"
-        )
-        # Returns: [
-        #     {
-        #         "metadata_file": Path("/path/to/friedman_metadata.json"),
-        #         "structured_dir": Path("/path/to/friedman_108_201_vol_1_structured_gemini_gemini_2.5_flash"),
-        #         "image_dir": Path("/path/to/friedman_108_201_vol_1_images")
-        #     },
-        #     ...
-        # ]
+    :param root_dir: academic_literature root.
+    :param suffix: Ignored (legacy). Discovery is now book-dir based.
+    :returns: List of ``{metadata_file, structured_dir, image_dir, book}`` dicts.
     """
-    metadata_files = find_metadata_files(root_dir=root_dir)
-    tasks: List[Dict[str, Any]] = []
-    
-    for metadata_file in metadata_files:
-        structured_dirs = find_structured_directories(
-            metadata_file=metadata_file,
-            suffix=suffix
-        )
-        
-        if not structured_dirs:
-            logger.warning(
-                f"No structured directories found for metadata file: {metadata_file}"
-            )
+    root = Path(root_dir)
+
+    # Group page files by the dir that directly contains them, tally per dir,
+    # and map each such dir to its book dir.
+    dir_pages: Counter = Counter()
+    dir_book: Dict[Path, Path] = {}
+    for p in root.rglob("page_*_structured.json"):
+        if not _is_structured_dir(p.parent):
             continue
-        
-        for structured_dir in structured_dirs:
-            image_dir = find_image_directory(structured_dir=structured_dir)
-            
-            task = {
-                "metadata_file": metadata_file,
-                "structured_dir": structured_dir,
-                "image_dir": image_dir,
-            }
-            tasks.append(task)
-            
-            logger.info(
-                f"Discovered task: metadata={metadata_file.name}, "
-                f"structured={structured_dir.name}, "
-                f"images={'found' if image_dir else 'not found'}"
-            )
-    
+        sd = p.parent
+        dir_pages[sd] += 1
+        dir_book[sd] = _book_dir_for_structured(p)
+
+    # Per book, keep the structured dir with the most pages.
+    best: Dict[Path, tuple] = {}
+    for sd, count in dir_pages.items():
+        bd = dir_book[sd]
+        if bd not in best or count > best[bd][1]:
+            best[bd] = (sd, count)
+
+    tasks: List[Dict[str, Any]] = []
+    for book_dir, (structured_dir, count) in sorted(best.items()):
+        metadata_file = find_book_metadata(book_dir, root)
+        if metadata_file is None:
+            logger.warning(f"No real metadata for book '{book_dir.name}' — skipping ES index")
+            continue
+        image_dir = find_image_directory(structured_dir=structured_dir)
+        tasks.append({
+            "metadata_file": metadata_file,
+            "structured_dir": structured_dir,
+            "image_dir": image_dir,
+            "book": book_dir.name,
+        })
+        logger.info(
+            f"Discovered: book={book_dir.name} ({count} pages), "
+            f"structured={structured_dir.name}, metadata={metadata_file.name}, "
+            f"images={'found' if image_dir else 'not found'}"
+        )
+
     return tasks
 
 
@@ -345,15 +375,14 @@ def main() -> None:
             --mode hybrid \
             --dry-run
     """
-    suffix_list = ["*_gemini_gemini_2.5_flash", "qwen", "_vl_8b"]
-    for suffix in suffix_list:
-        index_all_bibliography(
-            root_dir="/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/academic_literature",
-            index_name="bibliography_text_only_0.6",
-            embedding_mode="text_only",
-            suffix= suffix,
-            dry_run=False,
-        )
+    # Discovery is now book-dir based (one task per book, best structured-dir
+    # variant), so a single pass indexes the whole corpus — no suffix loop.
+    index_all_bibliography(
+        root_dir="/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/academic_literature",
+        index_name="bibliography_text_only_0.6",
+        embedding_mode="text_only",
+        dry_run=False,
+    )
 
 
 if __name__ == "__main__":

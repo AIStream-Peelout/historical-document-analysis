@@ -100,20 +100,28 @@ def test_index_ktiv_zips_groups_by_sysnum(tmp_path):
     assert index["990039474250205171"][0].endswith("images.zip")
 
 
-def test_merged_record_points_at_ktiv_zip():
+def test_merged_record_points_at_ktiv_images():
     ktiv = {"pnx_id": "PNX_1", "sys_num": "990051236050205171", "shelf_mark": "x"}
     zips = {"990051236050205171": ["ktiv_PNX_MANUSCRIPTS990051236050205171-1_images.zip"]}
-    rec = build_merged_record("Cambridge_CUL_T_S_10J5_6", None, [], ktiv, zips)
-    assert rec["images"]["ktiv"]["zip_files"] == zips["990051236050205171"]
-    assert rec["images"]["ktiv"]["zip_downloaded"] is True
+    images = {"990051236050205171": ["KTIV/990051236050205171/0001_FL1.jpg",
+                                     "KTIV/990051236050205171/0002_FL2.jpg"]}
+    rec = build_merged_record("Cambridge_CUL_T_S_10J5_6", None, [], ktiv, zips, images)
+    blk = rec["images"]["ktiv"]
+    assert blk["zip_files"] == zips["990051236050205171"]
+    assert blk["image_count"] == 2
+    assert blk["populated"] is True
+    assert blk["image_urls"][0].startswith(
+        "https://storage.googleapis.com/cairo-genizah-es-json/KTIV/990051236050205171/")
+    # Routes to KTIV once images are populated.
     assert rec["images"]["preferred_source"] == "ktiv"
 
 
-def test_merged_record_ktiv_zip_absent_when_not_downloaded():
+def test_merged_record_falls_back_to_fjp_when_ktiv_not_populated():
     ktiv = {"pnx_id": "PNX_2", "sys_num": "999999999999999999", "shelf_mark": "x"}
-    rec = build_merged_record("X_1", None, [], ktiv, {})
-    assert rec["images"]["ktiv"]["zip_files"] == []
-    assert rec["images"]["ktiv"]["zip_downloaded"] is False
+    fjp = [("Cambridge CUL: T-S 1.1", {"images": ["x_1r.jpg"]})]
+    rec = build_merged_record("X_1", None, fjp, ktiv, {}, {})
+    assert rec["images"]["ktiv"]["populated"] is False
+    assert rec["images"]["preferred_source"] == "fjp"
 
 
 def test_diff_baseline_when_no_previous():

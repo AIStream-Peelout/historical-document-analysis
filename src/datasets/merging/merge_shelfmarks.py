@@ -46,6 +46,7 @@ from src.datasets.merging.institution_tokens import (  # noqa: E402
     institution_token,
     resolve_token,
 )
+from src.datasets.merging.ktiv_images import gcs_url, ktiv_image_manifest  # noqa: E402
 
 RAW_DIR = os.path.join(_REPO_ROOT, "src", "datasets", "raw_data", "cairo_genizah")
 PGP_FRAGMENTS = os.path.join(RAW_DIR, "pgp_raw", "data", "fragments.csv")
@@ -371,6 +372,7 @@ def build_merged_record(
     fjp: List[Tuple[str, dict]],
     ktiv: Optional[dict],
     ktiv_zips: Optional[Dict[str, List[str]]] = None,
+    ktiv_images: Optional[Dict[str, List[str]]] = None,
 ) -> dict:
     """Assemble one merged record from the per-source blocks for *cid*.
 
@@ -414,12 +416,15 @@ def build_merged_record(
         fjp0.get("description"),
     )
 
-    # Image pointers (metadata only — nothing unzipped). For KTIV we point at
-    # the downloaded image archive(s) by sys_num as well as the IIIF manifest.
+    # Image pointers. FJP images live in the shared GCS bucket (web app prepends
+    # the bucket URL). KTIV images are extracted from the downloaded zips and
+    # uploaded under KTIV/<sys_num>/...; we record the resulting bucket-relative
+    # object paths + full URLs so the web app can route to KTIV when populated.
     fjp_images = sorted({img for rec in fjp_recs for img in (rec.get("images") or [])})
     ktiv_pnx = ktiv.get("pnx_id")
     ktiv_sysnum = ktiv.get("sys_num")
     ktiv_zip_files = (ktiv_zips or {}).get(ktiv_sysnum or "", []) if ktiv else []
+    ktiv_image_paths = (ktiv_images or {}).get(ktiv_sysnum or "", []) if ktiv else []
     images = {
         "fjp": fjp_images,
         "ktiv": {
@@ -430,12 +435,16 @@ def build_merged_record(
                 "friedberg_geniza_project_images_no"
             ),
             "zip_files": ktiv_zip_files,
-            "zip_downloaded": bool(ktiv_zip_files),
+            "images": ktiv_image_paths,
+            "image_urls": [gcs_url(p) for p in ktiv_image_paths],
+            "image_count": len(ktiv_image_paths),
+            "populated": bool(ktiv_image_paths),
         } if ktiv else None,
-        # KTIV is the preferred (higher-quality) imagery when a KTIV record
-        # exists; FJP's GCP images are the fallback. `zip_downloaded` says
-        # whether the KTIV archive is actually in hand yet.
-        "preferred_source": "ktiv" if ktiv_pnx else ("fjp" if fjp_images else None),
+        # Route to KTIV imagery (higher quality) once its images are populated;
+        # otherwise fall back to FJP's existing GCS images.
+        "preferred_source": (
+            "ktiv" if ktiv_image_paths else ("fjp" if fjp_images else None)
+        ),
     }
 
     # Institution: prefer the normalizer's prefix mapping, else the source's own
@@ -608,8 +617,11 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
     fjp_by_cid, fjp_stats = load_fjp(alias)
     ktiv_by_cid, ktiv_stats = load_ktiv(alias)
     ktiv_zips = index_ktiv_zips()
+    ktiv_images = ktiv_image_manifest(glob.glob(KTIV_ZIP_GLOB))
     ktiv_stats["zip_archives"] = sum(len(v) for v in ktiv_zips.values())
     ktiv_stats["zip_manuscripts"] = len(ktiv_zips)
+    ktiv_stats["image_manuscripts"] = len(ktiv_images)
+    ktiv_stats["image_objects"] = sum(len(v) for v in ktiv_images.values())
 
     all_ids = set(pgp_records) | set(fjp_by_cid) | set(ktiv_by_cid)
     counts: collections.Counter = collections.Counter()
@@ -624,7 +636,7 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
             pgp = pgp_records.get(cid)
             fjp = fjp_by_cid.get(cid, [])
             ktiv = ktiv_by_cid.get(cid)
-            record = build_merged_record(cid, pgp, fjp, ktiv, ktiv_zips)
+            record = build_merged_record(cid, pgp, fjp, ktiv, ktiv_zips, ktiv_images)
             out.write(json.dumps(record, ensure_ascii=False) + "\n")
             counts[",".join(record["sources_present"])] += 1
 
