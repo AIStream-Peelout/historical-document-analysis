@@ -25,6 +25,8 @@ import os
 import zipfile
 from typing import Optional
 
+import dotenv
+
 from src.datasets.merging.ktiv_images import (
     GCS_BUCKET,
     _is_image,
@@ -56,6 +58,15 @@ def upload(
     chosen = _pick_zip_per_sysnum(glob.glob(zip_glob))
     bucket = None
     if not dry_run:
+        # Load the repo-root .env (works from any cwd) so GOOGLE_APPLICATION_CREDENTIALS
+        # is available to google.auth.default() / storage.Client().
+        dotenv.load_dotenv(os.path.join(_REPO_ROOT, ".env"))
+        if not os.environ.get("GOOGLE_APPLICATION_CREDENTIALS"):
+            raise RuntimeError(
+                "GOOGLE_APPLICATION_CREDENTIALS is not set. Add it to the repo-root "
+                ".env (path to a service-account JSON) or run "
+                "`gcloud auth application-default login`."
+            )
         from google.cloud import storage  # imported lazily so --dry-run needs no creds
         bucket = storage.Client().bucket(bucket_name)
 

@@ -70,7 +70,7 @@ def index_merged(
     :param batch_size: Documents per indexing batch.
     :param limit: Optional cap for smoke testing.
     """
-    dotenv.load_dotenv()
+    dotenv.load_dotenv(os.path.join(_REPO_ROOT, ".env"))
     from src.embeddings.embedding_models import NomicsEmbedding
 
     embedding_model = NomicsEmbedding(text_only=text_only)

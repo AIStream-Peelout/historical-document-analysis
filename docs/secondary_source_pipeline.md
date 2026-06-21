@@ -1,318 +1,368 @@
 # Secondary Source Processing Pipeline
 
-This document describes the multi-stage pipeline used to process academic secondary
-sources (books, journal articles) about the Cairo Genizah into two downstream systems:
+How academic secondary sources (books, journal articles) about the Cairo Genizah
+are turned into two downstream systems:
 
-- **Elasticsearch** — full-text and semantic search for the RAG chatbot
+- **Elasticsearch** — full-text + semantic search for the RAG chatbot
 - **Neo4j** — knowledge graph for GraphRAG and interactive exploration
+
+This document covers the LLM extraction passes, the knowledge-graph schema, the
+relation-quality cleanup, the cross-store identifiers that link ES ↔ Neo4j, and
+the import/rebuild order.
 
 ---
 
 ## Design Principles
 
-- **Each pass is pure file I/O.** No pass reads from or writes to any database.
-  Database import is a separate final step.
-- **Each pass builds on the output of the prior pass.** The pipeline is linear
-  and reproducible; any pass can be re-run independently.
-- **Entity extraction precedes coreference resolution.** You cannot resolve "he
-  traveled there" without first knowing who "he" is. Per-page entity extraction
-  (Pass 2) runs before the long-context coreference pass (Pass 3).
-- **Elasticsearch and Neo4j are fed from different pipeline stages.** Elasticsearch
-  needs only Pass 1 output (full text + transcriptions). Neo4j needs the full chain
-  through Pass 4 (relations).
+- **Each pass is pure file I/O.** No extraction pass reads or writes a database;
+  DB import is a separate final step.
+- **Each pass builds on the prior pass's files** and can be re-run independently.
+- **Entity extraction precedes coreference precedes relations.** You can't resolve
+  "he traveled there" before knowing who "he" is, or extract a relation before the
+  entities exist.
+- **The page key is the filename sequence index, never the printed page.** Pages
+  are identified by their `page_NNN` filename position (`page_001` → 1). The OCR/
+  vision-extracted *printed* page number (`extracted_page_number`) is unreliable
+  (missing, duplicated, roman numerals) and is kept only as a display field
+  (`printed_page`). Every cross-stage and cross-store join uses the sequence index.
+- **LLM output is constrained, not trusted.** The local model (LM Studio) is driven
+  with JSON-schema constrained decoding + `/no_think`; outputs are then validated/
+  compacted deterministically before anything reaches the graph.
+- **ES and Neo4j share deterministic IDs** (`book_uuid` / `page_uuid`) so a KG
+  triplet can be traced back to its source page's full text in ES, and vice versa.
+
+---
+
+## Backends and Run Tags
+
+Passes 2–4 run through `src/models/llm/academic/llm_client.py`, which supports two
+backends:
+
+- **LM Studio** (local, default) — model `qwen3.6-35b-a3b` via the `lmstudio`
+  Python SDK with constrained JSON-schema decoding. **Load it at a large context
+  (65536) with no TTL** — the default low context (8192) silently fails Pass 4.
+- **Gemini** — `gemini-3.5-flash`, schema enforced via prompt.
+
+A **run tag** keeps LM Studio and Gemini outputs separate on disk. For LM Studio it
+is auto-derived from the model: `qwen3.6-35b-a3b` → `lms_qwen3_6-35b-a3b`. Gemini
+runs use no tag (the default paths).
+
+| Artifact | LM Studio (`run_tag`) | Gemini (default) |
+|---|---|---|
+| Pass 2 entities | `entities_<run_tag>/page_NNN_entities.json` | `entities/page_NNN_entities.json` |
+| Pass 3 resolved | `book_entities_resolved_<run_tag>.json` | `book_entities_resolved.json` |
+| Pass 4 relations | `relations_v2/<book>/<run_tag>/book_relations.json` | `relations_v2/<book>/book_relations.json` |
 
 ---
 
 ## Pipeline Overview
 
 ```
-PDF / Scanned Document
-        │
-        ▼
-[Prerequisite: OCR]                     → raw text + page images
-        │
-        ▼
-[Pass 1: Structured Page Extraction]    → page_NNN_structured.json  (per page)
-        │
-        ├──────────────────────────────→ ELASTICSEARCH INDEXING
-        │                                 (full text + transcriptions + metadata)
-        ▼
-[Pass 2: Per-Page Entity Tagging]       → page_NNN_entities.json    (per page)
-        │
-        ▼
-[Pass 3: Coreference Resolution]        → book_entities_resolved.json
-        │
-        ▼
-[Pass 4: Relation Extraction]           → book_relations.json
-        │
-        ▼
-[NEO4J IMPORT]                          → knowledge graph
+PDF / scan
+   │  [OCR or embedded-text extraction]            → raw text + page images
+   ▼
+[Pass 1] structured_json_llm.py                    → page_NNN_structured.json
+   │
+   ├───────────────────────────────────────────────→ ELASTICSEARCH (per page)
+   ▼
+[Pass 2] entity_tagger.py                          → page_NNN_entities.json
+   ▼
+[Pass 3] coreference_resolver.py                   → book_entities_resolved[_tag].json
+   ▼
+[Pass 4] relationship_extractor.py                 → book_relations.json  (+ _rejected.json)
+   ▼
+[NEO4J IMPORT]  academic_kg_import.py + others     → knowledge graph
 ```
 
 ---
 
-## Prerequisite: OCR
+## Prerequisite: OCR / text extraction
 
-If the document is not already digitized, OCR must run first. Supported backends:
-
-- **Google Cloud Vision API** — recommended; best results for Hebrew and non-Latin scripts
-- **Doctr**
-- **Unstructured**
-
-Output: per-page raw text alongside page images, stored in the book's directory.
-See `src/models/ocr/book_ocr_service.py`.
-
-If the source is already a digital text (e.g. a downloaded PDF with embedded text),
-OCR can be skipped.
+`src/models/ocr/book_ocr_service.py`. Scans → **Google Cloud Vision** (best for
+Hebrew/non-Latin). Born-digital PDFs → embedded-text extraction (no external OCR).
+Output: per-page raw text + page images in the book directory.
 
 ---
 
 ## Pass 1 — Structured Page Extraction
 
-**Script:** `src/models/llm/structured_json_llm.py`  
-**Input:** raw OCR text + page image (per page)  
-**Output:** `page_NNN_structured.json` (per page)  
-**Window:** single page  
+**Script:** `src/models/llm/academic/structured_json_llm.py` · **per page** ·
+output `page_NNN_structured.json`
 
-The first LLM pass processes each page independently. It does **not** attempt
-entity extraction or relationship inference — its sole job is imposing structure
-on the raw OCR text.
+Imposes structure on raw OCR text, one page at a time (no entity/relation work).
+Fields: `shelf_marks_mentioned`, `footnotes`, `transcriptions`, `classification`
+(`general_academic` / `transcription` / `catalog` / …), `full_main_text`,
+`summary`, `extracted_page_number` (printed page — unreliable, see below).
 
-Each structured page contains:
-
-| Field | Description |
-|---|---|
-| `shelf_marks_mentioned` | Shelf marks cited on this page with brief context description |
-| `footnotes` | Footnote number → full footnote text, separated from main body |
-| `transcriptions` | Hebrew/Aramaic transcriptions keyed by shelf mark, then line number |
-| `classification` | Page type: `general_academic`, `transcription`, `catalog`, `diagram/map` |
-| `full_main_text` | Cleaned main body text with footnotes removed |
-| `summary` | One-paragraph summary of page content |
-| `extracted_page_number` | Actual printed page number(s), not PDF position |
-
-**Design rationale:** Keeping Pass 1 narrow and single-page makes it fast,
-parallelizable, and cheap to re-run. Separating footnotes at this stage prevents
-footnote text from contaminating entity extraction in later passes. Shelf mark
-detection here also gives Pass 2 a head start.
+Default Pass-1 model is the 35B MoE (`qwen3.6-35b-a3b`); the old 8B VL model is
+unreliable (garbled `extracted_page_number`, sparse extraction). Output dirs follow
+the `*_structured_<model>/[<model>/]page_NNN_structured.json` convention.
 
 ---
 
 ## Pass 2 — Per-Page Entity Tagging
 
-**Script:** `src/models/llm/entity_tagger.py` *(planned)*  
-**Input:** `page_NNN_structured.json` for current page + previous page  
-**Output:** `page_NNN_entities.json` (per page)  
-**Window:** 2-page sliding window  
+**Script:** `src/models/llm/academic/entity_tagger.py` · 2-page window ·
+output `page_NNN_entities.json`
 
-A fast, focused pass that asks one narrow question per page: *what named entities
-appear here?*
+Extracts named entities per page: **people** (role hint `historical_person` /
+`scholar` / `collector`), **places**, **institutions**, **shelf marks**. The
+2-page window catches entities whose name appears at the bottom of the previous
+page and short form at the top of the current one.
 
-Each entity file records for this page:
+Key behaviors:
 
-- **People** — name, role hint (`historical_person`, `scholar`, `collector`)
-- **Places** — name, type hint (`city`, `region`, `body_of_water`, etc.)
-- **Institutions** — name, type hint (`library`, `university`, `archive`, etc.)
-- **Shelf marks** — confirmed/augmented from Pass 1
-
-The 2-page window exists to catch entities whose full name appears at the bottom
-of the previous page but whose pronoun or short form appears at the top of the
-current page.
-
-**Design rationale:** Every entity must carry the page number where it appears.
-Document-level extraction (the legacy approach) produces entities with no page
-anchor, making them invisible to relation extraction — you cannot cite evidence
-for a relationship if you don't know where in the text it was asserted.
+- **Constrained decoding** (`_ENTITY_JSON_SCHEMA`) + `/no_think` so the LLM emits
+  valid JSON, not chain-of-thought.
+- **`page_number` = filename sequence index**; the printed page is preserved as
+  `printed_page`.
+- **Template-leak guard.** On low-signal pages the model sometimes echoes the
+  prompt's JSON skeleton verbatim (entities literally named "Full name as it
+  appears" / "Place name", role = the enum string `historical_person|scholar|…`).
+  `_is_leaked_entity` drops these at parse time, and the coreference aggregator
+  applies the same guard so older entity files are cleaned without re-running Pass 2.
 
 ---
 
-## Pass 3 — Coreference Resolution
+## Pass 3 — Coreference Resolution + Entity Classification
 
-**Script:** `src/models/llm/coreference_resolver.py` *(planned)*  
-**Input:** all `page_NNN_entities.json` for a book  
-**Output:** `book_entities_resolved.json`  
-**Window:** 10-page sliding window (may be reduced if context budget is exceeded)  
+**Script:** `src/models/llm/academic/coreference_resolver.py` ·
+input all `page_NNN_entities.json` · output `book_entities_resolved[_tag].json`
 
-The long-context pass. Given a window of already-extracted per-page entities, the
-LLM resolves ambiguous references back to the named entities established in Pass 2:
+Aggregates per-page entities into deduplicated, page-attributed canonical entities,
+then classifies and cleans them:
 
-- **Pronouns:** "he traveled there" → "Joseph b. David Lebdi traveled to Aden"
-- **Definite descriptions:** "the merchant", "the manuscript", "the city"
-- **Shelf mark shorthand:** "the above-mentioned document", abbreviated forms
-- **Cross-page name variants:** "Lebdi" on page 30 = "Joseph b. David Lebdi" from page 1
-
-Output is a consolidated, deduplicated entity list with full page-range attribution
-for each entity across the book.
-
-**Design rationale:** Coreference resolution only works well *after* per-page entity
-extraction has run. Without a named-entity anchor list from Pass 2, the LLM has no
-referent to resolve pronouns to. The 10-page window balances context richness against
-model context limits; the window slides through the book chapter by chapter.
+1. **Aggregate** every name → its page set + contexts (page = filename seq index,
+   with a fallback that re-derives it from the filename for older entity files).
+2. **LLM dedup** (cheap, name-lists only): group surface variants → one canonical
+   ("Lebdi" / "Joseph b. David Lebdi"). The OpenAI-compat 400-on-`response_format`
+   is retried without it.
+3. **`person_class` classification** — each person tagged `biblical` / `scholar` /
+   `historical`:
+   - `biblical` via `biblical_person_classifier.py` (gazetteer of unambiguous
+     Tanakh/Mishnah/classical figures; ambiguous overlap names like *Abraham*,
+     *Joseph* are LLM-adjudicated with context, defaulting to historical).
+   - `scholar` via role hints (scholar/author/editor/collector/dealer/…) +
+     `ScholarRegistry` (ground-truth metadata authors). Scholar wins over
+     ambiguous-biblical.
+   - else `historical`.
+4. **Shelf-mark validation** — `ShelfmarkNormalizer.classify_shelfmark` keeps only
+   genuine shelf marks (recognised collection anchor + a digit), dropping LLM
+   reasoning prose, prompt echoes, vague descriptors ("poetic Geniza fragments"),
+   and Davidson *Thesaurus* poem refs (`D. I Nr. 1012`). Berlin Gemeindebibliothek
+   refs are kept with an explicit Berlin prefix (canonical linking deferred).
 
 ---
 
-## Pass 4 — Relation Extraction
+## Pass 4 — Relation Extraction + Compaction
 
-**Script:** `src/models/llm/relation_extractor.py` *(planned — replaces `enrich_node_relations.py`)*  
-**Input:** `book_entities_resolved.json` + relevant `page_NNN_structured.json` pages  
-**Output:** `book_relations.json`  
-**Window:** per entity, scoped to only the pages where that entity appears (from Pass 3)  
+**Script:** `src/models/llm/academic/relationship_extractor.py` · per entity, scoped
+to that entity's pages · output `book_relations.json` (accepted) +
+`book_relations_rejected.json` (quarantine)
 
-With fully resolved, page-attributed entities, this pass extracts typed relationships.
-Each relation cites the evidence page, a direct quote or close paraphrase, and a
-confidence level (`high` = direct statement, `medium` = clear implication).
+Extracts typed relations per entity (constrained schema + `/no_think`), each with an
+evidence quote, evidence page, and confidence. Then two deterministic, no-LLM steps:
 
-### Allowed Relation Types
+### Augmentation
+`author → STUDIED → fragment` is added for each ground-truth book author × the
+fragments it actually edits/discusses (gated on a transcription page or extended
+discussion) — the core scholarly edges the LLM produces inconsistently.
 
-| Relation | Subject | Object | Notes |
-|---|---|---|---|
-| `LIVED_IN` | Person | Place | historical residence |
-| `TRAVELED_TO` | Person | Place | journey attested in source |
-| `ORIGINATED_FROM` | Person / Fragment | Place | provenance |
-| `AFFILIATED_WITH` | Scholar | Institution | academic affiliation |
-| `WROTE` | Scholar | BookArticle | authorship |
-| `TRANSCRIBED` | Scholar | Fragment | who produced the transcription |
-| `STUDIED` | Scholar | Fragment | scholarly focus |
-| `COLLABORATED_WITH` | Scholar | Scholar | co-authorship or acknowledgment |
-| `MARRIED_TO` | Person | Person | attested in Genizah documents |
-| `RELATED_TO` | Person | Person | family relation |
-| `MENTIONS_PERSON` | Fragment | Person | person named in document |
-| `MENTIONS_PLACE` | Fragment | Place | place named in document |
-| `ORIGINATED_IN` | Fragment | Place | document's origin location |
-| `HELD_AT` | Fragment | Institution | current holding institution |
-| `CITED_IN` | Fragment | BookArticle | fragment discussed in article |
+### Compaction (rejected rows are quarantined, not deleted)
+Applied in order; each dropped relation carries a `reject_reason`:
 
-**Design rationale:** Scoping relation extraction to the pages where an entity
-actually appears prevents spurious relations from unrelated sections of a long book
-and keeps LLM prompts focused and evidence-grounded.
+| Rule | Drops |
+|---|---|
+| authoritative retyping | (not a drop) endpoints that are resolved people are retyped to their canonical label (Scholar / BiblicalPerson / Person) from Pass-3 `person_class` |
+| self-loop | subject == object |
+| exact dedup | identical (subject, relation, object) |
+| **bibliography/citation** | evidence is a reference-list citation (co-editor `COLLABORATED_WITH` cliques, per-citation `WROTE`, publisher cities) — the single biggest noise source |
+| language/concept | endpoint is a language/script/linguistic term (Judaeo-Arabic, imāla, Hebrew) |
+| vague entity | bare "Fragment" / "the manuscript" / etc. |
+| provenance | `ORIGINATED_FROM` from a non-`Person`/`Fragment` subject (publisher cities, institution addresses, scholar regions) |
+| type-pairing | `(subject_type, object_type)` violates `ALLOWED_RELATIONS` (Person/Scholar/BiblicalPerson interchangeable) |
+| biblical scope | a `BiblicalPerson` edge whose other end isn't a `Fragment` (no biblical person↔person edges) |
+
+Cross-store IDs (`book_uuid`, `page_uuid`) are stamped on each accepted relation
+(see *Cross-Store Identifiers*).
 
 ---
 
 ## Knowledge Graph Schema
 
-### Node Types
+### Node labels
 
-| Label | Description | Key Properties |
+| Label | Meaning | Key |
 |---|---|---|
-| `Fragment` | A Cairo Genizah document fragment | `canonical_shelfmark`, `shelfmark`, `collection` |
-| `Person` | A historical figure | `name`, `dates`, `origin` |
-| `Scholar` | A modern academic | `name`, `institution`, `era` |
-| `Place` | A geographic location | `name`, `lat`, `lng`, `region`, `period` |
-| `Institution` | Library, university, or archive | `name`, `city`, `country` |
-| `BookArticle` | Secondary source (book or article) | `title`, `author`, `year`, `article_id` |
-| `Transcription` | A scholarly transcription of a fragment | `text`, `language`, `script` |
+| `Fragment` | A Genizah document fragment | `canonical_shelfmark` |
+| `Person` | Genizah-era historical individual (the priority node type) | `name` |
+| `Scholar` | Modern post-discovery figure: academic, editor, dealer/collector | `name` |
+| `BiblicalPerson` | Canonical Tanakh/Mishnah/Talmud/classical figure | `name` |
+| `Place` | Geographic location (lat/lng after geocoding) | `name` |
+| `Institution` | Library / university / archive | `name` |
+| `BookArticle` | Secondary source | `article_id` (sha1 of title|author|year) |
+| `Entity` | Fallback when a type is unknown | `name` |
 
-### Person vs Scholar
+**Person vs Scholar vs BiblicalPerson.** `Person` = historical Genizah-era people
+(the priority). `Scholar` = modern researchers/editors/collectors — wins for anyone
+matching a ground-truth metadata author or scholar/collector role. `BiblicalPerson`
+= canonical ancient figures, kept *only* so they don't conflate with Person/Scholar
+and to support "fragments discussing Abraham" queries — they keep **only
+`Fragment → BiblicalPerson` edges** (no person↔person biblical graph). Classification
+happens in Pass 3 (`person_class`) and is applied at import; biblical detection is
+conservative so a real person named "David" is never demoted.
 
-These are intentionally distinct node types because their meaningful relationships
-differ fundamentally:
+### Relation types (`ALLOWED_RELATIONS`)
 
-**`Person`** — a historical individual attested in or discussed by Genizah documents.
-Relationships that matter: where they lived, where they traveled, who they married,
-which fragments mention them, where they originated from.
+| Relation | Subject → Object |
+|---|---|
+| `LIVED_IN`, `TRAVELED_TO`, `ORIGINATED_FROM` | Person → Place |
+| `AFFILIATED_WITH` | Scholar → Institution |
+| `WROTE` | Scholar → BookArticle |
+| `TRANSCRIBED`, `STUDIED` | Scholar → Fragment |
+| `COLLABORATED_WITH` | Scholar → Scholar |
+| `MARRIED_TO`, `RELATED_TO` | Person → Person |
+| `MENTIONS_PERSON` | Fragment → Person |
+| `MENTIONS_PLACE`, `ORIGINATED_IN` | Fragment → Place |
+| `HELD_AT` | Fragment → Institution |
+| `CITED_IN` | Fragment → BookArticle |
 
-**`Scholar`** — a modern academic who studies the Genizah. Relationships that matter:
-which fragments they transcribed or edited, which articles they wrote, which
-institutions they are affiliated with, which colleagues they collaborated with.
+### Provenance properties
 
-**Collectors** (individuals who assembled Genizah collections, e.g. Elkan Adler,
-David Kaufmann) are kept as `Person` nodes. Although their relationship to fragments
-differs from that of historical correspondents, they are historical actors whose
-provenance connections to fragments and institutions are meaningful and distinct from
-modern scholarship.
+Every node/edge carries `data_sources` (`pgp`, `biblio`, `extracted`, `enriched`,
+`merged`) and `source_books`, so any element's origin is traceable and re-imports
+are idempotent.
 
-### Transcription Provenance
+---
 
-A `Transcription` node links to **both** the `Fragment` it transcribes and the
-`BookArticle` in which it was published:
+## Cross-Store Identifiers (ES ↔ Neo4j)
 
-```
-(Scholar)-[:TRANSCRIBED]->(Transcription)-[:OF]->(Fragment)
-(Transcription)-[:PUBLISHED_IN]->(BookArticle)
-```
+**Module:** `src/datasets/document_models/corpus_ids.py`
 
-This captures the full provenance chain: *who* transcribed it, *where* it was
-published, and *which fragment* it represents. Multiple transcriptions of the same
-fragment by different scholars are modeled as separate `Transcription` nodes, all
-pointing to the same `Fragment`.
+Deterministic UUIDs shared by both stores, so the web app can jump from a KG triplet
+to its source page's text in ES and back:
+
+- **book key** = the book's DOI when present (`metadata.identifiers.doi`), else the
+  book directory stem (`pdf_name` / `source_book`).
+- `book_uuid = uuid5(GENIZAH_NS, book_key)` — uniform UUID either way.
+- `page_uuid = uuid5(GENIZAH_NS, "<book_key>#p<seq>")`, **seq = filename index**.
+
+Both stores must use the sequence index for the page component (the printed page is
+unreliable). On the ES side the page document's `_id` **is** the `page_uuid`; on the
+KG side each academic relation carries `r.book_uuid` / `r.page_uuid`. DOI coverage is
+currently small (≈3 books); the rest fall back to the stem.
 
 ---
 
 ## Elasticsearch Indexing
 
-Elasticsearch consumes **Pass 1 output only** and is indexed independently of the
-Neo4j pipeline. Each page becomes a searchable document with:
+**Scripts:** `src/datasets/indexing/bibliography/index_all_bibliography.py` (driver),
+`index_bibliography.py`, `elastic_index_genizah.py`. Consumes **Pass 1 output only**.
 
-- Full main text (footnotes separated)
-- Transcriptions (searchable Hebrew/Aramaic primary source text)
-- Shelf marks as keyword filters
-- Book/article metadata (author, year, collection)
-- Page classification and summary
+Discovery is **book-directory based** (mirrors the KG's book selection): one task per
+book, choosing the structured-dir variant with the most pages, resolving each book's
+real `*_metadata.json` (the root `example_book_metadata.json` template is excluded).
+This guarantees the ES book set matches the KG's exactly.
 
-This enables:
-- **Semantic search** via dense vector embeddings (NOMIC, CLIP)
-- **Keyword search** via BM25
-- **Primary source search** directly against transcription text
-- **Filtered search** by shelf mark, author, institution, date range
+Each page document carries: `full_text_content` (footnotes separated),
+`transcriptions`, `shelf_marks_mentioned`, book metadata, `page_number` (printed),
+**`page_seq`** (filename index), **`book_uuid`**, **`page_uuid`**, `doi`. Enables
+semantic (NOMIC/CLIP) + BM25 + transcription + filtered search. Re-index under a new
+index version since the `_id` scheme is now `page_uuid`.
 
 ---
 
-## Neo4j Import
+## Neo4j Import / Rebuild
 
-All Neo4j import scripts are **read-only with respect to the extraction pipeline** —
-they consume JSON files produced by Passes 1–4 and write to the graph. They do not
-feed back into the extraction pipeline.
+Import scripts consume the JSON files and write the graph; they never feed back into
+extraction. **Order matters** (later steps enrich earlier nodes):
 
 ```bash
-# Backup before any destructive rebuild
-python src/datasets/indexing/neo4j/backup_to_gcs.py
+# 1. Princeton PGP CSV → Fragment / Person / Place base
+python -m src.datasets.indexing.neo4j.knowlege_graph_poc
 
-# Princeton PGP CSV (Fragment nodes + basic metadata)
-python src/datasets/indexing/neo4j/knowledge_graph_poc.py
+# 2. Bibliography citations (RICHEST citation source — keep, not deprecated)
+python -m src.datasets.indexing.neo4j.biblio_import
 
-# Academic literature (entities + relations from Passes 2–4)
-python src/datasets/indexing/neo4j/academic_kg_import.py
+# 3. Academic literature relations (Pass 4 book_relations.json; stamps book_uuid/page_uuid)
+python -m src.datasets.indexing.neo4j.academic_kg_import      # add --include-legacy for old *_enhanced.json
 
-# Geocode Place nodes (runs after import)
-python src/datasets/indexing/neo4j/geocode_places.py
+# 4. Merged-shelfmarks enrichment (FJP related people/places + KTIV catalog)
+python -m src.datasets.indexing.neo4j.merged_shelfmarks_import
+
+# 5. Geocode Place nodes
+python -m src.datasets.indexing.neo4j.geocode_places
+```
+
+What each adds:
+
+- **`biblio_import`** (`biblio.json`, ~9.9k shelf marks / 28.7k citations) →
+  `BookArticle`, `Scholar`, `WROTE`, `REFERENCES`, `HELD_AT`. This is the **richest
+  citation source** (the merged file's FJP bibliography has less than half as many
+  citations), so it is *not* superseded by the merged import.
+- **`academic_kg_import`** → the academic relations from Pass 4. By default it imports
+  **only** the new `book_relations.json` (Pass 4); legacy `*_enhanced.json` /
+  `enriched_relations/` require `--include-legacy`. Resolves Person/Scholar/
+  BiblicalPerson labels and stamps `book_uuid`/`page_uuid`.
+- **`merged_shelfmarks_import`** (NEW) → from `merged_shelfmarks.jsonl`, the rich +
+  already-in-KG subset only: FJP `related_people`/`related_places` →
+  `MENTIONS_PERSON`/`MENTIONS_PLACE`; date/language/description and KTIV catalog
+  metadata (`subjects`, `notes`, paleography, `catalog_author`, `catalog_persons`,
+  `genres`) as Fragment properties; `HELD_AT`. Fragments keyed by
+  `to_canonical_id(shelfmark_display)` so they merge with existing nodes. KTIV
+  scholarly **bibliography** is *not* imported yet — the "FGP Catalogue record" field
+  that carries it is not captured by the current KTIV scraper.
+
+---
+
+## Running the Full Extraction (LM Studio)
+
+**Per book** (resumable driver over the whole corpus): `run_kg_overnight.py` walks
+every book directory and runs Passes 2→4 (`overwrite=True`), writing a
+`.v2_complete` sentinel per finished book so a restart skips completed work. Per-book
+/ per-pass errors are isolated.
+
+```bash
+# Ensure the model is loaded at a large context first (critical):
+lms load qwen/qwen3.6-35b-a3b --identifier qwen3.6-35b-a3b --context-length 65536 -y
+
+PYTHONPATH=. nohup .venv/bin/python run_kg_overnight.py >> ~/kg_overnight.log 2>&1 &
+```
+
+**Single book** (per-pass CLI; each derives `--run-tag` from `--lms-model`):
+
+```bash
+python -m src.models.llm.academic.entity_tagger        --dir <book> --backend lm_studio --lms-model qwen3.6-35b-a3b
+python -m src.models.llm.academic.coreference_resolver --dir <book> --lms-model qwen3.6-35b-a3b
+python -m src.models.llm.academic.relationship_extractor --dir <book> --backend lm_studio --lms-model qwen3.6-35b-a3b
 ```
 
 ---
 
-## Running the Full Pipeline
+## Operational Notes
 
-```bash
-# Step 0: OCR (skip if already digitized)
-python src/models/ocr/book_ocr_service.py --input path/to/book.pdf
-
-# Step 1: Structured extraction
-python src/models/llm/academic/structured_json_llm.py --dir academic_literature/my_book
-# Step 2: Per-page entity tagging  (planned)
-python src/models/llm/entity_tagger.py --dir academic_literature/my_book
-
-# Step 3: Coreference resolution  (planned)
-python src/models/llm/coreference_resolver.py --dir academic_literature/my_book
-
-# Step 4: Relation extraction  (planned)
-python src/models/llm/relationship_extractor.py --dir academic_literature/my_book
-
-# Index to Elasticsearch (can run after Step 1)
-python src/datasets/indexing/elasticsearch/elastic_index_genizah.py
-
-# Import to Neo4j (run after Steps 1–4 complete)
-python src/datasets/indexing/neo4j/knowledge_graph_poc.py
-python src/datasets/indexing/neo4j/academic_kg_import.py
-python src/datasets/indexing/neo4j/geocode_places.py
-```
+- **LM Studio context is the #1 gotcha.** Verify with `lms ps` (CONTEXT column) before
+  a run. At 8192, Pass 1 drops pages and Pass 4 yields **zero** relations. Load one
+  instance at 65536 under the exact identifier the pipeline requests (`qwen3.6-35b-a3b`),
+  no TTL, so it can't bind to a stale 8192 instance.
+- **Resumability.** `.v2_complete` sentinels live in the repo (under `relations_v2/`),
+  so they survive reboots and `/tmp` cleanups; re-running the driver continues where
+  it left off.
+- **Rebuild = full wipe.** To reflect the current pipeline, wipe the Neo4j DB and run
+  the import order above — `academic_kg_import` MERGEs, so importing onto an old graph
+  would mix new clean relations with stale noisy ones.
+- **Database.** `.env` `NEO4J_DATABASE=neo4j` (the data lives in `neo4j`, not
+  `genizah-prod`); scripts read this env var.
 
 ---
 
-## Legacy Scripts
+## Legacy / Status
 
-The following scripts predate this architecture and are being phased out:
-
-| Script | Issue | Replacement |
-|---|---|---|
-| `secondary_llm_processing.py` | Combined entity extraction, coreference, and KG triplets in one pass; document-level people with no page attribution | Pass 2 + Pass 3 |
-| `enrich_node_relations.py` | Queried Neo4j for candidate entities, creating a DB dependency mid-pipeline | Pass 4 |
-| `enrich_fragment_people.py` | Wrote Fragment→Person edges directly to Neo4j mid-pipeline | Pass 4 output → `academic_kg_import.py` |
-| `biblio_import.py` | Deprecated; functionality merged into `academic_kg_import.py` | `academic_kg_import.py` |
+| Script | Status |
+|---|---|
+| `biblio_import.py` | **Active** — richest citation source; complements `merged_shelfmarks_import`. |
+| `merged_shelfmarks_import.py` | **Active (new)** — fragment enrichment from the merged corpus. |
+| `secondary_llm_processing.py` | Deprecated — combined extraction/coref/triplets in one pass, no page attribution. Replaced by Pass 2 + Pass 3. |
+| `enrich_node_relations.py` | Deprecated — queried Neo4j mid-pipeline. Replaced by Pass 4. |
+| `enhanced_kg_import.py` | Superseded by `academic_kg_import.py`. |
+| `enrich_fragment_people.py` | Still reads legacy `*_enhanced.json`; pending port to the new outputs. |

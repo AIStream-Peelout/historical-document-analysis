@@ -63,6 +63,18 @@ _MERGED = _REPO / "src" / "datasets" / "raw_data" / "cairo_genizah" / "merged" /
 # Pure extraction (no Neo4j) — testable offline
 # ---------------------------------------------------------------------------
 
+def _as_text(value: Any) -> Optional[str]:
+    """Coerce a KTIV catalog field (str or list of str) to a clean string.
+
+    :param value: Raw field value (str, list, or None).
+    :returns: Trimmed string (lists joined with "; "), or None if empty.
+    """
+    if isinstance(value, list):
+        value = "; ".join(str(v).strip() for v in value if str(v).strip())
+    s = (str(value).strip() if value is not None else "")
+    return s or None
+
+
 def _fjp_records(record: Dict) -> List[Dict]:
     return (record.get("sources") or {}).get("fjp") or []
 
@@ -86,7 +98,10 @@ def is_rich(record: Dict) -> bool:
         if fr.get("related_people") or fr.get("related_places"):
             return True
     ktiv = _ktiv_record(record)
-    return bool(ktiv and ktiv.get("scholarly_entries"))
+    if not ktiv:
+        return False
+    fc = ktiv.get("full_catalog") or {}
+    return bool(ktiv.get("scholarly_entries") or fc.get("subjects") or fc.get("notes"))
 
 
 def extract_record(record: Dict) -> Optional[Dict]:
@@ -136,9 +151,24 @@ def extract_record(record: Dict) -> Optional[Dict]:
     genres: List[str] = []
     catalog_title = None
     scholarly_count = 0
+    subjects: List[str] = []
+    notes = catalog_author = catalog_persons = paleographic = None
     if ktiv:
         scholarly_count = int(ktiv.get("scholarly_entry_count") or 0)
-        catalog_title = (ktiv.get("basic_catalog") or {}).get("title")
+        bc = ktiv.get("basic_catalog") or {}
+        fc = ktiv.get("full_catalog") or {}
+        catalog_title = _as_text(bc.get("title"))
+        catalog_author = _as_text(bc.get("author"))
+        # subjects: drop the bare numeric NLI record-ids mixed into the list
+        subjects = [s.strip() for s in (fc.get("subjects") or [])
+                    if isinstance(s, str) and s.strip() and not s.strip().isdigit()]
+        notes = _as_text(fc.get("notes"))
+        paleographic = _as_text(fc.get("paleographic_note"))
+        # additional_persons is a single undelimited string — keep as a
+        # searchable property, do NOT split into (garbage) Person nodes.
+        ap = _as_text(fc.get("additional_persons")) or ""
+        psub = _as_text(fc.get("persons_as_subject")) or ""
+        catalog_persons = "; ".join(p for p in (ap, psub) if p) or None
         for se in (ktiv.get("scholarly_entries") or []):
             for sub in (se.get("subsections") or {}).values():
                 if not isinstance(sub, dict):
@@ -162,6 +192,11 @@ def extract_record(record: Dict) -> Optional[Dict]:
         "genres": genres,
         "catalog_title": catalog_title,
         "scholarly_entry_count": scholarly_count,
+        "subjects": subjects,
+        "notes": notes,
+        "paleographic": paleographic,
+        "catalog_author": catalog_author,
+        "catalog_persons": catalog_persons,
         "pgpids": record.get("pgpids") or [],
         "people": list(people.values()),
         "places": list(places.values()),
@@ -252,14 +287,21 @@ class MergedShelfmarkImporter:
                     f.language    = coalesce(f.language, $language),
                     f.description = coalesce(f.description, $description),
                     f.catalog_title = coalesce(f.catalog_title, $catalog_title),
+                    f.catalog_author = coalesce(f.catalog_author, $catalog_author),
+                    f.catalog_persons = coalesce(f.catalog_persons, $catalog_persons),
+                    f.notes = coalesce(f.notes, $notes),
+                    f.paleographic_note = coalesce(f.paleographic_note, $paleographic),
                     f.scholarly_entry_count = CASE WHEN $sec > 0 THEN $sec ELSE f.scholarly_entry_count END,
                     f.genres = CASE WHEN size($genres) > 0 THEN $genres ELSE f.genres END,
+                    f.subjects = CASE WHEN size($subjects) > 0 THEN $subjects ELSE f.subjects END,
                     f.pgpids = CASE WHEN size($pgpids) > 0 THEN $pgpids ELSE f.pgpids END
                 """,
                 canonical=r["canonical_shelfmark"], display=r["display_shelfmark"],
                 date=r["date"], language=r["language"], description=r["description"],
                 catalog_title=r["catalog_title"], sec=r["scholarly_entry_count"],
-                genres=r["genres"], pgpids=[str(p) for p in r["pgpids"]],
+                genres=r["genres"], subjects=r["subjects"], notes=r["notes"],
+                paleographic=r["paleographic"], catalog_author=r["catalog_author"],
+                catalog_persons=r["catalog_persons"], pgpids=[str(p) for p in r["pgpids"]],
             )
             if r["institution"]:
                 tx.run(
