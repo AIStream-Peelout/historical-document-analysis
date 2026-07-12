@@ -85,8 +85,8 @@ def ktiv_image_manifest(zip_paths: List[str]) -> Dict[str, List[str]]:
     """Map each manuscript ``sys_num`` to its ordered GCS image object paths.
 
     Reads the chosen archive per manuscript and lists its image members (the
-    ``header.pdf`` and any non-image members are skipped), preserving archive
-    order.
+    ``header.pdf`` and any non-image members are skipped), sorted by member name
+    for deterministic ordering.
 
     :param zip_paths: Paths to KTIV ``*.zip`` archives.
     :returns: ``sys_num -> [bucket-relative object paths]``. A manuscript with no
