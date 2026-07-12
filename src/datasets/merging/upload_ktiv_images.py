@@ -81,16 +81,11 @@ def upload(
                     continue
                 blob = bucket.blob(object_path)
                 if not overwrite and blob.exists():
+                    skipped += 1
+                    continue
                 with zf.open(member) as fh:
-                    ext = os.path.splitext(member)[1].lower()
-                    content_type = {
-                        ".png": "image/png",
-                        ".tif": "image/tiff",
-                        ".tiff": "image/tiff",
-                        ".jpeg": "image/jpeg",
-                        ".jpg": "image/jpeg",
-                    }.get(ext, "application/octet-stream")
-                    blob.upload_from_file(fh, content_type=content_type)
+                    blob.upload_from_file(fh, content_type="image/jpeg")
+                uploaded += 1
         print(f"{sys_num}: done ({uploaded} uploaded, {skipped} skipped so far)")
 
     result = {"uploaded": uploaded, "skipped": skipped, "manuscripts": len(chosen)}
