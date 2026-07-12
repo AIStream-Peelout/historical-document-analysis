@@ -605,7 +605,8 @@ def _legacy_enhanced_context(
     if not path:
         return ""
     try:
-        data = json.load(open(path, encoding="utf-8"))
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
     except Exception as e:
         logger.warning(f"  Could not load {path}: {e}")
         return ""
