@@ -379,7 +379,8 @@ def _get_entity_pages_resolved(
     if not resolved_files:
         return []
     try:
-        data = json.load(open(resolved_files[0], encoding="utf-8"))
+        with open(resolved_files[0], encoding="utf-8") as f:
+            data = json.load(f)
     except Exception as e:
         logger.warning(f"  Could not load {resolved_files[0]}: {e}")
         return []
