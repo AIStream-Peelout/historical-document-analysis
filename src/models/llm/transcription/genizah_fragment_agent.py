@@ -7,10 +7,12 @@ import asyncio
 import json
 import os
 import re
+import ssl
 from pathlib import Path
 from typing import TypedDict, Optional, Dict, List
 from urllib.parse import urlparse
 import aiohttp
+import certifi
 from langgraph.graph import StateGraph, END
 import google.generativeai as genai
 from google.cloud import vision
@@ -387,8 +389,11 @@ async def download_image(
             return output_path
 
         print(f"  ⬇ Downloading: {filename}")
+        # Use certifi's CA bundle explicitly — macOS Python installs often
+        # lack system certs, causing SSLCertVerificationError otherwise.
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
         async with aiohttp.ClientSession() as session:
-            async with session.get(url_or_filename) as response:
+            async with session.get(url_or_filename, ssl=ssl_ctx) as response:
                 response.raise_for_status()
                 content = await response.read()
                 output_path.write_bytes(content)

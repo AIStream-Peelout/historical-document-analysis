@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import re
 import time
 from pathlib import Path
@@ -79,6 +80,12 @@ from src.models.ocr.lms_transcriber import (
     LMStudioConfig,
 )
 
+# Claude (flag-gated — expensive, off by default)
+from src.models.llm.transcription.claude_transcriber import (
+    transcribe_with_claude,
+    ClaudeConfig,
+)
+
 
 # ============================================================================
 # Talmud-specific config (extends EvalConfig without modifying it)
@@ -96,21 +103,16 @@ TALMUD_RESULTS_DIR = Path("./talmud_results")
 IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".tif", ".tiff")
 
 _MAX_CELL_CHARS = 3000  # W&B renders long strings slowly; cap per cell
-_MAX_CELL_CHARS = 3000  # W&B renders long strings slowly; cap per cell
 
 # ============================================================================
-# LM Studio runtime state
-# Set once at the top of run_talmud_eval(); read throughout the module.
-# ========
-
-# ============================================================================
-# LM Studio runtime state
+# LM Studio / Claude runtime state
 # Set once at the top of run_talmud_eval(); read throughout the module.
 # ============================================================================
 
 # Populated by run_talmud_eval() before any documents are evaluated.
 _lm_studio_models: List[str] = []
 _lm_studio_base_url: str = LMStudioConfig.base_url  # "http://localhost:1234/v1"
+_use_claude: bool = False
 
 
 def _lm_key(model_id: str) -> str:
@@ -157,6 +159,8 @@ def _section_columns() -> List[str]:
 
     # ── Text outputs (all models together) ───────────────────────────────────
     cols += ["gemini_pro", "gemini_flash"]
+    if _use_claude:
+        cols += ["claude"]
     cols += lm_keys                        # open-weight VLMs
     cols += [
         "vision_ocr_raw",                  # flat full-page OCR (no section split)
@@ -168,6 +172,8 @@ def _section_columns() -> List[str]:
     # ── Metrics (all models together, same order as text above) ──────────────
     cols += ["pro_cer_strict", "pro_cer_lenient"]
     cols += ["flash_cer_strict", "flash_cer_lenient"]
+    if _use_claude:
+        cols += ["claude_cer_strict", "claude_cer_lenient"]
     for k in lm_keys:
         cols += [f"{k}_cer_strict", f"{k}_cer_lenient"]
     cols += [
@@ -210,6 +216,9 @@ def _append_section_table_rows(
         flash_sections: Optional[Dict[str, str]],
         pro_section_metrics: Optional[Dict],
         flash_section_metrics: Optional[Dict],
+        # Claude (flag-gated)
+        claude_sections: Optional[Dict[str, str]] = None,
+        claude_section_metrics: Optional[Dict] = None,
         # LM Studio VLMs
         lm_studio_sections: Optional[Dict[str, Dict[str, str]]] = None,
         lm_studio_section_metrics: Optional[Dict[str, Dict]] = None,
@@ -235,6 +244,8 @@ def _append_section_table_rows(
                   vision_ocr_seg_cer | kraken_seg_cer
                   ── metadata ──
     """
+    claude_sections           = claude_sections           or {}
+    claude_section_metrics    = claude_section_metrics    or {}
     lm_studio_sections        = lm_studio_sections        or {}
     lm_studio_section_metrics = lm_studio_section_metrics or {}
     vision_sections           = vision_sections           or {}
@@ -263,6 +274,8 @@ def _append_section_table_rows(
             _cell(pro_text),
             _cell(flash_text),
         ]
+        if _use_claude:
+            row.append(_cell(claude_sections.get(section, "")))
         for model_id in _lm_studio_models:
             lm_text = (lm_studio_sections.get(model_id) or {}).get(section, "")
             row.append(_cell(lm_text))
@@ -282,6 +295,11 @@ def _append_section_table_rows(
             _cer(flash_section_metrics, section, "cer_strict"),
             _cer(flash_section_metrics, section, "cer_lenient"),
         ]
+        if _use_claude:
+            row += [
+                _cer(claude_section_metrics, section, "cer_strict"),
+                _cer(claude_section_metrics, section, "cer_lenient"),
+            ]
         for model_id in _lm_studio_models:
             lm_mets = lm_studio_section_metrics.get(model_id) or {}
             row += [
@@ -612,6 +630,33 @@ def compute_section_metrics(
     return metrics
 
 
+def _score_section_output(section: str, text: str, gt_text: str) -> Dict[str, Optional[float]]:
+    """Score one section's output against its ground truth, guarding empty cases.
+
+    Returns ``None`` metrics when there is no model output or no GT for the
+    section — consistent with :func:`compute_section_metrics`, so unscorable
+    sections don't pollute per-section means with artificial CER values.
+
+    :param section: Section name (gemara / rashi / tosafot), for logging
+    :type section: str
+    :param text: Model output for the section
+    :type text: str
+    :param gt_text: Ground-truth text for the section
+    :type gt_text: str
+    :return: Dict with ``cer_strict`` / ``cer_lenient`` (floats or None)
+    :rtype: Dict[str, Optional[float]]
+    """
+    if text and gt_text.strip():
+        s, l = cer_pair(text, gt_text)
+        print(f"    [{section}] {len(text)} chars  CER strict={s:.3f}  lenient={l:.3f}")
+        return {"cer_strict": s, "cer_lenient": l}
+    if text:
+        print(f"    [{section}] {len(text)} chars — no GT for this section, not scored")
+    else:
+        print(f"    [{section}] no output")
+    return {"cer_strict": None, "cer_lenient": None}
+
+
 def _wandb_section_payload(model: str, metrics: Dict) -> Dict[str, float]:
     """Flatten section metrics to a W&B log dict."""
     out = {}
@@ -626,11 +671,12 @@ def _wandb_section_payload(model: str, metrics: Dict) -> Dict[str, float]:
 # VLM call helpers
 # ============================================================================
 
-async def _call_vision_ocr(image_path: str, full_gt: str) -> Tuple[Optional[str], Dict, float]:
-    """Run Google Cloud Vision OCR and return (text, metrics, elapsed_s).
+async def _call_vision_ocr(image_path: str) -> Tuple[Optional[str], float]:
+    """Run Google Cloud Vision OCR and return (text, elapsed_s).
 
-    Vision OCR returns a flat string with no section awareness — the same text
-    is shown in every section table row, and CER is computed against the full GT.
+    Vision OCR returns a flat string with no section awareness.  The raw
+    output is never scored (block order is not reading order) — it is shown
+    for inspection and scored only after the segmentation-LLM step.
     Mirrors the vision_ocr_node() implementation in genizah_fragment_agent.py.
     """
     t0 = time.time()
@@ -643,29 +689,17 @@ async def _call_vision_ocr(image_path: str, full_gt: str) -> Tuple[Optional[str]
 
         if response.text_annotations:
             text = response.text_annotations[0].description
+            print(f"    ✓ {len(text)} chars (raw — scored after segmentation only)")
         else:
             text = ""
-
-        if text:
-            strict, lenient = cer_pair(text, full_gt)
-            metrics = {
-                "overall": {"cer_strict": strict, "cer_lenient": lenient},
-                **{s: {"cer_strict": None, "cer_lenient": None} for s in SECTION_KEYS},
-            }
-            print(f"    ✓ {len(text)} chars  CER strict={strict:.3f}  lenient={lenient:.3f}")
-        else:
-            metrics = {
-                "overall": {"cer_strict": 1.0, "cer_lenient": 1.0},
-                **{s: {"cer_strict": None, "cer_lenient": None} for s in SECTION_KEYS},
-            }
             print("    ⚠ No text detected by Vision OCR")
 
-        return text, metrics, elapsed
+        return text, elapsed
 
     except Exception as exc:
         elapsed = time.time() - t0
         print(f"    ✗ Vision OCR failed: {type(exc).__name__}: {str(exc)[:120]}")
-        return None, {}, elapsed
+        return None, elapsed
 
 
 async def _call_section_extraction(
@@ -820,6 +854,7 @@ async def evaluate_talmud_document(
         skip_kraken: bool = False,
         skip_lm_studio: bool = False,
         skip_vision_ocr: bool = False,
+        use_claude: bool = False,
         batch_num: Optional[int] = None,
         segmentation_model: str = AgentConfig.GEMINI_FLASH_MODEL,
         segmentation_base_url: Optional[str] = None,
@@ -857,12 +892,14 @@ async def evaluate_talmud_document(
         # Per-section outputs keyed by model
         "_pro_sections":          {},   # {section: text}
         "_flash_sections":        {},
+        "_claude_sections":       {},
         "_lm_sections":           {},   # {model_id: {section: text}}
         "_vision_sections":       {},   # after segmentation
         "_kraken_sections":       {},   # after segmentation
         # Section metrics
         "_pro_section_metrics":   {},
         "_flash_section_metrics": {},
+        "_claude_section_metrics": {},
         "_lm_section_metrics":    {},   # {model_id: metrics_dict}
         "_vision_section_metrics":{},
         "_kraken_section_metrics":{},
@@ -880,7 +917,7 @@ async def evaluate_talmud_document(
     vision_text: Optional[str] = None
     if not skip_vision_ocr:
         print("  🔍 Vision OCR...")
-        vision_text, _, vision_elapsed = await _call_vision_ocr(str(image_path), full_gt)
+        vision_text, vision_elapsed = await _call_vision_ocr(str(image_path))
         state["model_times"]["vision_ocr"] = vision_elapsed
         state["_vision_flat"] = vision_text or ""
         if vision_text:
@@ -902,13 +939,9 @@ async def evaluate_talmud_document(
             )
             state["_pro_sections"][section] = text
             pro_t_total += elapsed
-            if text:
-                s, l = cer_pair(text, gt_sections.get(section, ""))
-                state["_pro_section_metrics"][section] = {"cer_strict": s, "cer_lenient": l}
-                print(f"    [{section}] {len(text)} chars  CER strict={s:.3f}  lenient={l:.3f}")
-            else:
-                state["_pro_section_metrics"][section] = {"cer_strict": None, "cer_lenient": None}
-                print(f"    [{section}] no output")
+            state["_pro_section_metrics"][section] = _score_section_output(
+                section, text, gt_sections.get(section, "")
+            )
             await asyncio.sleep(2)
         state["model_times"]["gemini_pro"] = pro_t_total
         # Overall CER across all sections
@@ -930,13 +963,9 @@ async def evaluate_talmud_document(
             )
             state["_flash_sections"][section] = text
             flash_t_total += elapsed
-            if text:
-                s, l = cer_pair(text, gt_sections.get(section, ""))
-                state["_flash_section_metrics"][section] = {"cer_strict": s, "cer_lenient": l}
-                print(f"    [{section}] {len(text)} chars  CER strict={s:.3f}  lenient={l:.3f}")
-            else:
-                state["_flash_section_metrics"][section] = {"cer_strict": None, "cer_lenient": None}
-                print(f"    [{section}] no output")
+            state["_flash_section_metrics"][section] = _score_section_output(
+                section, text, gt_sections.get(section, "")
+            )
             await asyncio.sleep(2)
         state["model_times"]["gemini_flash"] = flash_t_total
         flash_overall = compute_section_metrics(state["_flash_sections"], gt_sections)
@@ -945,6 +974,26 @@ async def evaluate_talmud_document(
         if not state["final_transcription"]:
             state["final_transcription"] = flash_full
             state["consensus_strategy"]  = "flash_fallback"
+
+    # ── Claude — 3 separate section-extraction calls (flag-gated) ────────────
+    if use_claude:
+        print(f"  🤖 Claude ({ClaudeConfig.DEFAULT_MODEL}, per-section extraction)...")
+        claude_t_total = 0.0
+        for section in SECTION_KEYS:
+            t0 = time.time()
+            text = await transcribe_with_claude(
+                str(image_path), SECTION_EXTRACT_PROMPTS[section]
+            )
+            text = (text or "").strip()
+            claude_t_total += time.time() - t0
+            state["_claude_sections"][section] = text
+            state["_claude_section_metrics"][section] = _score_section_output(
+                section, text, gt_sections.get(section, "")
+            )
+            await asyncio.sleep(1)
+        state["model_times"]["claude"] = claude_t_total
+        claude_overall = compute_section_metrics(state["_claude_sections"], gt_sections)
+        state["_claude_section_metrics"]["overall"] = claude_overall.get("overall", {})
 
     # ── Kraken (flat HTR → segmentation) ─────────────────────────────────────
     kraken_flat = ""
@@ -1012,6 +1061,8 @@ async def evaluate_talmud_document(
         flash_sections=flash_sections_d or None,
         pro_section_metrics=state["_pro_section_metrics"] or None,
         flash_section_metrics=state["_flash_section_metrics"] or None,
+        claude_sections=state["_claude_sections"] or None,
+        claude_section_metrics=state["_claude_section_metrics"] or None,
         lm_studio_sections=state["_lm_sections"] or None,
         lm_studio_section_metrics=state["_lm_section_metrics"] or None,
         vision_ocr_raw=state["_vision_flat"],
@@ -1030,6 +1081,7 @@ async def evaluate_talmud_document(
         ("vision_ocr", state["_vision_section_metrics"]),
         ("flash",      state["_flash_section_metrics"]),
         ("pro",        state["_pro_section_metrics"]),
+        ("claude",     state["_claude_section_metrics"]),
         ("kraken",     state["_kraken_section_metrics"]),
     ]:
         if mets:
@@ -1050,6 +1102,9 @@ async def evaluate_talmud_document(
     for section, text in state["_flash_sections"].items():
         if text:
             save_raw_output(doc_id, f"gemini_flash_{section}", text)
+    for section, text in state["_claude_sections"].items():
+        if text:
+            save_raw_output(doc_id, f"claude_{section}", text)
     if state["_kraken_flat"]:
         save_raw_output(doc_id, "kraken_flat", state["_kraken_flat"])
     for mid, secs in state["_lm_sections"].items():
@@ -1059,47 +1114,6 @@ async def evaluate_talmud_document(
     save_incremental_result(state, batch_num)
 
     return state
-
-
-def _update_comparison_html(state: Dict) -> None:
-    """Generate comparison HTML, injecting Kraken and LM Studio blocks."""
-    html = create_comparison_html(
-        state["doc_id"],
-        state.get("ground_truth", ""),
-        (state.get("vision_ocr_result") or {}).get("text", ""),
-        (state.get("gemini_flash_result") or {}).get("text", ""),
-        (state.get("gemini_pro_result") or {}).get("text", ""),
-        state["final_transcription"],
-        state["consensus_strategy"],
-    )
-
-    extra_blocks = ""
-
-    kraken_text = (state.get("kraken_result") or {}).get("text", "")
-    if kraken_text:
-        extra_blocks += f"""
-        <div class="section" style="grid-column: span 2;">
-            <h3>Kraken / MiDRASH Gen 01 ({len(kraken_text)} chars)</h3>
-            <div class="text">{kraken_text[:800]}...</div>
-        </div>"""
-
-    for model_id, result in state.get("_lm_results", {}).items():
-        text = (result or {}).get("text", "")
-        if text:
-            k = _lm_key(model_id)
-            extra_blocks += f"""
-        <div class="section" style="grid-column: span 2;">
-            <h3>LM Studio: {model_id} ({len(text)} chars)</h3>
-            <div class="text">{text[:800]}...</div>
-        </div>"""
-
-    if extra_blocks:
-        html = html.replace("</body>", extra_blocks + "\n</body>")
-
-    html_path = EvalConfig.RAW_OUTPUTS_DIR / state["doc_id"] / "comparison.html"
-    html_path.parent.mkdir(parents=True, exist_ok=True)
-    html_path.write_text(html, encoding="utf-8")
-    wandb.log({f"comparison_html/{state['doc_id']}": wandb.Html(html)})
 
 
 # ============================================================================
@@ -1118,16 +1132,27 @@ async def run_talmud_eval(
         skip_pro: bool = False,
         skip_kraken: bool = False,
         skip_lm_studio: bool = False,
+        use_claude: bool = False,
+        claude_model: Optional[str] = None,
         segmentation_model: str = AgentConfig.GEMINI_FLASH_MODEL,
         segmentation_base_url: Optional[str] = None,
         wandb_project: str = EvalConfig.WANDB_PROJECT,
         wandb_run_name: Optional[str] = None,
 ) -> None:
-    global _lm_studio_models, _lm_studio_base_url
+    global _lm_studio_models, _lm_studio_base_url, _use_claude
 
-    # ── Set module-level LM Studio config (drives dynamic column generation) ──
+    # ── Set module-level config (drives dynamic column generation) ────────────
     _lm_studio_models = [] if (skip_lm_studio or not lm_studio_models) else lm_studio_models
     _lm_studio_base_url = lm_studio_base_url
+    _use_claude = use_claude
+    if claude_model:
+        ClaudeConfig.DEFAULT_MODEL = claude_model
+
+    if _use_claude and not os.getenv("ANTHROPIC_API_KEY"):
+        print(
+            "⚠️  ANTHROPIC_API_KEY is not set — Claude auth will fall back to "
+            "an `ant auth login` profile if one exists."
+        )
 
     TALMUD_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     EvalConfig.RAW_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1197,9 +1222,11 @@ async def run_talmud_eval(
             # LM Studio config captured for reproducibility
             "lm_studio_models": _lm_studio_models,
             "lm_studio_base_url": _lm_studio_base_url if _lm_studio_models else None,
+            "claude_model": ClaudeConfig.DEFAULT_MODEL if _use_claude else None,
         },
         tags=["talmud", "section-eval", "kraken"]
-             + ([f"lm-studio:{_lm_key(m)}" for m in _lm_studio_models]),
+             + ([f"lm-studio:{_lm_key(m)}" for m in _lm_studio_models])
+             + (["claude"] if _use_claude else []),
     )
 
     all_results: List[Dict] = []
@@ -1217,6 +1244,7 @@ async def run_talmud_eval(
                 skip_pro=skip_pro,
                 skip_kraken=skip_kraken,
                 skip_lm_studio=not _lm_studio_models,
+                use_claude=_use_claude,
                 batch_num=1,
                 segmentation_model=segmentation_model,
                 segmentation_base_url=segmentation_base_url,
@@ -1252,6 +1280,8 @@ def _log_summary(results: List[Dict]) -> None:
         ("vision_ocr_seg", "vision_ocr_seg_cer_strict",    "vision_ocr_seg_cer_lenient"),
         ("kraken_seg",     "kraken_seg_cer_strict",        "kraken_seg_cer_lenient"),
     ]
+    if _use_claude:
+        model_cer_cols.append(("claude", "claude_cer_strict", "claude_cer_lenient"))
     for model_id in _lm_studio_models:
         k = _lm_key(model_id)
         model_cer_cols.append((k, f"{k}_cer_strict", f"{k}_cer_lenient"))
@@ -1278,9 +1308,6 @@ def _log_summary(results: List[Dict]) -> None:
 # ============================================================================
 # CLI
 # ============================================================================
-# ============================================================================
-# CLI
-# ============================================================================
 
 if __name__ == "__main__":
     p = argparse.ArgumentParser()
@@ -1299,9 +1326,21 @@ if __name__ == "__main__":
     p.add_argument(
         "--lm_studio_models",
         type=lambda s: [m.strip() for m in s.split(",") if m.strip()],
-        default=["qwen/qwen3-vl-8b"],
+        default=["qwen/qwen3-vl-8b", "google/gemma-4-31b-qat"],
         metavar="MODEL[,MODEL,...]",
         help="LM Studio VLM model IDs (comma-separated).",
+    )
+
+    # Claude (flag-gated — expensive, off by default)
+    p.add_argument(
+        "--use_claude",
+        action="store_true",
+        help="Include Claude in the benchmark (off by default — tokens are expensive).",
+    )
+    p.add_argument(
+        "--claude_model",
+        default=None,
+        help=f"Claude model ID (default: {ClaudeConfig.DEFAULT_MODEL}).",
     )
     p.add_argument(
         "--lm_studio_base_url",
@@ -1342,6 +1381,8 @@ if __name__ == "__main__":
         skip_pro=args.skip_pro,
         skip_kraken=args.skip_kraken,
         skip_lm_studio=args.skip_lm_studio,
+        use_claude=args.use_claude,
+        claude_model=args.claude_model,
         segmentation_model=args.segmentation_model,
         segmentation_base_url=args.segmentation_base_url,
         wandb_project=args.wandb_project,

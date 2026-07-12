@@ -47,3 +47,5 @@ google-cloud-vision
 aiohttp
 kraken
 googlemaps
+anthropic
+certifi

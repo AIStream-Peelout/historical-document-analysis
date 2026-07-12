@@ -237,6 +237,58 @@ async def transcribe_with_lm_studio(
 
 
 # ============================================================================
+# Text-only completion (no image) — used for OCR segmentation/extraction
+# ============================================================================
+
+async def complete_text(
+    model_id: str,
+    prompt: str,
+    base_url: str = DEFAULT_CONFIG.base_url,
+    temperature: float = DEFAULT_CONFIG.temperature,
+    max_tokens: int = DEFAULT_CONFIG.max_tokens,
+    timeout: float = 120.0,
+) -> Optional[str]:
+    """Text-only chat completion against an LM Studio model — no image.
+
+    Used when an open-weight text model is preferred over Gemini for the
+    OCR segmentation / extraction step.
+
+    :param model_id: LM Studio model ID
+    :type model_id: str
+    :param prompt: Full text prompt
+    :type prompt: str
+    :param base_url: LM Studio server root
+    :type base_url: str
+    :param temperature: Sampling temperature
+    :type temperature: float
+    :param max_tokens: Output token budget
+    :type max_tokens: int
+    :param timeout: Total request timeout in seconds
+    :type timeout: float
+    :return: Model output text, or None on failure
+    :rtype: Optional[str]
+    """
+    payload = {
+        "model": model_id,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+    }
+    try:
+        async with aiohttp.ClientSession(
+            timeout=aiohttp.ClientTimeout(total=timeout)
+        ) as session:
+            async with session.post(f"{base_url}/chat/completions", json=payload) as resp:
+                resp.raise_for_status()
+                data = await resp.json()
+                content = data["choices"][0]["message"]["content"] or ""
+                return content.strip() or None
+    except Exception as exc:
+        print(f"    ✗ LM Studio text-only failed ({model_id}): {exc}")
+        return None
+
+
+# ============================================================================
 # Convenience: run the same prompt across multiple models concurrently
 # ============================================================================
 
