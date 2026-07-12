@@ -4,7 +4,7 @@ import json
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from src.models.llm.gemma_three import Gemma3Provider  # Assuming the enhanced version
+from src.models.llm.transcription.gemma_three import Gemma3Provider  # Assuming the enhanced version
 from src.finetuning_scripts.diagnostic_scripts.gemma_trainer_diagnostic import fix_gradient_issues
 
 class DocumentType(Enum):

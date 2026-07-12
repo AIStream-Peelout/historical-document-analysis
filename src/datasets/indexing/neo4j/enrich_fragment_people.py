@@ -291,7 +291,13 @@ class FragmentPeopleEnricher:
         return {"edges_definite": definite, "edges_possible": possible}
 
     def enrich_all(self, root: Path, dry_run: bool = False):
-        files = sorted(root.rglob("*_enhanced.json"))
+        # Exclude enhanced JSONs inside *_structured*/ subdirs — those are
+        # intermediate pipeline artifacts; only the copy in the book's own
+        # directory is canonical.
+        files = sorted(
+            p for p in root.rglob("*_enhanced.json")
+            if "_structured" not in p.parent.name
+        )
         logger.info(f"Found {len(files)} enhanced JSON files")
 
         totals: Dict[str, int] = defaultdict(int)

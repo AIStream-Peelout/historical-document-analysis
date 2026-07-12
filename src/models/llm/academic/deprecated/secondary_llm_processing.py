@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 BACKEND_OLLAMA  = "ollama"   # local LM Studio / Ollama endpoint
 BACKEND_GEMINI  = "gemini"   # Google Gemini via google-generativeai SDK
 
-GEMINI_FLASH_MODEL = "gemini-3-flash-preview"   # matches AgentConfig
+GEMINI_FLASH_MODEL = "gemini-3.5-flash"   # matches AgentConfig
 
 
 class SecondaryLLMProcessor:
@@ -81,7 +81,7 @@ class SecondaryLLMProcessor:
             ollama_url:          Base URL for the Ollama/LM Studio endpoint.
             model_name:          Model name used when backend="ollama".
             gemini_model:        Gemini model name when backend="gemini".
-                                 Defaults to gemini-3-flash-preview.
+                                 Defaults to gemini-3.5-flash.
             gemini_api_key:      Gemini API key. Falls back to GEMINI_API_KEY env var.
             context_window_pages: Number of pages included in each context window.
         """
@@ -375,11 +375,11 @@ Return ONLY valid JSON in this exact format:
 {{
     "triplets": [
         {{
-            "subject":       "Exact name of person, place, or shelf mark",
-            "subject_type":  "Person|Place|Fragment|BookArticle",
+            "subject":       "Exact name of person, place, institution, or shelf mark",
+            "subject_type":  "Person|Scholar|Place|Institution|Fragment|BookArticle",
             "relation":      "LIVED_IN",
-            "object":        "Exact name of person, place, or shelf mark",
-            "object_type":   "Person|Place|Fragment|BookArticle",
+            "object":        "Exact name of person, place, institution, or shelf mark",
+            "object_type":   "Person|Scholar|Place|Institution|Fragment|BookArticle",
             "evidence":      "The sentence or phrase that supports this triplet",
             "confidence":    "high|medium|low"
         }}
@@ -428,40 +428,50 @@ Extract the triplets:"""
             logger.error(f"Failed to call Ollama API: {e}")
             raise
 
-    def _call_gemini(self, prompt: str) -> str:
-        """Call Gemini Flash via google-generativeai SDK (sync wrapper)."""
+    def _call_gemini(self, prompt: str, max_retries: int = 5) -> str:
+        """Call Gemini via google-genai SDK with retries and exponential backoff.
+
+        AFC (Automatic Function Calling) is explicitly disabled — it caused
+        spurious server disconnects when the SDK tried to negotiate tool schemas.
+        """
+        import time
         try:
-            import google.generativeai as genai  # noqa: PLC0415
+            from google import genai as genai_new
+            from google.genai import types as genai_types
         except ImportError:
-            raise ImportError("google-generativeai is required for the Gemini backend. "
-                              "Run: pip install google-generativeai")
+            raise ImportError("google-genai is required. Run: pip install google-genai")
 
-        genai.configure(api_key=self.gemini_api_key)
-        model = genai.GenerativeModel(self.gemini_model)
+        client = genai_new.Client(
+            api_key=self.gemini_api_key,
+            http_options=genai_types.HttpOptions(timeout=300_000),  # 5 min, in ms
+        )
 
-        async def _async_call():
-            response = await model.generate_content_async(
-                prompt,
-                generation_config=genai.GenerationConfig(
-                    temperature=0.2,
-                    response_mime_type="application/json",
-                ),
-            )
-            return response.text
+        if max_retries <= 0:
+            raise ValueError("max_retries must be greater than 0")
 
-        try:
-            # Re-use a running loop if one exists (e.g. Jupyter), else create one.
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(asyncio.run, _async_call())
-                    return future.result(timeout=300)
-            else:
-                return loop.run_until_complete(_async_call())
-        except Exception as e:
-            logger.error(f"Gemini API call failed: {e}")
-            raise
+        last_exc = None
+        for attempt in range(max_retries):
+            try:
+                response = client.models.generate_content(
+                    model=self.gemini_model,
+                    contents=prompt,
+                    config=genai_types.GenerateContentConfig(
+                        temperature=0.2,
+                        response_mime_type="application/json",
+                        automatic_function_calling=genai_types.AutomaticFunctionCallingConfig(
+                            disable=True,
+                        ),
+                    ),
+                )
+                return response.text
+            except Exception as e:
+                last_exc = e
+                wait = 2 ** attempt  # 1, 2, 4, 8, 16 seconds
+                logger.warning(f"Gemini call failed (attempt {attempt + 1}/{max_retries}): {e} — retrying in {wait}s")
+                time.sleep(wait)
+
+        logger.error(f"Gemini call failed after {max_retries} attempts: {last_exc}")
+        raise last_exc
     
     def _parse_llm_response(self, response_text: str) -> Dict[str, Any]:
         """
@@ -495,6 +505,19 @@ Extract the triplets:"""
                 json_text = response_text
             
             parsed_json = json.loads(json_text)
+            # Gemini occasionally returns a bare list instead of an object — preserve it.
+            if isinstance(parsed_json, list):
+                if parsed_json and all(isinstance(item, dict) for item in parsed_json):
+                    first = parsed_json[0]
+                    if {"subject", "object"}.issubset(first) and (
+                        "relation" in first or "predicate" in first
+                    ):
+                        return {"triplets": parsed_json}
+                    if "location_type" in first:
+                        return {"locations": parsed_json}
+                    if "role" in first:
+                        return {"people": parsed_json}
+                return {"items": parsed_json}
             return parsed_json
             
         except json.JSONDecodeError as e:
@@ -594,48 +617,171 @@ Extract the triplets:"""
         Returns:
             Enhanced structured data with improved linking and extracted entities
         """
+        structured_dir = Path(structured_dir)
+        # Checkpoint file lives next to the structured dir so partial runs resume
+        checkpoint_path = structured_dir.parent / f"{structured_dir.parent.name}_checkpoint.json"
+
+        def _load_checkpoint() -> Dict:
+            if checkpoint_path.exists():
+                try:
+                    with open(checkpoint_path, encoding='utf-8') as f:
+                        ck = json.load(f)
+                    logger.info(f"Resuming from checkpoint: {checkpoint_path}")
+                    return ck
+                except Exception:
+                    pass
+            return {}
+
+        def _save_checkpoint(data: Dict):
+            with open(checkpoint_path, 'w', encoding='utf-8') as f:
+                json.dump(data, f, ensure_ascii=False)
+            logger.info(f"Checkpoint saved: {checkpoint_path}")
+
+        checkpoint = _load_checkpoint()
+
         try:
             logger.info(f"Starting secondary processing of structured data in {structured_dir}")
-            
+
             # Load structured data files
             pages_data = self._load_structured_data_files(structured_dir)
-            
+
             if not pages_data:
                 logger.warning("No structured data files found")
                 return {}
-            
+
             # Analyze shelf mark patterns
             pattern_analysis = self._analyze_shelf_mark_patterns(pages_data)
-            
-            # Create context analysis prompt
-            context_prompt = self._create_context_analysis_prompt(pages_data)
-            
-            # Call LLM for context analysis
-            logger.info("Performing multi-page context analysis...")
-            context_response = self._call_llm(context_prompt)
-            context_analysis = self._parse_llm_response(context_response)
-            
-            # Extract people and locations from combined text
-            combined_text = " ".join([
-                page_data.get('full_main_text', '') + " " +
-                " ".join(page_data.get('footnotes', {}).values())
-                for page_data in pages_data
-            ])
 
-            people_locations_prompt = self._create_people_locations_prompt(combined_text)
-            logger.info("Extracting people and locations...")
-            people_locations_response = self._call_llm(people_locations_prompt)
-            people_locations = self._parse_llm_response(people_locations_response)
+            # All LLM calls are chunked at 5 pages to stay well within Gemini's
+            # timeout limits.  Results are merged across chunks.
+            # 5 pages per chunk: enough to capture cross-page shelfmark/transcription
+            # spans (typically 1–3 pages) while staying well within Gemini's timeout.
+            # The original gemma3:27b runs used context_window_pages=5 for the same reason.
+            # The prior 504s were caused by full_main_text being sent untruncated across
+            # all 45 pages — not by chunk size itself.
+            CHUNK_PAGES = 5
 
-            # Extract KG triplets using identified entities as anchors
-            logger.info("Extracting knowledge graph triplets...")
-            kg_triplets_prompt = self._create_kg_triplets_prompt(
-                combined_text,
-                people_locations.get('people', []),
-                people_locations.get('locations', []),
+            # Context analysis — chunked, merge enhanced_shelf_mark_transcriptions
+            # and cross_page_references; keep the last analysis_summary.
+            # Resumes from checkpoint if a previous run completed this phase.
+            # Restore partial context analysis progress from checkpoint if present
+            merged_context: Dict[str, Any] = checkpoint.get('merged_context') or {
+                'enhanced_shelf_mark_transcriptions': {},
+                'people_mentioned':   [],
+                'locations_mentioned': [],
+                'cross_page_references': [],
+                'analysis_summary': '',
+            }
+            ctx_done_chunks: set = set(checkpoint.get('ctx_done_chunks', []))
+            seen_people:    set = set(p.get('name', '') for p in merged_context['people_mentioned'])
+            seen_locations: set = set(l.get('name', '') for l in merged_context['locations_mentioned'])
+
+            if 'context_analysis' in checkpoint:
+                logger.info("Skipping context analysis — fully loaded from checkpoint")
+                context_analysis = checkpoint['context_analysis']
+            else:
+                logger.info("Performing multi-page context analysis...")
+
+                for chunk_start in range(0, len(pages_data), CHUNK_PAGES):
+                    if chunk_start in ctx_done_chunks:
+                        logger.info(f"  Skipping context chunk {chunk_start + 1}–"
+                                    f"{chunk_start + CHUNK_PAGES} (checkpoint)")
+                        continue
+                    chunk = pages_data[chunk_start: chunk_start + CHUNK_PAGES]
+                    logger.info(
+                        f"  Context analysis chunk pages "
+                        f"{chunk_start + 1}–{chunk_start + len(chunk)} of {len(pages_data)}"
+                    )
+                    ctx_prompt   = self._create_context_analysis_prompt(chunk)
+                    ctx_response = self._call_llm(ctx_prompt)
+                    ctx_chunk    = self._parse_llm_response(ctx_response)
+
+                    merged_context['enhanced_shelf_mark_transcriptions'].update(
+                        ctx_chunk.get('enhanced_shelf_mark_transcriptions') or {}
+                    )
+                    for p in ctx_chunk.get('people_mentioned') or []:
+                        name = (p.get('name') or '').strip()
+                        if name and name not in seen_people:
+                            seen_people.add(name)
+                            merged_context['people_mentioned'].append(p)
+                    for loc in ctx_chunk.get('locations_mentioned') or []:
+                        name = (loc.get('name') or '').strip()
+                        if name and name not in seen_locations:
+                            seen_locations.add(name)
+                            merged_context['locations_mentioned'].append(loc)
+                    merged_context['cross_page_references'].extend(
+                        ctx_chunk.get('cross_page_references') or []
+                    )
+                    if ctx_chunk.get('analysis_summary'):
+                        merged_context['analysis_summary'] = ctx_chunk['analysis_summary']
+
+                    # Save after every chunk so a crash only loses the current chunk
+                    ctx_done_chunks.add(chunk_start)
+                    checkpoint['merged_context']   = merged_context
+                    checkpoint['ctx_done_chunks']  = list(ctx_done_chunks)
+                    _save_checkpoint(checkpoint)
+
+                context_analysis = merged_context
+                checkpoint['context_analysis'] = context_analysis
+                _save_checkpoint(checkpoint)
+
+            # Extract people and locations in chunks; results are merged by name.
+            # Resume from checkpoint if this phase was partially or fully completed.
+            all_people:    Dict[str, Dict] = {p['name']: p for p in checkpoint.get('all_people', [])}
+            all_locations: Dict[str, Dict] = {l['name']: l for l in checkpoint.get('all_locations', [])}
+            pl_done_chunks: set = set(checkpoint.get('pl_done_chunks', []))
+
+            # Cap text per page to 400 chars before joining — full_main_text after
+            # step 2.5 can be thousands of chars per page which inflates the prompt
+            # far beyond what the people/locations task needs.
+            MAX_CHARS_PER_PAGE = 400
+
+            for chunk_start in range(0, len(pages_data), CHUNK_PAGES):
+                if chunk_start in pl_done_chunks:
+                    logger.info(f"  Skipping people/locations chunk {chunk_start + 1}–"
+                                f"{chunk_start + CHUNK_PAGES} (checkpoint)")
+                    continue
+                chunk = pages_data[chunk_start: chunk_start + CHUNK_PAGES]
+                chunk_text = " ".join(
+                    (page_data.get('full_main_text', '') + " " +
+                     " ".join(page_data.get('footnotes', {}).values()))[:MAX_CHARS_PER_PAGE]
+                    for page_data in chunk
+                )
+                logger.info(
+                    f"Extracting people and locations — pages "
+                    f"{chunk_start + 1}–{chunk_start + len(chunk)} of {len(pages_data)}..."
+                )
+                pl_prompt   = self._create_people_locations_prompt(chunk_text)
+                pl_response = self._call_llm(pl_prompt)
+                pl_chunk    = self._parse_llm_response(pl_response)
+
+                for p in pl_chunk.get('people', []):
+                    name = (p.get('name') or '').strip()
+                    if name and name not in all_people:
+                        all_people[name] = p
+                for loc in pl_chunk.get('locations', []):
+                    name = (loc.get('name') or '').strip()
+                    if name and name not in all_locations:
+                        all_locations[name] = loc
+
+                pl_done_chunks.add(chunk_start)
+                checkpoint['all_people']     = list(all_people.values())
+                checkpoint['all_locations']  = list(all_locations.values())
+                checkpoint['pl_done_chunks'] = list(pl_done_chunks)
+                _save_checkpoint(checkpoint)
+
+            people_locations = {
+                'people':    list(all_people.values()),
+                'locations': list(all_locations.values()),
+            }
+            logger.info(
+                f"People/locations extracted: {len(people_locations['people'])} people, "
+                f"{len(people_locations['locations'])} locations"
             )
-            kg_triplets_response = self._call_llm(kg_triplets_prompt)
-            kg_triplets = self._parse_llm_response(kg_triplets_response)
+
+            # KG triplets removed — Pass 3 (enrich_node_relations.py) handles all
+            # relationship extraction with entity-anchored, focused prompts.
+            # Keeping the key in the output for backwards compatibility but always empty.
 
             # Combine results
             enhanced_data = {
@@ -643,19 +789,23 @@ Extract the triplets:"""
                 'pattern_analysis': pattern_analysis,
                 'context_analysis': context_analysis,
                 'people_locations': people_locations,
-                'kg_triplets':      kg_triplets.get('triplets', []),
+                'kg_triplets':      [],
                 'processing_metadata': {
                     'total_pages':          len(pages_data),
                     'model_used':           self.model_name,
                     'context_window_pages': self.context_window_pages,
                     'processing_timestamp': str(Path().cwd()),
-                    'triplet_count':        len(kg_triplets.get('triplets', [])),
+                    'triplet_count':        0,
                 }
             }
             
             logger.info("Secondary processing completed successfully")
+            # Clean up checkpoint — full run succeeded
+            if checkpoint_path.exists():
+                checkpoint_path.unlink()
+                logger.info(f"Checkpoint removed: {checkpoint_path}")
             return enhanced_data
-            
+
         except Exception as e:
             logger.error(f"Failed to process multiple pages: {e}")
             raise
@@ -699,6 +849,9 @@ Extract the triplets:"""
             'CITES':           ('BookArticle', 'BookArticle'),
         }
 
+        _VALID_LABELS = {'Person', 'Scholar', 'Place', 'Institution',
+                         'Fragment', 'BookArticle', 'Entity'}
+
         driver = _GDB.driver(neo4j_uri, auth=(neo4j_user, neo4j_password))
         written = 0
         try:
@@ -710,8 +863,10 @@ Extract the triplets:"""
                     rel      = t.get('relation', '').upper()
                     subj     = t.get('subject', '').strip()
                     obj      = t.get('object', '').strip()
-                    s_label  = t.get('subject_type', 'Person')
-                    o_label  = t.get('object_type',  'Place')
+                    s_label  = t.get('subject_type', 'Person') or 'Person'
+                    o_label  = t.get('object_type',  'Place')  or 'Place'
+                    s_label  = s_label if s_label in _VALID_LABELS else 'Person'
+                    o_label  = o_label if o_label in _VALID_LABELS else 'Entity'
 
                     if not (rel and subj and obj):
                         continue

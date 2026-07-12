@@ -102,7 +102,7 @@ class FineTuningStrategy:
         """Apply Donut-style training: freeze text decoder, train vision encoder.
 
         This strategy is optimal for document transcription tasks where we want to
-        adapt the vision components while keeping the language model frozen.
+        adapt the vision components while keeping the language model frozen..
 
         :param model: The Gemma3 model to configure
         :type model: Union[Gemma3ForConditionalGeneration, Gemma3ForCausalLM]

@@ -5,6 +5,14 @@ import json
 import logging
 from pathlib import Path
 
+from src.datasets.document_models.corpus_ids import (
+    book_key as _book_key,
+    book_uuid as _book_uuid,
+    page_uuid as _page_uuid,
+    extract_doi as _extract_doi,
+    page_seq_from_filename as _page_seq_from_filename,
+)
+
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
 logger = logging.getLogger(__name__)
 
@@ -55,6 +63,13 @@ class BibliographyDocument(BaseModel):
     pdf_name: str
     page_number: int
     extracted_page_number: Optional[Any] = None
+    # Cross-store identifiers (shared with the Neo4j KG via corpus_ids). page_seq
+    # is the filename sequence index (page_001 -> 1), the canonical page key for
+    # joining to KG triplets — NOT the printed extracted_page_number.
+    page_seq: Optional[int] = None
+    book_uuid: Optional[str] = None
+    page_uuid: Optional[str] = None
+    doi: Optional[str] = None
     shelf_marks_mentioned: Union[List[str], Dict[str, str]] = Field(default_factory=list)
     shelf_marks_mentioned_raw: Optional[Dict[str, str]] = None  # Store original dict format if available
     transcriptions: Dict[str, str] = Field(default_factory=dict)
@@ -140,7 +155,13 @@ class BibliographyDocument(BaseModel):
             "main_language": self.metadata.get("language", "Unknown"),
             "page_number": self.page_number,
             "extracted_page_number": self.extracted_page_number,
+            # Cross-store join keys (shared with the Neo4j KG).
+            "page_seq": self.page_seq,
+            "book_uuid": self.book_uuid,
+            "page_uuid": self.page_uuid,
         }
+        if self.doi:
+            es_doc["doi"] = self.doi
 
         # Book-level metadata fields (only include if not None/empty)
         author_str = self.author or (", ".join(self.authors) if self.authors else None)
@@ -389,12 +410,25 @@ class BibliographyDocument(BaseModel):
                     if transcription_value.strip():
                         transcriptions_flat[shelf_mark_key] = transcription_value.strip()
 
+        # Cross-store identifiers shared with the KG. The book key is the DOI
+        # when the metadata has one, else the pdf stem (== KG source_book). The
+        # page key is the filename sequence index, NOT the printed page.
+        _seq = _page_seq_from_filename(json_path.name)
+        _bk = _book_key(book_metadata, pdf_name)
+        _bk_uuid = _book_uuid(_bk)
+        _pg_uuid = _page_uuid(_bk, _seq) if _seq is not None else None
+        _doi = _extract_doi(book_metadata)
+
         return BibliographyDocument(
             doc_id=doc_id,
             shelf_mark=shelf_mark,
             pdf_name=pdf_name,
             page_number=page_number,
             extracted_page_number=extracted_page_number_raw,
+            page_seq=_seq,
+            book_uuid=_bk_uuid,
+            page_uuid=_pg_uuid,
+            doi=_doi,
             page_display=page_label,
             shelf_marks_mentioned=mentioned,
             shelf_marks_mentioned_raw=shelf_marks_mentioned_raw,

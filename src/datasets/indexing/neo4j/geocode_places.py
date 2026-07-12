@@ -40,6 +40,9 @@ project_root = Path(__file__).parent.parent.parent.parent.parent
 sys.path.append(str(project_root))
 dotenv.load_dotenv(project_root / ".env")
 
+from src.datasets.document_models.place_normalizer import PlaceNormalizer  # noqa: E402
+from src.datasets.document_models.institution_normalizer import InstitutionNormalizer  # noqa: E402
+
 from neo4j import GraphDatabase
 
 logging.basicConfig(
@@ -339,9 +342,12 @@ def _geocode_one(geolocator, name: str) -> Optional[dict]:
         except Exception:
             return None
 
-    # 1. Historical override — curated, always trusted
-    if name in HISTORICAL_OVERRIDES:
-        loc = _try(HISTORICAL_OVERRIDES[name])
+    # 1. Historical override — curated, always trusted.
+    # PlaceNormalizer.geocode_query() returns a modern geocoder-friendly string
+    # when the name has a known override, or the name itself otherwise.
+    geocode_override = PlaceNormalizer.geocode_query(name)
+    if geocode_override != name:
+        loc = _try(geocode_override)
         if loc:
             result = _build_result(loc, place_name=name)
             if result:
@@ -512,41 +518,31 @@ def _extract_institution_location(name: str) -> list[str]:
         if first_word not in queries:
             queries.append(first_word)
 
-    # Well-known institution → city overrides
-    _KNOWN: dict[str, str] = {
-        "jewish theological seminary":          "New York City",
-        "jts":                                  "New York City",
-        "bodleian":                             "Oxford",
-        "taylor-schechter":                     "Cambridge",
-        "cambridge university library":         "Cambridge",
-        "john rylands":                         "Manchester",
-        "british library":                      "London",
-        "bibliotheque nationale":               "Paris",
-        "national library of israel":           "Jerusalem",
-        "hebrew university":                    "Jerusalem",
-        "yad ben zvi":                          "Jerusalem",
-        "ben-zvi institute":                    "Jerusalem",
-        "dropsie college":                      "Philadelphia",
-        "mandel institute":                     "Jerusalem",
-        "brandeis":                             "Waltham Massachusetts",
-        "ben-gurion university":                "Beersheba Israel",
-        "bar-ilan":                             "Ramat Gan Israel",
-        "genazim institute":                    "Tel Aviv",
-        # Hebrew Union College — Genizah fragments are at the Klau Library,
-        # Cincinnati campus. HUC also has campuses in Jerusalem, NY, and LA
-        # so geocoders default to Jerusalem without this override.
-        "hebrew union college":                 "Klau Library, Cincinnati Ohio",
-        "klau library":                         "Klau Library, Cincinnati Ohio",
-        "huc-jir":                              "Klau Library, Cincinnati Ohio",
-        # Columbia University — geocodes to Colombia, South America without this
-        "columbia university": "Columbia University, New York City",
-        "columbia university library": "Columbia University, New York City",
-        "butler library": "Columbia University, New York City",
-    }
-    for key, city in _KNOWN.items():
-        if key in lower:
-            queries.append(city)
-            break
+    # Derive a geocoder-friendly city hint from InstitutionNormalizer metadata.
+    # When we have a known city, insert a city-qualified query IMMEDIATELY after
+    # the full name so the geocoder uses it before any other fallback.
+    # This prevents multi-campus institutions (e.g. Hebrew Union College) from
+    # resolving to the wrong campus when the unqualified name is ambiguous.
+    #
+    # IMPORTANT: use the canonical name (not the raw DB name) as the query base.
+    # The DB may store names with Arabic subtitles, transliterations, or other
+    # decorations (e.g. "Coptic Museum, Cairo (al-Matḥāf al-Qibṭī)") that
+    # confuse the geocoder.  The canonical form is always the clean version.
+    meta = InstitutionNormalizer.get_metadata(name)
+    city_hint = meta.get("city", "")
+    if city_hint:
+        canonical = InstitutionNormalizer.normalize(name)
+        # If the canonical differs from the raw name, insert it as a clean
+        # first-priority query so garbage suffixes don't poison the geocoder.
+        if canonical != name and canonical not in queries:
+            queries.insert(1, canonical)
+        # City-qualified canonical: "Coptic Museum, Cairo, Cairo" avoids the
+        # double-city redundancy — use canonical + city only when meaningful.
+        city_qualified = f"{canonical}, {city_hint}"
+        if city_qualified not in queries:
+            queries.insert(2 if canonical != name else 1, city_qualified)
+        if city_hint not in queries:
+            queries.append(city_hint)
 
     return queries
 
@@ -683,15 +679,26 @@ def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
 
     ok, failed = 0, []
     for name in institutions:
+        # Pre-seed city/country/region from InstitutionNormalizer metadata.
+        # This ensures well-known institutions get correct location metadata
+        # even when the geocoder would return a wrong campus or no result.
+        # The geocoder result can still override lat/lng but metadata values
+        # from the registry always win over geocoder-derived city/country/region.
+        known_meta = InstitutionNormalizer.get_metadata(name)
+
         if gmaps_client:
             result = _geocode_institution_google(name, gmaps_client)
-            # Google has no rate limit concern at this scale, but be polite
             time.sleep(0.1)
         else:
             result = _geocode_institution_nominatim(geolocator, name)
             time.sleep(args.delay)
 
         if result:
+            # Registry metadata takes precedence over geocoder-derived location
+            # strings to prevent e.g. HUC resolving to Jerusalem.
+            city    = known_meta.get("city")    or result.get("city",    "")
+            country = known_meta.get("country") or result.get("country", "")
+            region  = known_meta.get("region")  or result.get("region",  "")
             session.run("""
                 MATCH (i:Institution {name: $name})
                 SET i.lat              = $lat,
@@ -700,10 +707,26 @@ def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
                     i.country          = CASE WHEN $country <> '' AND i.country IS NULL THEN $country ELSE i.country END,
                     i.region           = CASE WHEN $region  <> '' AND i.region  IS NULL THEN $region  ELSE i.region  END,
                     i.osm_display_name = $osm_display_name
-            """, name=name, **result)
+            """, name=name, lat=result["lat"], lng=result["lng"],
+                 city=city, country=country, region=region,
+                 osm_display_name=result.get("osm_display_name", ""))
             ok += 1
             logger.info(f"  ✅ {name} → ({result['lat']:.4f}, {result['lng']:.4f}) "
-                        f"{result['city']}, {result['country']}")
+                        f"{city}, {country}")
+        elif known_meta.get("city"):
+            # No geocoder result but we have registry metadata — at least set
+            # the location text fields so the node isn't completely unplaced.
+            session.run("""
+                MATCH (i:Institution {name: $name})
+                SET i.city    = CASE WHEN i.city    IS NULL THEN $city    ELSE i.city    END,
+                    i.country = CASE WHEN i.country IS NULL THEN $country ELSE i.country END,
+                    i.region  = CASE WHEN i.region  IS NULL THEN $region  ELSE i.region  END
+            """, name=name,
+                 city=known_meta.get("city", ""),
+                 country=known_meta.get("country", ""),
+                 region=known_meta.get("region", ""))
+            failed.append(name)
+            logger.warning(f"  ⚠️  {name} — no geocoder result; seeded city/country from registry")
         else:
             failed.append(name)
             logger.warning(f"  ❌ {name} — no result")

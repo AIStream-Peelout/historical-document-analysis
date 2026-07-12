@@ -108,9 +108,14 @@ class ElasticsearchGenizahProcessor:
                 
                 # Convert to ES format
                 es_doc = doc.to_elasticsearch_document(embedding=embedding)
+                # Prefer the cross-store page_uuid as the ES _id so the doc
+                # joins cleanly to KG triplets and re-indexing is idempotent.
+                # (Also avoids the legacy doc_id collision when two pages share
+                # the same printed page number.) Falls back to doc_id for
+                # document types without a page_uuid.
                 es_documents.append({
                     '_index': self.index_name,
-                    '_id': doc.doc_id or f"doc_{actual_index}",
+                    '_id': getattr(doc, 'page_uuid', None) or doc.doc_id or f"doc_{actual_index}",
                     '_source': es_doc
                 })
 
@@ -411,6 +416,17 @@ class ElasticsearchGenizahProcessor:
                 "properties": {
                     # Core fields
                     "doc_id": {"type": "keyword"},
+                    # Multi-source merge provenance (from merged_shelfmarks.jsonl).
+                    "canonical_id": {"type": "keyword"},
+                    "sources_present": {"type": "keyword"},
+                    "image_preferred_source": {"type": "keyword"},
+                    "has_ktiv_images": {"type": "boolean"},
+                    "ktiv_iiif_manifest_url": {"type": "keyword"},
+                    # Cross-store join keys (shared with the Neo4j KG).
+                    "book_uuid": {"type": "keyword"},
+                    "page_uuid": {"type": "keyword"},
+                    "page_seq": {"type": "integer"},
+                    "doi": {"type": "keyword"},
                     "shelf_mark": {"type": "keyword"},
                     "description": {"type": "text", "analyzer": "multilingual"},
                     "full_text_content": {"type": "text", "analyzer": "multilingual"},

@@ -39,6 +39,7 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
+from src.datasets.document_models.scholar_normalizer import ScholarRegistry, display_form
 
 logging.basicConfig(
     level=logging.INFO,
@@ -68,6 +69,19 @@ def _split_authors(raw: str) -> List[str]:
          → ["French, Mary", "Goldie, Rebecca", "Nichols, Emma"]
     """
     return [part.strip() for part in raw.split(';') if part.strip()]
+
+
+def _canonical_author(raw: str) -> str:
+    """Snap an author name to its canonical knowledge-graph form.
+
+    Ground-truth metadata authors win (so "Arrant, Estara J" merges with
+    "Estara J Arrant"); otherwise the name is flipped to First-Last display
+    order so the merge key matches names extracted from running text.
+
+    :param raw: Author name as written in the bibliography CSV.
+    :returns: Canonical Scholar.name merge key.
+    """
+    return ScholarRegistry.instance().resolve(raw) or display_form(raw)
 
 
 def _canonical_to_display(canonical: str) -> str:
@@ -299,7 +313,7 @@ class GenizahBiblioImporter:
                             ELSE coalesce(r.data_sources, []) + ['biblio']
                         END
                     """, {
-                        'author':     individual_author,
+                        'author':     _canonical_author(individual_author),
                         'article_id': article_id,
                     })
 

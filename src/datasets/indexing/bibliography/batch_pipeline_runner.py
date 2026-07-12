@@ -48,9 +48,9 @@ sys.path.append(str(project_root))
 dotenv.load_dotenv(project_root / ".env")
 
 from src.models.ocr.book_ocr_service import BookOCRService
-from src.models.llm.structured_json_llm import StructuredJSONLLM
-from src.models.llm.secondary_llm_processing import SecondaryLLMProcessor
-from src.models.llm.add_full_text_to_structured import add_full_text_to_structured
+from src.models.llm.academic.structured_json_llm import StructuredJSONLLM
+from src.models.llm.academic.deprecated.secondary_llm_processing import SecondaryLLMProcessor
+from src.models.llm.academic.add_full_text_to_structured import add_full_text_to_structured
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -285,7 +285,7 @@ def run_file(
             if gemini_key:
                 processor = SecondaryLLMProcessor(
                     backend        = "gemini",
-                    gemini_model   = "gemini-3-flash-preview",
+                    gemini_model   = "gemini-3.5-flash",
                     gemini_api_key = gemini_key,
                 )
             else:
@@ -341,9 +341,9 @@ def main():
     )
     parser.add_argument(
         "--skip-unocred",
-        action="store_true",
-        help="Skip any PDF that hasn't been OCR'd yet (avoids GCP Vision API costs).",
-        default=True
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Skip any PDF that hasn't been OCR'd yet (avoids GCP Vision API costs). Use --no-skip-unocred to process all.",
     )
     parser.add_argument(
         "--no-gemini",

@@ -72,7 +72,11 @@ def _split_authors(raw: Any) -> List[str]:
     Handles both a list of strings and a single semicolon-delimited string,
     e.g. "French, Mary ;Goldie, Rebecca ;Nichols, Emma".
     """
+    if raw is None:
+        return []
     if isinstance(raw, str):
+        raw = [raw]
+    elif not isinstance(raw, (list, tuple)):
         raw = [raw]
     authors: List[str] = []
     for item in raw:
