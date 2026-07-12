@@ -351,7 +351,8 @@ def _load_structured_pages(book_dir: Path) -> Dict[int, Dict]:
         if "_structured" not in p.parent.name and "_structured" not in p.parent.parent.name:
             continue
         try:
-            data = json.load(open(p, encoding="utf-8"))
+            with open(p, encoding="utf-8") as f:
+                data = json.load(f)
         except Exception as e:
             logger.warning(f"  Could not load {p}: {e}")
             continue
