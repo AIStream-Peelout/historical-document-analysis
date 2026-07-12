@@ -14,7 +14,7 @@ Run (needs Google credentials, e.g. ``GOOGLE_APPLICATION_CREDENTIALS``)::
     python -m src.datasets.merging.upload_ktiv_images --overwrite
 
 This is the only step that touches the bucket; the merge itself just records the
-(deterministic) pointers, so the JSONL is valid before the upload completes.
+(deterministic) pointers, so the JSONL is valid before the upload completes. .
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ def upload(
     overwrite: bool = False,
     dry_run: bool = False,
 ) -> dict:
-    """Stream KTIV images from local zips to the GCS bucket.
+    """Stream KTIV images from local zip files to the GCS bucket..
 
     :param zip_glob: Glob matching the KTIV ``*.zip`` archives.
     :param bucket_name: Destination GCS bucket.
