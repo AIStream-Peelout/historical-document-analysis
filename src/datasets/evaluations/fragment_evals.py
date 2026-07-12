@@ -36,6 +36,14 @@ from src.models.llm.transcription.claude_transcriber import (
     ClaudeConfig,
 )
 
+# LLM-judge error-type classification
+from src.datasets.evaluations.error_classifier import (
+    classify_transcription_errors,
+    classification_table_rows,
+    aggregate_error_stats,
+    TABLE_COLUMNS as ERROR_TABLE_COLUMNS,
+)
+
 # Shared benchmark metrics
 from src.datasets.evaluations.metrics import (
     cer_pair,
@@ -83,7 +91,13 @@ class EvalConfig:
 
 _lm_studio_models: List[str] = []
 _lm_studio_base_url: str = EvalConfig.LM_STUDIO_BASE_URL
-_use_claude: bool = False
+_claude_models: List[str] = []   # e.g. ["claude-opus-4-8", "claude-sonnet-5"]
+
+# LLM judge for error-type classification (text-only, cheap — Gemini Flash
+# by default so it adds no new provider cost).
+_judge_model: str = AgentConfig.GEMINI_ANALYSIS_MODEL
+_judge_base_url: Optional[str] = None
+_run_error_analysis: bool = True
 
 # Text-only LLM used to reconstruct reading-order text from raw OCR output.
 # BOTH OCR engines (Google Vision, Kraken) are routed through this same model
@@ -110,12 +124,11 @@ def model_key_from_id(model_id: str) -> str:
 def extra_model_keys() -> List[str]:
     """Return the state/W&B keys for all configured extra models.
 
-    :return: List of model keys (LM Studio models first, then Claude)
+    :return: List of model keys (LM Studio models first, then Claude models)
     :rtype: List[str]
     """
     keys = [model_key_from_id(m) for m in _lm_studio_models]
-    if _use_claude:
-        keys.append("claude")
+    keys += [model_key_from_id(m) for m in _claude_models]
     return keys
 
 
@@ -643,9 +656,9 @@ def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
     _FIXED_DISPLAY_NAMES = {
         'gemini_flash': 'Gemini Flash',
         'gemini_pro': 'Gemini Pro',
-        'claude': f'Claude ({ClaudeConfig.DEFAULT_MODEL})',
         'vision_ocr_seg': 'Vision OCR → LLM extraction',
         'kraken_seg': 'Kraken → LLM extraction',
+        **{model_key_from_id(m): f'Claude ({m})' for m in _claude_models},
     }
     model_display_names = [
         (key, _FIXED_DISPLAY_NAMES.get(key, key)) for key in scored_model_keys()
@@ -787,22 +800,25 @@ async def evaluate_document(doc_id: str, metadata: dict, wandb_run, batch_num: i
                 final_state[f'{key}_result'] = None
                 print(f"    ✗ [{key}] no output")
 
-    if _use_claude:
-        print(f"  🤖 Claude ({ClaudeConfig.DEFAULT_MODEL})...")
+    for claude_model in _claude_models:
+        key = model_key_from_id(claude_model)
+        print(f"  🤖 Claude ({claude_model})...")
         t0 = time.time()
-        claude_text = await transcribe_with_claude(str(image_path), prompt)
+        claude_text = await transcribe_with_claude(
+            str(image_path), prompt, model=claude_model
+        )
         claude_elapsed = time.time() - t0
         if claude_text:
-            final_state['claude_result'] = {
+            final_state[f'{key}_result'] = {
                 'text': claude_text,
-                'model': ClaudeConfig.DEFAULT_MODEL,
+                'model': claude_model,
                 'char_count': len(claude_text),
                 'processing_time': claude_elapsed,
             }
-            final_state['model_times']['claude'] = claude_elapsed
+            final_state['model_times'][key] = claude_elapsed
             print(f"    ✓ Extracted {len(claude_text)} chars in {claude_elapsed:.1f}s")
         else:
-            final_state['claude_result'] = None
+            final_state[f'{key}_result'] = None
 
     # ── OCR → text-only LLM extraction pipelines ────────────────────────────
     # Raw OCR (Vision, Kraken) is NEVER scored — line order is not reading
@@ -865,6 +881,29 @@ async def evaluate_document(doc_id: str, metadata: dict, wandb_run, batch_num: i
         print(f"    Consensus: CER={consensus_metrics['cer']:.3f}, "
               f"Strategy={final_state['consensus_strategy']}")
 
+    # ── LLM-judge error-type classification ─────────────────────────────────
+    # A cheap text-only judge labels WHAT kind of errors each model made
+    # (character confusion, canonical completion, omission, ...) — aggregated
+    # into per-type percentages and severities in the W&B summary.
+    final_state['_error_classifications'] = []
+    if _run_error_analysis:
+        print(f"  🧪 Error classification (judge: {_judge_model})...")
+        for model_key in scored_model_keys():
+            result = final_state.get(f'{model_key}_result')
+            if not result or not result.get('text'):
+                continue
+            classification = await classify_transcription_errors(
+                result['text'], ground_truth,
+                judge_model=_judge_model, judge_base_url=_judge_base_url,
+            )
+            if classification:
+                final_state['_error_classifications'].append({
+                    'doc_id': doc_id, 'model': model_key, **classification,
+                })
+                types = [e['type'] for e in classification['errors']] or ['none']
+                print(f"    [{model_key}] {classification['overall_quality']}: "
+                      f"{', '.join(types)}")
+
     # Log to W&B and get table rows
     text_row, metrics_rows, analysis_row = log_to_wandb(final_state, wandb_run.name)
 
@@ -890,9 +929,12 @@ async def main(
         lm_studio_models: Optional[List[str]] = None,
         lm_studio_base_url: str = EvalConfig.LM_STUDIO_BASE_URL,
         use_claude: bool = False,
-        claude_model: Optional[str] = None,
+        claude_models: Optional[List[str]] = None,
         segmentation_model: str = AgentConfig.GEMINI_FLASH_MODEL,
         segmentation_base_url: Optional[str] = None,
+        judge_model: str = AgentConfig.GEMINI_ANALYSIS_MODEL,
+        judge_base_url: Optional[str] = None,
+        skip_error_analysis: bool = False,
 ):
     """Main evaluation pipeline with batch processing support.
 
@@ -910,11 +952,12 @@ async def main(
     :type lm_studio_models: Optional[List[str]]
     :param lm_studio_base_url: LM Studio API base URL.
     :type lm_studio_base_url: str
-    :param use_claude: Include Claude in the benchmark. Off by default —
-        tokens are expensive.
+    :param use_claude: Include Claude models in the benchmark. Off by
+        default — tokens are expensive.
     :type use_claude: bool
-    :param claude_model: Override the Claude model ID.
-    :type claude_model: Optional[str]
+    :param claude_models: Claude model IDs to score side by side (e.g.
+        ["claude-opus-4-8", "claude-sonnet-5"]). Ignored unless use_claude.
+    :type claude_models: Optional[List[str]]
     :param segmentation_model: Text-only LLM that reconstructs reading-order
         text from raw OCR output. Both Vision OCR and Kraken are routed
         through this same model.
@@ -922,9 +965,17 @@ async def main(
     :param segmentation_base_url: If set, the segmentation model is served
         via LM Studio at this URL instead of Gemini.
     :type segmentation_base_url: Optional[str]
+    :param judge_model: Text-only LLM that classifies error types against
+        the ground truth.
+    :type judge_model: str
+    :param judge_base_url: If set, the judge is served via LM Studio at this URL.
+    :type judge_base_url: Optional[str]
+    :param skip_error_analysis: Disable the LLM-judge error classification.
+    :type skip_error_analysis: bool
     """
-    global _lm_studio_models, _lm_studio_base_url, _use_claude
+    global _lm_studio_models, _lm_studio_base_url, _claude_models
     global _segmentation_model, _segmentation_base_url
+    global _judge_model, _judge_base_url, _run_error_analysis
 
     print("=" * 80)
     print("Cairo Genizah Transcription Evaluation - BATCH MODE")
@@ -933,11 +984,12 @@ async def main(
     # ── Extra model configuration ────────────────────────────────────────────
     _lm_studio_models = list(lm_studio_models) if lm_studio_models else []
     _lm_studio_base_url = lm_studio_base_url
-    _use_claude = use_claude
+    _claude_models = list(claude_models) if (use_claude and claude_models) else []
     _segmentation_model = segmentation_model
     _segmentation_base_url = segmentation_base_url
-    if claude_model:
-        ClaudeConfig.DEFAULT_MODEL = claude_model
+    _judge_model = judge_model
+    _judge_base_url = judge_base_url
+    _run_error_analysis = not skip_error_analysis
 
     if _lm_studio_models:
         print(f"\n🖥  Checking LM Studio at {_lm_studio_base_url} ...")
@@ -954,7 +1006,7 @@ async def main(
             print(f"   ⚠️  {exc}\n   Disabling LM Studio for this run.")
             _lm_studio_models = []
 
-    if _use_claude and not os.getenv("ANTHROPIC_API_KEY"):
+    if _claude_models and not os.getenv("ANTHROPIC_API_KEY"):
         print(
             "\n⚠️  ANTHROPIC_API_KEY is not set — Claude auth will fall back to "
             "an `ant auth login` profile if one exists."
@@ -1046,9 +1098,10 @@ async def main(
     print(f"   Gemini Pro: {'✓' if AgentConfig.USE_GEMINI_PRO else '✗'} (timeout: {AgentConfig.GEMINI_PRO_TIMEOUT}s)")
     print(f"   Analysis: {'✓' if AgentConfig.USE_ANALYSIS else '✗'}")
     print(f"   LM Studio: {', '.join(_lm_studio_models) if _lm_studio_models else '✗'}")
-    print(f"   Claude: {ClaudeConfig.DEFAULT_MODEL if _use_claude else '✗'}")
+    print(f"   Claude: {', '.join(_claude_models) if _claude_models else '✗'}")
     print(f"   OCR extraction model: {_segmentation_model}"
           + (f" (LM Studio @ {_segmentation_base_url})" if _segmentation_base_url else " (Gemini)"))
+    print(f"   Error-type judge: {_judge_model if _run_error_analysis else '✗'}")
     print(f"   Delay between docs: {EvalConfig.DELAY_BETWEEN_DOCS}s")
 
     # Initialize W&B
@@ -1073,14 +1126,15 @@ async def main(
                     ("gemini_3_flash", AgentConfig.USE_GEMINI_FLASH),
                     ("gemini_3_pro", AgentConfig.USE_GEMINI_PRO)
                 ] if enabled
-            ] + _lm_studio_models + ([ClaudeConfig.DEFAULT_MODEL] if _use_claude else []),
+            ] + _lm_studio_models + _claude_models,
             "flash_timeout": AgentConfig.GEMINI_FLASH_TIMEOUT,
             "pro_timeout": AgentConfig.GEMINI_PRO_TIMEOUT,
             "lm_studio_models": _lm_studio_models,
             "lm_studio_base_url": _lm_studio_base_url if _lm_studio_models else None,
-            "claude_model": ClaudeConfig.DEFAULT_MODEL if _use_claude else None,
+            "claude_models": _claude_models,
             "ocr_segmentation_model": _segmentation_model,
             "ocr_segmentation_base_url": _segmentation_base_url,
+            "error_judge_model": _judge_model if _run_error_analysis else None,
         }
     )
 
@@ -1170,6 +1224,26 @@ async def main(
             data=analysis_rows
         )
         wandb.log({f"batch_{batch_info['batch_num']}_analysis": analysis_table})
+
+    # ── Error-type classification: per-doc table + benchmark summary ────────
+    all_classifications = [
+        c for r in results for c in r.get('_error_classifications', [])
+    ]
+    if all_classifications:
+        error_table = wandb.Table(
+            columns=ERROR_TABLE_COLUMNS,
+            data=classification_table_rows(all_classifications),
+        )
+        wandb.log({f"batch_{batch_info['batch_num']}_error_classification": error_table})
+
+        error_stats = aggregate_error_stats(all_classifications)
+        for key, value in error_stats.items():
+            wandb.summary[key] = value
+
+        print("\n🧪 Error-type summary (fraction of docs affected):")
+        for key in sorted(k for k in error_stats if k.endswith("/pct_docs")):
+            print(f"   {key.removeprefix('error_types/').removesuffix('/pct_docs')}: "
+                  f"{error_stats[key]:.0%}")
 
     # ========================================================================
     # BATCH SUMMARY
@@ -1306,9 +1380,29 @@ if __name__ == "__main__":
         help='Include Claude in the benchmark (off by default — tokens are expensive)'
     )
     parser.add_argument(
-        '--claude-model',
+        '--claude-models',
+        type=lambda s: [m.strip() for m in s.split(',') if m.strip()],
+        default=["claude-opus-4-8", "claude-sonnet-5"],
+        metavar='MODEL[,MODEL,...]',
+        help='Claude model IDs to score side by side when --use-claude is set '
+             '(comma-separated). Default: claude-opus-4-8,claude-sonnet-5'
+    )
+    parser.add_argument(
+        '--judge-model',
+        default=AgentConfig.GEMINI_ANALYSIS_MODEL,
+        help='Text-only LLM that classifies error types vs the ground truth. '
+             'Default: Gemini Flash. Set to an LM Studio model ID and provide '
+             '--judge-base-url to use a local model instead.'
+    )
+    parser.add_argument(
+        '--judge-base-url',
         default=None,
-        help=f'Claude model ID (default: {ClaudeConfig.DEFAULT_MODEL})'
+        help='If set, the judge model is served via LM Studio at this URL.'
+    )
+    parser.add_argument(
+        '--skip-error-analysis',
+        action='store_true',
+        help='Disable the LLM-judge error-type classification'
     )
     parser.add_argument(
         '--segmentation-model',
@@ -1335,7 +1429,10 @@ if __name__ == "__main__":
         lm_studio_models=[] if args.skip_lm_studio else args.lm_studio_models,
         lm_studio_base_url=args.lm_studio_base_url,
         use_claude=args.use_claude,
-        claude_model=args.claude_model,
+        claude_models=args.claude_models,
         segmentation_model=args.segmentation_model,
         segmentation_base_url=args.segmentation_base_url,
+        judge_model=args.judge_model,
+        judge_base_url=args.judge_base_url,
+        skip_error_analysis=args.skip_error_analysis,
     ))

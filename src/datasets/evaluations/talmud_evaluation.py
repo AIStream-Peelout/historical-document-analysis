@@ -86,6 +86,14 @@ from src.models.llm.transcription.claude_transcriber import (
     ClaudeConfig,
 )
 
+# LLM-judge error-type classification
+from src.datasets.evaluations.error_classifier import (
+    classify_transcription_errors,
+    classification_table_rows,
+    aggregate_error_stats,
+    TABLE_COLUMNS as ERROR_TABLE_COLUMNS,
+)
+
 
 # ============================================================================
 # Talmud-specific config (extends EvalConfig without modifying it)
@@ -112,7 +120,13 @@ _MAX_CELL_CHARS = 3000  # W&B renders long strings slowly; cap per cell
 # Populated by run_talmud_eval() before any documents are evaluated.
 _lm_studio_models: List[str] = []
 _lm_studio_base_url: str = LMStudioConfig.base_url  # "http://localhost:1234/v1"
-_use_claude: bool = False
+_claude_models: List[str] = []   # e.g. ["claude-opus-4-8", "claude-sonnet-5"]
+
+# LLM judge for error-type classification (text-only; Gemini Flash default).
+_judge_model: str = AgentConfig.GEMINI_ANALYSIS_MODEL
+_judge_base_url: Optional[str] = None
+_run_error_analysis: bool = True
+_error_classifications: List[Dict] = []   # accumulated across documents
 
 
 def _lm_key(model_id: str) -> str:
@@ -157,10 +171,11 @@ def _section_columns() -> List[str]:
     # ── Identity ──────────────────────────────────────────────────────────────
     cols = ["image", "doc_id", "ground_truth"]
 
+    claude_keys = [_lm_key(m) for m in _claude_models]
+
     # ── Text outputs (all models together) ───────────────────────────────────
     cols += ["gemini_pro", "gemini_flash"]
-    if _use_claude:
-        cols += ["claude"]
+    cols += claude_keys                    # Claude tiers side by side
     cols += lm_keys                        # open-weight VLMs
     cols += [
         "vision_ocr_raw",                  # flat full-page OCR (no section split)
@@ -172,8 +187,8 @@ def _section_columns() -> List[str]:
     # ── Metrics (all models together, same order as text above) ──────────────
     cols += ["pro_cer_strict", "pro_cer_lenient"]
     cols += ["flash_cer_strict", "flash_cer_lenient"]
-    if _use_claude:
-        cols += ["claude_cer_strict", "claude_cer_lenient"]
+    for k in claude_keys:
+        cols += [f"{k}_cer_strict", f"{k}_cer_lenient"]
     for k in lm_keys:
         cols += [f"{k}_cer_strict", f"{k}_cer_lenient"]
     cols += [
@@ -216,9 +231,9 @@ def _append_section_table_rows(
         flash_sections: Optional[Dict[str, str]],
         pro_section_metrics: Optional[Dict],
         flash_section_metrics: Optional[Dict],
-        # Claude (flag-gated)
-        claude_sections: Optional[Dict[str, str]] = None,
-        claude_section_metrics: Optional[Dict] = None,
+        # Claude models (flag-gated) — keyed by model ID, like LM Studio
+        claude_sections: Optional[Dict[str, Dict[str, str]]] = None,
+        claude_section_metrics: Optional[Dict[str, Dict]] = None,
         # LM Studio VLMs
         lm_studio_sections: Optional[Dict[str, Dict[str, str]]] = None,
         lm_studio_section_metrics: Optional[Dict[str, Dict]] = None,
@@ -274,8 +289,9 @@ def _append_section_table_rows(
             _cell(pro_text),
             _cell(flash_text),
         ]
-        if _use_claude:
-            row.append(_cell(claude_sections.get(section, "")))
+        for model_id in _claude_models:
+            c_text = (claude_sections.get(model_id) or {}).get(section, "")
+            row.append(_cell(c_text))
         for model_id in _lm_studio_models:
             lm_text = (lm_studio_sections.get(model_id) or {}).get(section, "")
             row.append(_cell(lm_text))
@@ -295,10 +311,11 @@ def _append_section_table_rows(
             _cer(flash_section_metrics, section, "cer_strict"),
             _cer(flash_section_metrics, section, "cer_lenient"),
         ]
-        if _use_claude:
+        for model_id in _claude_models:
+            c_mets = claude_section_metrics.get(model_id) or {}
             row += [
-                _cer(claude_section_metrics, section, "cer_strict"),
-                _cer(claude_section_metrics, section, "cer_lenient"),
+                _cer(c_mets, section, "cer_strict"),
+                _cer(c_mets, section, "cer_lenient"),
             ]
         for model_id in _lm_studio_models:
             lm_mets = lm_studio_section_metrics.get(model_id) or {}
@@ -854,7 +871,7 @@ async def evaluate_talmud_document(
         skip_kraken: bool = False,
         skip_lm_studio: bool = False,
         skip_vision_ocr: bool = False,
-        use_claude: bool = False,
+        claude_models: Optional[List[str]] = None,
         batch_num: Optional[int] = None,
         segmentation_model: str = AgentConfig.GEMINI_FLASH_MODEL,
         segmentation_base_url: Optional[str] = None,
@@ -975,25 +992,31 @@ async def evaluate_talmud_document(
             state["final_transcription"] = flash_full
             state["consensus_strategy"]  = "flash_fallback"
 
-    # ── Claude — 3 separate section-extraction calls (flag-gated) ────────────
-    if use_claude:
-        print(f"  🤖 Claude ({ClaudeConfig.DEFAULT_MODEL}, per-section extraction)...")
+    # ── Claude — 3 section-extraction calls per model (flag-gated) ───────────
+    for claude_model in (claude_models or []):
+        ckey = _lm_key(claude_model)
+        print(f"  🤖 Claude ({claude_model}, per-section extraction)...")
         claude_t_total = 0.0
+        c_sections: Dict[str, str] = {}
+        c_metrics: Dict = {}
         for section in SECTION_KEYS:
             t0 = time.time()
             text = await transcribe_with_claude(
-                str(image_path), SECTION_EXTRACT_PROMPTS[section]
+                str(image_path), SECTION_EXTRACT_PROMPTS[section],
+                model=claude_model,
             )
             text = (text or "").strip()
             claude_t_total += time.time() - t0
-            state["_claude_sections"][section] = text
-            state["_claude_section_metrics"][section] = _score_section_output(
+            c_sections[section] = text
+            c_metrics[section] = _score_section_output(
                 section, text, gt_sections.get(section, "")
             )
             await asyncio.sleep(1)
-        state["model_times"]["claude"] = claude_t_total
-        claude_overall = compute_section_metrics(state["_claude_sections"], gt_sections)
-        state["_claude_section_metrics"]["overall"] = claude_overall.get("overall", {})
+        c_overall = compute_section_metrics(c_sections, gt_sections)
+        c_metrics["overall"] = c_overall.get("overall", {})
+        state["_claude_sections"][claude_model] = c_sections
+        state["_claude_section_metrics"][claude_model] = c_metrics
+        state["model_times"][ckey] = claude_t_total
 
     # ── Kraken (flat HTR → segmentation) ─────────────────────────────────────
     kraken_flat = ""
@@ -1051,6 +1074,41 @@ async def evaluate_talmud_document(
     pro_full   = "\n".join(pro_sections_d.get(k, "")   for k in SECTION_KEYS)
     flash_full = "\n".join(flash_sections_d.get(k, "") for k in SECTION_KEYS)
 
+    # ── LLM-judge error-type classification (full page per model) ────────────
+    if _run_error_analysis:
+        def _join_sections(secs: Dict[str, str]) -> str:
+            return "\n".join(secs.get(k, "") for k in SECTION_KEYS)
+
+        judge_candidates: Dict[str, str] = {}
+        if pro_full.strip():
+            judge_candidates["pro"] = pro_full
+        if flash_full.strip():
+            judge_candidates["flash"] = flash_full
+        for mid, secs in state["_claude_sections"].items():
+            judge_candidates[_lm_key(mid)] = _join_sections(secs)
+        for mid, secs in state["_lm_sections"].items():
+            judge_candidates[_lm_key(mid)] = _join_sections(secs)
+        if state["_vision_sections"]:
+            judge_candidates["vision_ocr_seg"] = _join_sections(state["_vision_sections"])
+        if state["_kraken_sections"]:
+            judge_candidates["kraken_seg"] = _join_sections(state["_kraken_sections"])
+
+        print(f"  🧪 Error classification (judge: {_judge_model})...")
+        for label, hyp_text in judge_candidates.items():
+            if not hyp_text.strip():
+                continue
+            classification = await classify_transcription_errors(
+                hyp_text, full_gt,
+                judge_model=_judge_model, judge_base_url=_judge_base_url,
+            )
+            if classification:
+                _error_classifications.append(
+                    {"doc_id": doc_id, "model": label, **classification}
+                )
+                types = [e["type"] for e in classification["errors"]] or ["none"]
+                print(f"    [{label}] {classification['overall_quality']}: "
+                      f"{', '.join(types)}")
+
     # For the section tables we show the segmented OCR text per section;
     # for the full-page table we show the raw flat text.
     _append_section_table_rows(
@@ -1081,11 +1139,12 @@ async def evaluate_talmud_document(
         ("vision_ocr", state["_vision_section_metrics"]),
         ("flash",      state["_flash_section_metrics"]),
         ("pro",        state["_pro_section_metrics"]),
-        ("claude",     state["_claude_section_metrics"]),
         ("kraken",     state["_kraken_section_metrics"]),
     ]:
         if mets:
             scalar.update(_wandb_section_payload(label, mets))
+    for mid, mets in state["_claude_section_metrics"].items():
+        scalar.update(_wandb_section_payload(_lm_key(mid), mets))
     for mid, mets in state["_lm_section_metrics"].items():
         scalar.update(_wandb_section_payload(_lm_key(mid), mets))
     for key, t in state["model_times"].items():
@@ -1102,9 +1161,10 @@ async def evaluate_talmud_document(
     for section, text in state["_flash_sections"].items():
         if text:
             save_raw_output(doc_id, f"gemini_flash_{section}", text)
-    for section, text in state["_claude_sections"].items():
-        if text:
-            save_raw_output(doc_id, f"claude_{section}", text)
+    for mid, secs in state["_claude_sections"].items():
+        for section, text in secs.items():
+            if text:
+                save_raw_output(doc_id, f"{_lm_key(mid)}_{section}", text)
     if state["_kraken_flat"]:
         save_raw_output(doc_id, "kraken_flat", state["_kraken_flat"])
     for mid, secs in state["_lm_sections"].items():
@@ -1133,22 +1193,27 @@ async def run_talmud_eval(
         skip_kraken: bool = False,
         skip_lm_studio: bool = False,
         use_claude: bool = False,
-        claude_model: Optional[str] = None,
+        claude_models: Optional[List[str]] = None,
         segmentation_model: str = AgentConfig.GEMINI_FLASH_MODEL,
         segmentation_base_url: Optional[str] = None,
+        judge_model: str = AgentConfig.GEMINI_ANALYSIS_MODEL,
+        judge_base_url: Optional[str] = None,
+        skip_error_analysis: bool = False,
         wandb_project: str = EvalConfig.WANDB_PROJECT,
         wandb_run_name: Optional[str] = None,
 ) -> None:
-    global _lm_studio_models, _lm_studio_base_url, _use_claude
+    global _lm_studio_models, _lm_studio_base_url, _claude_models
+    global _judge_model, _judge_base_url, _run_error_analysis
 
     # ── Set module-level config (drives dynamic column generation) ────────────
     _lm_studio_models = [] if (skip_lm_studio or not lm_studio_models) else lm_studio_models
     _lm_studio_base_url = lm_studio_base_url
-    _use_claude = use_claude
-    if claude_model:
-        ClaudeConfig.DEFAULT_MODEL = claude_model
+    _claude_models = list(claude_models) if (use_claude and claude_models) else []
+    _judge_model = judge_model
+    _judge_base_url = judge_base_url
+    _run_error_analysis = not skip_error_analysis
 
-    if _use_claude and not os.getenv("ANTHROPIC_API_KEY"):
+    if _claude_models and not os.getenv("ANTHROPIC_API_KEY"):
         print(
             "⚠️  ANTHROPIC_API_KEY is not set — Claude auth will fall back to "
             "an `ant auth login` profile if one exists."
@@ -1222,11 +1287,12 @@ async def run_talmud_eval(
             # LM Studio config captured for reproducibility
             "lm_studio_models": _lm_studio_models,
             "lm_studio_base_url": _lm_studio_base_url if _lm_studio_models else None,
-            "claude_model": ClaudeConfig.DEFAULT_MODEL if _use_claude else None,
+            "claude_models": _claude_models,
+            "error_judge_model": _judge_model if _run_error_analysis else None,
         },
         tags=["talmud", "section-eval", "kraken"]
              + ([f"lm-studio:{_lm_key(m)}" for m in _lm_studio_models])
-             + (["claude"] if _use_claude else []),
+             + ([f"claude:{_lm_key(m)}" for m in _claude_models]),
     )
 
     all_results: List[Dict] = []
@@ -1244,7 +1310,7 @@ async def run_talmud_eval(
                 skip_pro=skip_pro,
                 skip_kraken=skip_kraken,
                 skip_lm_studio=not _lm_studio_models,
-                use_claude=_use_claude,
+                claude_models=_claude_models,
                 batch_num=1,
                 segmentation_model=segmentation_model,
                 segmentation_base_url=segmentation_base_url,
@@ -1280,9 +1346,7 @@ def _log_summary(results: List[Dict]) -> None:
         ("vision_ocr_seg", "vision_ocr_seg_cer_strict",    "vision_ocr_seg_cer_lenient"),
         ("kraken_seg",     "kraken_seg_cer_strict",        "kraken_seg_cer_lenient"),
     ]
-    if _use_claude:
-        model_cer_cols.append(("claude", "claude_cer_strict", "claude_cer_lenient"))
-    for model_id in _lm_studio_models:
+    for model_id in _claude_models + _lm_studio_models:
         k = _lm_key(model_id)
         model_cer_cols.append((k, f"{k}_cer_strict", f"{k}_cer_lenient"))
 
@@ -1303,6 +1367,21 @@ def _log_summary(results: List[Dict]) -> None:
     for k, v in sorted(summary.items()):
         wandb.summary[k] = v
         print(f"  {k}: {v:.4f}" if isinstance(v, float) else f"  {k}: {v}")
+
+    # ── Error-type classification: per-doc table + benchmark summary ────────
+    if _error_classifications:
+        wandb.log({
+            "error_classification": wandb.Table(
+                columns=ERROR_TABLE_COLUMNS,
+                data=classification_table_rows(_error_classifications),
+            )
+        })
+        error_stats = aggregate_error_stats(_error_classifications)
+        print("\n🧪 Error-type summary (fraction of docs affected):")
+        for k, v in sorted(error_stats.items()):
+            wandb.summary[k] = v
+            if k.endswith("/pct_docs"):
+                print(f"  {k.removeprefix('error_types/').removesuffix('/pct_docs')}: {v:.0%}")
 
 
 # ============================================================================
@@ -1338,9 +1417,31 @@ if __name__ == "__main__":
         help="Include Claude in the benchmark (off by default — tokens are expensive).",
     )
     p.add_argument(
-        "--claude_model",
+        "--claude_models",
+        type=lambda s: [m.strip() for m in s.split(",") if m.strip()],
+        default=["claude-opus-4-8", "claude-sonnet-5"],
+        metavar="MODEL[,MODEL,...]",
+        help="Claude model IDs to score side by side when --use_claude is set "
+             "(comma-separated). Default: claude-opus-4-8,claude-sonnet-5",
+    )
+
+    # LLM-judge error-type classification
+    p.add_argument(
+        "--judge_model",
+        default=AgentConfig.GEMINI_ANALYSIS_MODEL,
+        help="Text-only LLM that classifies error types vs the ground truth. "
+             "Default: Gemini Flash. Set to an LM Studio model ID and provide "
+             "--judge_base_url to use a local model instead.",
+    )
+    p.add_argument(
+        "--judge_base_url",
         default=None,
-        help=f"Claude model ID (default: {ClaudeConfig.DEFAULT_MODEL}).",
+        help="If set, the judge model is served via LM Studio at this URL.",
+    )
+    p.add_argument(
+        "--skip_error_analysis",
+        action="store_true",
+        help="Disable the LLM-judge error-type classification.",
     )
     p.add_argument(
         "--lm_studio_base_url",
@@ -1382,9 +1483,12 @@ if __name__ == "__main__":
         skip_kraken=args.skip_kraken,
         skip_lm_studio=args.skip_lm_studio,
         use_claude=args.use_claude,
-        claude_model=args.claude_model,
+        claude_models=args.claude_models,
         segmentation_model=args.segmentation_model,
         segmentation_base_url=args.segmentation_base_url,
+        judge_model=args.judge_model,
+        judge_base_url=args.judge_base_url,
+        skip_error_analysis=args.skip_error_analysis,
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run_name,
     ))
