@@ -35,8 +35,10 @@ class AgentConfig:
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
     # Models
+    # NOTE: there is no "gemini-3.5-pro" — the API's Pro line currently tops
+    # out at gemini-3.1-pro-preview (verify with genai.list_models()).
     GEMINI_FLASH_MODEL = "gemini-3.5-flash"
-    GEMINI_PRO_MODEL = "gemini-3.5-pro"
+    GEMINI_PRO_MODEL = "gemini-3.1-pro-preview"
     GEMINI_ANALYSIS_MODEL = "gemini-3.5-flash"
 
     # Model selection
@@ -47,7 +49,9 @@ class AgentConfig:
 
     # Timeouts
     GEMINI_FLASH_TIMEOUT = 180   # 3 minutes
-    GEMINI_PRO_TIMEOUT   = 300   # 5 minutes
+    # gemini-3.1-pro-preview is a heavy thinking model — dense sections
+    # (rashi/tosafot) routinely exceed 300s, wasting all 3 retries.
+    GEMINI_PRO_TIMEOUT   = 600   # 10 minutes
 
     # Output token budget.
     # gemini-3.5-pro is a thinking model — thinking tokens count against

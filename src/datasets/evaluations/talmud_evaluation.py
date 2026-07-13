@@ -75,7 +75,7 @@ from src.models.ocr.kraken_transcriber import preload_kraken_model, transcribe_w
 
 # Local VLMs via LM Studio
 from src.models.ocr.lms_transcriber import (
-    transcribe_batch as lm_studio_transcribe_batch,
+    transcribe_with_lm_studio,
     check_lm_studio_health,
     LMStudioConfig,
 )
@@ -404,6 +404,13 @@ Return ONLY the Tosafot transcription.""",
 # Kraken, or Tesseract.  The LLM identifies and separates the three sections
 # from the unsegmented OCR stream using its knowledge of Talmud page structure.
 
+# Structural framing (column order) — empirically the strongest prior for
+# gemara/tosafot extraction: it tells the model WHERE the text lives.
+# Kept byte-identical to the long-proven wording — paraphrasing it made
+# gemara extraction bimodal (occasional collapse to ~1/3 of the section).
+# NOTE: the rashi prompt deliberately does NOT use this framing — the
+# labelled sub-sections it describes are the marginal apparatus, and
+# conflating them with Rashi's commentary produced rashi CER > 1.0.
 _OCR_STRUCTURE = """\
 The OCR was run on a full Talmud page and reads COLUMN BY COLUMN.
 The output has this structure:
@@ -411,7 +418,6 @@ The output has this structure:
   FIRST (~50–80 lines): Right column — the Rashi margin area, printed as
   labelled sub-sections. These labels all belong to the Rashi column:
     מסורת השיים, הגהות הב"ח, גליון השים, מוסף רש"י / מוסף ר'ש"י, רב ניסים גאון
-  (מוסף ר'ש"י = "Rashi's additions" — this IS Rashi's commentary proper.)
 
   SEPARATOR: possibly a garbled/corrupted line at the column boundary.
 
@@ -419,22 +425,48 @@ The output has this structure:
   continuous Gemara text (Aramaic/Hebrew discourse) mixed with Tosafot
   entries (start with ד"ה, contain וא"ת / ויש לומר / ותימה)."""
 
+# Content taxonomy — used for the rashi call, where content shape (not
+# position) is what identifies the text.  Tested on saved raw OCR: this
+# dropped kraken rashi CER from 1.10/2.27 to 0.05/0.10 on the worst pages.
+_CONTENT_TAXONOMY = """\
+The OCR was run on a full page of the Babylonian Talmud (Vilna edition).
+It reads COLUMN BY COLUMN, so the page's sections appear interleaved and out
+of reading order, with OCR errors throughout.  The stream contains FOUR kinds
+of text:
+
+1. MARGINAL APPARATUS — short labelled reference blocks. Their (possibly
+   garbled) labels include: מסורת הש"ס, הגהות הב"ח, גליון הש"ס, תורה אור,
+   עין משפט, רב ניסים גאון, מוסף רש"י — plus the page header (e.g. פרק ... ברכות).
+   These are NOT Rashi's commentary.
+2. GEMARA — the main text: continuous Talmudic Aramaic/Hebrew discourse
+   (dialectic with terms like אמר רב, תנו רבנן, מאי, תניא).
+3. RASHI — Rashi's running commentary: a chain of SHORT glosses. Each gloss
+   opens with a headword quoted from the Gemara, usually ending with a
+   period, followed by a brief explanation, usually ending with a colon.
+   Example shape:  בריוני. פריצים:  שפיל. השפיל עצמך לסוף המקרא ... :
+4. TOSAFOT — longer dialectical entries. They also open with a headword, but
+   contain extended argumentation with phrases like וא"ת (ואם תאמר),
+   וי"ל / ויש לומר, ותימה, וקשה, אומר ר"ת."""
+
 # One prompt per section — each call only needs to output ~1/3 of the text,
 # avoiding the finish_reason=2 truncation that kills the single-prompt approach.
 _SEGMENTATION_PROMPTS: Dict[str, str] = {
     "gemara": f"""{_OCR_STRUCTURE}
 
 Extract ONLY the main Gemara text (continuous Talmudic Aramaic/Hebrew discourse).
-Do NOT include Rashi or Tosafot commentary.
+Do NOT include the marginal apparatus, Rashi, or Tosafot commentary.
 Return ONLY the raw text — no label, no explanation.""",
 
-    "rashi": f"""{_OCR_STRUCTURE}
+    "rashi": f"""{_CONTENT_TAXONOMY}
 
-Extract ONLY the Rashi column content — that is, ALL text from the labelled
-sub-sections at the start of the OCR output:
-מסורת השיים, הגהות הב"ח, גליון השים, מוסף ר'ש"י / מוסף רש"י, רב ניסים גאון.
-Include all of those sub-sections verbatim, with their labels.
-Return ONLY the raw text — no extra explanation.""",
+Extract ONLY kind 3 — Rashi's running commentary: the chain of short
+headword-period + explanation-colon glosses.
+Do NOT include the labelled marginal apparatus blocks (מסורת הש"ס,
+הגהות הב"ח, גליון הש"ס, רב ניסים גאון etc.) — those are NOT Rashi.
+Do NOT include the Gemara or the longer dialectical Tosafot entries.
+Copy the text EXACTLY as the OCR produced it — do NOT correct, complete, or
+normalize anything, even obvious OCR errors.
+Return ONLY the raw extracted text — no label, no explanation.""",
 
     "tosafot": f"""{_OCR_STRUCTURE}
 
@@ -740,31 +772,6 @@ async def _call_section_extraction(
     return (text or "").strip(), time.time() - t0
 
 
-async def _call_lms_section_extraction(
-    image_path: str,
-    section: str,
-) -> Tuple[Dict[str, str], Dict[str, float]]:
-    """Run all LM Studio models extracting one section from the full page.
-
-    Returns ({model_id: text}, {model_id: elapsed_s}).
-    Plain text — no JSON parsing required.
-    """
-    if not _lm_studio_models:
-        return {}, {}
-
-    t0 = time.time()
-    raw_results = await lm_studio_transcribe_batch(
-        model_ids=_lm_studio_models,
-        image_path=image_path,
-        prompt=SECTION_EXTRACT_PROMPTS[section],
-        base_url=_lm_studio_base_url,
-    )
-    elapsed = time.time() - t0
-    texts   = {mid: (txt or "").strip() for mid, txt in raw_results.items()}
-    timings = {mid: elapsed for mid in _lm_studio_models}
-    return texts, timings
-
-
 async def _call_lms_text_only(
     prompt: str,
     model_id: str,
@@ -831,8 +838,20 @@ async def _call_ocr_segmentation(
 
     for section in SECTION_KEYS:
         text = await _call_one(section)
-        sections[section] = text
         gt_len = len(gt_sections.get(section, ""))
+        # The segmentation LLM occasionally misfires in one of two ways
+        # (bimodal behavior even at temperature 0.1): collapsing to a small
+        # fraction of the section, or dumping several sections into one.
+        # The signature is output length far from the GT length — one
+        # resample usually recovers; keep whichever sample is closer to
+        # the GT length.
+        if gt_len > 200 and not (0.5 * gt_len <= len(text) <= 2.5 * gt_len):
+            print(f"      [{section}] suspicious length ({len(text)} chars vs "
+                  f"gt={gt_len}) — resampling once...")
+            retry = await _call_one(section)
+            if abs(len(retry) - gt_len) < abs(len(text) - gt_len):
+                text = retry
+        sections[section] = text
         print(f"      [{section}] extracted {len(text)} chars  "
               f"(gt={gt_len} chars)")
         if section != SECTION_KEYS[-1]:
@@ -1039,29 +1058,32 @@ async def evaluate_talmud_document(
         else:
             print("    ✗ Kraken returned nothing")
 
-    # ── LM Studio — 3 separate per-section calls ─────────────────────────────
+    # ── LM Studio — 3 per-section calls, MODEL-MAJOR order ────────────────────
+    # All sections for one model before switching models: LM Studio holds one
+    # large model in memory at a time, so interleaving models per section
+    # forces an evict/reload on every call (and requests to the evicted model
+    # 400 with "Model unloaded").
     if not skip_lm_studio and _lm_studio_models:
         print(f"  🖥  LM Studio: {', '.join(_lm_key(m) for m in _lm_studio_models)}...")
-        lm_sections_by_model: Dict[str, Dict[str, str]] = {mid: {} for mid in _lm_studio_models}
-        lm_timings: Dict[str, float] = {mid: 0.0 for mid in _lm_studio_models}
-
-        for section in SECTION_KEYS:
-            texts, timings = await _call_lms_section_extraction(str(image_path), section)
-            for mid, text in texts.items():
-                lm_sections_by_model[mid][section] = text
-                lm_timings[mid] += timings.get(mid, 0.0)
-            await asyncio.sleep(2)
-
-        for mid, sections in lm_sections_by_model.items():
+        for mid in _lm_studio_models:
             k = _lm_key(mid)
-            state["model_times"][k] = lm_timings[mid]
+            t0 = time.time()
+            sections: Dict[str, str] = {}
+            for section in SECTION_KEYS:
+                text = await transcribe_with_lm_studio(
+                    mid, str(image_path), SECTION_EXTRACT_PROMPTS[section],
+                    base_url=_lm_studio_base_url,
+                )
+                sections[section] = (text or "").strip()
+                await asyncio.sleep(1)
+            state["model_times"][k] = time.time() - t0
             mets = compute_section_metrics(sections, gt_sections)
             state["_lm_sections"][mid]        = sections
             state["_lm_section_metrics"][mid] = mets
             om = mets.get("overall", {})
             print(
-                f"    [{k}] overall CER strict={om.get('cer_strict', '?'):.3f}  "
-                f"lenient={om.get('cer_lenient', '?'):.3f}"
+                f"    [{k}] overall CER strict={om.get('cer_strict', 1.0):.3f}  "
+                f"lenient={om.get('cer_lenient', 1.0):.3f}"
             )
 
     state["processing_time"] = time.time() - t_doc_start
@@ -1405,9 +1427,14 @@ if __name__ == "__main__":
     p.add_argument(
         "--lm_studio_models",
         type=lambda s: [m.strip() for m in s.split(",") if m.strip()],
-        default=["qwen/qwen3-vl-8b", "google/gemma-4-31b-qat"],
+        default=["qwen/qwen3-vl-8b"],
         metavar="MODEL[,MODEL,...]",
-        help="LM Studio VLM model IDs (comma-separated).",
+        help="LM Studio VLM model IDs (comma-separated). "
+             "To add Gemma 4, use gemma-4-31b-it-mlx (correct but SLOW: "
+             "~9 min/section on Apple Silicon — plan an overnight run). "
+             "Do NOT use the QAT GGUF builds (google/gemma-4-31b-qat, "
+             "google/gemma-4-26b-a4b-qat) — runaway thinking produces empty "
+             "output and the 31B's crashes poison other models' requests.",
     )
 
     # Claude (flag-gated — expensive, off by default)

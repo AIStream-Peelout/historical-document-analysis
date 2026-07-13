@@ -78,9 +78,13 @@ class EvalConfig:
     BATCH_TRACKING_FILE = Path("./transcription_results/batch_progress.json")
     INCREMENTAL_RESULTS_FILE = Path("./transcription_results/incremental_results.jsonl")
 
-    # LM Studio (local open-weight VLMs) — top models from independent labs,
-    # both scored in every run.
-    LM_STUDIO_MODELS = ["qwen/qwen3-vl-8b", "google/gemma-4-31b-qat"]
+    # LM Studio (local open-weight VLMs).
+    # To add Gemma 4, pass --lm-studio-models with gemma-4-31b-it-mlx —
+    # correct but SLOW (~9 min per full transcription on Apple Silicon).
+    # Do NOT use the QAT GGUF builds (google/gemma-4-31b-qat,
+    # google/gemma-4-26b-a4b-qat): runaway thinking produces empty output
+    # and the 31B's crashes poison other models' requests.
+    LM_STUDIO_MODELS = ["qwen/qwen3-vl-8b"]
     LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
 
 

@@ -54,11 +54,16 @@ class LMStudioConfig:
     temperature: float = 0.1
     """Low temperature → less creative hallucination (matches Gemini calls)."""
 
-    max_tokens: int = 4096
-    """Enough headroom for a full JSON response with three sections."""
+    max_tokens: int = 8192
+    """Headroom for a full section transcription PLUS thinking tokens —
+    reasoning models (e.g. Gemma 4) burn hundreds of tokens on a hidden
+    reasoning channel before emitting content; too small a budget returns
+    finish_reason=length with EMPTY content."""
 
-    timeout_s: float = 180.0
-    """LM Studio on a local GPU is fast; generous timeout for CPU fallback."""
+    timeout_s: float = 600.0
+    """Large local models are slow: gemma-4-31b-qat generates ~16 tok/s on
+    Apple Silicon, so a full Gemara section (thinking + ~4k output tokens)
+    can take 4-5 minutes. 180s produced spurious timeouts."""
 
     connect_timeout_s: float = 5.0
     """Fail fast if LM Studio isn't running."""
@@ -71,6 +76,36 @@ class LMStudioConfig:
 
 # Singleton used by the eval loop; callers may replace it.
 DEFAULT_CONFIG = LMStudioConfig()
+
+
+# ============================================================================
+# Global serialization — ONE LM Studio inference request at a time
+# ============================================================================
+# The local server holds one large model in memory; concurrent requests make
+# it evict/reload models (400 "Model unloaded") and thrash limited RAM.
+# Every inference entry point in this module acquires this lock, so no two
+# LM Studio requests are ever in flight simultaneously — process-wide,
+# regardless of how callers schedule their coroutines.
+
+_lms_lock: Optional[asyncio.Lock] = None
+_lms_lock_loop: Optional[asyncio.AbstractEventLoop] = None
+
+
+def _get_lms_lock() -> asyncio.Lock:
+    """Return the module-wide LM Studio lock for the running event loop.
+
+    Created lazily per event loop (an asyncio.Lock cannot be shared across
+    loops, and tests/scripts may call asyncio.run() several times).
+
+    :return: Lock serializing all LM Studio inference calls
+    :rtype: asyncio.Lock
+    """
+    global _lms_lock, _lms_lock_loop
+    loop = asyncio.get_running_loop()
+    if _lms_lock is None or _lms_lock_loop is not loop:
+        _lms_lock = asyncio.Lock()
+        _lms_lock_loop = loop
+    return _lms_lock
 
 
 # ============================================================================
@@ -189,51 +224,55 @@ async def transcribe_with_lm_studio(
     url = f"{base_url}/chat/completions"
     client_timeout = aiohttp.ClientTimeout(total=timeout)
 
-    last_exc: Optional[Exception] = None
-    for attempt in range(max_retries + 1):
-        try:
-            async with aiohttp.ClientSession(timeout=client_timeout) as session:
-                async with session.post(url, json=payload) as resp:
-                    if resp.status == 503:
-                        # Model still loading — wait and retry
-                        body = await resp.text()
-                        print(
-                            f"    ⏳ LM Studio 503 (model loading?) — "
-                            f"attempt {attempt + 1}/{max_retries + 1}: {body[:120]}"
-                        )
-                        if attempt < max_retries:
-                            await asyncio.sleep(retry_delay * (attempt + 1))
-                            continue
-                        return None
+    # Hold the module-wide lock for the entire call (retries included):
+    # LM Studio must never see two inference requests at once.
+    async with _get_lms_lock():
+        last_exc: Optional[Exception] = None
+        for attempt in range(max_retries + 1):
+            try:
+                async with aiohttp.ClientSession(timeout=client_timeout) as session:
+                    async with session.post(url, json=payload) as resp:
+                        if resp.status != 200:
+                            # Always surface LM Studio's error body — e.g.
+                            # {"error": "Model unloaded."} when another large
+                            # model evicted this one from memory.
+                            body = await resp.text()
+                            print(
+                                f"    ✗ [{model_id}] HTTP {resp.status} "
+                                f"(attempt {attempt + 1}/{max_retries + 1}): {body[:200]}"
+                            )
+                            if attempt < max_retries:
+                                await asyncio.sleep(retry_delay * (attempt + 1))
+                                continue
+                            return None
 
-                    resp.raise_for_status()
-                    data = await resp.json()
+                        data = await resp.json()
 
-                    # OpenAI-compatible response shape
-                    choices = data.get("choices", [])
-                    if not choices:
-                        print(f"    ✗ [{model_id}] Empty choices in response")
-                        return None
+                        # OpenAI-compatible response shape
+                        choices = data.get("choices", [])
+                        if not choices:
+                            print(f"    ✗ [{model_id}] Empty choices in response")
+                            return None
 
-                    content = choices[0].get("message", {}).get("content", "")
-                    return content.strip() if content else None
+                        content = choices[0].get("message", {}).get("content", "")
+                        return content.strip() if content else None
 
-        except aiohttp.ClientConnectorError:
-            print(f"    ✗ [{model_id}] Cannot connect to LM Studio at {base_url}")
-            return None
-        except asyncio.TimeoutError:
-            last_exc = asyncio.TimeoutError(f"Timed out after {timeout}s")
-            print(f"    ⏱ [{model_id}] Timeout on attempt {attempt + 1}")
-            if attempt < max_retries:
-                await asyncio.sleep(retry_delay)
-        except Exception as exc:
-            last_exc = exc
-            print(f"    ✗ [{model_id}] Error on attempt {attempt + 1}: {exc}")
-            if attempt < max_retries:
-                await asyncio.sleep(retry_delay)
+            except aiohttp.ClientConnectorError:
+                print(f"    ✗ [{model_id}] Cannot connect to LM Studio at {base_url}")
+                return None
+            except asyncio.TimeoutError:
+                last_exc = asyncio.TimeoutError(f"Timed out after {timeout}s")
+                print(f"    ⏱ [{model_id}] Timeout on attempt {attempt + 1}")
+                if attempt < max_retries:
+                    await asyncio.sleep(retry_delay)
+            except Exception as exc:
+                last_exc = exc
+                print(f"    ✗ [{model_id}] Error on attempt {attempt + 1}: {exc}")
+                if attempt < max_retries:
+                    await asyncio.sleep(retry_delay)
 
-    print(f"    ✗ [{model_id}] All {max_retries + 1} attempts failed. Last: {last_exc}")
-    return None
+        print(f"    ✗ [{model_id}] All {max_retries + 1} attempts failed. Last: {last_exc}")
+        return None
 
 
 # ============================================================================
@@ -274,18 +313,21 @@ async def complete_text(
         "max_tokens": max_tokens,
         "temperature": temperature,
     }
-    try:
-        async with aiohttp.ClientSession(
-            timeout=aiohttp.ClientTimeout(total=timeout)
-        ) as session:
-            async with session.post(f"{base_url}/chat/completions", json=payload) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-                content = data["choices"][0]["message"]["content"] or ""
-                return content.strip() or None
-    except Exception as exc:
-        print(f"    ✗ LM Studio text-only failed ({model_id}): {exc}")
-        return None
+    # Same module-wide lock as image transcription — LM Studio must never
+    # see two inference requests at once (limited RAM, model eviction).
+    async with _get_lms_lock():
+        try:
+            async with aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=timeout)
+            ) as session:
+                async with session.post(f"{base_url}/chat/completions", json=payload) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+                    content = data["choices"][0]["message"]["content"] or ""
+                    return content.strip() or None
+        except Exception as exc:
+            print(f"    ✗ LM Studio text-only failed ({model_id}): {exc}")
+            return None
 
 
 # ============================================================================
@@ -299,22 +341,31 @@ async def transcribe_batch(
     base_url: str = DEFAULT_CONFIG.base_url,
     **kwargs,
 ) -> dict[str, Optional[str]]:
-    """Transcribe one image with multiple LM Studio models concurrently.
+    """Transcribe one image with multiple LM Studio models SEQUENTIALLY.
 
-    Returns {model_id: raw_text_or_None}.
+    Sequential on purpose: concurrent requests to two large models make
+    LM Studio evict one to load the other, and every request to the evicted
+    model fails instantly with 400 ``{"error": "Model unloaded."}``.
+    On a single local GPU concurrency buys nothing anyway.
+
+    :param model_ids: LM Studio model IDs to run
+    :type model_ids: List[str]
+    :param image_path: Path to the document image
+    :type image_path: str
+    :param prompt: Transcription prompt sent to every model
+    :type prompt: str
+    :param base_url: LM Studio server root
+    :type base_url: str
+    :return: Mapping of model_id to raw text (or None on failure)
+    :rtype: dict[str, Optional[str]]
     """
-    tasks = {
-        model_id: transcribe_with_lm_studio(
-            model_id, image_path, prompt, base_url=base_url, **kwargs
-        )
-        for model_id in model_ids
-    }
-    results = await asyncio.gather(*tasks.values(), return_exceptions=True)
     out: dict[str, Optional[str]] = {}
-    for model_id, result in zip(tasks.keys(), results):
-        if isinstance(result, Exception):
-            print(f"    ✗ [{model_id}] Exception: {result}")
+    for model_id in model_ids:
+        try:
+            out[model_id] = await transcribe_with_lm_studio(
+                model_id, image_path, prompt, base_url=base_url, **kwargs
+            )
+        except Exception as exc:
+            print(f"    ✗ [{model_id}] Exception: {exc}")
             out[model_id] = None
-        else:
-            out[model_id] = result
     return out
