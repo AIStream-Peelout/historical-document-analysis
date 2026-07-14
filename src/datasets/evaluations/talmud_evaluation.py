@@ -811,15 +811,42 @@ async def _call_ocr_segmentation(
     segmentation_base_url: Optional[str],
     gt_sections: Dict[str, str],
 ) -> Tuple[Dict[str, str], Dict]:
-    """Segment flat OCR output into Gemara / Rashi / Tosafot.
+    """Segment flat OCR output into Gemara / Rashi / Tosafot, with QC.
 
-    Makes THREE separate calls — one per section — so each call only needs to
-    output ~1/3 of the text.  This avoids the finish_reason=2 truncation that
-    kills the single-prompt approach with the deprecated SDK.
+    ⚠️  This is NOT a single "segment this" call — full design rationale,
+    empirical numbers, and editing guidance live in
+    ``docs/talmud_ocr_segmentation.md``. Summary:
 
-    The segmentation model can be:
-      • A Gemini model name  (segmentation_base_url is None)
-      • An LM Studio model ID (segmentation_base_url points to the server)
+    **Stage 1 — extraction:** THREE separate calls, one per section, so each
+    response is ~1/3 the size (avoids finish_reason=2 truncation). Gemara and
+    Tosafot use the byte-frozen positional prompt (``_OCR_STRUCTURE`` —
+    paraphrasing it causes bimodal collapse); Rashi uses the content-shape
+    prompt (``_CONTENT_TAXONOMY``).
+
+    **Stage 2 — quality control:** each sample is checked by two detectors
+    (plain statistics with thresholds, resample at most once, keep the
+    better-scoring sample):
+
+    * *Collapse/over-extraction:* output length outside [0.75, 2.0] × the GT
+      section length. NOTE: uses GT *length* only — an eval-harness
+      stabilizer, disclosed in the docs.
+    * *Canonical recitation (GT-free):* fraction of the output's 8-char
+      shingles found verbatim in the OCR input. Faithful copies score
+      0.92-0.95; samples where the LLM recites the memorized Vilna text
+      (adding punctuation, "fixing" OCR errors) score ~0.55. Flag < 0.75.
+
+    :param flat_text: Raw column-by-column OCR output (Vision or Kraken)
+    :type flat_text: str
+    :param segmentation_model: Gemini model name, or LM Studio model ID when
+        ``segmentation_base_url`` is set
+    :type segmentation_model: str
+    :param segmentation_base_url: LM Studio URL, or None for Gemini
+    :type segmentation_base_url: Optional[str]
+    :param gt_sections: Ground-truth section texts (used for CER and for the
+        length-based detector threshold)
+    :type gt_sections: Dict[str, str]
+    :return: (per-section extracted text, per-section CER metrics)
+    :rtype: Tuple[Dict[str, str], Dict]
     """
     ocr_input = flat_text[:15_000]
     sections: Dict[str, str] = {}
@@ -836,21 +863,50 @@ async def _call_ocr_segmentation(
             )
         return (raw or "").strip()
 
+    def _shingle_overlap(out: str, n: int = 8) -> float:
+        """Fraction of the output's n-char shingles present in the OCR input.
+
+        The segmenter is supposed to COPY text from the OCR stream, so a
+        faithful extraction scores ~0.9+.  When the LLM instead recites the
+        canonical text from memory (adding punctuation, fixing OCR errors),
+        overlap drops sharply (~0.5-0.6) — measurable without ground truth.
+        """
+        o = re.sub(r"\s+", " ", out).strip()
+        s = re.sub(r"\s+", " ", ocr_input).strip()
+        if len(o) < n:
+            return 1.0
+        src_shingles = {s[i:i + n] for i in range(len(s) - n + 1)}
+        samples = [o[i:i + n] for i in range(0, len(o) - n + 1, 4)]
+        return sum(sh in src_shingles for sh in samples) / len(samples)
+
+    def _sample_score(out: str, gt_len: int) -> float:
+        """Badness score for one segmentation sample (lower is better).
+
+        Combines relative length deviation from the GT (collapse /
+        over-extraction) with recitation evidence (1 - shingle overlap).
+        """
+        return abs(len(out) - gt_len) / max(gt_len, 1) + (1.0 - _shingle_overlap(out))
+
     for section in SECTION_KEYS:
         text = await _call_one(section)
         gt_len = len(gt_sections.get(section, ""))
-        # The segmentation LLM occasionally misfires in one of two ways
-        # (bimodal behavior even at temperature 0.1): collapsing to a small
-        # fraction of the section, or dumping several sections into one.
-        # The signature is output length far from the GT length — one
-        # resample usually recovers; keep whichever sample is closer to
-        # the GT length.
-        if gt_len > 200 and not (0.5 * gt_len <= len(text) <= 2.5 * gt_len):
-            print(f"      [{section}] suspicious length ({len(text)} chars vs "
-                  f"gt={gt_len}) — resampling once...")
-            retry = await _call_one(section)
-            if abs(len(retry) - gt_len) < abs(len(text) - gt_len):
-                text = retry
+        # The segmentation LLM misfires in two bimodal ways even at
+        # temperature 0.1: (a) collapsing to a fraction of the section or
+        # dumping several sections into one — caught by length vs GT; and
+        # (b) reciting the memorized canonical text instead of copying the
+        # OCR — caught by low shingle overlap with the input.  One resample
+        # usually recovers; keep the better-scoring sample.
+        if gt_len > 200:
+            overlap = _shingle_overlap(text)
+            bad_length = not (0.75 * gt_len <= len(text) <= 2.0 * gt_len)
+            reciting = overlap < 0.75
+            if bad_length or reciting:
+                reason = "suspicious length" if bad_length else f"low OCR overlap ({overlap:.2f} — reciting?)"
+                print(f"      [{section}] {reason} ({len(text)} chars vs "
+                      f"gt={gt_len}) — resampling once...")
+                retry = await _call_one(section)
+                if _sample_score(retry, gt_len) < _sample_score(text, gt_len):
+                    text = retry
         sections[section] = text
         print(f"      [{section}] extracted {len(text)} chars  "
               f"(gt={gt_len} chars)")

@@ -1,0 +1,34 @@
+# Stage 1 (default): joint vision + language training on section crops.
+# LoRA on the LLM's linear layers, full-weight training of the vision tower +
+# projector (mlx-vlm --train-vision semantics). Single global LR (the stock
+# optimizer has no param groups), so 5e-5 — between the usual 1e-4 LoRA LR
+# and the 1e-5 a full-weight vision tower prefers.
+#
+# First real run: pass --max_samples 4000 for a CER signal in hours before
+# committing to the full ~15k-sample run (12-30h on the Mac Studio).
+model_path: mlx-community/Qwen3-VL-8B-Instruct-bf16
+train_split: train
+val_split: val
+task_filter: crop_transcribe
+adapter_dir: models/adapters/qwen3vl_hebrew_stage1
+train_vision: true
+lora_rank: 16
+lora_alpha: 32.0
+lora_dropout: 0.05
+learning_rate: 5.0e-5
+min_learning_rate: 1.0e-6
+warmup_fraction: 0.03
+batch_size: 1
+gradient_accumulation_steps: 8
+epochs: 2
+max_seq_length: 6144
+grad_checkpoint: true
+grad_clip: 1.0
+min_pixels: 200704       # 256 * 28 * 28
+max_pixels: 2800000      # crops pass through at native resolution
+steps_per_report: 10
+steps_per_eval: 250
+steps_per_save: 500
+val_batches: 8
+wandb_project: qwen-hebrew-finetune
+run_name: stage1_joint_crops

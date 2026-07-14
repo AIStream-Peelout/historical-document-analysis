@@ -1,0 +1,29 @@
+# Ablation / fallback: language-side LoRA only, vision tower frozen.
+# Use if stage1_joint destabilizes (loss spikes, degraded generations), or as
+# the paper's "where did the fix land" ablation against the joint run.
+model_path: mlx-community/Qwen3-VL-8B-Instruct-bf16
+train_split: train
+val_split: val
+task_filter: crop_transcribe
+adapter_dir: models/adapters/qwen3vl_hebrew_text_only
+train_vision: false
+lora_rank: 16
+lora_alpha: 32.0
+lora_dropout: 0.05
+learning_rate: 1.0e-4    # pure-LoRA runs tolerate the standard higher LR
+min_learning_rate: 1.0e-6
+warmup_fraction: 0.03
+batch_size: 1
+gradient_accumulation_steps: 8
+epochs: 2
+max_seq_length: 6144
+grad_checkpoint: true
+grad_clip: 1.0
+min_pixels: 200704
+max_pixels: 2800000
+steps_per_report: 10
+steps_per_eval: 250
+steps_per_save: 500
+val_batches: 8
+wandb_project: qwen-hebrew-finetune
+run_name: ablation_text_only
