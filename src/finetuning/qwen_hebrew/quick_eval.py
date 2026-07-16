@@ -13,6 +13,7 @@ Run inside the training venv:
 """
 
 import argparse
+import json
 import random
 import statistics
 import tempfile
@@ -33,16 +34,29 @@ SAMPLE_SEED = 20260714
 MAX_GEN_TOKENS = 4500
 
 
-def load_model(model_path: str, adapter_path: Optional[str] = None):
+def load_model(
+    model_path: str,
+    adapter_path: Optional[str] = None,
+    min_pixels: int = 200704,
+    max_pixels: int = 1_800_000,
+):
     """Load an mlx-vlm model, optionally with trained adapters.
+
+    Applies the same image-resolution policy used in training so eval-time
+    inputs match the training distribution.
 
     :param model_path: HF hub id or local path of the (base or fused) model.
     :param adapter_path: Optional adapter directory from training.
+    :param min_pixels: Processor minimum image pixels (match training config).
+    :param max_pixels: Processor maximum image pixels (match training config).
     :returns: Tuple of (model, processor, config dict).
     """
     from mlx_vlm.utils import load
 
+    from src.finetuning.qwen_hebrew.mlx_train import apply_resolution_policy
+
     model, processor = load(model_path, adapter_path=adapter_path or None)
+    apply_resolution_policy(processor, min_pixels, max_pixels)
     return model, processor, model.config.__dict__
 
 
@@ -131,21 +145,28 @@ def evaluate_samples(
             hyp_n = normalize_whitespace(hyp)
             ref_n = normalize_whitespace(row["answer"])
             strict, lenient = cer_pair(hyp_n, ref_n)
+            # CER of the hypothesis truncated to the reference length —
+            # separates "starts reading then loops" (low prefix CER, high
+            # full CER) from "garbage from token one" (both high).
+            prefix_strict, _ = cer_pair(hyp_n[: len(ref_n)], ref_n)
             results.append(
                 {
                     "stem": row["stem"],
                     "section": row["section"],
                     "cer_strict": strict,
                     "cer_lenient": lenient,
+                    "cer_prefix": prefix_strict,
                     "char_ratio": char_count_ratio(hyp_n, ref_n),
                     "flags": flag_failure_modes(hyp_n, ref_n),
                     "hypothesis": hyp,
+                    "reference": row["answer"],
                 }
             )
             print(
                 f"  [{i + 1}/{n}] {row['stem']}/{row['section']}: "
-                f"CER {strict:.3f} (lenient {lenient:.3f}) "
-                f"ratio {results[-1]['char_ratio']:.2f} {results[-1]['flags'] or ''}"
+                f"CER {strict:.3f} (prefix {prefix_strict:.3f}) "
+                f"ratio {results[-1]['char_ratio']:.2f} {results[-1]['flags'] or ''}",
+                flush=True,
             )
     return results
 
@@ -165,6 +186,7 @@ def summarize(results: List[Dict]) -> Dict:
         "num_samples": len(results),
         "cer_strict_mean": statistics.mean(r["cer_strict"] for r in results),
         "cer_lenient_mean": statistics.mean(r["cer_lenient"] for r in results),
+        "cer_prefix_mean": statistics.mean(r.get("cer_prefix", r["cer_strict"]) for r in results),
         "char_ratio_mean": statistics.mean(r["char_ratio"] for r in results),
         "per_section": {
             s: {
@@ -190,6 +212,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--num_samples", type=int, default=30)
     parser.add_argument("--seed", type=int, default=SAMPLE_SEED)
     parser.add_argument("--wandb", action="store_true", help="Log summary to W&B.")
+    parser.add_argument(
+        "--save_outputs", type=Path, default=None,
+        help="Write per-sample hypothesis/reference JSONL here for inspection.",
+    )
     args = parser.parse_args(argv)
 
     print(f"Model: {args.model}" + (f" + adapter {args.adapter}" if args.adapter else ""))
@@ -197,6 +223,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     samples = select_val_samples(args.dataset_dir, args.num_samples, args.seed)
     results = evaluate_samples(model, processor, config, samples)
     summary = summarize(results)
+
+    if args.save_outputs:
+        args.save_outputs.parent.mkdir(parents=True, exist_ok=True)
+        with open(args.save_outputs, "w", encoding="utf-8") as f:
+            for r in results:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        print(f"  outputs saved → {args.save_outputs}")
 
     print("\n── Quick eval summary ──")
     print(f"  samples:        {summary['num_samples']}")

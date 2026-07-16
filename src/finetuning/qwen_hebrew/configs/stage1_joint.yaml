@@ -10,6 +10,7 @@ model_path: mlx-community/Qwen3-VL-8B-Instruct-bf16
 train_split: train
 val_split: val
 task_filter: crop_transcribe
+max_target_tokens: 1800   # drops ~p90+ longest targets — Metal OOM guard
 adapter_dir: models/adapters/qwen3vl_hebrew_stage1
 train_vision: true
 lora_rank: 16
@@ -21,11 +22,12 @@ warmup_fraction: 0.03
 batch_size: 1
 gradient_accumulation_steps: 8
 epochs: 2
-max_seq_length: 6144
+max_seq_length: 5120
 grad_checkpoint: true
 grad_clip: 1.0
 min_pixels: 200704       # 256 * 28 * 28
-max_pixels: 2800000      # crops pass through at native resolution
+max_pixels: 1800000      # ~0.87x linear downscale of the largest gemara crops;
+                         # vision-tower attention over full-res crops OOMs Metal
 steps_per_report: 10
 steps_per_eval: 250
 steps_per_save: 500

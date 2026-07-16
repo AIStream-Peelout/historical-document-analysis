@@ -50,6 +50,9 @@ class ExperimentConfig:
     :param val_split: Split used for validation (empty string disables).
     :param task_filter: Keep only rows with this ``task`` value ('' = all).
     :param max_samples: Optional cap on training rows (0 = all).
+    :param max_target_tokens: Drop rows with longer targets (0 = keep all).
+        Memory guard for local runs — the longest tosafot targets combined
+        with large gemara crops OOM the Metal backend.
     :param adapter_dir: Output directory for adapter checkpoints.
     :param resume_adapter: Optional adapter path to resume from.
     :param train_vision: Unfreeze the vision tower + projector.
@@ -81,6 +84,7 @@ class ExperimentConfig:
     val_split: str = "val"
     task_filter: str = "crop_transcribe"
     max_samples: int = 0
+    max_target_tokens: int = 0
     adapter_dir: str = "models/adapters/qwen3vl_hebrew"
     resume_adapter: str = ""
     train_vision: bool = True
@@ -249,6 +253,10 @@ def run_training(cfg: ExperimentConfig) -> Path:
     train_ds = dataset_dict[cfg.train_split]
     if cfg.task_filter:
         train_ds = train_ds.filter(lambda t: t == cfg.task_filter, input_columns="task")
+    if cfg.max_target_tokens:
+        train_ds = train_ds.filter(
+            lambda t: t <= cfg.max_target_tokens, input_columns="target_tokens"
+        )
     if cfg.max_samples:
         train_ds = train_ds.shuffle(seed=0).select(range(min(cfg.max_samples, len(train_ds))))
     train_ds = transform_dataset_to_messages(train_ds, model_type)
@@ -258,6 +266,10 @@ def run_training(cfg: ExperimentConfig) -> Path:
         val_ds = dataset_dict[cfg.val_split]
         if cfg.task_filter:
             val_ds = val_ds.filter(lambda t: t == cfg.task_filter, input_columns="task")
+        if cfg.max_target_tokens:
+            val_ds = val_ds.filter(
+                lambda t: t <= cfg.max_target_tokens, input_columns="target_tokens"
+            )
         val_ds = transform_dataset_to_messages(val_ds, model_type)
         val_dataset = VisionDataset(
             val_ds, config, processor, train_on_completions=True
@@ -269,13 +281,17 @@ def run_training(cfg: ExperimentConfig) -> Path:
 
     steps_per_epoch = max(len(train_ds) // cfg.batch_size, 1)
     total_iters = steps_per_epoch * cfg.epochs
-    warmup_steps = max(int(total_iters * cfg.warmup_fraction), 1)
+    # The LR schedule ticks once per optimizer.update(), which fires every
+    # gradient_accumulation_steps batches — size warmup/decay in OPTIMIZER
+    # steps, not batch iterations.
+    optimizer_steps = max(total_iters // cfg.gradient_accumulation_steps, 1)
+    warmup_steps = max(int(optimizer_steps * cfg.warmup_fraction), 1)
 
     lr_schedule = optim.join_schedules(
         [
             optim.linear_schedule(0.0, cfg.learning_rate, warmup_steps),
             optim.cosine_decay(
-                cfg.learning_rate, total_iters - warmup_steps, cfg.min_learning_rate
+                cfg.learning_rate, optimizer_steps - warmup_steps, cfg.min_learning_rate
             ),
         ],
         [warmup_steps],
@@ -292,6 +308,37 @@ def run_training(cfg: ExperimentConfig) -> Path:
     model = setup_model_for_training(
         model, train_args_ns, cfg.resume_adapter or None
     )
+    if cfg.resume_adapter:
+        # mlx-vlm's resume branch applies adapters WITHOUT re-freezing the
+        # base model, silently turning a LoRA continuation into a full
+        # 8.8B-parameter fine-tune. Freeze everything, then unfreeze only
+        # the LoRA parameters (and the vision stack if configured).
+        from mlx_vlm.lora import unfreeze_modules
+        from mlx_vlm.trainer.lora_layers import (
+            LoRAEmbedding,
+            LoRALinear,
+            LoRASwitchLinear,
+        )
+
+        model.freeze()
+        lora_layers = 0
+        for _, module in model.named_modules():
+            if isinstance(module, (LoRALinear, LoRASwitchLinear, LoRAEmbedding)):
+                module.unfreeze(keys=["lora_a", "lora_b"], strict=False)
+                lora_layers += 1
+        if lora_layers == 0:
+            raise RuntimeError(
+                f"Resume from {cfg.resume_adapter} produced no LoRA layers — "
+                f"adapter application failed."
+            )
+        if cfg.train_vision:
+            unfreeze_modules(
+                model,
+                ["vision_model", "vision_tower", "mm_projector",
+                 "multi_modal_projector", "aligner", "connector",
+                 "vision_resampler"],
+            )
+        print(f"Resume: re-froze base model, unfroze {lora_layers} LoRA layers")
     print_trainable_parameters(model)
 
     adapter_dir = Path(cfg.adapter_dir)
@@ -315,8 +362,9 @@ def run_training(cfg: ExperimentConfig) -> Path:
 
     print(
         f"Training: {len(train_ds)} samples, {total_iters} iters "
-        f"({cfg.epochs} epochs), warmup {warmup_steps}, "
-        f"train_vision={cfg.train_vision}, label masking ON"
+        f"({cfg.epochs} epochs), {optimizer_steps} optimizer steps "
+        f"(warmup {warmup_steps}), train_vision={cfg.train_vision}, "
+        f"label masking ON"
     )
 
     wandb_run = None
@@ -353,6 +401,10 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     :param argv: Optional argument list (defaults to ``sys.argv``).
     """
+    from dotenv import load_dotenv
+
+    load_dotenv()  # WANDB_API_KEY lives in the repo .env
+
     parser = argparse.ArgumentParser(description="Train Qwen3-VL on Hebrew documents (MLX).")
     parser.add_argument("--config", type=Path, required=True, help="YAML experiment config.")
     parser.add_argument("--max_samples", type=int, default=None,
