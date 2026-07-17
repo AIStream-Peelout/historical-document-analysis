@@ -1,0 +1,19 @@
+# Overfit-8 sanity run: the pipeline MUST drive loss to ~0 on 8 fixed samples.
+# If it can't, something is broken (images not flowing, labels not masked,
+# wrong prompt format) — stop and debug before any real run.
+model_path: mlx-community/Qwen3-VL-8B-Instruct-bf16
+train_split: smoke
+val_split: ""          # no validation during smoke
+task_filter: crop_transcribe
+max_samples: 8
+adapter_dir: models/adapters/qwen3vl_hebrew_smoke
+train_vision: true
+learning_rate: 1.0e-4
+batch_size: 1
+gradient_accumulation_steps: 1
+epochs: 40             # 8 samples x 40 epochs = 320 iters
+max_seq_length: 6144
+steps_per_report: 10
+steps_per_save: 1000   # no intermediate checkpoints needed
+wandb_project: ""      # keep smoke runs out of W&B
+run_name: smoke_overfit8

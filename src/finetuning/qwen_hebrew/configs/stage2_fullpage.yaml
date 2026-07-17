@@ -1,0 +1,28 @@
+# Optional stage 2: continue from stage-1 adapters on full-page extraction
+# (Task B) to close any crop-to-page transfer gap on the benchmark.
+# Full pages are ~4.2MP -> capped at 2.8MP here (mild 0.82x linear downscale);
+# the Colab/A100 path trains Task B at native resolution instead.
+model_path: mlx-community/Qwen3-VL-8B-Instruct-bf16
+train_split: train
+val_split: val
+task_filter: page_extract
+adapter_dir: models/adapters/qwen3vl_hebrew_stage2
+resume_adapter: models/adapters/qwen3vl_hebrew_stage1/adapters.safetensors
+train_vision: true
+learning_rate: 2.0e-5    # continuation: lower LR
+min_learning_rate: 1.0e-6
+warmup_fraction: 0.03
+batch_size: 1
+gradient_accumulation_steps: 8
+epochs: 1
+max_seq_length: 8192     # ~5.3k vision tokens + section text
+grad_checkpoint: true
+grad_clip: 1.0
+min_pixels: 200704
+max_pixels: 2800000
+steps_per_report: 10
+steps_per_eval: 250
+steps_per_save: 500
+val_batches: 8
+wandb_project: qwen-hebrew-finetune
+run_name: stage2_fullpage

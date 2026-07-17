@@ -7,10 +7,12 @@ import asyncio
 import json
 import os
 import re
+import ssl
 from pathlib import Path
 from typing import TypedDict, Optional, Dict, List
 from urllib.parse import urlparse
 import aiohttp
+import certifi
 from langgraph.graph import StateGraph, END
 import google.generativeai as genai
 from google.cloud import vision
@@ -33,8 +35,10 @@ class AgentConfig:
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 
     # Models
+    # NOTE: there is no "gemini-3.5-pro" — the API's Pro line currently tops
+    # out at gemini-3.1-pro-preview (verify with genai.list_models()).
     GEMINI_FLASH_MODEL = "gemini-3.5-flash"
-    GEMINI_PRO_MODEL = "gemini-3.5-pro"
+    GEMINI_PRO_MODEL = "gemini-3.1-pro-preview"
     GEMINI_ANALYSIS_MODEL = "gemini-3.5-flash"
 
     # Model selection
@@ -45,7 +49,9 @@ class AgentConfig:
 
     # Timeouts
     GEMINI_FLASH_TIMEOUT = 180   # 3 minutes
-    GEMINI_PRO_TIMEOUT   = 300   # 5 minutes
+    # gemini-3.1-pro-preview is a heavy thinking model — dense sections
+    # (rashi/tosafot) routinely exceed 300s, wasting all 3 retries.
+    GEMINI_PRO_TIMEOUT   = 600   # 10 minutes
 
     # Output token budget.
     # gemini-3.5-pro is a thinking model — thinking tokens count against
@@ -387,8 +393,11 @@ async def download_image(
             return output_path
 
         print(f"  ⬇ Downloading: {filename}")
+        # Use certifi's CA bundle explicitly — macOS Python installs often
+        # lack system certs, causing SSLCertVerificationError otherwise.
+        ssl_ctx = ssl.create_default_context(cafile=certifi.where())
         async with aiohttp.ClientSession() as session:
-            async with session.get(url_or_filename) as response:
+            async with session.get(url_or_filename, ssl=ssl_ctx) as response:
                 response.raise_for_status()
                 content = await response.read()
                 output_path.write_bytes(content)

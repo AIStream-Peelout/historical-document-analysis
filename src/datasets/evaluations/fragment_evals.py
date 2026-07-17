@@ -5,6 +5,8 @@ Batch processing with metrics, W&B logging, and auto-resume
 
 import asyncio
 import json
+import os
+import re
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -16,7 +18,30 @@ from src.models.llm.transcription.genizah_fragment_agent import (
     AgentConfig,
     TranscriptionState,
     transcribe_document,
-    download_image
+    download_image,
+    call_gemini_text_only,
+    _series_from_doc_id,
+)
+
+# Local VLMs via LM Studio (e.g. Gemma 4)
+from src.models.ocr.lms_transcriber import (
+    transcribe_batch as lm_studio_transcribe_batch,
+    complete_text as lm_studio_complete_text,
+    check_lm_studio_health,
+)
+
+# Claude (flag-gated — expensive, off by default)
+from src.models.llm.transcription.claude_transcriber import (
+    transcribe_with_claude,
+    ClaudeConfig,
+)
+
+# LLM-judge error-type classification
+from src.datasets.evaluations.error_classifier import (
+    classify_transcription_errors,
+    classification_table_rows,
+    aggregate_error_stats,
+    TABLE_COLUMNS as ERROR_TABLE_COLUMNS,
 )
 
 # Shared benchmark metrics
@@ -52,6 +77,166 @@ class EvalConfig:
     # Progress tracking
     BATCH_TRACKING_FILE = Path("./transcription_results/batch_progress.json")
     INCREMENTAL_RESULTS_FILE = Path("./transcription_results/incremental_results.jsonl")
+
+    # LM Studio (local open-weight VLMs).
+    # To add Gemma 4, pass --lm-studio-models with gemma-4-31b-it-mlx —
+    # correct but SLOW (~9 min per full transcription on Apple Silicon).
+    # Do NOT use the QAT GGUF builds (google/gemma-4-31b-qat,
+    # google/gemma-4-26b-a4b-qat): runaway thinking produces empty output
+    # and the 31B's crashes poison other models' requests.
+    LM_STUDIO_MODELS = ["qwen/qwen3-vl-8b"]
+    LM_STUDIO_BASE_URL = "http://localhost:1234/v1"
+
+
+# ============================================================================
+# Extra benchmark models (LM Studio VLMs + optional Claude)
+# Populated once in main() before any documents are evaluated.
+# ============================================================================
+
+_lm_studio_models: List[str] = []
+_lm_studio_base_url: str = EvalConfig.LM_STUDIO_BASE_URL
+_claude_models: List[str] = []   # e.g. ["claude-opus-4-8", "claude-sonnet-5"]
+
+# LLM judge for error-type classification (text-only, cheap — Gemini Flash
+# by default so it adds no new provider cost).
+_judge_model: str = AgentConfig.GEMINI_ANALYSIS_MODEL
+_judge_base_url: Optional[str] = None
+_run_error_analysis: bool = True
+
+# Text-only LLM used to reconstruct reading-order text from raw OCR output.
+# BOTH OCR engines (Google Vision, Kraken) are routed through this same model
+# so the two "specialized OCR + LLM extraction" pipelines are directly
+# comparable to each other and to the end-to-end VLMs.
+_segmentation_model: str = AgentConfig.GEMINI_FLASH_MODEL
+_segmentation_base_url: Optional[str] = None  # set → served via LM Studio
+
+
+def model_key_from_id(model_id: str) -> str:
+    """Stable short identifier for a model ID, safe for W&B column names.
+
+    e.g. "google/gemma-4-31b-qat" → "gemma_4_31b_qat"
+
+    :param model_id: Provider-qualified model ID
+    :type model_id: str
+    :return: Sanitized snake_case key
+    :rtype: str
+    """
+    name = model_id.split("/")[-1]
+    return re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
+
+
+def extra_model_keys() -> List[str]:
+    """Return the state/W&B keys for all configured extra models.
+
+    :return: List of model keys (LM Studio models first, then Claude models)
+    :rtype: List[str]
+    """
+    keys = [model_key_from_id(m) for m in _lm_studio_models]
+    keys += [model_key_from_id(m) for m in _claude_models]
+    return keys
+
+
+def scored_model_keys() -> List[str]:
+    """Return every model key that gets CER/WER metrics in this run.
+
+    Two families are compared:
+
+    * **End-to-end VLMs** — Gemini Flash/Pro, LM Studio VLMs, Claude.
+    * **Specialized OCR + text-only LLM extraction** — Google Vision OCR
+      and Kraken, each routed through the SAME extraction model
+      (``_segmentation_model``) so the two pipelines are directly
+      comparable.
+
+    Raw OCR output is deliberately never scored: it is not necessarily in
+    reading order, so scoring it directly would conflate OCR quality with
+    line ordering.  Raw outputs are saved and shown for inspection only,
+    so OCR-model failures can be told apart from extraction-LLM failures.
+
+    :return: Ordered list of model state keys
+    :rtype: List[str]
+    """
+    keys = ['gemini_flash', 'gemini_pro'] + extra_model_keys()
+    if AgentConfig.USE_VISION_OCR:
+        keys.append('vision_ocr_seg')
+    if AgentConfig.USE_KRAKEN:
+        keys.append('kraken_seg')
+    return keys
+
+
+def raw_ocr_keys() -> List[str]:
+    """Return the enabled OCR engines whose RAW output is saved and shown
+    for inspection but never scored.
+
+    :return: Ordered list of OCR state-key prefixes
+    :rtype: List[str]
+    """
+    keys = []
+    if AgentConfig.USE_VISION_OCR:
+        keys.append('vision_ocr')
+    if AgentConfig.USE_KRAKEN:
+        keys.append('kraken')
+    return keys
+
+
+_OCR_EXTRACTION_PROMPT = """\
+The following text is raw OCR output from a Cairo Genizah manuscript fragment.
+The text may be in Hebrew, Aramaic, or Judaeo-Arabic (Arabic written in Hebrew
+script).  The OCR engine reads text block by block, so lines may be OUT of
+natural reading order and may contain stray non-text artifacts.
+
+Reconstruct the transcription in natural reading order (right to left, top to
+bottom).  Keep the text EXACTLY as the OCR produced it — do NOT correct,
+complete, or normalize anything from memory; only reorder lines and drop
+obvious non-text artifacts.
+
+Return ONLY the reconstructed transcription — no labels, no commentary.
+
+OCR text:
+{ocr_text}"""
+
+
+async def _call_ocr_extraction(flat_text: str) -> Optional[str]:
+    """Route flat OCR output through the shared text-only extraction LLM.
+
+    The extraction model can be a Gemini model (default) or an LM Studio
+    model when ``_segmentation_base_url`` is set — mirroring the Talmud
+    eval's ``--segmentation_model`` / ``--segmentation_base_url`` options.
+
+    :param flat_text: Raw OCR text (possibly out of reading order)
+    :type flat_text: str
+    :return: Reconstructed reading-order transcription, or None on failure
+    :rtype: Optional[str]
+    """
+    prompt = _OCR_EXTRACTION_PROMPT.format(ocr_text=flat_text[:15_000])
+    if _segmentation_base_url:
+        return await lm_studio_complete_text(
+            model_id=_segmentation_model,
+            prompt=prompt,
+            base_url=_segmentation_base_url,
+        )
+    return await call_gemini_text_only(_segmentation_model, prompt, timeout=90)
+
+
+def _fragment_prompt(doc_id: str) -> str:
+    """Build the standard fragment transcription prompt for extra models.
+
+    Mirrors the Gemini Flash prompt in genizah_fragment_agent so all models
+    are benchmarked with identical instructions.
+
+    :param doc_id: Document identifier (used to derive the collection series)
+    :type doc_id: str
+    :return: Transcription prompt
+    :rtype: str
+    """
+    series = _series_from_doc_id(doc_id)
+    return f"""This is a manuscript from the Cairo Genizah ({series} collection).
+The text may be in Hebrew, Aramaic, or Judaeo-Arabic (Arabic written in Hebrew script).
+
+Transcribe the text in this image exactly as written. Do not normalize or correct the text.
+Preserve all vocalization marks (nikud) and line structure.
+Mark damaged or unclear characters with [?].
+
+Return ONLY the transcription with no commentary."""
 
 
 # ============================================================================
@@ -99,9 +284,14 @@ def extract_ground_truth(transcriptions) -> str:
     if not transcriptions:
         return ""
 
+    # Numeric keys sort numerically ("2" < "10"); non-numeric keys sort
+    # lexically after them instead of all collapsing to position 0.
+    def _line_key(x: str):
+        return (0, int(x), "") if x.isdigit() else (1, 0, x)
+
     # Format 1: Dictionary with string keys
     if isinstance(transcriptions, dict):
-        sorted_keys = sorted(transcriptions.keys(), key=lambda x: int(x) if x.isdigit() else 0)
+        sorted_keys = sorted(transcriptions.keys(), key=_line_key)
         lines = [transcriptions[k] for k in sorted_keys]
         return '\n'.join(lines)
 
@@ -112,9 +302,12 @@ def extract_ground_truth(transcriptions) -> str:
 
         first_transcription = transcriptions[0]
 
+        if len(transcriptions) > 1:
+            print(f"  ⚠️  {len(transcriptions)} transcription versions found — using the first")
+
         if isinstance(first_transcription, dict) and 'lines' in first_transcription:
             lines_dict = first_transcription['lines']
-            sorted_keys = sorted(lines_dict.keys(), key=lambda x: int(x) if x.isdigit() else 0)
+            sorted_keys = sorted(lines_dict.keys(), key=_line_key)
             lines = [lines_dict[k] for k in sorted_keys]
             return '\n'.join(lines)
 
@@ -238,9 +431,12 @@ class BatchManager:
         """Load batch processing progress"""
         if EvalConfig.BATCH_TRACKING_FILE.exists():
             with open(EvalConfig.BATCH_TRACKING_FILE, 'r') as f:
-                return json.load(f)
+                progress = json.load(f)
+            progress.setdefault('completed_docs', [])
+            return progress
         return {
             'completed_batches': [],
+            'completed_docs': [],
             'failed_docs': [],
             'last_processed_doc': None,
             'total_processed': 0
@@ -294,16 +490,61 @@ class BatchManager:
 
         return start_doc
 
+    def is_doc_completed(self, doc_id: str) -> bool:
+        """Check whether a document already succeeded in a previous run.
+
+        :param doc_id: Document identifier
+        :type doc_id: str
+        :return: True if the document was already evaluated successfully
+        :rtype: bool
+        """
+        return doc_id in self.progress['completed_docs']
+
+    def mark_doc_completed(self, doc_id: str):
+        """Record a successfully evaluated document.
+
+        Also clears any earlier failure entries for the same document, so
+        the failure list only reflects documents that still need attention.
+
+        :param doc_id: Document identifier
+        :type doc_id: str
+        """
+        if doc_id not in self.progress['completed_docs']:
+            self.progress['completed_docs'].append(doc_id)
+        self.progress['failed_docs'] = [
+            f for f in self.progress['failed_docs'] if f['doc_id'] != doc_id
+        ]
+        self.progress['last_processed_doc'] = doc_id
+        self.progress['total_processed'] = len(self.progress['completed_docs'])
+        self.save_batch_progress(self.progress)
+
     def mark_batch_completed(self, batch_num: int, doc_ids: list):
-        """Mark batch as completed"""
-        if batch_num not in self.progress['completed_batches']:
-            self.progress['completed_batches'].append(batch_num)
-        self.progress['total_processed'] += len(doc_ids)
-        self.progress['last_processed_doc'] = doc_ids[-1] if doc_ids else None
+        """Mark a batch completed — only if EVERY document in it succeeded.
+
+        Batches with failures stay uncompleted so ``--auto-next`` revisits
+        them; already-succeeded documents are skipped per-doc, so only the
+        failed ones are retried (no API tokens wasted on re-runs).
+
+        :param batch_num: 1-based batch number
+        :type batch_num: int
+        :param doc_ids: All document IDs belonging to this batch
+        :type doc_ids: list
+        """
+        if all(d in self.progress['completed_docs'] for d in doc_ids):
+            if batch_num not in self.progress['completed_batches']:
+                self.progress['completed_batches'].append(batch_num)
+        else:
+            remaining = [d for d in doc_ids if d not in self.progress['completed_docs']]
+            print(f"\n⚠️  Batch {batch_num} left uncompleted — {len(remaining)} doc(s) "
+                  f"still failing and will be retried on the next run: {remaining[:5]}")
+        self.progress['total_processed'] = len(self.progress['completed_docs'])
         self.save_batch_progress(self.progress)
 
     def mark_doc_failed(self, doc_id: str, error: str):
-        """Track failed documents"""
+        """Track failed documents (one entry per document — latest error wins)."""
+        self.progress['failed_docs'] = [
+            f for f in self.progress['failed_docs'] if f['doc_id'] != doc_id
+        ]
         self.progress['failed_docs'].append({
             'doc_id': doc_id,
             'error': error,
@@ -359,7 +600,7 @@ def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
     }
 
     # Per-model scalars (CER, WER, char_count_ratio, lenient variants)
-    for model_key in ['vision_ocr', 'gemini_flash', 'gemini_pro']:
+    for model_key in scored_model_keys():
         model_metrics = state.get(f'{model_key}_metrics')
         if model_metrics:
             for key, value in model_metrics.items():
@@ -396,9 +637,16 @@ def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
         state['doc_id'],
         wandb_image,
         state.get('ground_truth', ''),
-        (state.get('vision_ocr_result') or {}).get('text', ''),
-        (state.get('gemini_flash_result') or {}).get('text', ''),
-        (state.get('gemini_pro_result') or {}).get('text', ''),
+    ]
+    # One text column per scored model (VLMs + OCR→LLM pipelines) — columns
+    # added in the same order by main() when building the W&B table.
+    for key in scored_model_keys():
+        text_comparison_row.append((state.get(f'{key}_result') or {}).get('text', ''))
+    # Raw OCR text is shown for inspection only — never scored (line order
+    # is not reading order).
+    for ocr_key in raw_ocr_keys():
+        text_comparison_row.append((state.get(f'{ocr_key}_result') or {}).get('text', ''))
+    text_comparison_row += [
         state['final_transcription'],
         state['consensus_strategy']
     ]
@@ -409,12 +657,19 @@ def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
 
     metrics_rows = []
 
-    for model_key, model_name in [
-        ('vision_ocr', 'Google Vision OCR'),
-        ('gemini_flash', 'Gemini Flash'),
-        ('gemini_pro', 'Gemini Pro'),
-        ('consensus', 'Consensus')
-    ]:
+    _FIXED_DISPLAY_NAMES = {
+        'gemini_flash': 'Gemini Flash',
+        'gemini_pro': 'Gemini Pro',
+        'vision_ocr_seg': 'Vision OCR → LLM extraction',
+        'kraken_seg': 'Kraken → LLM extraction',
+        **{model_key_from_id(m): f'Claude ({m})' for m in _claude_models},
+    }
+    model_display_names = [
+        (key, _FIXED_DISPLAY_NAMES.get(key, key)) for key in scored_model_keys()
+    ]
+    model_display_names.append(('consensus', 'Consensus'))
+
+    for model_key, model_name in model_display_names:
         metrics_key = f'{model_key}_metrics'
         model_metrics = state.get(metrics_key)
 
@@ -522,8 +777,84 @@ async def evaluate_document(doc_id: str, metadata: dict, wandb_run, batch_num: i
     final_state['_benchmark_track'] = 'track1'
     final_state['_benchmark_script_type'] = metadata.get('script_type', 'unknown')
 
+    # ── Extra benchmark models (same prompt as Gemini Flash) ────────────────
+    prompt = _fragment_prompt(doc_id)
+
+    if _lm_studio_models:
+        print(f"  🖥  LM Studio: {', '.join(model_key_from_id(m) for m in _lm_studio_models)}...")
+        t0 = time.time()
+        lm_results = await lm_studio_transcribe_batch(
+            model_ids=_lm_studio_models,
+            image_path=str(image_path),
+            prompt=prompt,
+            base_url=_lm_studio_base_url,
+        )
+        lm_elapsed = time.time() - t0
+        for model_id, text in lm_results.items():
+            key = model_key_from_id(model_id)
+            if text:
+                final_state[f'{key}_result'] = {
+                    'text': text,
+                    'model': key,
+                    'char_count': len(text),
+                    'processing_time': lm_elapsed,
+                }
+                final_state['model_times'][key] = lm_elapsed
+            else:
+                final_state[f'{key}_result'] = None
+                print(f"    ✗ [{key}] no output")
+
+    for claude_model in _claude_models:
+        key = model_key_from_id(claude_model)
+        print(f"  🤖 Claude ({claude_model})...")
+        t0 = time.time()
+        claude_text = await transcribe_with_claude(
+            str(image_path), prompt, model=claude_model
+        )
+        claude_elapsed = time.time() - t0
+        if claude_text:
+            final_state[f'{key}_result'] = {
+                'text': claude_text,
+                'model': claude_model,
+                'char_count': len(claude_text),
+                'processing_time': claude_elapsed,
+            }
+            final_state['model_times'][key] = claude_elapsed
+            print(f"    ✓ Extracted {len(claude_text)} chars in {claude_elapsed:.1f}s")
+        else:
+            final_state[f'{key}_result'] = None
+
+    # ── OCR → text-only LLM extraction pipelines ────────────────────────────
+    # Raw OCR (Vision, Kraken) is NEVER scored — line order is not reading
+    # order.  Both engines are routed through the SAME extraction LLM and the
+    # end-to-end result is scored, making the OCR+LLM pipelines directly
+    # comparable to the end-to-end VLMs.  Raw output is saved so OCR-model
+    # failures can be told apart from extraction-LLM failures.
+    for ocr_key in raw_ocr_keys():
+        raw_text = (final_state.get(f'{ocr_key}_result') or {}).get('text', '')
+        if not raw_text:
+            final_state[f'{ocr_key}_seg_result'] = None
+            continue
+        save_raw_output(doc_id, f'{ocr_key}_raw', raw_text)
+        print(f"  🔀 {ocr_key} → {_segmentation_model} extraction...")
+        t0 = time.time()
+        seg_text = await _call_ocr_extraction(raw_text)
+        seg_elapsed = time.time() - t0
+        if seg_text:
+            final_state[f'{ocr_key}_seg_result'] = {
+                'text': seg_text,
+                'model': f'{ocr_key}+{_segmentation_model}',
+                'char_count': len(seg_text),
+                'processing_time': seg_elapsed,
+            }
+            final_state['model_times'][f'{ocr_key}_seg'] = seg_elapsed
+            print(f"    ✓ [{ocr_key}_seg] {len(seg_text)} chars in {seg_elapsed:.1f}s")
+        else:
+            final_state[f'{ocr_key}_seg_result'] = None
+            print(f"    ✗ [{ocr_key}_seg] extraction returned nothing")
+
     # Compute evaluation metrics and failure flags for each model
-    for model_key in ['vision_ocr', 'gemini_flash', 'gemini_pro']:
+    for model_key in scored_model_keys():
         result = final_state.get(f'{model_key}_result')
         if result:
             metrics = evaluate_transcription(ground_truth, result['text'], result['model'])
@@ -554,6 +885,29 @@ async def evaluate_document(doc_id: str, metadata: dict, wandb_run, batch_num: i
         print(f"    Consensus: CER={consensus_metrics['cer']:.3f}, "
               f"Strategy={final_state['consensus_strategy']}")
 
+    # ── LLM-judge error-type classification ─────────────────────────────────
+    # A cheap text-only judge labels WHAT kind of errors each model made
+    # (character confusion, canonical completion, omission, ...) — aggregated
+    # into per-type percentages and severities in the W&B summary.
+    final_state['_error_classifications'] = []
+    if _run_error_analysis:
+        print(f"  🧪 Error classification (judge: {_judge_model})...")
+        for model_key in scored_model_keys():
+            result = final_state.get(f'{model_key}_result')
+            if not result or not result.get('text'):
+                continue
+            classification = await classify_transcription_errors(
+                result['text'], ground_truth,
+                judge_model=_judge_model, judge_base_url=_judge_base_url,
+            )
+            if classification:
+                final_state['_error_classifications'].append({
+                    'doc_id': doc_id, 'model': model_key, **classification,
+                })
+                types = [e['type'] for e in classification['errors']] or ['none']
+                print(f"    [{model_key}] {classification['overall_quality']}: "
+                      f"{', '.join(types)}")
+
     # Log to W&B and get table rows
     text_row, metrics_rows, analysis_row = log_to_wandb(final_state, wandb_run.name)
 
@@ -575,20 +929,92 @@ async def evaluate_document(doc_id: str, metadata: dict, wandb_run, batch_num: i
 async def main(
         start_doc: Optional[int] = None,
         num_docs: Optional[int] = None,
-        auto_next: bool = True
+        auto_next: bool = True,
+        lm_studio_models: Optional[List[str]] = None,
+        lm_studio_base_url: str = EvalConfig.LM_STUDIO_BASE_URL,
+        use_claude: bool = False,
+        claude_models: Optional[List[str]] = None,
+        segmentation_model: str = AgentConfig.GEMINI_FLASH_MODEL,
+        segmentation_base_url: Optional[str] = None,
+        judge_model: str = AgentConfig.GEMINI_ANALYSIS_MODEL,
+        judge_base_url: Optional[str] = None,
+        skip_error_analysis: bool = False,
 ):
     """Main evaluation pipeline with batch processing support.
 
-    Args:
-        start_doc: Starting document index (0-based). If None and auto_next=True,
-                   finds next uncompleted batch automatically.
-        num_docs: Number of documents to process. If None, uses EvalConfig.BATCH_SIZE
-        auto_next: If True and start_doc is None, automatically find next uncompleted batch
+    :param start_doc: Starting document index (0-based). If None and
+        auto_next=True, finds next uncompleted batch automatically.
+    :type start_doc: Optional[int]
+    :param num_docs: Number of documents to process. If None, uses
+        EvalConfig.BATCH_SIZE.
+    :type num_docs: Optional[int]
+    :param auto_next: If True and start_doc is None, automatically find the
+        next uncompleted batch.
+    :type auto_next: bool
+    :param lm_studio_models: LM Studio VLM model IDs to benchmark (e.g.
+        ["google/gemma-4-31b-qat"]). Empty list disables LM Studio.
+    :type lm_studio_models: Optional[List[str]]
+    :param lm_studio_base_url: LM Studio API base URL.
+    :type lm_studio_base_url: str
+    :param use_claude: Include Claude models in the benchmark. Off by
+        default — tokens are expensive.
+    :type use_claude: bool
+    :param claude_models: Claude model IDs to score side by side (e.g.
+        ["claude-opus-4-8", "claude-sonnet-5"]). Ignored unless use_claude.
+    :type claude_models: Optional[List[str]]
+    :param segmentation_model: Text-only LLM that reconstructs reading-order
+        text from raw OCR output. Both Vision OCR and Kraken are routed
+        through this same model.
+    :type segmentation_model: str
+    :param segmentation_base_url: If set, the segmentation model is served
+        via LM Studio at this URL instead of Gemini.
+    :type segmentation_base_url: Optional[str]
+    :param judge_model: Text-only LLM that classifies error types against
+        the ground truth.
+    :type judge_model: str
+    :param judge_base_url: If set, the judge is served via LM Studio at this URL.
+    :type judge_base_url: Optional[str]
+    :param skip_error_analysis: Disable the LLM-judge error classification.
+    :type skip_error_analysis: bool
     """
+    global _lm_studio_models, _lm_studio_base_url, _claude_models
+    global _segmentation_model, _segmentation_base_url
+    global _judge_model, _judge_base_url, _run_error_analysis
 
     print("=" * 80)
     print("Cairo Genizah Transcription Evaluation - BATCH MODE")
     print("=" * 80)
+
+    # ── Extra model configuration ────────────────────────────────────────────
+    _lm_studio_models = list(lm_studio_models) if lm_studio_models else []
+    _lm_studio_base_url = lm_studio_base_url
+    _claude_models = list(claude_models) if (use_claude and claude_models) else []
+    _segmentation_model = segmentation_model
+    _segmentation_base_url = segmentation_base_url
+    _judge_model = judge_model
+    _judge_base_url = judge_base_url
+    _run_error_analysis = not skip_error_analysis
+
+    if _lm_studio_models:
+        print(f"\n🖥  Checking LM Studio at {_lm_studio_base_url} ...")
+        try:
+            available = await check_lm_studio_health(_lm_studio_base_url)
+            print(f"   Available models: {available}")
+            missing = [m for m in _lm_studio_models if m not in available]
+            if missing:
+                print(
+                    f"   ⚠️  These models are not loaded in LM Studio: {missing}\n"
+                    f"   Load them in LM Studio or they will produce empty results."
+                )
+        except RuntimeError as exc:
+            print(f"   ⚠️  {exc}\n   Disabling LM Studio for this run.")
+            _lm_studio_models = []
+
+    if _claude_models and not os.getenv("ANTHROPIC_API_KEY"):
+        print(
+            "\n⚠️  ANTHROPIC_API_KEY is not set — Claude auth will fall back to "
+            "an `ant auth login` profile if one exists."
+        )
 
     # Setup
     EvalConfig.IMAGES_DIR.mkdir(exist_ok=True)
@@ -675,6 +1101,11 @@ async def main(
         f"   Gemini Flash: {'✓' if AgentConfig.USE_GEMINI_FLASH else '✗'} (timeout: {AgentConfig.GEMINI_FLASH_TIMEOUT}s)")
     print(f"   Gemini Pro: {'✓' if AgentConfig.USE_GEMINI_PRO else '✗'} (timeout: {AgentConfig.GEMINI_PRO_TIMEOUT}s)")
     print(f"   Analysis: {'✓' if AgentConfig.USE_ANALYSIS else '✗'}")
+    print(f"   LM Studio: {', '.join(_lm_studio_models) if _lm_studio_models else '✗'}")
+    print(f"   Claude: {', '.join(_claude_models) if _claude_models else '✗'}")
+    print(f"   OCR extraction model: {_segmentation_model}"
+          + (f" (LM Studio @ {_segmentation_base_url})" if _segmentation_base_url else " (Gemini)"))
+    print(f"   Error-type judge: {_judge_model if _run_error_analysis else '✗'}")
     print(f"   Delay between docs: {EvalConfig.DELAY_BETWEEN_DOCS}s")
 
     # Initialize W&B
@@ -699,9 +1130,15 @@ async def main(
                     ("gemini_3_flash", AgentConfig.USE_GEMINI_FLASH),
                     ("gemini_3_pro", AgentConfig.USE_GEMINI_PRO)
                 ] if enabled
-            ],
+            ] + _lm_studio_models + _claude_models,
             "flash_timeout": AgentConfig.GEMINI_FLASH_TIMEOUT,
             "pro_timeout": AgentConfig.GEMINI_PRO_TIMEOUT,
+            "lm_studio_models": _lm_studio_models,
+            "lm_studio_base_url": _lm_studio_base_url if _lm_studio_models else None,
+            "claude_models": _claude_models,
+            "ocr_segmentation_model": _segmentation_model,
+            "ocr_segmentation_base_url": _segmentation_base_url,
+            "error_judge_model": _judge_model if _run_error_analysis else None,
         }
     )
 
@@ -714,6 +1151,13 @@ async def main(
 
     for i, (doc_id, metadata) in enumerate(batch_docs.items(), 1):
         global_index = start_doc + i
+
+        # Per-document resume: skip anything that already succeeded so
+        # failed-doc retries never re-pay API tokens for completed docs.
+        if batch_manager.is_doc_completed(doc_id):
+            print(f"\n[{i}/{len(batch_docs)}] ⏭️  {doc_id} already completed — skipping")
+            continue
+
         print(f"\n[{i}/{len(batch_docs)}] (Global: {global_index}/{len(eval_docs)})", end=" ")
 
         try:
@@ -724,6 +1168,7 @@ async def main(
                 all_metrics_rows.extend(result['_metrics_rows'])
                 if result.get('_analysis_row'):
                     analysis_rows.append(result['_analysis_row'])
+                batch_manager.mark_doc_completed(doc_id)
             else:
                 failed_docs.append({'doc_id': doc_id, 'reason': 'No result returned'})
                 batch_manager.mark_doc_failed(doc_id, 'No result returned')
@@ -748,8 +1193,11 @@ async def main(
     if text_comparison_rows:
         text_table = wandb.Table(
             columns=[
-                "fragment_id", "image", "ground_truth", "vision_ocr",
-                "gemini_flash", "gemini_pro", "consensus", "consensus_strategy"
+                "fragment_id", "image", "ground_truth",
+                *scored_model_keys(),
+                # raw OCR shown for inspection only — no metrics
+                *[f"{k}_raw" for k in raw_ocr_keys()],
+                "consensus", "consensus_strategy"
             ],
             data=text_comparison_rows
         )
@@ -781,6 +1229,26 @@ async def main(
         )
         wandb.log({f"batch_{batch_info['batch_num']}_analysis": analysis_table})
 
+    # ── Error-type classification: per-doc table + benchmark summary ────────
+    all_classifications = [
+        c for r in results for c in r.get('_error_classifications', [])
+    ]
+    if all_classifications:
+        error_table = wandb.Table(
+            columns=ERROR_TABLE_COLUMNS,
+            data=classification_table_rows(all_classifications),
+        )
+        wandb.log({f"batch_{batch_info['batch_num']}_error_classification": error_table})
+
+        error_stats = aggregate_error_stats(all_classifications)
+        for key, value in error_stats.items():
+            wandb.summary[key] = value
+
+        print("\n🧪 Error-type summary (fraction of docs affected):")
+        for key in sorted(k for k in error_stats if k.endswith("/pct_docs")):
+            print(f"   {key.removeprefix('error_types/').removesuffix('/pct_docs')}: "
+                  f"{error_stats[key]:.0%}")
+
     # ========================================================================
     # BATCH SUMMARY
     # ========================================================================
@@ -794,7 +1262,7 @@ async def main(
 
     if results:
         # Individual model stats
-        for model_name in ['vision_ocr', 'gemini_flash', 'gemini_pro']:
+        for model_name in scored_model_keys():
             metrics_key = f'{model_name}_metrics'
             model_results = [r[metrics_key] for r in results if r.get(metrics_key)]
 
@@ -892,6 +1360,68 @@ if __name__ == "__main__":
         action='store_false',
         help='Disable auto-finding next batch'
     )
+    parser.add_argument(
+        '--lm-studio-models',
+        type=lambda s: [m.strip() for m in s.split(',') if m.strip()],
+        default=EvalConfig.LM_STUDIO_MODELS,
+        metavar='MODEL[,MODEL,...]',
+        help='LM Studio VLM model IDs to benchmark (comma-separated). '
+             f'Default: {",".join(EvalConfig.LM_STUDIO_MODELS)}'
+    )
+    parser.add_argument(
+        '--lm-studio-base-url',
+        default=EvalConfig.LM_STUDIO_BASE_URL,
+        help='LM Studio API base URL'
+    )
+    parser.add_argument(
+        '--skip-lm-studio',
+        action='store_true',
+        help='Disable LM Studio models for this run'
+    )
+    parser.add_argument(
+        '--use-claude',
+        action='store_true',
+        help='Include Claude in the benchmark (off by default — tokens are expensive)'
+    )
+    parser.add_argument(
+        '--claude-models',
+        type=lambda s: [m.strip() for m in s.split(',') if m.strip()],
+        default=["claude-opus-4-8", "claude-sonnet-5"],
+        metavar='MODEL[,MODEL,...]',
+        help='Claude model IDs to score side by side when --use-claude is set '
+             '(comma-separated). Default: claude-opus-4-8,claude-sonnet-5'
+    )
+    parser.add_argument(
+        '--judge-model',
+        default=AgentConfig.GEMINI_ANALYSIS_MODEL,
+        help='Text-only LLM that classifies error types vs the ground truth. '
+             'Default: Gemini Flash. Set to an LM Studio model ID and provide '
+             '--judge-base-url to use a local model instead.'
+    )
+    parser.add_argument(
+        '--judge-base-url',
+        default=None,
+        help='If set, the judge model is served via LM Studio at this URL.'
+    )
+    parser.add_argument(
+        '--skip-error-analysis',
+        action='store_true',
+        help='Disable the LLM-judge error-type classification'
+    )
+    parser.add_argument(
+        '--segmentation-model',
+        default=AgentConfig.GEMINI_FLASH_MODEL,
+        help='Text-only LLM that reconstructs reading-order text from raw OCR '
+             'output (Vision OCR and Kraken both use it). Default: Gemini Flash. '
+             'Set to an LM Studio model ID and provide --segmentation-base-url '
+             'to use an open-source text model instead.'
+    )
+    parser.add_argument(
+        '--segmentation-base-url',
+        default=None,
+        help='If set, the segmentation model is served via LM Studio at this '
+             'URL. Leave unset to use Gemini (default).'
+    )
 
     args = parser.parse_args()
 
@@ -899,5 +1429,14 @@ if __name__ == "__main__":
     asyncio.run(main(
         start_doc=args.start_doc,
         num_docs=args.num_docs,
-        auto_next=args.auto_next
+        auto_next=args.auto_next,
+        lm_studio_models=[] if args.skip_lm_studio else args.lm_studio_models,
+        lm_studio_base_url=args.lm_studio_base_url,
+        use_claude=args.use_claude,
+        claude_models=args.claude_models,
+        segmentation_model=args.segmentation_model,
+        segmentation_base_url=args.segmentation_base_url,
+        judge_model=args.judge_model,
+        judge_base_url=args.judge_base_url,
+        skip_error_analysis=args.skip_error_analysis,
     ))

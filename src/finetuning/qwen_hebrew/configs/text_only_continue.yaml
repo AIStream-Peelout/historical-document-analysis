@@ -1,0 +1,29 @@
+# Continuation of ablation_text_only from its iter-1000 checkpoint.
+# Fresh (short) schedule over the remaining ~1 epoch; LR halved since the
+# adapter is already warm. Tests the "undertrained" hypothesis: does CER
+# improve once training actually completes?
+model_path: mlx-community/Qwen3-VL-8B-Instruct-bf16
+train_split: train
+val_split: val
+task_filter: crop_transcribe
+max_target_tokens: 1800
+adapter_dir: models/adapters/qwen3vl_hebrew_text_only
+resume_adapter: models/adapters/qwen3vl_hebrew_text_only
+train_vision: false
+learning_rate: 5.0e-5
+min_learning_rate: 1.0e-6
+warmup_fraction: 0.02
+batch_size: 1
+gradient_accumulation_steps: 8
+epochs: 1
+max_seq_length: 5120
+grad_checkpoint: true
+grad_clip: 1.0
+min_pixels: 200704
+max_pixels: 1800000
+steps_per_report: 10
+steps_per_eval: 250
+steps_per_save: 500
+val_batches: 8
+wandb_project: qwen-hebrew-finetune
+run_name: text_only_continue_from1000
