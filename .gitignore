@@ -14,8 +14,7 @@ idea/
 genizah_images
 transcription_raw_outputs
 transcription_results
-# Qwen Hebrew fine-tuning artifacts (large, regenerable)
+# Qwen Hebrew fine-tuning artifacts (large, regenerable — canonical copies on HF hub)
 src/datasets/processed/
-models/adapters/
-models/qwen3-vl-*
+models/
 .venv-mlx/
