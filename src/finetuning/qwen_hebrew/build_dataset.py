@@ -237,12 +237,19 @@ def pick_val_stems(stems: List[str], n_pages: int, seed: int) -> Set[str]:
 
     rng = random.Random(seed)
     volumes = sorted(by_volume)
+    pools: Dict[str, List[str]] = {v: by_volume[v].copy() for v in volumes}
+    for v in pools:
+        rng.shuffle(pools[v])
+
     picked: List[str] = []
     while len(picked) < n_pages and volumes:
-        for vol in volumes:
-            pool = [s for s in by_volume[vol] if s not in picked]
-            if pool and len(picked) < n_pages:
-                picked.append(rng.choice(pool))
+        for vol in list(volumes):
+            if len(picked) >= n_pages:
+                break
+            if not pools[vol]:
+                volumes.remove(vol)
+                continue
+            picked.append(pools[vol].pop())
     return set(picked)
 
 
