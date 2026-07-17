@@ -42,6 +42,7 @@ dotenv.load_dotenv(project_root / ".env")
 
 from src.datasets.document_models.place_normalizer import PlaceNormalizer  # noqa: E402
 from src.datasets.document_models.institution_normalizer import InstitutionNormalizer  # noqa: E402
+from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
 
 from neo4j import GraphDatabase
 
@@ -479,7 +480,24 @@ def _extract_institution_location(name: str) -> list[str]:
     "Brandeis University"                    → ["Brandeis University", "Waltham Massachusetts"]
     "Ben-Gurion University of the Negev"     → ["Ben-Gurion University of the Negev", "Beersheba Israel"]
     """
-    queries = [name]  # always try the full name first
+    # Derive a geocoder-friendly city hint from InstitutionNormalizer metadata
+    # FIRST, so that when the DB name carries decorations the registry already
+    # strips (Arabic subtitles, transliterations, parentheticals — e.g.
+    # "Coptic Museum, Cairo (al-Matḥāf al-Qibṭī)") the clean canonical query
+    # is tried BEFORE the raw name. Every geocoding function here stops at the
+    # first accepted hit, so if the raw name is tried first and happens to
+    # match some unrelated same-named place (e.g. a hamlet called "Cairo,
+    # Alabama"), the correct canonical query later in the list would never be
+    # reached. Putting canonical queries first fixes that ordering bug.
+    meta = InstitutionNormalizer.get_metadata(name)
+    city_hint = meta.get("city", "")
+    canonical = InstitutionNormalizer.normalize(name)
+
+    queries: list[str] = []
+    if city_hint and canonical != name:
+        queries.append(f"{canonical}, {city_hint}")
+        queries.append(canonical)
+    queries.append(name)  # always try the full name too
 
     lower = name.lower()
 
@@ -518,31 +536,10 @@ def _extract_institution_location(name: str) -> list[str]:
         if first_word not in queries:
             queries.append(first_word)
 
-    # Derive a geocoder-friendly city hint from InstitutionNormalizer metadata.
-    # When we have a known city, insert a city-qualified query IMMEDIATELY after
-    # the full name so the geocoder uses it before any other fallback.
-    # This prevents multi-campus institutions (e.g. Hebrew Union College) from
-    # resolving to the wrong campus when the unqualified name is ambiguous.
-    #
-    # IMPORTANT: use the canonical name (not the raw DB name) as the query base.
-    # The DB may store names with Arabic subtitles, transliterations, or other
-    # decorations (e.g. "Coptic Museum, Cairo (al-Matḥāf al-Qibṭī)") that
-    # confuse the geocoder.  The canonical form is always the clean version.
-    meta = InstitutionNormalizer.get_metadata(name)
-    city_hint = meta.get("city", "")
-    if city_hint:
-        canonical = InstitutionNormalizer.normalize(name)
-        # If the canonical differs from the raw name, insert it as a clean
-        # first-priority query so garbage suffixes don't poison the geocoder.
-        if canonical != name and canonical not in queries:
-            queries.insert(1, canonical)
-        # City-qualified canonical: "Coptic Museum, Cairo, Cairo" avoids the
-        # double-city redundancy — use canonical + city only when meaningful.
-        city_qualified = f"{canonical}, {city_hint}"
-        if city_qualified not in queries:
-            queries.insert(2 if canonical != name else 1, city_qualified)
-        if city_hint not in queries:
-            queries.append(city_hint)
+    # City hint alone as a last-resort fallback (canonical/city-qualified
+    # queries were already prepended at the top of this function).
+    if city_hint and city_hint not in queries:
+        queries.append(city_hint)
 
     return queries
 
@@ -551,7 +548,14 @@ def _geocode_google(queries: list[str], gmaps_client,
                     suspect_types: set = None) -> Optional[dict]:
     """Geocode using the Google Geocoding API.
 
-    Tries each query in order, returns the first usable result.
+    Tries every query in order and keeps the first *non-suspect* result;
+    if every query only turns up a suspect hit, falls back to the best
+    suspect result rather than whichever query happened to be tried first.
+    This matters because a coincidental name collision earlier in the query
+    list (e.g. an institution name that happens to match an unrelated small
+    place) would otherwise win outright even when a better query later in
+    the list would have resolved correctly.
+
     Sets geocode_suspect=True when Google returns a sub-city unit.
 
     `suspect_types` — additional Google result types to flag (e.g. for
@@ -560,6 +564,8 @@ def _geocode_google(queries: list[str], gmaps_client,
     if suspect_types is None:
         suspect_types = {"neighborhood", "sublocality", "sublocality_level_1",
                          "sublocality_level_2", "premise", "point_of_interest"}
+
+    fallback_suspect: Optional[dict] = None
 
     for query in queries:
         try:
@@ -581,13 +587,22 @@ def _geocode_google(queries: list[str], gmaps_client,
                        or components.get("administrative_area_level_1", ""))
             region  = COUNTRY_TO_REGION.get(country, "")
 
-            # Flag as suspect if Google returned a sub-city unit
-            suspect = bool(types & suspect_types) and "locality" not in types
+            # Flag as suspect if Google returned a sub-city unit. "establishment"
+            # is excluded from triggering suspect: Google tags essentially every
+            # real named place (library, museum, university...) as
+            # "establishment"/"point_of_interest", so without this exemption a
+            # correct institution match gets penalized as suspect while a wrong
+            # same-named neighbourhood (typically bare "political"/"sublocality"
+            # with no establishment tag) sails through unflagged — exactly
+            # backwards. Confirmed live: "John Rylands Library, University of
+            # Manchester" (types include establishment+point_of_interest) was
+            # being marked suspect and passed over in favor of the Cape Town
+            # suburb "Rylands" (types: political/sublocality, no establishment).
+            suspect = (bool(types & suspect_types)
+                       and "locality" not in types
+                       and "establishment" not in types)
 
-            if query != queries[0]:
-                logger.debug(f"  Resolved via Google query '{query}'")
-
-            return {
+            result = {
                 "lat":              lat,
                 "lng":              lng,
                 "city":             city,
@@ -597,24 +612,57 @@ def _geocode_google(queries: list[str], gmaps_client,
                 "geocode_source":   "google",
                 "geocode_suspect":  suspect,
             }
+
+            if not suspect:
+                if query != queries[0]:
+                    logger.debug(f"  Resolved via Google query '{query}'")
+                return result
+
+            if fallback_suspect is None:
+                fallback_suspect = result
         except Exception as e:
             logger.debug(f"  Google query '{query}' failed: {e}")
             continue
 
-    return None
+    return fallback_suspect
 
 
 def _geocode_institution_google(name: str, gmaps_client) -> Optional[dict]:
-    """Geocode an institution — institutions can be sub-city so suspect rules are relaxed."""
-    queries = [name] + _extract_institution_location(name)[1:]
-    # For institutions, only flag truly ambiguous types as suspect
-    return _geocode_google(queries, gmaps_client,
-                           suspect_types={"premise", "point_of_interest"})
+    """Geocode an institution using the Google Geocoding API.
+
+    Uses the same suspect-type set as the historical-place path (sub-city
+    administrative units — neighbourhood/sublocality/premise/point_of_interest
+    with no "establishment" signal). A previous version relaxed this to just
+    {"premise", "point_of_interest"} on the theory that institutions are
+    legitimately sub-city, but that was backwards: Google tags essentially
+    every real named institution (library, museum, university...) as
+    "point_of_interest", so that override flagged CORRECT institution matches
+    as suspect while letting same-named neighbourhoods with no
+    establishment/POI signal through unflagged. The "establishment" exemption
+    in _geocode_google already distinguishes a real named place from a bare
+    sub-city unit, so no per-caller override is needed here.
+    """
+    queries = _extract_institution_location(name)
+    return _geocode_google(queries, gmaps_client)
 
 
 def _geocode_institution_nominatim(geolocator, name: str) -> Optional[dict]:
-    """Geocode an institution using Nominatim as fallback."""
+    """Geocode an institution using Nominatim as fallback.
+
+    Unlike the historical-place path, institution names are legitimately
+    scattered worldwide (Cambridge, New York, Jerusalem, ...), so no
+    Genizah-region bounding box applies here. But every query used to be
+    accepted on the first geographic-class hit with no quality check at
+    all, which let coincidental name collisions win outright — e.g.
+    "Coptic Museum, Cairo (...)" matching a hamlet called Cairo, Alabama,
+    "Rylands Genizah" matching a Cape Town neighbourhood called Rylands, or
+    "ENA ..." shelfmarks matching the Japanese city Ena. This now applies
+    the same importance/sub-city-unit suspect check the Place path uses,
+    tries every candidate query, and prefers the first non-suspect result —
+    only falling back to a suspect one if nothing better turned up.
+    """
     queries = _extract_institution_location(name)
+    fallback_suspect: Optional[dict] = None
 
     for query in queries:
         try:
@@ -624,6 +672,8 @@ def _geocode_institution_nominatim(geolocator, name: str) -> Optional[dict]:
                 continue
 
             osm_class = loc.raw.get("class", "")
+            osm_type  = loc.raw.get("type", "")
+            importance = float(loc.raw.get("importance", 1.0))
             accepted  = _GEOGRAPHIC_CLASSES | {"amenity", "tourism", "office"}
             if osm_class not in accepted:
                 logger.debug(f"  Skipping OSM class='{osm_class}' for '{query}'")
@@ -634,23 +684,59 @@ def _geocode_institution_nominatim(geolocator, name: str) -> Optional[dict]:
             city    = (addr.get("city") or addr.get("town") or
                        addr.get("village") or addr.get("county") or "")
             region  = COUNTRY_TO_REGION.get(country, "")
+            suspect = (osm_type in _SUSPECT_OSM_TYPES) or (importance < _IMPORTANCE_THRESHOLD)
 
-            if query != name:
-                logger.debug(f"  '{name}' resolved via Nominatim query '{query}'")
-
-            return {
+            result = {
                 "lat":              loc.latitude,
                 "lng":              loc.longitude,
                 "city":             city,
                 "country":          country,
                 "region":           region,
                 "osm_display_name": loc.address,
+                "geocode_suspect":  suspect,
             }
+
+            if not suspect:
+                if query != name:
+                    logger.debug(f"  '{name}' resolved via Nominatim query '{query}'")
+                return result
+
+            if fallback_suspect is None:
+                fallback_suspect = result
         except Exception as e:
             logger.debug(f"  Nominatim query '{query}' failed: {e}")
             continue
 
-    return None
+    if fallback_suspect:
+        logger.debug(f"  '{name}' — only a suspect Nominatim match found "
+                     f"('{fallback_suspect['osm_display_name'][:60]}')")
+    return fallback_suspect
+
+
+def _cities_match(a: str, b: str) -> bool:
+    """Loose city-name comparison for registry-vs-geocoder cross-checks.
+
+    A strict string equality check over-triggers on same-place variants that
+    are common between a curated registry and a geocoder's address
+    components: "Cairo" vs "Old Cairo", "Manchester" vs "Greater Manchester",
+    "Cambridge" vs "Cambridgeshire", "St. Petersburg" vs "Saint Petersburg".
+    This treats either side being a substring of the other (after light
+    St./Saint normalisation) as a match, while still catching genuine
+    mismatches like "New York" vs "Columbia".
+
+    :param a: First city name.
+    :param b: Second city name.
+    :returns: True if the two names plausibly refer to the same city, or if
+        either is empty (nothing to compare, so no conflict).
+    """
+    def _norm(c: str) -> str:
+        c = (c or "").lower().strip()
+        return c.replace("saint ", "st ").replace("st. ", "st ")
+
+    na, nb = _norm(a), _norm(b)
+    if not na or not nb:
+        return True
+    return na in nb or nb in na
 
 
 def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
@@ -662,16 +748,43 @@ def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
         query = ("MATCH (i:Institution) WHERE i.lat IS NULL "
                  "RETURN i.name AS name ORDER BY i.name")
 
-    institutions = [r["name"] for r in session.run(query) if r["name"]]
+    all_institutions = [r["name"] for r in session.run(query) if r["name"]]
+
+    # Skip names that are actually shelfmarks mistyped as Institution nodes
+    # (e.g. "ENA 3902.5 verso", "Bodl. MS. Heb. b. 12") — geocoding these
+    # produces nonsense pins (the string "ENA" matches the Japanese city Ena).
+    # They should be fixed at the source (see relationship_extractor.py's
+    # institution_is_shelfmark rejection) but this is a defensive backstop so
+    # any that still slip through never get real-looking coordinates.
+    # Only the strict "standard" classification (a recognised collection
+    # anchor + a digit) is used here, NOT the looser "berlin" bucket that
+    # is_probable_shelfmark() also accepts — "Berlin, Staatsbibliothek zu
+    # Berlin" and "Jüdische Gemeindebibliothek (Berlin)" are real
+    # institutions that trip the "berlin" classification's loose
+    # substring/prefix match, so using is_probable_shelfmark() here would
+    # wrongly skip them. "standard" alone still catches every genuine
+    # shelfmark-shaped name (AIU/BL/Bodl./CUL/ENA/T-S + digit).
+    institutions, shelfmark_skipped = [], []
+    for name in all_institutions:
+        if ShelfmarkNormalizer.classify_shelfmark(name) == "standard":
+            shelfmark_skipped.append(name)
+        else:
+            institutions.append(name)
+
     if args.limit:
         institutions = institutions[:args.limit]
 
     logger.info(f"Found {len(institutions)} Institution node(s) to geocode")
+    if shelfmark_skipped:
+        logger.info(f"Skipping {len(shelfmark_skipped)} node(s) that look like "
+                     f"shelfmarks, not institutions: {shelfmark_skipped}")
 
     if args.dry_run:
         for name in institutions:
             queries = _extract_institution_location(name)
             print(f"  {name}  →  would try: {queries}")
+        for name in shelfmark_skipped:
+            print(f"  {name}  →  SKIP (looks like a shelfmark, not an institution)")
         return
 
     backend = "Google" if gmaps_client else "Nominatim"
@@ -693,9 +806,51 @@ def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
             result = _geocode_institution_nominatim(geolocator, name)
             time.sleep(args.delay)
 
+        # Cross-check the geocoder's country/city against the curated registry
+        # before trusting its coordinates. This is the fix for the Columbia
+        # University Library bug: a fallback query ("Columbia") resolved to
+        # the country Colombia, and lat/lng were written unconditionally even
+        # though the registry (and the text country field it seeds)
+        # correctly said "United States" — an internally inconsistent record.
+        # A registry conflict (country OR, when the country matches, city)
+        # means the coordinates aren't trustworthy: we withhold lat/lng
+        # entirely (keeping the curated text metadata) rather than write a
+        # pin that's confidently wrong. E.g. re-running after the query-
+        # ordering fix above, Columbia University Library no longer hits
+        # Colombia but instead hits Columbia, SOUTH CAROLINA — same country,
+        # still the wrong city — so a same-country city mismatch is checked
+        # too, not just country. A withheld pin (recoverable by fixing the
+        # registry/query later) beats a confidently-wrong one, since nothing
+        # here currently filters on geocode_suspect before rendering.
+        registry_country = (known_meta.get("country") or "").strip().lower()
+        geocoded_country = (result.get("country") or "").strip().lower() if result else ""
+        country_conflict = bool(result and registry_country and geocoded_country
+                                 and registry_country != geocoded_country)
+
+        registry_city = known_meta.get("city") or ""
+        geocoded_city = (result.get("city") or "") if result else ""
+        city_conflict = bool(result and not country_conflict and registry_city and geocoded_city
+                              and not _cities_match(registry_city, geocoded_city))
+
+        if result and (country_conflict or city_conflict):
+            conflict_desc = (f"country '{known_meta.get('country')}' != '{result.get('country')}'"
+                              if country_conflict else
+                              f"city '{known_meta.get('city')}' != '{result.get('city')}'")
+            logger.warning(f"  ⚠️  {name} — registry {conflict_desc} "
+                            f"({result['lat']:.4f}, {result['lng']:.4f}) — "
+                            f"withholding coordinates, keeping registry text metadata")
+            result = None
+
         if result:
             # Registry metadata takes precedence over geocoder-derived location
-            # strings to prevent e.g. HUC resolving to Jerusalem.
+            # strings to prevent e.g. HUC resolving to Jerusalem. A registry
+            # value is trusted/curated, so it should overwrite whatever text is
+            # already stored (which may be stale/wrong from an earlier flawed
+            # geocoding run — e.g. "Rylands Genizah" originally had city='Cape
+            # Town' text written before the registry had an entry for it). A
+            # geocoder-only value (no registry entry) is less trusted, so it
+            # still only fills in a currently-null field rather than
+            # overwriting whatever's there.
             city    = known_meta.get("city")    or result.get("city",    "")
             country = known_meta.get("country") or result.get("country", "")
             region  = known_meta.get("region")  or result.get("region",  "")
@@ -703,24 +858,41 @@ def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
                 MATCH (i:Institution {name: $name})
                 SET i.lat              = $lat,
                     i.lng              = $lng,
-                    i.city             = CASE WHEN $city    <> '' AND i.city    IS NULL THEN $city    ELSE i.city    END,
-                    i.country          = CASE WHEN $country <> '' AND i.country IS NULL THEN $country ELSE i.country END,
-                    i.region           = CASE WHEN $region  <> '' AND i.region  IS NULL THEN $region  ELSE i.region  END,
-                    i.osm_display_name = $osm_display_name
+                    i.city             = CASE WHEN $city    <> '' AND ($city_is_registry    OR i.city    IS NULL) THEN $city    ELSE i.city    END,
+                    i.country          = CASE WHEN $country <> '' AND ($country_is_registry OR i.country IS NULL) THEN $country ELSE i.country END,
+                    i.region           = CASE WHEN $region  <> '' AND ($region_is_registry  OR i.region  IS NULL) THEN $region  ELSE i.region  END,
+                    i.osm_display_name = $osm_display_name,
+                    i.geocode_suspect  = $geocode_suspect
             """, name=name, lat=result["lat"], lng=result["lng"],
                  city=city, country=country, region=region,
-                 osm_display_name=result.get("osm_display_name", ""))
+                 city_is_registry=bool(known_meta.get("city")),
+                 country_is_registry=bool(known_meta.get("country")),
+                 region_is_registry=bool(known_meta.get("region")),
+                 osm_display_name=result.get("osm_display_name", ""),
+                 geocode_suspect=bool(result.get("geocode_suspect", False)))
             ok += 1
+            suspect_flag = " ⚠️ suspect" if result.get("geocode_suspect") else ""
             logger.info(f"  ✅ {name} → ({result['lat']:.4f}, {result['lng']:.4f}) "
-                        f"{city}, {country}")
+                        f"{city}, {country}{suspect_flag}")
         elif known_meta.get("city"):
-            # No geocoder result but we have registry metadata — at least set
-            # the location text fields so the node isn't completely unplaced.
+            # No trustworthy geocoder result (either none found, or a
+            # registry conflict invalidated it) but we have registry
+            # metadata — set the location text fields (registry-sourced, so
+            # overwrites unconditionally, same reasoning as city_is_registry
+            # above) and CLEAR any existing lat/lng/geocode_suspect rather
+            # than leaving them untouched. Without this, a conflict-withheld
+            # institution that already had bad coordinates from an earlier,
+            # pre-fix geocoding run (e.g. Columbia University Library's old
+            # Bogotá pin) would keep them forever, since withholding only
+            # stops a *new* write — it doesn't undo an old one.
             session.run("""
                 MATCH (i:Institution {name: $name})
-                SET i.city    = CASE WHEN i.city    IS NULL THEN $city    ELSE i.city    END,
-                    i.country = CASE WHEN i.country IS NULL THEN $country ELSE i.country END,
-                    i.region  = CASE WHEN i.region  IS NULL THEN $region  ELSE i.region  END
+                SET i.city    = $city,
+                    i.country = $country,
+                    i.region  = $region,
+                    i.lat     = null,
+                    i.lng     = null,
+                    i.geocode_suspect = null
             """, name=name,
                  city=known_meta.get("city", ""),
                  country=known_meta.get("country", ""),

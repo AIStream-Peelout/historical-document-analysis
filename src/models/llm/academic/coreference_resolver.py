@@ -616,6 +616,10 @@ class CoreferenceResolver:
           editor/translator role, a manuscript dealer/collector, or a known
           ground-truth author.  Wins over the ambiguous-biblical guess so a
           modern scholar named "David" is never demoted to biblical.
+          A known pre-modern historical author (Maimonides, Saadia Gaon,
+          Yehuda ha-Levi, ...) overrides this — they were literally authors
+          of classical works, which trips the same role-hint check that
+          identifies modern scholars, but they must stay ``historical``.
         * ``historical`` — default: a Genizah-era individual.
 
         :param people_list: Resolved people dicts (mutated in place).
@@ -626,8 +630,9 @@ class CoreferenceResolver:
         for p in people_list:
             verdict = bib.lookup(p["name"])
             role = (p.get("role") or "").lower()
-            is_scholar = (any(h in role for h in _SCHOLAR_ROLE_HINTS)
-                          or registry.is_known_scholar(p["name"]))
+            is_scholar = (not bib.is_known_historical_author(p["name"])
+                          and (any(h in role for h in _SCHOLAR_ROLE_HINTS)
+                               or registry.is_known_scholar(p["name"])))
 
             if verdict == "biblical":
                 p["person_class"] = "biblical"

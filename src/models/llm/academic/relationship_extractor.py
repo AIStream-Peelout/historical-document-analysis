@@ -85,6 +85,7 @@ dotenv.load_dotenv(_project_root / ".env")
 
 from src.models.llm.academic.llm_client import LLMClient  # noqa: E402
 from src.datasets.document_models.scholar_normalizer import ScholarRegistry  # noqa: E402
+from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -355,13 +356,36 @@ _CITE_PUBLISHER_RE = re.compile(r'\bpublisher\b|location of|[A-Z][a-z]+:\s+[A-Z]
 _CITE_AUTHOR_YEAR_RE = re.compile(r'[A-Z][A-Za-zäöüéè]+,\s+[A-Z]\.')
 _YEAR_RE = re.compile(r'\b(1[5-9]\d\d|20\d\d)\b')
 
+# Hebrew equivalents of the above. The Latin-script patterns above miss
+# Hebrew-language academic citations entirely (no "ed."/"trans."/capitalised
+# "Lastname, F." shape exists in Hebrew) — audited 2026-07-17: 28% of live
+# COLLABORATED_WITH edges have Hebrew evidence text, and most are exactly
+# this co-editor-citation-clique noise, just never caught because the
+# detector only had English patterns.
+_CITE_EDITOR_RE_HE = re.compile(r'(עורך|עורכים|עורכת|בעריכת|בעריכה|תרגם|תרגמה|מתרגם|מתרגמת|תרגום)')
+# Page/siman-reference abbreviation ("עמ' 123", "עמ קכח", "סי' קט") —
+# practically never appears in a substantive in-text quote, only in a
+# citation/reference (עמ' = page, סי' = siman/paragraph in rabbinic
+# literature citations).
+_CITE_PAGE_RE_HE = re.compile(r"(עמ['׳״]?|סי['׳״])\s*[\dא-ת]")
+# Publisher/city colon inside a parenthetical, e.g. "(ירושלים: יד יצחק
+# בן־צבי, תשנ..." — the Hebrew analogue of "City: Publisher". Stands alone
+# (mirrors _CITE_PUBLISHER_RE, which isn't AND-ed with a year either):
+# evidence strings are sometimes truncated mid-citation before the year's
+# gershayim mark ever appears, so requiring a co-occurring year missed this
+# exact shape live. The match only requires the opening "(...:" shape, not
+# a closing ")", to tolerate that truncation.
+_CITE_PUBLISHER_RE_HE = re.compile(r'\([^)\n]{0,60}:')
+
 
 def _is_citation_evidence(evidence: str) -> bool:
     """Return True if *evidence* looks like a bibliography/reference citation.
 
     Catches editor/translator credits ("ed. X, Y, Z"), publisher-location
     phrasing, and "Lastname, F. … <year>" citation shapes — the patterns that
-    drive the COLLABORATED_WITH co-editor clique and per-citation WROTE noise.
+    drive the COLLABORATED_WITH co-editor clique and per-citation WROTE noise
+    — plus the Hebrew equivalents (עורכים/בעריכת, עמ' page refs, and a
+    parenthetical "(City: Publisher..." shape).
 
     :param evidence: The relation's evidence string.
     :returns: True if it is a citation rather than substantive content.
@@ -374,6 +398,12 @@ def _is_citation_evidence(evidence: str) -> bool:
     if _CITE_PUBLISHER_RE.search(ev):
         return True
     if _CITE_AUTHOR_YEAR_RE.search(ev) and _YEAR_RE.search(ev):
+        return True
+    if _CITE_EDITOR_RE_HE.search(ev):
+        return True
+    if _CITE_PAGE_RE_HE.search(ev):
+        return True
+    if _CITE_PUBLISHER_RE_HE.search(ev):
         return True
     return False
 
@@ -503,6 +533,10 @@ def _compact_relations(
     4. **Language/concept endpoints** — drop relations whose endpoint is a
        language/script/linguistic term (Judaeo-Arabic, imāla, Hebrew…).
     5. **Vague endpoints** — drop bare "Fragment"/"the manuscript"/etc.
+    5b. **Shelfmark-as-Institution** — drop relations where an "Institution"
+        endpoint is actually a shelfmark string (per
+        :meth:`ShelfmarkNormalizer.is_probable_shelfmark`), e.g. a mistyped
+        HELD_AT object like "ENA 3902.5 verso".
     6. **Provenance** — ORIGINATED_FROM only from Person/Fragment (drops
        publisher cities, institution addresses, scholar regions).
     7. **Type pairing** — drop triples violating :data:`ALLOWED_RELATIONS`
@@ -557,6 +591,25 @@ def _compact_relations(
             continue
 
         st, ot = r["subject_type"], r["object_type"]
+
+        # 5b. shelfmark mistyped as Institution — the model sometimes emits a
+        # HELD_AT (Fragment -> Institution) relation where the "institution"
+        # slot is actually another shelfmark string (e.g. "Bodl. MS. Heb. b.
+        # 12", "ENA 3902.5 verso"). These are real shelfmarks, not repository
+        # names, and geocoding them as institutions produces nonsense pins
+        # (e.g. "ENA ..." matching the Japanese city Ena).
+        #
+        # Only the strict "standard" classification is used (anchor + a
+        # digit), not classify_shelfmark's looser "berlin" bucket — that one
+        # also matches real institution names like "Jüdische
+        # Gemeindebibliothek (Berlin)" on a bare substring/prefix check, which
+        # would wrongly reject genuine HELD_AT relations to that library.
+        if st == "Institution" and ShelfmarkNormalizer.classify_shelfmark(subj) == "standard":
+            reject(r, "institution_is_shelfmark")
+            continue
+        if ot == "Institution" and ShelfmarkNormalizer.classify_shelfmark(obj) == "standard":
+            reject(r, "institution_is_shelfmark")
+            continue
 
         # 6. provenance: ORIGINATED_FROM only from Person/Fragment
         if rel == "ORIGINATED_FROM" and st not in _PROVENANCE_SUBJECTS:
