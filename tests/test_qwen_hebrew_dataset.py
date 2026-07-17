@@ -62,6 +62,13 @@ def test_pick_val_stems_deterministic_and_stratified() -> None:
     assert len(volumes) == 10, "expected every volume represented"
 
 
+def test_pick_val_stems_terminates_when_overasked() -> None:
+    """Asking for more pages than exist must return everything, not hang."""
+    stems = [f"01_{i}" for i in range(2, 12)]
+    picked = pick_val_stems(stems, n_pages=10**6, seed=7)
+    assert picked == set(stems)
+
+
 # ── Artifact tests ────────────────────────────────────────────────────────────
 
 @pytest.fixture(scope="module")

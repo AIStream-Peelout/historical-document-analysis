@@ -15,7 +15,7 @@ google-generativeai
 notebook
 fastapi
 accelerate
-python-Levenshtein
+python-Levenshtein>=0.21  # rapidfuzz-backed: accepts token lists (WER fast path)
 matplotlib
 openai
 google-genai
