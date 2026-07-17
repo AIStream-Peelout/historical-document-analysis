@@ -153,12 +153,18 @@ def apply_resolution_policy(processor, min_pixels: int, max_pixels: int) -> None
     :raises AttributeError: If the processor exposes no known size interface.
     """
     ip = getattr(processor, "image_processor", processor)
-    if hasattr(ip, "min_pixels"):
-        ip.min_pixels = min_pixels
-        ip.max_pixels = max_pixels
-    elif hasattr(ip, "size") and isinstance(ip.size, dict) and "min_pixels" in ip.size:
+    size = getattr(ip, "size", None)
+    if isinstance(size, dict) and "shortest_edge" in size:
+        # transformers 5.x: pixel budget lives in the size dict (the key
+        # names are misleading — they hold TOTAL pixel counts) and
+        # min_pixels/max_pixels are read-only property views.
+        ip.size = {"shortest_edge": min_pixels, "longest_edge": max_pixels}
+    elif isinstance(size, dict) and "min_pixels" in size:
         ip.size["min_pixels"] = min_pixels
         ip.size["max_pixels"] = max_pixels
+    elif hasattr(ip, "min_pixels"):
+        ip.min_pixels = min_pixels
+        ip.max_pixels = max_pixels
     else:
         raise AttributeError(
             f"Cannot set resolution policy on {type(ip).__name__} — "
