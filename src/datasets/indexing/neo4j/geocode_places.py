@@ -494,9 +494,17 @@ def _extract_institution_location(name: str) -> list[str]:
     canonical = InstitutionNormalizer.normalize(name)
 
     queries: list[str] = []
-    if city_hint and canonical != name:
+    if city_hint:
+        # ALWAYS lead with the city-qualified form when the registry knows the
+        # city — including when canonical == name. An earlier version only
+        # city-qualified when the canonical differed from the raw name, which
+        # meant a DB name already in canonical form ("Columbia University
+        # Library") was geocoded bare, resolved to the wrong same-named place
+        # (the country Colombia; HUC's Jerusalem campus), and the registry
+        # conflict check then had nothing better to fall back on.
         queries.append(f"{canonical}, {city_hint}")
-        queries.append(canonical)
+        if canonical != name:
+            queries.append(canonical)
     queries.append(name)  # always try the full name too
 
     lower = name.lower()
@@ -739,6 +747,67 @@ def _cities_match(a: str, b: str) -> bool:
     return na in nb or nb in na
 
 
+def _geocode_registry_city(known_meta: dict, geolocator, gmaps_client,
+                           delay: float) -> Optional[dict]:
+    """Geocode a registry-known city ("New York, United States") for a
+    city-level institution pin.
+
+    Used when institution-level geocoding failed or conflicted with the
+    registry: the city+country string from the curated registry is an
+    unambiguous query, so its result is trustworthy where the institution
+    name's wasn't. The returned country is still verified against the
+    registry as a belt-and-braces check.
+
+    :param known_meta: ``{city, country, region}`` from InstitutionNormalizer.
+    :param geolocator: Nominatim geolocator (fallback backend).
+    :param gmaps_client: Google Maps client or None (preferred backend).
+    :param delay: Nominatim courtesy delay in seconds.
+    :returns: ``{lat, lng, osm_display_name}`` or None.
+    """
+    city = known_meta.get("city", "")
+    country = known_meta.get("country", "")
+    if not city:
+        return None
+    query = f"{city}, {country}" if country else city
+
+    if gmaps_client:
+        try:
+            results = gmaps_client.geocode(query)
+            if results:
+                r = results[0]
+                components = {c["types"][0]: c["long_name"]
+                              for c in r.get("address_components", [])
+                              if c.get("types")}
+                got_country = components.get("country", "")
+                if country and got_country and \
+                        got_country.strip().lower() != country.strip().lower():
+                    logger.debug(f"  Registry-city query '{query}' returned "
+                                 f"country '{got_country}' — rejecting")
+                    return None
+                loc = r["geometry"]["location"]
+                return {"lat": loc["lat"], "lng": loc["lng"],
+                        "osm_display_name": r.get("formatted_address", "")}
+        except Exception as e:
+            logger.debug(f"  Registry-city Google query '{query}' failed: {e}")
+
+    try:
+        time.sleep(delay)
+        loc = geolocator.geocode(query, exactly_one=True, timeout=10,
+                                 addressdetails=True, language="en")
+        if loc:
+            got_country = (loc.raw.get("address", {}) or {}).get("country", "")
+            if country and got_country and \
+                    got_country.strip().lower() != country.strip().lower():
+                logger.debug(f"  Registry-city query '{query}' returned "
+                             f"country '{got_country}' — rejecting")
+                return None
+            return {"lat": loc.latitude, "lng": loc.longitude,
+                    "osm_display_name": loc.address}
+    except Exception as e:
+        logger.debug(f"  Registry-city Nominatim query '{query}' failed: {e}")
+    return None
+
+
 def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
     """Geocode all Institution nodes that are missing lat/lng."""
     if args.all:
@@ -875,30 +944,56 @@ def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
             logger.info(f"  ✅ {name} → ({result['lat']:.4f}, {result['lng']:.4f}) "
                         f"{city}, {country}{suspect_flag}")
         elif known_meta.get("city"):
-            # No trustworthy geocoder result (either none found, or a
-            # registry conflict invalidated it) but we have registry
-            # metadata — set the location text fields (registry-sourced, so
-            # overwrites unconditionally, same reasoning as city_is_registry
-            # above) and CLEAR any existing lat/lng/geocode_suspect rather
-            # than leaving them untouched. Without this, a conflict-withheld
-            # institution that already had bad coordinates from an earlier,
-            # pre-fix geocoding run (e.g. Columbia University Library's old
-            # Bogotá pin) would keep them forever, since withholding only
-            # stops a *new* write — it doesn't undo an old one.
-            session.run("""
-                MATCH (i:Institution {name: $name})
-                SET i.city    = $city,
-                    i.country = $country,
-                    i.region  = $region,
-                    i.lat     = null,
-                    i.lng     = null,
-                    i.geocode_suspect = null
-            """, name=name,
-                 city=known_meta.get("city", ""),
-                 country=known_meta.get("country", ""),
-                 region=known_meta.get("region", ""))
-            failed.append(name)
-            logger.warning(f"  ⚠️  {name} — no geocoder result; seeded city/country from registry")
+            # No trustworthy institution-level result (either none found, or a
+            # registry conflict invalidated it) but the registry knows the
+            # city — fall back to geocoding the registry city itself
+            # ("New York, United States"), an unambiguous query, and pin the
+            # institution at city level. A city-level pin in the RIGHT city
+            # beats both a building-level pin in the wrong country and no pin
+            # at all. geocode_source='registry_city' records the reduced
+            # precision. The registry text fields are written
+            # unconditionally (curated), replacing any stale text from
+            # earlier flawed runs.
+            city_result = _geocode_registry_city(known_meta, geolocator,
+                                                 gmaps_client, args.delay)
+            if city_result:
+                session.run("""
+                    MATCH (i:Institution {name: $name})
+                    SET i.lat     = $lat,
+                        i.lng     = $lng,
+                        i.city    = $city,
+                        i.country = $country,
+                        i.region  = $region,
+                        i.osm_display_name = $osm_display_name,
+                        i.geocode_source   = 'registry_city',
+                        i.geocode_suspect  = false
+                """, name=name, lat=city_result["lat"], lng=city_result["lng"],
+                     city=known_meta.get("city", ""),
+                     country=known_meta.get("country", ""),
+                     region=known_meta.get("region", ""),
+                     osm_display_name=city_result.get("osm_display_name", ""))
+                ok += 1
+                logger.info(f"  📍 {name} → ({city_result['lat']:.4f}, "
+                            f"{city_result['lng']:.4f}) {known_meta.get('city')}, "
+                            f"{known_meta.get('country')} [registry city-level]")
+            else:
+                # Even the city query failed — clear any stale coordinates
+                # from earlier flawed runs rather than leaving a wrong pin.
+                session.run("""
+                    MATCH (i:Institution {name: $name})
+                    SET i.city    = $city,
+                        i.country = $country,
+                        i.region  = $region,
+                        i.lat     = null,
+                        i.lng     = null,
+                        i.geocode_suspect = null
+                """, name=name,
+                     city=known_meta.get("city", ""),
+                     country=known_meta.get("country", ""),
+                     region=known_meta.get("region", ""))
+                failed.append(name)
+                logger.warning(f"  ⚠️  {name} — no geocoder result even for registry "
+                                f"city; seeded text metadata only")
         else:
             failed.append(name)
             logger.warning(f"  ❌ {name} — no result")

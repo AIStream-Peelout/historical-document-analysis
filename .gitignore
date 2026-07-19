@@ -18,3 +18,4 @@ transcription_results
 src/datasets/processed/
 models/
 .venv-mlx/
+src/finetuning/qwen_hebrew/assets/
