@@ -39,6 +39,8 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
+from src.datasets.document_models.institution_normalizer import InstitutionNormalizer
+from src.datasets.document_models import biblical_person_classifier as bib
 
 # Configure logging
 logging.basicConfig(
@@ -255,6 +257,14 @@ class PrincetonGenizahKG:
                 canonical = ShelfmarkNormalizer.to_canonical_id(shelfmark)
                 inst_info = ShelfmarkNormalizer.get_institution_info(shelfmark)
                 institution = inst_info.get('institution') or doc_data.get('library')
+                # Canonicalise before it ever becomes a MERGE key. Without this,
+                # this PGP-CSV path creates its own un-normalized Institution
+                # node ("Jewish Theological Seminary Library") alongside the
+                # canonical one other pipelines create via InstitutionNormalizer
+                # ("Jewish Theological Seminary") -- same real institution, two
+                # nodes, "circles inside circles" duplicate map pins.
+                if institution:
+                    institution = InstitutionNormalizer.normalize(institution)
                 collection  = inst_info.get('collection')
                 subcollection = inst_info.get('subcollection')
 
@@ -468,6 +478,19 @@ class PrincetonGenizahKG:
                     doc_data.get('authors', ''),
                     str(doc_data.get('year', '')),
                 )
+                # Drop known pre-modern historical authors (Maimonides,
+                # Saadia Gaon, ...) from the Scholar-creation list below —
+                # PGP bibliography "authors" is almost always modern
+                # secondary scholarship, but a primary-source edition/
+                # translation entry could legitimately list one of them,
+                # and WROTE->BookArticle would otherwise mislabel them
+                # Scholar the same way the academic-literature pipeline once
+                # did (see biblical_person_classifier.is_known_historical_author).
+                raw_authors = doc_data.get('authors', '') or ''
+                authors = ';'.join(
+                    a for a in raw_authors.split(';')
+                    if a.strip() and not bib.is_known_historical_author(a.strip())
+                ) or None
                 query = """
                 MERGE (b:BookArticle {article_id: $article_id})
                 SET b.title        = $title,
@@ -512,7 +535,7 @@ class PrincetonGenizahKG:
                     'url':          doc_data.get('url'),
                     'citation':     citation,
                     'source_type':  doc_data.get('source_type'),
-                    'authors':      doc_data.get('authors'),
+                    'authors':      authors,
                 })
 
         batch_size = 100

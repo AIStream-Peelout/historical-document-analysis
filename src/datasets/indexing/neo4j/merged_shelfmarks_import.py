@@ -49,6 +49,7 @@ sys.path.insert(0, str(_REPO))
 dotenv.load_dotenv(_REPO / ".env")
 
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+from src.datasets.document_models.institution_normalizer import InstitutionNormalizer  # noqa: E402
 from src.datasets.document_models.person_normalizer import PersonNormalizer  # noqa: E402
 from src.datasets.document_models.place_normalizer import PlaceNormalizer  # noqa: E402
 
@@ -180,10 +181,19 @@ def extract_record(record: Dict) -> Optional[Dict]:
                     if d and d not in genres:
                         genres.append(d)
 
+    # ShelfmarkNormalizer.INSTITUTION_MAPPING and InstitutionNormalizer's
+    # canonical dict are separately maintained; normalising here is a safety
+    # net so this pipeline's Institution nodes always converge with the ones
+    # the LLM/enriched pipeline creates via InstitutionNormalizer, even if the
+    # two tables ever drift apart.
+    institution = inst.get("institution")
+    if institution:
+        institution = InstitutionNormalizer.normalize(institution)
+
     return {
         "canonical_shelfmark": canonical,
         "display_shelfmark": display,
-        "institution": inst.get("institution"),
+        "institution": institution,
         "collection": inst.get("collection"),
         "subcollection": inst.get("subcollection"),
         "date": date,

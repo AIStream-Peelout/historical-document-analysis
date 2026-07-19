@@ -39,7 +39,9 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
+from src.datasets.document_models.institution_normalizer import InstitutionNormalizer
 from src.datasets.document_models.scholar_normalizer import ScholarRegistry, display_form
+from src.datasets.document_models import biblical_person_classifier as bib
 
 logging.basicConfig(
     level=logging.INFO,
@@ -204,12 +206,20 @@ class GenizahBiblioImporter:
             display = _canonical_to_display(canonical_shelfmark)
             canonical = ShelfmarkNormalizer.to_canonical_id(display) or canonical_shelfmark
             inst_info = ShelfmarkNormalizer.get_institution_info(display)
+            # ShelfmarkNormalizer.INSTITUTION_MAPPING and InstitutionNormalizer's
+            # canonical dict are separately maintained; normalising here is a
+            # safety net so this pipeline's Institution nodes always converge
+            # with the ones the LLM/enriched pipeline creates via
+            # InstitutionNormalizer, even if the two tables ever drift apart.
+            institution = inst_info.get('institution')
+            if institution:
+                institution = InstitutionNormalizer.normalize(institution)
 
             for citation in entry.get('citations', []):
                 rows.append({
                     'canonical_shelfmark': canonical,
                     'display_shelfmark':   display,
-                    'institution':         inst_info.get('institution'),
+                    'institution':         institution,
                     'collection':          inst_info.get('collection'),
                     'subcollection':       inst_info.get('subcollection'),
                     'citation':            citation,
@@ -300,6 +310,16 @@ class GenizahBiblioImporter:
             # 4. Ensure Scholar nodes (one per author) and WROTE relationships
             if author and title:
                 for individual_author in _split_authors(author):
+                    # Skip known pre-modern historical authors (Maimonides,
+                    # Saadia Gaon, ...) -- biblio.json's 28.7k citations are
+                    # mostly modern secondary scholarship, but a primary-
+                    # source edition/translation citation could legitimately
+                    # list one of them as "author", which would otherwise
+                    # mislabel them Scholar (see
+                    # biblical_person_classifier.is_known_historical_author
+                    # and the same guard in knowlege_graph_poc.py).
+                    if bib.is_known_historical_author(individual_author):
+                        continue
                     tx.run("""
                         MERGE (s:Scholar {name: $author})
                         SET s.data_sources = CASE

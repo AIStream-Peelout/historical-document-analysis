@@ -82,6 +82,7 @@ from src.datasets.document_models.institution_normalizer import InstitutionNorma
 from src.datasets.document_models.place_normalizer import PlaceNormalizer  # noqa: E402
 from src.datasets.document_models.person_normalizer import PersonNormalizer  # noqa: E402
 from src.datasets.document_models.scholar_normalizer import ScholarRegistry  # noqa: E402
+from src.datasets.document_models import biblical_person_classifier as bib  # noqa: E402
 from src.datasets.document_models import corpus_ids  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -229,10 +230,23 @@ def _person_label(name: str, declared: str) -> str:
     Person is reserved for historical figures from the Genizah documents
     themselves, while modern researchers always belong under Scholar.
 
+    A known pre-modern historical author (Maimonides, Saadia Gaon, Yehuda
+    ha-Levi, ...) is exempted from the ScholarRegistry promotion below, even
+    if they ever appear as a metadata "author" (e.g. a book that is a modern
+    edition/translation of one of their own classical works would list them
+    as an author). Audited 2026-07-17: this import-time re-check is a second,
+    independent place a historical figure can end up mislabeled Scholar,
+    separate from the Pass-3 role-hint fix in coreference_resolver.py's
+    _classify_people — closing it here too so the "Person = historical
+    figures" invariant holds regardless of what any future book's metadata
+    says, not just for the specific books in the corpus today.
+
     :param name: Canonical (already-normalised) person name.
     :param declared: Label declared by the extraction (Person/Scholar/Entity).
     :returns: Final label to use for the MERGE.
     """
+    if bib.is_known_historical_author(name):
+        return "Person"
     if declared in ("Person", "Scholar", "Entity") and \
             ScholarRegistry.instance().is_known_scholar(name):
         return "Scholar"
