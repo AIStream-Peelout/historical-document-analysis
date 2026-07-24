@@ -1,6 +1,7 @@
 # file_name
 import json
 import logging
+import os
 import pickle
 import time
 from pathlib import Path
@@ -11,6 +12,29 @@ from elasticsearch.helpers import bulk
 
 logger = logging.getLogger(__name__)
 logging.getLogger('elasticsearch').setLevel(logging.DEBUG)
+
+
+def es_config_from_env() -> Dict[str, Any]:
+    """Build the Elasticsearch client config from environment variables.
+
+    Uses ``ELASTIC_SEARCH_HOST`` (required) plus optional
+    ``ELASTIC_SEARCH_PORT`` (default 443) and ``ELASTIC_SEARCH_SCHEME``
+    (default https). Indexing runs on the ES host machine can set
+    ``ELASTIC_SEARCH_HOST=localhost ELASTIC_SEARCH_PORT=9200
+    ELASTIC_SEARCH_SCHEME=http`` to talk to the Docker ES directly instead of
+    going through the Cloudflare-forwarded endpoint.
+
+    :return: Kwargs for the :class:`Elasticsearch` constructor.
+    :rtype: Dict[str, Any]
+    """
+    return {
+        "hosts": [{
+            "host": os.environ["ELASTIC_SEARCH_HOST"],
+            "port": int(os.environ.get("ELASTIC_SEARCH_PORT", "443")),
+            "scheme": os.environ.get("ELASTIC_SEARCH_SCHEME", "https"),
+        }],
+        "basic_auth": (os.environ["ELASTIC_USER"], os.environ["ELASTIC_PASSWORD"]),
+    }
 
 
 class ElasticsearchGenizahProcessor:
@@ -37,7 +61,8 @@ class ElasticsearchGenizahProcessor:
                  index_name = "genizah_documents_text1",
                  cache_dir: str = "embedding_cache",
                  use_cache: bool = False,
-                 embedding_dims: int = 128):
+                 embedding_dims: int = 128,
+                 index_meta: Optional[Dict[str, Any]] = None):
         """Initialize the Elasticsearch processor.
 
         :param embedding_model: Model for generating document embeddings
@@ -47,11 +72,17 @@ class ElasticsearchGenizahProcessor:
         :type elasticsearch_config: Dict[str, Any]
         :param cache_dir: Directory for caching the generated embedding model embeddings.
         :type cache_dir: str
+        :param embedding_dims: Dimensionality of the dense_vector mapping.
+        :type embedding_dims: int
+        :param index_meta: Optional ``_meta`` block written into the index
+            mapping at creation time (embedding contract, canary, etc.).
+        :type index_meta: Optional[Dict[str, Any]]
         """
         self.embedding_model = embedding_model
         self.es_client = Elasticsearch(**elasticsearch_config)
         self.index_name = index_name
         self.embedding_dims = embedding_dims
+        self.index_meta = index_meta
 
         # Setup caching
         self.cache_dir = Path(cache_dir)
@@ -90,6 +121,9 @@ class ElasticsearchGenizahProcessor:
 
             logger.info(f"Processing batch {batch_start // batch_size + 1}: documents {batch_start + 1}-{batch_end}")
 
+            # Batched embedding path for text-only models that support it
+            batch_embeddings = self._get_embeddings_for_batch(batch)
+
             # Process this batch
             es_documents = []
             for i, doc in enumerate(batch):
@@ -97,7 +131,10 @@ class ElasticsearchGenizahProcessor:
                 logger.info(f"Processing document {actual_index + 1}/{len(documents)}: {doc.doc_id}")
 
                 # Generate embedding - fail if this doesn't work
-                embedding = self._get_embedding_for_document(document=doc)
+                if batch_embeddings is not None:
+                    embedding = batch_embeddings[i]
+                else:
+                    embedding = self._get_embedding_for_document(document=doc)
                 if embedding is None:
                     raise Exception(f"Failed to generate embedding for document {doc.doc_id}")
 
@@ -340,7 +377,44 @@ class ElasticsearchGenizahProcessor:
             'index_size_mb': index_stats['store']['size_in_bytes'] / (1024 * 1024)
         }
 
+    def filter_existing_ids(self, ids: List[str]) -> set:
+        """Return the subset of the given document ids already in the index.
+
+        Lets callers resume an interrupted run without re-embedding documents
+        that were already indexed (ids are stable across runs).
+
+        :param ids: Candidate document ids.
+        :type ids: List[str]
+        :return: Ids present in the index.
+        :rtype: set
+        """
+        if not ids or not self.es_client.indices.exists(index=self.index_name):
+            return set()
+        resp = self.es_client.mget(index=self.index_name, ids=list(ids), source=False)
+        return {d["_id"] for d in resp["docs"] if d.get("found")}
+
     # ===== PRIVATE METHODS =====
+    def _get_embeddings_for_batch(self, batch: List) -> Optional[np.ndarray]:
+        """Embed a whole batch at once when the model supports it.
+
+        Uses the embedding model's ``get_text_embeddings_batch`` (text-only
+        models such as ``QwenTextEmbedding``) so encoding is batched instead of
+        one forward pass per document. Returns ``None`` when the model has no
+        batched path (or is image-based), in which case the caller falls back
+        to the per-document ``_get_embedding_for_document``.
+
+        :param batch: List of document objects with ``create_text_representation``.
+        :type batch: List
+        :return: Array of shape ``(len(batch), dims)`` or ``None``.
+        :rtype: Optional[np.ndarray]
+        """
+        if not hasattr(self.embedding_model, 'get_text_embeddings_batch'):
+            return None
+        if getattr(self.embedding_model, 'image_only', False):
+            return None
+        texts = [doc.create_text_representation() for doc in batch]
+        return self.embedding_model.get_text_embeddings_batch(texts)
+
     def _preprocess_document_dates(self, es_doc: Dict[str, Any]) -> Dict[str, Any]:
         """
         Preprocess document dates by normalizing all dates as strings.
@@ -398,7 +472,7 @@ class ElasticsearchGenizahProcessor:
             logger.info(f"Index {self.index_name} already exists")
             return
 
-        mapping = {
+        mapping: Dict[str, Any] = {
             "settings": {
                 "number_of_shards": 1,
                 "number_of_replicas": 0,
@@ -476,7 +550,8 @@ class ElasticsearchGenizahProcessor:
                         "type": "text",
                         "fields": {
                             "keyword": {"type": "keyword"},
-                            "numeric": {"type": "long"}
+                            # Roman-numeral pages ("vii") must not fail the doc.
+                            "numeric": {"type": "long", "ignore_malformed": True}
                         }
                     },
                     "shelf_marks_mentioned": {
@@ -565,6 +640,9 @@ class ElasticsearchGenizahProcessor:
                 }
             }
         }
+        if self.index_meta:
+            mapping["mappings"]["_meta"] = self.index_meta
+
         self.es_client.indices.create(index=self.index_name, body=mapping)
         logger.info(f"Created index {self.index_name} with string-based historical dates")
 

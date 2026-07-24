@@ -7,9 +7,14 @@ from typing import Any, Dict, List, Optional, Literal
 import dotenv
 from src.datasets.document_models.bibliography_document import BibliographyDocument
 from PIL import Image
-from src.embeddings.embedding_models import NomicsEmbedding
+from src.embeddings.qwen_text_embedding import (
+    EMBEDDING_DIMS,
+    QwenTextEmbedding,
+    build_index_meta,
+)
 from src.datasets.indexing.elastic_index_genizah import (
     ElasticsearchGenizahProcessor,
+    es_config_from_env,
 )
 
 dotenv.load_dotenv()
@@ -171,6 +176,7 @@ def index_bibliography_to_elasticsearch(
         index_name: str = "genizah_bibliography_v1.0.0",
         embedding_mode: Literal["text_only", "image_only", "hybrid"] = "hybrid",
         image_dir: Optional[str] = None,
+        embeddings_model: Optional[QwenTextEmbedding] = None,
 ) -> None:
     """Index academic literature structured pages into Elasticsearch using Nomic embeddings.
 
@@ -189,6 +195,9 @@ def index_bibliography_to_elasticsearch(
                       Images should be named to match document IDs or page numbers.
                       If None, images will not be loaded.
     :type image_dir: Optional[str]
+    :param embeddings_model: Optional pre-initialized embedding model to reuse
+                             across calls (avoids reloading the model per book).
+    :type embeddings_model: Optional[QwenTextEmbedding]
     :return: None
     :rtype: None
 
@@ -202,41 +211,27 @@ def index_bibliography_to_elasticsearch(
             image_dir="/Users/isaac1/.../academic_literature/cairo_to_manchester_1/images",
         )
     """
-    # Initialize embedding model with appropriate mode
-    text_only = embedding_mode == "text_only"
-    image_only = embedding_mode == "image_only"
+    # Embeddings are text-only (Qwen3-Embedding-0.6B); image/hybrid modes are
+    # no longer supported now that the ColBERT-style multimodal model is gone.
+    if embedding_mode != "text_only":
+        raise ValueError(
+            f"embedding_mode={embedding_mode!r} is no longer supported: "
+            "embeddings are text-only (Qwen3-Embedding-0.6B)."
+        )
 
-    logger.info(f"Initializing embeddings model for bibliography indexing with mode: {embedding_mode}...")
-    embeddings_model = NomicsEmbedding(text_only=text_only, image_only=image_only)
+    if embeddings_model is None:
+        logger.info(f"Initializing embeddings model for bibliography indexing with mode: {embedding_mode}...")
+        embeddings_model = QwenTextEmbedding()
 
-    elastic_config: Dict[str, Any] = {
-        "hosts": [
-            {
-                "host": os.environ["ELASTIC_SEARCH_HOST"],
-                "port": 443,
-                "scheme": "https",
-            }
-        ],
-        "basic_auth": (
-            os.environ["ELASTIC_USER"],
-            os.environ["ELASTIC_PASSWORD"],
-        ),
-    }
-
-    # Determine embedding dims from the model with a short probe to align index mapping
-    try:
-        probe_vec = embeddings_model.get_embeddings(image=None, text="probe text for embedding dims")
-        embedding_dims = int(probe_vec.shape[-1])
-    except Exception as e:
-        logger.warning(f"Failed to probe embedding dims: {e}. Falling back to 128.")
-        embedding_dims = 128
+    elastic_config: Dict[str, Any] = es_config_from_env()
 
     logger.info("Initializing Elasticsearch processor for bibliography index...")
     processor = ElasticsearchGenizahProcessor(
         embedding_model=embeddings_model,
         elasticsearch_config=elastic_config,
         index_name=index_name,
-        embedding_dims=embedding_dims,
+        embedding_dims=EMBEDDING_DIMS,
+        index_meta=build_index_meta(embeddings_model),
     )
 
     # Load book metadata
@@ -317,6 +312,21 @@ def index_bibliography_to_elasticsearch(
         if embedding_mode == "image_only" and images_missing_count > 0:
             logger.warning \
                 (f"Warning: {images_missing_count} documents missing images in image_only mode. These will use text-only embeddings as fallback.")
+
+    # Resume support: skip pages that a previous (possibly interrupted) run
+    # already indexed — ids are stable, so re-runs only embed what's missing.
+    doc_ids = [getattr(d, "page_uuid", None) or d.doc_id for d in documents]
+    existing = processor.filter_existing_ids(doc_ids)
+    if existing:
+        documents = [
+            d for d in documents
+            if (getattr(d, "page_uuid", None) or d.doc_id) not in existing
+        ]
+        logger.info(f"Skipping {len(existing)} already-indexed pages")
+
+    if not documents:
+        logger.info("All pages already indexed. Nothing to do.")
+        return
 
     logger.info(f"Indexing {len(documents)} bibliography documents...")
     processor.process_documents(documents=documents, batch_size=10)

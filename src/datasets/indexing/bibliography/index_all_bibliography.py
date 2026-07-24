@@ -305,7 +305,7 @@ def index_all_bibliography(
         return
     
     logger.info(f"Discovered {len(tasks)} indexing tasks")
-    
+
     if dry_run:
         logger.info("DRY RUN MODE: Would index the following tasks:")
         for i, task in enumerate(tasks, 1):
@@ -316,10 +316,14 @@ def index_all_bibliography(
             )
         return
     
+    # Load the embedding model once and share it across all book tasks.
+    from src.embeddings.qwen_text_embedding import QwenTextEmbedding
+    embeddings_model = QwenTextEmbedding()
+
     # Process each task
     successful = 0
     failed = 0
-    
+
     for i, task in enumerate(tasks, 1):
         logger.info(
             f"\n{'='*80}\n"
@@ -337,6 +341,7 @@ def index_all_bibliography(
                 index_name=index_name,
                 embedding_mode=embedding_mode,
                 image_dir=str(task['image_dir']) if task['image_dir'] else None,
+                embeddings_model=embeddings_model,
             )
             successful += 1
             logger.info(f"Successfully indexed task {i}/{len(tasks)}")
@@ -379,7 +384,7 @@ def main() -> None:
     # variant), so a single pass indexes the whole corpus — no suffix loop.
     index_all_bibliography(
         root_dir="/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/academic_literature",
-        index_name="bibliography_text_only_0.6",
+        index_name="bibliography_text_only_0.7",
         embedding_mode="text_only",
         dry_run=False,
     )
