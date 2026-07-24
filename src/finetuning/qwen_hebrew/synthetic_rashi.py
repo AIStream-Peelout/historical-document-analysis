@@ -163,9 +163,12 @@ def render_block(text: str, rng: random.Random, fonts: List[Path]) -> Tuple[Imag
     :param fonts: Candidate font files.
     :returns: (augmented image, ground-truth text with line breaks).
     """
-    font_size = rng.randint(11, 30)
+    # Render LARGE then let degradation augments simulate small print — an
+    # 11px RENDERED glyph carries only 11px of information (unlike a high-DPI
+    # scan of small physical print) and upscaling it yields unreadable mush.
+    font_size = rng.randint(18, 48)
     font = ImageFont.truetype(str(rng.choice(fonts)), font_size)
-    col_width = rng.randint(280, 900)
+    col_width = rng.randint(450, 1400)
     margin = rng.randint(8, 30)
     line_gap = int(font_size * rng.uniform(0.25, 0.6))
 

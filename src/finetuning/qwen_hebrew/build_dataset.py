@@ -142,16 +142,29 @@ def collect_records(
     count_tokens,
     page_task_stems: Set[str],
     stats: Counter,
+    crop_sections: Optional[Set[str]] = None,
 ) -> List[Dict]:
     """Assemble raw dataset records for both tasks.
+
+    Crop (Task A) and page (Task B) rows are gated independently: the fixed
+    crop geometry can pair a margin strip with the wrong text (non-standard
+    layouts) or clip it (L-shaped Vilna commentaries), but the full page
+    always contains its section's text, so page rows carry none of the
+    crop-geometry checks.
 
     :param gt_by_stem: Parsed ground truth, ``{stem: {section: text}}``.
     :param manifest_by_stem: Crop manifest entries keyed by GT stem.
     :param count_tokens: Callable mapping text to token count.
     :param page_task_stems: Stems that also get Task B (full page) rows.
     :param stats: Counter mutated with skip/keep tallies.
+    :param crop_sections: Sections that get Task A (crop) rows; defaults to
+        all of ``SECTIONS``. v1.6 uses ``{"gemara"}`` because the fixed-width
+        rashi/tosafot strips capture the marginal apparatus, not the
+        commentary they are labelled with.
     :returns: List of record dicts (images stored as file paths).
     """
+    if crop_sections is None:
+        crop_sections = set(SECTIONS)
     records: List[Dict] = []
     for stem, sections in sorted(gt_by_stem.items()):
         page_entry = manifest_by_stem.get(stem)
@@ -170,22 +183,10 @@ def collect_records(
             if not gt or not gt.strip():
                 stats["sections_missing_gt"] += 1
                 continue
-            if section != "gemara" and not standard_layout:
-                stats["sections_skipped_nonstandard_layout"] += 1
-                continue
             answer = normalize_target(gt)
             n_tokens = count_tokens(answer)
             if n_tokens > MAX_TARGET_TOKENS:
                 stats["sections_too_long"] += 1
-                continue
-
-            crop_info = page_entry["crops"][section]
-            crop_path = Path(crop_info["path"])
-            if not crop_path.exists():
-                stats["crop_files_missing"] += 1
-                continue
-            if crop_info["width"] < MIN_CROP_WIDTH_PX:
-                stats["crops_too_narrow"] += 1
                 continue
 
             base = {
@@ -196,17 +197,29 @@ def collect_records(
                 "target_chars": len(answer),
                 "target_tokens": n_tokens,
             }
-            records.append(
-                {
-                    **base,
-                    "image": str(crop_path),
-                    "question": CROP_TRANSCRIBE_PROMPTS[section],
-                    "task": "crop_transcribe",
-                    "image_width": crop_info["width"],
-                    "image_height": crop_info["height"],
-                }
-            )
-            stats["crop_records"] += 1
+
+            if section in crop_sections:
+                if section != "gemara" and not standard_layout:
+                    stats["sections_skipped_nonstandard_layout"] += 1
+                else:
+                    crop_info = page_entry["crops"][section]
+                    crop_path = Path(crop_info["path"])
+                    if not crop_path.exists():
+                        stats["crop_files_missing"] += 1
+                    elif crop_info["width"] < MIN_CROP_WIDTH_PX:
+                        stats["crops_too_narrow"] += 1
+                    else:
+                        records.append(
+                            {
+                                **base,
+                                "image": str(crop_path),
+                                "question": CROP_TRANSCRIBE_PROMPTS[section],
+                                "task": "crop_transcribe",
+                                "image_width": crop_info["width"],
+                                "image_height": crop_info["height"],
+                            }
+                        )
+                        stats["crop_records"] += 1
 
             if stem in page_task_stems and page_image.exists():
                 records.append(
@@ -258,6 +271,7 @@ def build(
     tokenizer_name: str,
     page_task_pages: int,
     push_to_hub: Optional[str] = None,
+    crop_sections: Optional[Set[str]] = None,
 ) -> None:
     """Build and save the dataset splits plus ``stats.json``.
 
@@ -266,6 +280,8 @@ def build(
     :param page_task_pages: Number of pages that also get Task B rows
         (full-page images are large; keep this bounded).
     :param push_to_hub: Optional private HF hub repo id to push to.
+    :param crop_sections: Sections that get crop (Task A) rows; ``None``
+        means all sections.
     """
     stats: Counter = Counter()
 
@@ -286,7 +302,8 @@ def build(
     )
 
     records = collect_records(
-        train_gt, manifest_by_stem, count_tokens, page_task_stems, stats
+        train_gt, manifest_by_stem, count_tokens, page_task_stems, stats,
+        crop_sections=crop_sections,
     )
 
     val_stems = pick_val_stems(list(train_gt), VAL_PAGES, SPLIT_SEED)
@@ -332,6 +349,7 @@ def build(
         },
         "val_pages": sorted(val_stems),
         "page_task_pages": len(page_task_stems),
+        "crop_sections": sorted(crop_sections) if crop_sections else sorted(SECTIONS),
         "tokenizer": tokenizer_name,
         "split_seed": SPLIT_SEED,
     }
@@ -366,13 +384,25 @@ def main(argv: Optional[List[str]] = None) -> None:
     )
     parser.add_argument("--push_to_hub", type=str, default=None,
                         help="Private HF hub repo id, e.g. user/qwen-hebrew-talmud.")
+    parser.add_argument(
+        "--crop_sections", type=str, default=",".join(SECTIONS),
+        help="Comma-separated sections that get crop (Task A) rows. "
+             "v1.6 uses 'gemara' — the fixed rashi/tosafot strips capture "
+             "the marginal apparatus, not the commentary.",
+    )
     args = parser.parse_args(argv)
+
+    crop_sections = {s.strip() for s in args.crop_sections.split(",") if s.strip()}
+    unknown = crop_sections - set(SECTIONS)
+    if unknown:
+        parser.error(f"unknown --crop_sections: {sorted(unknown)}")
 
     build(
         output_dir=args.output_dir,
         tokenizer_name=args.tokenizer,
         page_task_pages=args.page_task_pages,
         push_to_hub=args.push_to_hub,
+        crop_sections=crop_sections,
     )
 
 
