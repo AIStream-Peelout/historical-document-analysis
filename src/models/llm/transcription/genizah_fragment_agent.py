@@ -63,7 +63,11 @@ class AgentConfig:
     GEMINI_FLASH_MAX_OUTPUT_TOKENS = 16_384
     GEMINI_PRO_MAX_OUTPUT_TOKENS   = 32_768
 
-    MAX_RETRIES = 3
+    # Overridable for long benchmark runs: Gemini Pro 504s burn the full
+    # timeout per attempt on pages/fragments it cannot finish, so run-once
+    # benchmarks set GEMINI_MAX_ATTEMPTS=1 and report the failure as
+    # coverage (project protocol) instead of paying the retry tax.
+    MAX_RETRIES = int(os.getenv("GEMINI_MAX_ATTEMPTS", "3"))
     RETRY_DELAY = 10  # seconds
 
     # Image preprocessing

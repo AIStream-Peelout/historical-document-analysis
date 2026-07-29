@@ -245,3 +245,109 @@ def flag_failure_modes(
         flags.append("metadata_anchored_confabulation")
 
     return flags
+
+
+# ── Genizah visible-ink scoring ───────────────────────────────────────────────
+# The Genizah eval ground truths are diplomatic editions dense with editorial
+# apparatus (uncertainty '?', bracket reconstructions, lacuna dot-runs, column
+# markers, supplied letters).  Scoring raw model output against raw GT
+# penalises every model for not reproducing apparatus that is not ink on the
+# page.  Visible-ink scoring cleans BOTH sides: the GT keeps only visible ink
+# (via the training pipeline's clean_diplomatic), and the hypothesis is
+# stripped of damage markers the prompt asks for ([?]) plus markdown noise.
+
+_MD_NOISE_RE = re.compile(r"[*#_`]+")
+_BRACKET_MARK_RE = re.compile(r"\[[^\]\n]{0,4}\]")          # [?], [..], [ ]
+_DOTS_RUN_RE = re.compile(r"(?:[.·…]\s*){2,}")
+_EDITORIAL_CHARS_RE = re.compile(r"[¶@^§\\/|<>{}\[\]]")
+_QMARK_RE = re.compile(r"\(\?+\)|\?")
+
+
+def dedup_repeated_tail(text: str, min_letters: int = 60) -> str:
+    """Cut a duplicated tail block (same text accidentally concatenated twice).
+
+    Some catalog ground truths glue two copies of the same edition section
+    together; the repeated tail double-counts every character of GT.  Works on
+    a letters-only projection so lacuna dots and markup differences between
+    the two copies do not hide the repeat.
+
+    :param text: Ground-truth text.
+    :type text: str
+    :param min_letters: Minimum length (in letters) of the repeated block.
+    :type min_letters: int
+    :return: Text with the repeated tail removed (or unchanged).
+    :rtype: str
+    """
+    letters = []
+    positions = []
+    for i, ch in enumerate(text):
+        if _HEBREW_SCRIPT_RE.match(ch) or _ARABIC_SCRIPT_RE.match(ch):
+            letters.append(ch)
+            positions.append(i)
+    n = len(letters)
+    joined = "".join(letters)
+    best_k = 0
+    for k in range(n // 2, min_letters - 1, -1):
+        if joined[:k] == joined[n - k:]:
+            best_k = k
+            break
+    if not best_k:
+        return text
+    cut_at = positions[n - best_k]
+    return text[:cut_at].rstrip()
+
+
+def genizah_visible_ink_gt(gt_text: str) -> str:
+    """Reduce a diplomatic ground truth to its visible-ink scoring form.
+
+    :param gt_text: Raw diplomatic ground truth.
+    :type gt_text: str
+    :return: Visible-ink text (no apparatus, no gap tokens, deduped).
+    :rtype: str
+    """
+    from src.datasets.cleaning.clean_genizah_transcriptions import (
+        clean_diplomatic,
+        GAP,
+    )
+    deduped = dedup_repeated_tail(gt_text)
+    cleaned, _recon, _visible = clean_diplomatic(deduped)
+    cleaned = cleaned.replace(GAP, " ")
+    cleaned = cleaned.replace("@", "")
+    return normalize_whitespace(cleaned)
+
+
+def normalize_ink_hypothesis(hyp_text: str) -> str:
+    """Normalize a model transcription for visible-ink scoring.
+
+    Strips the damage markers the prompt requests ([?]), editorial characters
+    models copy from their training distribution, markdown emphasis, and
+    lacuna dot-runs — mirroring the GT-side cleaning so neither side is
+    penalised for apparatus.
+
+    :param hyp_text: Raw model output.
+    :type hyp_text: str
+    :return: Visible-ink hypothesis text.
+    :rtype: str
+    """
+    text = unicodedata.normalize("NFC", hyp_text)
+    text = _MD_NOISE_RE.sub(" ", text)
+    text = _BRACKET_MARK_RE.sub(" ", text)
+    text = _DOTS_RUN_RE.sub(" ", text)
+    text = _QMARK_RE.sub("", text)
+    text = _EDITORIAL_CHARS_RE.sub(" ", text)
+    return normalize_whitespace(text)
+
+
+def cer_ink_pair(hypothesis: str, reference_gt: str) -> Tuple[float, float]:
+    """Visible-ink CER (strict, lenient) between raw model output and raw GT.
+
+    :param hypothesis: Raw model transcription.
+    :type hypothesis: str
+    :param reference_gt: Raw diplomatic ground truth.
+    :type reference_gt: str
+    :return: (strict CER, nikud-stripped lenient CER) on visible-ink forms.
+    :rtype: Tuple[float, float]
+    """
+    hyp = normalize_ink_hypothesis(hypothesis)
+    ref = genizah_visible_ink_gt(reference_gt)
+    return cer_pair(hyp, ref)
