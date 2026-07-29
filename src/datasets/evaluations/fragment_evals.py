@@ -631,6 +631,104 @@ Last processed: {self.progress['last_processed_doc']}
 # W&B Logging
 # ============================================================================
 
+def _default_run_name(batch_info: dict, num_docs: int) -> str:
+    """Build a self-describing W&B run name from the active configuration.
+
+    e.g. ``genizah_test_v1-150docs-locals3+claude2+openai1+gemini+ocr-20260729``
+    — the benchmark, its size, and which model families took part, so a run
+    is identifiable months later without opening its config.
+
+    :param batch_info: Batch metadata from :class:`BatchManager`.
+    :type batch_info: dict
+    :param num_docs: Number of documents in this batch.
+    :type num_docs: int
+    :return: Descriptive run name.
+    :rtype: str
+    """
+    parts = []
+    if _lm_studio_models:
+        parts.append(f"locals{len(_lm_studio_models)}")
+    if _claude_models:
+        parts.append(f"claude{len(_claude_models)}")
+    if _openai_models:
+        parts.append(f"openai{len(_openai_models)}")
+    gemini = [
+        n for n, on in (("flash", AgentConfig.USE_GEMINI_FLASH),
+                        ("pro", AgentConfig.USE_GEMINI_PRO)) if on
+    ]
+    if gemini:
+        parts.append("gemini_" + "+".join(gemini))
+    ocr = [
+        n for n, on in (("vision", AgentConfig.USE_VISION_OCR),
+                        ("kraken", AgentConfig.USE_KRAKEN)) if on
+    ]
+    if ocr:
+        parts.append("ocr_" + "+".join(ocr))
+    benchmark = EvalConfig.CATALOG_PATH.stem.replace("_catalog", "")
+    lineup = "-".join(parts) if parts else "nomodels"
+    suffix = "" if batch_info["total_batches"] == 1 else f"-b{batch_info['batch_num']}"
+    return f"{benchmark}-{num_docs}docs-{lineup}{suffix}-{time.strftime('%Y%m%d-%H%M')}"
+
+
+def log_incremental_tables(
+        text_rows: List[list],
+        metrics_rows: List[list],
+        analysis_rows: List[list],
+) -> None:
+    """Re-log the benchmark tables to W&B with stable names.
+
+    Called after EVERY document (not just at the end of the batch) so the
+    tables are viewable while a long run is in flight and survive a crash —
+    the fragment harness previously logged them only after the final
+    document, so an interrupted run left no tables at all.  Stable keys mean
+    W&B replaces the previous version rather than appending a new panel.
+
+    :param text_rows: Accumulated text-comparison rows.
+    :type text_rows: List[list]
+    :param metrics_rows: Accumulated per-model metrics rows.
+    :type metrics_rows: List[list]
+    :param analysis_rows: Accumulated analysis rows (may be empty).
+    :type analysis_rows: List[list]
+    """
+    payload = {}
+    if text_rows:
+        payload["benchmark/text_comparison"] = wandb.Table(
+            columns=[
+                "fragment_id", "image", "ground_truth",
+                *scored_model_keys(),
+                # raw OCR shown for inspection only — no metrics
+                *[f"{k}_raw" for k in raw_ocr_keys()],
+                "consensus", "consensus_strategy",
+            ],
+            data=text_rows,
+        )
+    if metrics_rows:
+        payload["benchmark/metrics"] = wandb.Table(
+            columns=[
+                "fragment_id", "model",
+                "cer", "cer_lenient", "cer_ink",
+                "wer", "wer_lenient",
+                "char_count_ratio", "similarity",
+                "char_count", "gt_char_count", "char_diff",
+                "processing_time_sec", "exact_match",
+                "failure_mode_flags",
+            ],
+            data=metrics_rows,
+        )
+    if analysis_rows:
+        payload["benchmark/analysis"] = wandb.Table(
+            columns=[
+                "fragment_id", "catalog_description", "content_summary",
+                "translation_sample", "coherence_assessment", "catalog_alignment",
+                "recommended_model", "reasoning", "key_observations",
+                "analysis_time_sec",
+            ],
+            data=analysis_rows,
+        )
+    if payload:
+        wandb.log(payload)
+
+
 def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
     """Log comprehensive metrics and return table rows for batch logging."""
 
@@ -1033,6 +1131,7 @@ async def main(
         skip_vision_ocr: bool = False,
         skip_kraken: bool = False,
         skip_analysis: bool = False,
+        wandb_run_name: Optional[str] = None,
 ):
     """Main evaluation pipeline with batch processing support.
 
@@ -1245,7 +1344,7 @@ async def main(
     wandb_run = wandb.init(
         project=EvalConfig.WANDB_PROJECT,
         entity=EvalConfig.WANDB_ENTITY,
-        name=f"batch-{batch_info['batch_num']}-of-{batch_info['total_batches']}-{time.strftime('%Y%m%d-%H%M%S')}",
+        name=wandb_run_name or _default_run_name(batch_info, len(batch_docs)),
         tags=[
             f"batch_{batch_info['batch_num']}",
             f"docs_{start_doc}_to_{batch_info['end_doc']}",
@@ -1316,6 +1415,11 @@ async def main(
                     batch_manager.mark_doc_failed(doc_id, reason)
                 else:
                     batch_manager.mark_doc_completed(doc_id)
+                # Re-log tables after every document so they are viewable
+                # mid-run and survive an interrupted run.
+                log_incremental_tables(
+                    text_comparison_rows, all_metrics_rows, analysis_rows
+                )
             else:
                 failed_docs.append({'doc_id': doc_id, 'reason': 'No result returned'})
                 batch_manager.mark_doc_failed(doc_id, 'No result returned')
@@ -1335,46 +1439,8 @@ async def main(
     # LOG BATCH TABLES TO W&B
     # ========================================================================
 
-    print("\n📊 Logging batch tables to W&B...")
-
-    if text_comparison_rows:
-        text_table = wandb.Table(
-            columns=[
-                "fragment_id", "image", "ground_truth",
-                *scored_model_keys(),
-                # raw OCR shown for inspection only — no metrics
-                *[f"{k}_raw" for k in raw_ocr_keys()],
-                "consensus", "consensus_strategy"
-            ],
-            data=text_comparison_rows
-        )
-        wandb.log({f"batch_{batch_info['batch_num']}_text_comparison": text_table})
-
-    if all_metrics_rows:
-        metrics_table = wandb.Table(
-            columns=[
-                "fragment_id", "model",
-                "cer", "cer_lenient", "cer_ink",
-                "wer", "wer_lenient",
-                "char_count_ratio", "similarity",
-                "char_count", "gt_char_count", "char_diff",
-                "processing_time_sec", "exact_match",
-                "failure_mode_flags",
-            ],
-            data=all_metrics_rows
-        )
-        wandb.log({f"batch_{batch_info['batch_num']}_metrics": metrics_table})
-
-    if analysis_rows:
-        analysis_table = wandb.Table(
-            columns=[
-                "fragment_id", "catalog_description", "content_summary",
-                "translation_sample", "coherence_assessment", "catalog_alignment",
-                "recommended_model", "reasoning", "key_observations", "analysis_time_sec"
-            ],
-            data=analysis_rows
-        )
-        wandb.log({f"batch_{batch_info['batch_num']}_analysis": analysis_table})
+    print("\n📊 Logging final batch tables to W&B...")
+    log_incremental_tables(text_comparison_rows, all_metrics_rows, analysis_rows)
 
     # ── Error-type classification phase (sequential, end of run) ────────────
     # Runs AFTER the batch tables are safely logged, in the same W&B run.
@@ -1606,6 +1672,9 @@ if __name__ == "__main__":
                         help='Disable Kraken pipeline')
     parser.add_argument('--skip-analysis', action='store_true',
                         help='Disable the Gemini analysis step')
+    parser.add_argument('--wandb-run-name', default=None,
+                        help='W&B run name. Default: a self-describing name built from '
+                             'the benchmark, doc count, and participating model families')
     parser.add_argument(
         '--judge-model',
         default=AgentConfig.GEMINI_ANALYSIS_MODEL,
@@ -1664,4 +1733,5 @@ if __name__ == "__main__":
         skip_vision_ocr=args.skip_vision_ocr,
         skip_kraken=args.skip_kraken,
         skip_analysis=args.skip_analysis,
+        wandb_run_name=args.wandb_run_name,
     ))
