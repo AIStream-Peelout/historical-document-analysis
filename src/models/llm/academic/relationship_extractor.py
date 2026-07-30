@@ -90,7 +90,23 @@ from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer 
 logger = logging.getLogger(__name__)
 
 _data_root     = _project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" / "academic_literature"
-_RELATIONS_V2  = _data_root / "relations_v2"   # output root — separate from old enriched_relations/
+
+# Pipeline data version. BUMP THIS whenever a change to Pass 2/3/4 logic would
+# produce different output for the same inputs, so a re-run lands in a NEW
+# directory instead of silently overwriting the previous generation's
+# artifacts. The version also flows into the per-book run tag (see
+# run_kg_overnight.RUN_TAG), which is what names the resolved-entity files, so
+# bumping it protects BOTH the relations output and the Pass-3 output.
+#
+# History:
+#   v2 — 2026-06-21 full-corpus run (qwen3.6-35b-a3b). Baseline currently in Neo4j.
+#   v3 — adds the Hebrew citation-evidence detector, the shelfmark-as-Institution
+#        reject rule, and the historical-author gazetteer (all landed 2026-07),
+#        none of which have ever been executed against the corpus.
+PIPELINE_VERSION = "v3"
+
+_RELATIONS_ROOT = _data_root / f"relations_{PIPELINE_VERSION}"  # output root
+_RELATIONS_V2   = _data_root / "relations_v2"  # previous generation — read-only, kept for comparison
 _OUTPUT_FILE   = "book_relations.json"
 _REJECTED_FILE = "book_relations_rejected.json"
 _RESOLVED_FILE = "book_entities_resolved.json"
@@ -731,9 +747,9 @@ class RelationExtractor:
             resolved_path = book_dir / _RESOLVED_FILE
             logger.info(f"  {book_dir.name}: no tagged resolved file, using default")
 
-        # Output: relations_v2/<book_name>/ for Gemini,
-        #         relations_v2/<book_name>/<run_tag>/ for LMS runs
-        out_dir = _RELATIONS_V2 / book_dir.name
+        # Output: relations_<version>/<book_name>/ for Gemini,
+        #         relations_<version>/<book_name>/<run_tag>/ for LMS runs
+        out_dir = _RELATIONS_ROOT / book_dir.name
         if self.run_tag:
             out_dir = out_dir / self.run_tag
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -824,22 +840,24 @@ class RelationExtractor:
         extracted_at = datetime.now(timezone.utc).isoformat()
 
         output = {
-            "source_book":    source_book,
-            "extracted_at":   extracted_at,
-            "model_used":     model_used,
-            "relation_count": len(accepted),
-            "relations":      accepted,
+            "source_book":     source_book,
+            "pipeline_version": PIPELINE_VERSION,
+            "extracted_at":    extracted_at,
+            "model_used":      model_used,
+            "relation_count":  len(accepted),
+            "relations":       accepted,
         }
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(output, f, indent=2, ensure_ascii=False)
 
         rejected_path = out_dir / _REJECTED_FILE
         rejected_output = {
-            "source_book":    source_book,
-            "extracted_at":   extracted_at,
-            "model_used":     model_used,
-            "relation_count": len(rejected),
-            "relations":      rejected,
+            "source_book":     source_book,
+            "pipeline_version": PIPELINE_VERSION,
+            "extracted_at":    extracted_at,
+            "model_used":      model_used,
+            "relation_count":  len(rejected),
+            "relations":       rejected,
         }
         with open(rejected_path, "w", encoding="utf-8") as f:
             json.dump(rejected_output, f, indent=2, ensure_ascii=False)

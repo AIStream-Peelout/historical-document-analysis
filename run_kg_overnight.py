@@ -30,12 +30,17 @@ from src.models.llm.academic.entity_tagger import (
     EntityTagger, _safe_tag, _is_structured_dir, _book_dir_for_structured,
 )
 from src.models.llm.academic.coreference_resolver import CoreferenceResolver
-from src.models.llm.academic.relationship_extractor import RelationExtractor, _RELATIONS_V2
+from src.models.llm.academic.relationship_extractor import (
+    RelationExtractor, _RELATIONS_ROOT, PIPELINE_VERSION,
+)
 
 ROOT = Path("src/datasets/raw_data/cairo_genizah/academic_literature")
 MODEL = "qwen3.6-35b-a3b"
-RUN_TAG = _safe_tag(MODEL)
-SKIP: set = set()  # resumability is handled by the .v2_complete sentinels
+# Run tag = pipeline version + model. The version prefix is what stops a
+# re-run on the same model from overwriting the previous generation's
+# resolved-entity files (book_entities_resolved_<run_tag>.json) in place.
+RUN_TAG = f"{PIPELINE_VERSION}_{_safe_tag(MODEL)}"
+SKIP: set = set()  # resumability is handled by the .<version>_complete sentinels
 
 
 def discover_books() -> list:
@@ -50,7 +55,7 @@ def discover_books() -> list:
 
 
 def sentinel(book_dir: Path) -> Path:
-    return _RELATIONS_V2 / book_dir.name / RUN_TAG / ".v2_complete"
+    return _RELATIONS_ROOT / book_dir.name / RUN_TAG / f".{PIPELINE_VERSION}_complete"
 
 
 def main() -> None:
