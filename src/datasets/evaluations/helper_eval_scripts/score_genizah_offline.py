@@ -144,13 +144,35 @@ def aligned_prf(hyp: str, gt: str) -> tuple:
     return precision, recall, f1
 
 
-def classify(raw: str, hyp_letters: str, gt_letters: str, ngram_p: float) -> str:
+# Script-agnostic assertion test: abstention means the model asserted no
+# page content in ANY plausible script.  Judging assertion by Hebrew letters
+# alone silently reclassifies Arabic-script output (script confusion, e.g.
+# looping Basmala formulae) as abstention, hiding hallucinated content.
+# Scoring stays Hebrew-side: wrong-script assertions fall through to the
+# loop/hallucination checks because their Hebrew n-gram precision is ~0.
+_ASSERTED_RE = re.compile(r"[֐-׿؀-ۿݐ-ݿ]")
+
+
+def asserted_letters(text: str) -> str:
+    """Reduce text to letters in any page-plausible script (Hebrew + Arabic).
+
+    :param text: Normalised hypothesis text.
+    :type text: str
+    :return: Concatenated Hebrew and Arabic letters, in order.
+    :rtype: str
+    """
+    text = re.sub(r"\[\.\.\.\]|\(!\)|\[\?\]", " ", text)
+    return "".join(_ASSERTED_RE.findall(text))
+
+
+def classify(raw: str, hyp_asserted: str, gt_letters: str, ngram_p: float) -> str:
     """Assign a failure mode to one model output.
 
     :param raw: Raw model output as saved.
     :type raw: str
-    :param hyp_letters: Normalised hypothesis reduced to letters.
-    :type hyp_letters: str
+    :param hyp_asserted: Normalised hypothesis reduced to script-agnostic
+        asserted letters (Hebrew + Arabic).
+    :type hyp_asserted: str
     :param gt_letters: Ground truth reduced to letters.
     :type gt_letters: str
     :param ngram_p: Order-independent n-gram precision.
@@ -158,9 +180,9 @@ def classify(raw: str, hyp_letters: str, gt_letters: str, ngram_p: float) -> str
     :return: One of abstained / loop_collapse / hallucinated / substantive.
     :rtype: str
     """
-    if len(hyp_letters) < ABSTAIN_MIN_CHARS or _REFUSAL_RE.search(raw[:400]):
+    if len(hyp_asserted) < ABSTAIN_MIN_CHARS or _REFUSAL_RE.search(raw[:400]):
         return "abstained"
-    if loop_ratio(hyp_letters) > LOOP_REPEAT_RATIO:
+    if loop_ratio(hyp_asserted) > LOOP_REPEAT_RATIO:
         return "loop_collapse"
     if ngram_p < HALLUCINATION_NGRAM:
         return "hallucinated"
@@ -218,13 +240,13 @@ def main() -> None:
         per_model = {}
         for f in sorted(outdir.glob("*.txt")):
             model = f.stem
-            if model in ("ground_truth", "consensus") or model.endswith(("_raw", "_flat")):
+            if model in ("ground_truth", "consensus") or model.endswith("_flat"):
                 continue
             raw = f.read_text(errors="replace")
             hyp = normalize_ink_hypothesis(raw)
             hyp_letters = letters_only(hyp)
             ngram_p = ngram_precision(hyp_letters, gt_letters)
-            mode = classify(raw, hyp_letters, gt_letters, ngram_p)
+            mode = classify(raw, asserted_letters(hyp), gt_letters, ngram_p)
             precision, recall, f1 = aligned_prf(hyp, gt_ink)
             cer_s, cer_l = cer_pair(hyp, gt_ink)
             wer_s, _ = wer_pair(hyp, gt_ink)

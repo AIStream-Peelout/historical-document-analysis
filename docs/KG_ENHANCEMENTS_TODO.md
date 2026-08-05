@@ -26,9 +26,29 @@ content; the serving repo only reads.
 
 3. **BookArticle dedup + metadata completion.**
    Duplicate nodes per work with complementary fields (one has publisher, the
-   other has year as a string). Merge; normalize `year` to int; where DOI is
-   discoverable (CrossRef lookup by title+author), backfill `doi` — the chat
-   UI's book popups link DOI → WorldCat/Scholar in that priority order.
+   other has year as a string). Merge; normalize `year` to int.
+
+   **Direct-link identifiers are the highest-value gap here.** Coverage as of
+   2026-07-31, out of 6,309 BookArticle nodes:
+   - `doi`: **0** — the serving repo's "View via DOI" path can never fire.
+   - `url`: **222** (JSTOR stable 79, Cambridge T-S 37, Academia.edu 35,
+     doi.org 23, Persée/NLI/Princeton the rest). These are genuinely useful and
+     the chat now links them directly.
+   - `isbn`: **0** — no direct WorldCat item links are possible for books.
+
+   Because ~96% of works have no direct identifier, the chat has to fall back
+   to a WorldCat/Google Scholar *search*, which is a poor experience: the
+   reader gets a result list instead of the work. Backfill, in priority order:
+   1. **DOI via CrossRef** (query by title + first author + year); store the
+      bare DOI, not a URL.
+   2. **ISBN for books** (OpenLibrary / WorldCat search API) — enables direct
+      `https://search.worldcat.org/isbn/<isbn>` item links.
+   3. **`url` for everything else** — publisher/JSTOR/library landing page.
+      Where the source bibliography already prints a stable URL, capture it at
+      ingestion rather than discarding it; that is where the existing 222 came
+      from and the same extractor should be applied to the rest.
+   Normalize: strip trailing punctuation (some stored URLs end in "."), prefer
+   https, and prefer `doi.org` form when a DOI is discoverable from the URL.
 
 4. **Bibliography page-id extraction bug (`bibliography_text_only_0.7`).**
    860 of 3,621 pages share duplicated `doc_id`s: patterns `<book>_p[]` (empty)
@@ -87,7 +107,30 @@ content; the serving repo only reads.
    - Duplicate BookArticle nodes (item 3) split REFERENCES across copies;
      merging consolidates each work's fragment list.
 
-8. **Fragment `occasion` / holiday facet.**
+8. **Hebrew-scholarship bridges in the bibliography index (audited 2026-08-03).**
+   523/3,621 pages are Hebrew-dominant (Gil's *Be-Malkhut Yishma'el* alone is
+   350 = 67% of them). English queries reach them only through English
+   metadata, and those bridges are weak:
+   - **86 of 523 Hebrew pages have Hebrew-only descriptions** — no English
+     bridge at all. Generate English descriptions for these.
+   - **subject_keywords are boilerplate**: the same ~6 generic tags ("Cairo
+     Genizah", "Jewish history", "Islamic world"…) on effectively every Gil
+     page. Regenerate page-specific topical keywords (in English) — for
+     Hebrew pages they are a primary retrieval bridge, and generic tags make
+     pages match every query weakly and no query strongly.
+   - **language / main_language fields are dead**: empty and literal
+     "Unknown" respectively on ALL 3,621 docs. Populate them (the serving
+     side currently infers language from character ratios at request time).
+   - Embedding note: full_text_content begins with an English metadata
+     preamble (title, subjects, AI summary) which is why stored vectors show
+     no cross-lingual penalty — PRESERVE that preamble structure in any
+     re-embed, and improving the preamble's topical specificity directly
+     improves Hebrew pages' semantic reachability.
+   Serving-side mitigations shipped (query-time Hebrew search variant, Hebrew
+   alias slots, cross-script gates); the durable fix is richer English
+   metadata here.
+
+9. **Fragment `occasion` / holiday facet.**
    Tag fragments (and bibliography pages) with a normalized occasion field
    (holiday, fast day, liturgical genre: qinot, piyyut, haggadah, ketubba…) via
    a local-LLM pass. Dense embeddings alone cannot reliably distinguish
@@ -96,13 +139,13 @@ content; the serving repo only reads.
 
 ## Medium value
 
-9. **Display-form shelf marks on Fragment nodes.**
+10. **Display-form shelf marks on Fragment nodes.**
    `canonical_shelfmark` is underscore-dialect (`T_S_12_388`). Add a
    `display_shelfmark` ("T-S 12.388") so RAG answers and map popups can show
    the scholarly citation form. (Serving side currently links the underscore
    forms via `es_doc_id`, but they read as raw ids.)
 
-10. **`es_doc_id` coverage + retarget to `genizah_merged_v2` + reverse-lookup index.**
+11. **`es_doc_id` coverage + retarget to `genizah_merged_v2` + reverse-lookup index.**
    Coverage verified 2026-07-27: 44,896/49,074 Fragment nodes carry es_doc_id
    and resolve against `genizah_merged_v2`; 11,956 have ≥1 REFERENCES from a
    BookArticle. Backfill the missing ~4.2k, and **CREATE INDEX for
@@ -111,14 +154,14 @@ content; the serving repo only reads.
    es_doc_id and currently would scan; only canonical_shelfmark/pgpid/
    shelfmark are indexed.
 
-11. **Scraping worklist integration.**
+12. **Scraping worklist integration.**
    The serving repo now records shelf marks cited in scholarship but absent
    from the fragment index in ES index `genizah_missing_fragments_v1`
    (occurrence counts, citing works, rejected near-matches; exposed at
    `GET /missing-fragments` on the backend). Use it to prioritize fragment
    scraping — first entry is T-S H3.111 (a T-S H3-series gap).
 
-12. **Holiday/topic relationships in the graph.**
+13. **Holiday/topic relationships in the graph.**
    Once fragments carry occasion facets, add e.g. `(:Fragment)-[:FOR_OCCASION]->
    (:Occasion {name: "Tisha B'Av"})` so the RAG planner can eventually route
    holiday queries graph-first (currently deliberately deprioritized because

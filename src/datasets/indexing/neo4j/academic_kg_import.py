@@ -83,6 +83,9 @@ from src.datasets.document_models.place_normalizer import PlaceNormalizer  # noq
 from src.datasets.document_models.person_normalizer import PersonNormalizer  # noqa: E402
 from src.datasets.document_models.scholar_normalizer import ScholarRegistry  # noqa: E402
 from src.datasets.document_models import biblical_person_classifier as bib  # noqa: E402
+from src.models.llm.academic.relationship_extractor import (  # noqa: E402
+    PIPELINE_VERSION, _RELATIONS_ROOT,
+)
 from src.datasets.document_models import corpus_ids  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -1150,6 +1153,7 @@ class AcademicKGImporter:
         enriched_only: bool = False,
         relations_only: bool = False,
         include_legacy: bool = False,
+        relations_root: Optional[Path] = None,
     ):
         if not dry_run:
             self.ensure_constraints()
@@ -1174,8 +1178,13 @@ class AcademicKGImporter:
                 totals[f"enriched_{k}"] += v
 
         if not enhanced_only and not enriched_only:
-            logger.info("━━━ Pass 4: book_relations.json files ━━━")
-            counts = self.import_all_relations(enhanced_root, dry_run=dry_run)
+            # Scope the Pass-4 search to the CURRENT pipeline version's output
+            # root. Searching the whole corpus root would rglob across every
+            # relations_v*/ generation at once and import them all together,
+            # mixing versions in the graph.
+            root = relations_root if relations_root is not None else _RELATIONS_ROOT
+            logger.info(f"━━━ Pass 4: book_relations.json files ({root.name}) ━━━")
+            counts = self.import_all_relations(root, dry_run=dry_run)
             for k, v in counts.items():
                 totals[f"relations_{k}"] += v
 
@@ -1291,6 +1300,9 @@ def main():
                              "pipeline imports only Pass 4 book_relations.json.")
     parser.add_argument("--dir", "-d", metavar="SUBDIR", default=None,
                         help="Limit to a subdirectory under academic_literature/.")
+    parser.add_argument("--relations-root", metavar="DIR", default=None,
+                        help=f"Pass-4 output root to import (default: relations_{PIPELINE_VERSION}). "
+                             "Point at another relations_v*/ to import a previous generation.")
     parser.add_argument("--enriched-dir", metavar="DIR", default=None,
                         help="Path to enriched_relations/ directory (default: auto-detected).")
     args = parser.parse_args()
@@ -1323,6 +1335,7 @@ def main():
             enriched_only=args.enriched_only,
             relations_only=args.relations_only,
             include_legacy=args.include_legacy,
+            relations_root=Path(args.relations_root) if args.relations_root else None,
         )
     finally:
         importer.close()

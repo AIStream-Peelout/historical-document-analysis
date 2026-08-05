@@ -79,6 +79,9 @@ async def main() -> None:
                         default=[],
                         help="Model keys to judge (default: every output file found)")
     parser.add_argument("--limit-docs", type=int, default=None)
+    parser.add_argument("--docs-from", type=Path, default=None,
+                        help="Benchmark JSON; judge only its doc_ids (skips the "
+                             "Talmud page directories that share this outputs dir)")
     parser.add_argument("--wandb-run-name", default=None)
     parser.add_argument("--wandb-project", default="cairo-genizah-transcription")
     parser.add_argument("--no-wandb", action="store_true")
@@ -90,6 +93,9 @@ async def main() -> None:
         d for d in args.outputs_dir.iterdir()
         if d.is_dir() and (d / "ground_truth.txt").exists()
     )
+    if args.docs_from:
+        wanted = {d["doc_id"] for d in json.load(open(args.docs_from))["docs"]}
+        doc_dirs = [d for d in doc_dirs if d.name in wanted]
     if args.limit_docs:
         doc_dirs = doc_dirs[:args.limit_docs]
     print(f"Judging {len(doc_dirs)} docs with {args.judge_model}"

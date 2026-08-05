@@ -107,7 +107,12 @@ _OUTPUT_FILE = "book_entities_resolved.json"
 # ---------------------------------------------------------------------------
 _LMS_URL     = "http://localhost:1234/v1"
 _LMS_MODEL   = "qwen/qwen3-4b-2507"
-_LMS_TIMEOUT = 120  # seconds
+# A 50-name dedup batch on the 35B reasoning model that run_kg_overnight passes
+# in generates several thousand reasoning tokens before any answer, which
+# reliably exceeded the old 120s read timeout — the request was killed mid-flight
+# and the batch silently dropped ("Dedup skipped"). Measured: large batches sat
+# at exactly 120.0s before failing. 600s leaves room for the slowest batches.
+_LMS_TIMEOUT = 600  # seconds
 
 
 # ---------------------------------------------------------------------------
@@ -309,37 +314,87 @@ def _call_lms(prompt: str, lms_url: str, lms_model: str, timeout: int) -> Option
     :param timeout: HTTP timeout in seconds.
     :returns: Response text, or None on failure.
     """
-    payload = {
-        "model": lms_model,
-        "messages": [
-            {"role": "system", "content": _DEDUP_SYSTEM},
-            {"role": "user",   "content": prompt},
-        ],
-        "temperature": 0.1,
-        "max_tokens":  8192,
-        "response_format": {"type": "json_object"},
-    }
+    # NOTE on response_format: this LM Studio build validates the field and
+    # rejects {"type": "json_object"} outright with
+    #   'response_format.type' must be 'json_schema' or 'text'
+    # so sending it burned a guaranteed-failing round trip on EVERY call and
+    # relied on the retry below. We send "text" and let the regex extraction in
+    # _parse_dedup_response pull the JSON out, which it already did on the retry
+    # path anyway.
+    #
+    # NOTE on max_tokens: reasoning models (qwen3.6-35b-a3b, which
+    # run_kg_overnight passes in) spend the max_tokens budget on
+    # `reasoning_content` BEFORE emitting any `content`. `/no_think` is in
+    # _DEDUP_SYSTEM but this model ignores it and still reasons — measured
+    # ~7k characters on a 50-name batch. If the budget runs out mid-reasoning
+    # the response comes back 200 OK with finish_reason="length" and an EMPTY
+    # content string, so the caller's `if not raw` treats it as a failed call
+    # and silently drops the batch ("Dedup skipped"). Measured on a 50-name
+    # batch: max_tokens=2048 -> truncated, content empty; 8192 -> stop, valid.
+    # 16384 leaves headroom for larger/messier batches, and is affordable now
+    # that the model is loaded at 65536 context.
+    def _payload(max_tokens: int) -> dict:
+        return {
+            "model": lms_model,
+            "messages": [
+                {"role": "system", "content": _DEDUP_SYSTEM},
+                {"role": "user",   "content": prompt},
+            ],
+            "temperature": 0.1,
+            "max_tokens":  max_tokens,
+            "response_format": {"type": "text"},
+        }
+
+    url = f"{lms_url.rstrip('/')}/chat/completions"
+    max_tokens = 16384
     try:
-        r = requests.post(
-            f"{lms_url.rstrip('/')}/chat/completions",
-            json=payload,
-            timeout=timeout,
-        )
-        if r.status_code == 400 and "response_format" in payload:
-            # Some LM Studio builds reject response_format on the
-            # OpenAI-compat endpoint — retry without it (the regex
-            # extraction in _parse_dedup_groups handles loose output).
-            del payload["response_format"]
-            r = requests.post(
-                f"{lms_url.rstrip('/')}/chat/completions",
-                json=payload,
-                timeout=timeout,
-            )
-        r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
+        for attempt in range(3):
+            r = requests.post(url, json=_payload(max_tokens), timeout=timeout)
+
+            if r.status_code == 400:
+                # Genuine context overflow (prompt + reservation > window).
+                # Shrink the reservation rather than dropping the batch.
+                if attempt < 2:
+                    max_tokens //= 2
+                    logger.warning(f"  400 from LM Studio ({(r.text or '')[:160]}); "
+                                   f"retrying with max_tokens={max_tokens}")
+                    continue
+                r.raise_for_status()
+
+            r.raise_for_status()
+            choice  = r.json()["choices"][0]
+            message = choice.get("message", {})
+            content = (message.get("content") or "").strip()
+
+            if content:
+                return content
+
+            # 200 OK but no content — reasoning ate the whole budget.
+            reasoning = message.get("reasoning_content") or ""
+            if choice.get("finish_reason") == "length" and attempt < 2:
+                max_tokens *= 2
+                logger.warning(
+                    f"  Empty content (finish_reason=length, "
+                    f"{len(reasoning)} reasoning chars) — the model spent the "
+                    f"token budget reasoning. Retrying with max_tokens={max_tokens}."
+                )
+                continue
+
+            # Deliberately NO fallback to reasoning_content here. A truncated
+            # reasoning trace often contains a complete-looking DRAFT grouping
+            # the model then retracted ("...wait, Abraham Maimonides is his
+            # SON, a different person") — cut off before the correction, that
+            # draft parses cleanly and silently merges two different real
+            # people (reproduced in the 2026-08 audit). A dropped batch is
+            # recoverable; a wrong merge is silent data corruption.
+            logger.error(f"  LM Studio returned no usable content "
+                         f"(finish_reason={choice.get('finish_reason')}, "
+                         f"{len(reasoning)} reasoning chars)")
+            return None
     except Exception as e:
         logger.error(f"  LM Studio call failed: {e}")
         return None
+    return None
 
 
 _JSON_RE = re.compile(r'\{.*\}', re.DOTALL)
@@ -440,6 +495,52 @@ def _parse_dedup_response(raw: str) -> List[Dict]:
     ]
 
 
+def _validate_dedup_groups(
+    groups: List[Dict],
+    batch_names: List[str],
+) -> List[Dict]:
+    """Drop hallucinated content from LLM dedup groups.
+
+    The model's response is only trusted where it references names that were
+    actually in the batch it was shown (2026-08 audit: nothing previously
+    validated this, so a hallucinated canonical renamed real entities to a
+    string never extracted from the book, and a hallucinated variant naming a
+    DIFFERENT real entity silently destroyed it).
+
+    Rules, per group:
+    * canonical not in the batch → drop the whole group (a canonical the LLM
+      invented would otherwise become the output entity name);
+    * variants filtered to names in the batch, excluding the canonical itself;
+    * no surviving variants → drop the group (it would be a no-op anyway, and
+      empty groups are where fabricated aliases used to sneak in).
+
+    :param groups: Parsed groups from :func:`_parse_dedup_response`.
+    :param batch_names: The exact names sent to the LLM for this batch.
+    :returns: Groups safe to feed to :func:`_apply_dedup`.
+    """
+    known = {n.strip() for n in batch_names}
+    valid: List[Dict] = []
+    for g in groups:
+        canon = (g.get("canonical") or "").strip()
+        if canon not in known:
+            logger.warning(
+                f"  Dropping dedup group with hallucinated canonical "
+                f"{canon!r} (not in the batch shown to the model)")
+            continue
+        variants = [v.strip() for v in (g.get("variants") or [])
+                    if v and v.strip() in known and v.strip() != canon]
+        dropped = [v.strip() for v in (g.get("variants") or [])
+                   if v and v.strip() and v.strip() not in known]
+        if dropped:
+            logger.warning(
+                f"  Dropping hallucinated variant(s) {dropped!r} from "
+                f"group {canon!r}")
+        if not variants:
+            continue
+        valid.append({"canonical": canon, "variants": variants})
+    return valid
+
+
 def _apply_dedup(
     resolved_list: List[Dict],
     groups: List[Dict],
@@ -461,7 +562,12 @@ def _apply_dedup(
     for g in groups:
         canon = g["canonical"].strip()
         variants = [v.strip() for v in (g.get("variants") or []) if v.strip()]
-        canonical_variants[canon] = variants
+        # extend, don't assign: groups accumulate across independent batches,
+        # and a canonical can legitimately appear in more than one batch's
+        # groups — assignment would silently discard the earlier batch's
+        # variants.
+        existing = canonical_variants.setdefault(canon, [])
+        existing.extend(v for v in variants if v not in existing)
         for v in variants:
             variant_to_canonical[v] = canon
 
@@ -534,6 +640,11 @@ class CoreferenceResolver:
         self.lms_url     = lms_url
         self.lms_model   = lms_model
         self.lms_timeout = lms_timeout
+        # Per-book count of dedup batches that failed and were skipped.
+        # Reset at the top of resolve_book; drivers (run_kg_overnight) check
+        # it after Pass 3 and refuse to write a success sentinel when > 0,
+        # so silently-degraded books can't masquerade as complete.
+        self.dedup_skipped_batches = 0
         self.use_llm     = use_llm
         self.run_tag     = run_tag  # e.g. "lms_qwen3-32b"; empty = default output
 
@@ -556,7 +667,12 @@ class CoreferenceResolver:
             logger.warning(f"Could not reach LM Studio at {self.lms_url}: {e}")
 
     # Maximum names per LMS batch — keeps response well under 8192 tokens
-    _BATCH_SIZE = 50
+    # Reasoning cost per dedup call scales with batch size, and a 50-name batch
+    # on the 35B blew past both the token budget and the read timeout. 25 keeps
+    # each call comfortably inside both, at the cost of ~2x more (much shorter)
+    # calls. Batches are independent, so smaller batches also mean a single
+    # failure loses less work.
+    _BATCH_SIZE = 25
 
     def _dedup_category(
         self,
@@ -591,9 +707,13 @@ class CoreferenceResolver:
             raw = _call_lms(prompt, self.lms_url, self.lms_model, self.lms_timeout)
             if not raw:
                 logger.warning(f"  Dedup skipped for batch (LMS call failed)")
+                self.dedup_skipped_batches += 1
                 continue
             groups = _parse_dedup_response(raw)
-            all_groups.extend(groups)
+            # Only trust groups that reference names actually in this batch
+            # (guards against hallucinated canonicals/variants merging or
+            # renaming real entities — see _validate_dedup_groups).
+            all_groups.extend(_validate_dedup_groups(groups, batch))
 
         if not all_groups:
             return resolved_list
@@ -700,6 +820,7 @@ class CoreferenceResolver:
         :param overwrite: If True, re-resolve even if output already exists.
         :returns: True if output was written, False otherwise.
         """
+        self.dedup_skipped_batches = 0
         # Tagged output file for LMS runs so Gemini and LMS results coexist
         output_filename = (_OUTPUT_FILE.replace(".json", f"_{self.run_tag}.json")
                            if self.run_tag else _OUTPUT_FILE)
@@ -805,13 +926,18 @@ class CoreferenceResolver:
         :param overwrite: Re-resolve books that already have output.
         :returns: Counts dict with ``resolved``, ``skipped``, ``no_entities`` keys.
         """
+        # Tagged runs write entities_<run_tag>/, untagged runs entities/ —
+        # the literal "entities/" pattern made the standalone CLI find 0
+        # books for any tagged run (2026-08 audit).
+        entity_dir = f"entities_{self.run_tag}" if self.run_tag else "entities"
         book_dirs = sorted(set(
             p.parent.parent
-            for p in root.rglob("entities/page_*_entities.json")
+            for p in root.rglob(f"{entity_dir}/page_*_entities.json")
         ))
 
         counts = {"resolved": 0, "skipped": 0, "no_entities": 0}
-        logger.info(f"Found {len(book_dirs)} book directories with entity files")
+        logger.info(f"Found {len(book_dirs)} book directories with entity files "
+                    f"(looking in {entity_dir}/)")
 
         for book_dir in book_dirs:
             logger.info(f"Book: {book_dir.relative_to(root)}")

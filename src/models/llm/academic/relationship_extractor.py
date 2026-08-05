@@ -744,8 +744,19 @@ class RelationExtractor:
                              if self.run_tag else _RESOLVED_FILE)
         resolved_path = book_dir / resolved_filename
         if not resolved_path.exists() and self.run_tag:
-            resolved_path = book_dir / _RESOLVED_FILE
-            logger.info(f"  {book_dir.name}: no tagged resolved file, using default")
+            # HARD FAILURE, deliberately. The old behavior fell back to the
+            # untagged book_entities_resolved.json — i.e. a PREVIOUS
+            # generation's Pass-3 output — and still stamped the result with
+            # the current pipeline_version (2026-08 audit finding). In a
+            # corpus run that turned any Pass-3 failure into v3-labeled
+            # relations built on stale June entities, with only an INFO log.
+            # Raising makes the driver mark the book failed (no sentinel), so
+            # it is retried instead of silently mixed across generations.
+            raise FileNotFoundError(
+                f"{book_dir.name}: tagged resolved file {resolved_filename!r} "
+                f"not found — Pass 3 has not completed for this run tag. "
+                f"Refusing to fall back to the untagged previous-generation "
+                f"file; run Pass 3 first.")
 
         # Output: relations_<version>/<book_name>/ for Gemini,
         #         relations_<version>/<book_name>/<run_tag>/ for LMS runs
@@ -862,9 +873,16 @@ class RelationExtractor:
         with open(rejected_path, "w", encoding="utf-8") as f:
             json.dump(rejected_output, f, indent=2, ensure_ascii=False)
 
+        # len(all_relations) - accepted - rejected = exact duplicates, which
+        # _compact_relations drops without recording in either list. Count
+        # them separately — the old log lumped them into "rejected", which
+        # made the log disagree with the rejected file (240 vs 193 confusion
+        # in the 2026-08 audit).
+        n_dupes = len(all_relations) - len(accepted) - len(rejected)
         logger.info(
             f"  {source_book}: wrote {len(accepted)} relations → {output_path.name} "
-            f"({len(all_relations) - len(accepted)} rejected → {rejected_path.name})"
+            f"({len(rejected)} rejected → {rejected_path.name}; "
+            f"{n_dupes} exact duplicate(s) dropped)"
         )
         return len(accepted)
 
