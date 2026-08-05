@@ -899,12 +899,18 @@ class RelationExtractor:
         :param overwrite: Re-extract books that already have output.
         :returns: Counts dict.
         """
+        # Tagged runs write book_entities_resolved_<run_tag>.json; globbing the
+        # untagged name found 0 books for any tagged run (same class of bug as
+        # the resolver's CLI discovery — 2026-08 audit).
+        resolved_glob = (_RESOLVED_FILE.replace(".json", f"_{self.run_tag}.json")
+                         if self.run_tag else _RESOLVED_FILE)
         book_dirs = sorted(set(
-            p.parent for p in root.rglob(_RESOLVED_FILE)
+            p.parent for p in root.rglob(resolved_glob)
         ))
 
         counts = {"books": len(book_dirs), "relations": 0, "skipped": 0}
-        logger.info(f"Found {len(book_dirs)} books with resolved entities")
+        logger.info(f"Found {len(book_dirs)} books with resolved entities "
+                    f"({resolved_glob})")
 
         for book_dir in book_dirs:
             logger.info(f"Book: {book_dir.relative_to(root)}")

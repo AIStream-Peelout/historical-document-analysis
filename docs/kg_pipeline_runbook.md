@@ -106,12 +106,37 @@ made during this investigation produced a **100% dedup failure rate**.
 > both slower and reasoning-heavy. Using the 4B for Pass 3 would sidestep this
 > whole failure class.
 
-**After any Pass 2–4 run, grep the log before trusting the output:**
+**Since 2026-08 the driver enforces this for you:** if any dedup batch is
+skipped, `run_kg_overnight.py` logs `DEGRADED` and **refuses to write the
+`.v3_complete` sentinel**, so the book is retried on the next run instead of
+being silently marked done. You can still audit manually:
 ```bash
-grep -c "Dedup skipped" ~/kg_overnight.log
+grep "Dedup skipped" ~/kg_overnight.log | sort -u | wc -l   # sort -u: June lines are double-written
+grep "DEGRADED" ~/kg_overnight.log
 ```
-A non-zero count means that run's coreference is degraded. Investigate before
-importing.
+
+### Other 2026-08 integrity guards (do not remove these)
+- **No `reasoning_content` fallback.** `_call_lms` used to return the raw
+  reasoning trace when content was empty. A truncated trace often holds a
+  complete-looking *draft* grouping the model was about to retract
+  (`...wait, Abraham Maimonides is his SON`) — it parsed cleanly and merged
+  two different real people. A dropped batch is recoverable; a wrong merge is
+  silent corruption. It now returns `None`.
+- **Dedup groups are validated against the batch** (`_validate_dedup_groups`).
+  A canonical not in the batch drops the group (it would rename real entities
+  to a never-extracted string); variants not in the batch are filtered (one
+  naming a *different* real entity used to destroy it).
+- **Pass 4 refuses to fall back to the untagged resolved file.** It used to
+  silently read the previous generation's `book_entities_resolved.json` and
+  still stamp `pipeline_version: v3`. It now raises `FileNotFoundError`, so the
+  driver marks the book failed and it is retried.
+- **Discovery is run-tag aware.** Both `CoreferenceResolver.resolve_all` and
+  `RelationExtractor.extract_all` glob the tagged names. Previously a tagged
+  run globbed untagged paths — the resolver CLI found 0 books, and Pass 4's
+  `extract_all` found 5 stale Gemini-era books.
+- **The relations log line separates rejects from exact duplicates.**
+  `_compact_relations` drops exact dupes silently; the old line counted them as
+  "rejected", so the log disagreed with the rejected file.
 | **Neo4j is Community Edition — one database only (`neo4j`).** | `CREATE DATABASE` is Enterprise-only. To get a clean target, run a **second container on another port**, not a second database. |
 | **The default Neo4j is the live site's DB.** | It lives in `genizah_search/docker-compose.yml`; the `backend` service (api.cairogenizah.ai) depends on it. Validate on dev before touching it. |
 
