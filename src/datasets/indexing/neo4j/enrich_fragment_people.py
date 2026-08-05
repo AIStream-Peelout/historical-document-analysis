@@ -57,6 +57,8 @@ data_root    = project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" 
 sys.path.append(str(project_root))
 dotenv.load_dotenv(project_root / ".env")
 
+from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s",
@@ -195,11 +197,130 @@ def _extract_edges(data: Dict, source_book: str) -> List[Dict]:
 # Neo4j write
 # ---------------------------------------------------------------------------
 
+def _extract_edges_from_resolved(data: Dict, source_book: str) -> List[Dict]:
+    """Build Fragment→Person edges from a Pass-3 resolved entity file.
+
+    Replaces the legacy ``*_enhanced.json`` reader. The resolved file is a much
+    better input: both people and shelf-marks carry explicit ``pages`` lists
+    (page attribution the deprecated ``SecondaryLLMProcessor`` never produced),
+    people are already deduplicated and carry ``person_class``, and shelf-marks
+    have already been validated by ``ShelfmarkNormalizer.classify_shelfmark``
+    in Pass 3.
+
+    Same two strategies as the legacy pass:
+
+    1. **Name in description** (``definite``) — a person's name or alias
+       appears verbatim in the shelf-mark's description.
+    2. **Sole person on a shared page** (``possible``) — the person and the
+       shelf-mark appear on the same page and that page has exactly one
+       historical person, so the link is unambiguous.
+
+    Only ``person_class == "historical"`` people are linked: a fragment does
+    not "mention" a modern scholar discussing it, and biblical figures are
+    handled by Pass 4's dedicated Fragment↔BiblicalPerson scope rule. Linking
+    scholars here would also recreate the Person/Scholar split-identity bug.
+
+    :param data: Parsed ``book_entities_resolved_<run_tag>.json``.
+    :param source_book: Book stem for provenance.
+    :returns: Edge dicts with canonical_shelfmark, display_shelfmark,
+        person_name, certainty, evidence, source_book.
+    """
+    people = [p for p in (data.get("people") or [])
+              if (p.get("person_class") or "historical") == "historical"
+              and (p.get("name") or "").strip()]
+
+    # page -> historical people on it (for the co-occurrence strategy)
+    page_people: Dict[int, List[Dict]] = defaultdict(list)
+    for p in people:
+        for pg in (p.get("pages") or []):
+            page_people[pg].append(p)
+
+    edges: List[Dict] = []
+    seen: set = set()
+
+    for sm in (data.get("shelf_marks") or []):
+        mark = (sm.get("mark") or "").strip()
+        # Pass 3 already filtered, but re-check: only genuine marks become
+        # Fragment nodes, so junk never reaches the graph through this path.
+        if not mark or ShelfmarkNormalizer.classify_shelfmark(mark) != "standard":
+            continue
+        canonical = ShelfmarkNormalizer.to_canonical_id(mark)
+        if not canonical:
+            continue
+        desc = sm.get("description") or ""
+        pages = sm.get("pages") or []
+
+        # --- Strategy 1: name (or alias) verbatim in the description ---
+        # Requires page consistency: the person must also appear on one of the
+        # mark's pages. A bare substring match is too loose — Pass 3 sometimes
+        # types a *work* as a historical person (observed: "Ecclesiastes"),
+        # and the description "a Judaeo-Arabic transcription of Ecclesiastes"
+        # then linked three unrelated fragments to it. That entity sits on
+        # page 13 while the marks are on pages 2/18/20/22/23, so the page
+        # check rejects all three.
+        mark_pages = set(pages)
+        matched = False
+        for p in people:
+            names = [p["name"]] + [a for a in (p.get("aliases") or []) if a]
+            hit = next((n for n in names if len(n) > 4 and n in desc), None)
+            if not hit:
+                continue
+            if mark_pages and not (set(p.get("pages") or []) & mark_pages):
+                logger.debug(
+                    f"  page-inconsistent match rejected: {mark!r} desc names "
+                    f"{p['name']!r} but they share no page")
+                continue
+            key = (canonical, p["name"])
+            if key in seen:
+                continue
+            seen.add(key)
+            matched = True
+            edges.append({
+                "canonical_shelfmark": canonical,
+                "display_shelfmark":   mark,
+                "person_name":         p["name"],
+                "certainty":           "definite",
+                "evidence":            desc[:500],
+                "source_book":         source_book,
+            })
+
+        # --- Strategy 2: sole historical person on a shared page ---
+        if matched:
+            continue
+        for pg in pages:
+            on_page = page_people.get(pg) or []
+            if len(on_page) != 1:
+                continue
+            p = on_page[0]
+            key = (canonical, p["name"])
+            if key in seen:
+                continue
+            seen.add(key)
+            edges.append({
+                "canonical_shelfmark": canonical,
+                "display_shelfmark":   mark,
+                "person_name":         p["name"],
+                "certainty":           "possible",
+                "evidence":            (desc[:500] if desc
+                                        else f"Sole person on page {pg} with {mark}"),
+                "source_book":         source_book,
+            })
+
+    return edges
+
+
 def _write_edge(tx, edge: Dict) -> None:
-    """MERGE Fragment and Person nodes; MERGE MENTIONS_PERSON relationship."""
+    """MERGE Fragment and Person nodes; MERGE MENTIONS_PERSON relationship.
+
+    Fragment is keyed on ``canonical_shelfmark`` — the merge key the rest of
+    the pipeline uses. The legacy version keyed on ``shelfmark``, which
+    created a SECOND Fragment node for any fragment already imported by the
+    PGP/merged pipelines instead of attaching to it.
+    """
     tx.run("""
-        MERGE (f:Fragment {shelfmark: $shelfmark})
+        MERGE (f:Fragment {canonical_shelfmark: $canonical_shelfmark})
         ON CREATE SET
+            f.shelfmark    = $display_shelfmark,
             f.data_sources = ['extracted'],
             f.source_books  = [$book]
         ON MATCH SET
@@ -239,7 +360,8 @@ def _write_edge(tx, edge: Dict) -> None:
                 ELSE coalesce(r.source_books, []) + [$book]
             END
     """,
-        shelfmark=edge["shelfmark"],
+        canonical_shelfmark=edge["canonical_shelfmark"],
+        display_shelfmark=edge["display_shelfmark"],
         person_name=edge["person_name"],
         certainty=edge["certainty"],
         evidence=edge["evidence"],
@@ -265,8 +387,10 @@ class FragmentPeopleEnricher:
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
 
-        source_book = path.stem.replace("_enhanced", "")
-        edges = _extract_edges(data, source_book)
+        # The resolved file records its own source_book; fall back to the
+        # containing directory name (the run-tagged filename is not the book).
+        source_book = data.get("source_book") or path.parent.name
+        edges = _extract_edges_from_resolved(data, source_book)
 
         definite = sum(1 for e in edges if e["certainty"] == "definite")
         possible = sum(1 for e in edges if e["certainty"] == "possible")
@@ -290,15 +414,22 @@ class FragmentPeopleEnricher:
 
         return {"edges_definite": definite, "edges_possible": possible}
 
-    def enrich_all(self, root: Path, dry_run: bool = False):
-        # Exclude enhanced JSONs inside *_structured*/ subdirs — those are
-        # intermediate pipeline artifacts; only the copy in the book's own
-        # directory is canonical.
-        files = sorted(
-            p for p in root.rglob("*_enhanced.json")
-            if "_structured" not in p.parent.name
-        )
-        logger.info(f"Found {len(files)} enhanced JSON files")
+    def enrich_all(self, root: Path, dry_run: bool = False,
+                   run_tag: Optional[str] = None):
+        # Read Pass-3 resolved entity files. Tagged runs write
+        # book_entities_resolved_<run_tag>.json; untagged runs write the bare
+        # name. Globbing the untagged name during a tagged run would pick up
+        # stale previous-generation files (the same trap fixed in
+        # relationship_extractor.extract_all).
+        resolved_glob = (f"book_entities_resolved_{run_tag}.json" if run_tag
+                         else "book_entities_resolved.json")
+        files = sorted(root.rglob(resolved_glob))
+        logger.info(f"Found {len(files)} resolved entity files ({resolved_glob})")
+        if not files:
+            logger.error(
+                f"No {resolved_glob} found under {root}. Pass 3 must run first; "
+                f"if this is a tagged run, pass --run-tag.")
+            return
 
         totals: Dict[str, int] = defaultdict(int)
         for path in tqdm(files, desc="Enriching fragment–person links"):
@@ -332,12 +463,17 @@ def main():
     parser.add_argument("--dry-run", "-n", action="store_true")
     parser.add_argument("--dir", "-d", metavar="SUBDIR", default=None,
                         help="Limit to a subdirectory under academic_literature/")
+    parser.add_argument("--run-tag", metavar="TAG", default=None,
+                        help="Pass-3 run tag, e.g. v3_lms_qwen3_6-35b-a3b. Selects "
+                             "book_entities_resolved_<TAG>.json; omit for untagged runs.")
     args = parser.parse_args()
 
     uri      = os.getenv("NEO4J_URI",      "bolt://localhost:7687")
     user     = os.getenv("NEO4J_USER",     "neo4j")
     password = os.getenv("NEO4J_PASSWORD")
-    database = os.getenv("NEO4J_DATABASE", "genizah-prod")
+    # "genizah-prod" cannot exist on Neo4j Community Edition (single database);
+    # default to the real database name instead of a value that always fails.
+    database = os.getenv("NEO4J_DATABASE", "neo4j")
 
     if not password:
         logger.error("NEO4J_PASSWORD not set")
@@ -352,7 +488,7 @@ def main():
 
     enricher = FragmentPeopleEnricher(uri, user, password, database=database)
     try:
-        enricher.enrich_all(root, dry_run=args.dry_run)
+        enricher.enrich_all(root, dry_run=args.dry_run, run_tag=args.run_tag)
     finally:
         enricher.close()
 
