@@ -383,7 +383,16 @@ _CITE_EDITOR_RE_HE = re.compile(r'(עורך|עורכים|עורכת|בעריכת
 # practically never appears in a substantive in-text quote, only in a
 # citation/reference (עמ' = page, סי' = siman/paragraph in rabbinic
 # literature citations).
-_CITE_PAGE_RE_HE = re.compile(r"(עמ['׳״]?|סי['׳״])\s*[\dא-ת]")
+#
+# The abbreviation marker is REQUIRED: bare "עמ" followed directly by another
+# letter is the ordinary verb עמד / עמדו / עמדה ("stood", "served", "was
+# appointed"), which is everywhere in Hebrew historical prose. An earlier
+# version made the apostrophe optional (`עמ['׳״]?`), so `עמד` matched and
+# roughly 31 of 32 bibliography_citation rejects on a Hebrew book were
+# substantive prose — including an entire merchant-correspondence network.
+# A real page reference always has either an apostrophe/gershayim ("עמ'
+# 123") or whitespace before the number ("עמ קכח"); the verb has neither.
+_CITE_PAGE_RE_HE = re.compile(r"(?:עמ['׳״]|עמ(?=\s)|סי['׳״])\s*[\dא-ת]")
 # Publisher/city colon inside a parenthetical, e.g. "(ירושלים: יד יצחק
 # בן־צבי, תשנ..." — the Hebrew analogue of "City: Publisher". Stands alone
 # (mirrors _CITE_PUBLISHER_RE, which isn't AND-ed with a year either):
