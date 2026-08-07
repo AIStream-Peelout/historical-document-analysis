@@ -140,6 +140,34 @@ grep "DEGRADED" ~/kg_overnight.log
 | **Neo4j is Community Edition — one database only (`neo4j`).** | `CREATE DATABASE` is Enterprise-only. To get a clean target, run a **second container on another port**, not a second database. |
 | **The default Neo4j is the live site's DB.** | It lives in `genizah_search/docker-compose.yml`; the `backend` service (api.cairogenizah.ai) depends on it. Validate on dev before touching it. |
 
+### ⚠️ LM Studio degrades silently — restart the SERVER, not just the model
+Observed 2026-08-06 mid-run: throughput collapsed to **~5 tok/s** for a 35B MoE
+(should be 85-95 tok/s). Every dedup batch then hit the 600s timeout exactly,
+and the book ground on for hours producing nothing. **Unloading and reloading
+the model did NOT fix it. Only `lms server stop && lms server start` did** —
+5 tok/s → 86-94 tok/s, an ~18x recovery. Something in the server's GPU/Metal
+state degrades and survives a model reload.
+
+**Measure throughput before every long run** (this is the canary — it catches
+the degraded state that no status field reports):
+```bash
+curl -s localhost:1234/v1/chat/completions -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3.6-35b-a3b","messages":[{"role":"user","content":"/no_think Say: ready"}],
+       "max_tokens":512,"response_format":{"type":"text"}}' \
+  | jq '.usage.completion_tokens'   # time it: expect ~2s / 85-95 tok/s
+```
+If it is slow: `lms server stop; lms server start`, reload the model, re-measure.
+
+**Always load with `--parallel 1`.** The pipeline is strictly single-threaded,
+but LM Studio defaults to `PARALLEL 4` and reserves KV cache for four
+concurrent predictions. At 65536 context that wasted **11.6 GB** (free memory
+went 16.5 → 28.1 GB on changing it) and contributed to the memory pressure
+that crashed the machine:
+```bash
+lms load qwen/qwen3.6-35b-a3b --identifier qwen3.6-35b-a3b \
+         --context-length 65536 --parallel 1 -y
+```
+
 ### Targeting a dev database
 `load_dotenv` does **not** override exported environment variables (verified), so
 no code change is needed — just prefix the command:
