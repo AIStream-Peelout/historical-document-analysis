@@ -120,15 +120,26 @@ class HttpClient:
     :param cache_dir: Directory for cached responses.
     :param min_interval: Minimum seconds between requests to one host.
     :param timeout: Per-request timeout in seconds.
+    :param max_attempts: Tries per URL before giving up, including the first.
+    :param backoff_base: Seconds for the first retry pause; doubles each time.
     """
 
-    def __init__(self, cache_dir: Path, min_interval: float = 1.0, timeout: int = 30) -> None:
+    def __init__(
+        self,
+        cache_dir: Path,
+        min_interval: float = 1.0,
+        timeout: int = 30,
+        max_attempts: int = 4,
+        backoff_base: float = 2.0,
+    ) -> None:
         self.cache_dir = cache_dir
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.timeout = timeout
         self._min_interval = min_interval
+        self.max_attempts = max_attempts
+        self.backoff_base = backoff_base
         self._last_call: Dict[str, float] = {}
-        self.stats: Dict[str, int] = {"hit": 0, "miss": 0, "error": 0}
+        self.stats: Dict[str, int] = {"hit": 0, "miss": 0, "error": 0, "throttled": 0}
 
     def _wait(self, url: str) -> None:
         """Sleep so the URL's host is not called faster than the interval.
@@ -154,18 +165,36 @@ class HttpClient:
         if path.exists():
             self.stats["hit"] += 1
             return path.read_text(encoding="utf-8")
-        self._wait(url)
         request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
-        try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                body = response.read().decode("utf-8", "replace")
-        except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, OSError) as exc:
-            self.stats["error"] += 1
-            logger.warning("GET failed (%s): %s", type(exc).__name__, url[:120])
-            return None
-        self.stats["miss"] += 1
-        path.write_text(body, encoding="utf-8")
-        return body
+        # Providers throttle bulk callers; a 429/503 means "slow down", not
+        # "not found", and treating it as a miss would silently blank out a
+        # large fraction of a long run.
+        for attempt in range(self.max_attempts):
+            self._wait(url)
+            try:
+                with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                    body = response.read().decode("utf-8", "replace")
+                self.stats["miss"] += 1
+                path.write_text(body, encoding="utf-8")
+                return body
+            except urllib.error.HTTPError as exc:
+                if exc.code in (429, 500, 502, 503, 504) and attempt + 1 < self.max_attempts:
+                    backoff = self.backoff_base * (2 ** attempt)
+                    self.stats["throttled"] += 1
+                    logger.info("HTTP %s, backing off %.1fs: %s", exc.code, backoff, url[:100])
+                    time.sleep(backoff)
+                    continue
+                self.stats["error"] += 1
+                logger.warning("GET failed (HTTP %s): %s", exc.code, url[:120])
+                return None
+            except (urllib.error.URLError, TimeoutError, OSError) as exc:
+                if attempt + 1 < self.max_attempts:
+                    time.sleep(self.backoff_base * (2 ** attempt))
+                    continue
+                self.stats["error"] += 1
+                logger.warning("GET failed (%s): %s", type(exc).__name__, url[:120])
+                return None
+        return None
 
 
 # ---------------------------------------------------------------------------

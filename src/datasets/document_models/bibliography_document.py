@@ -10,6 +10,8 @@ from src.datasets.document_models.corpus_ids import (
     book_uuid as _book_uuid,
     page_uuid as _page_uuid,
     extract_doi as _extract_doi,
+    display_doi as _display_doi,
+    external_link as _external_link,
     page_seq_from_filename as _page_seq_from_filename,
 )
 
@@ -70,6 +72,8 @@ class BibliographyDocument(BaseModel):
     book_uuid: Optional[str] = None
     page_uuid: Optional[str] = None
     doi: Optional[str] = None
+    oclc: Optional[str] = None
+    worldcat_url: Optional[str] = None
     shelf_marks_mentioned: Union[List[str], Dict[str, str]] = Field(default_factory=list)
     shelf_marks_mentioned_raw: Optional[Dict[str, str]] = None  # Store original dict format if available
     transcriptions: Dict[str, str] = Field(default_factory=dict)
@@ -162,6 +166,10 @@ class BibliographyDocument(BaseModel):
         }
         if self.doi:
             es_doc["doi"] = self.doi
+        if self.oclc:
+            es_doc["oclc"] = self.oclc
+        if self.worldcat_url:
+            es_doc["worldcat_url"] = self.worldcat_url
 
         # Book-level metadata fields (only include if not None/empty)
         author_str = self.author or (", ".join(self.authors) if self.authors else None)
@@ -417,7 +425,12 @@ class BibliographyDocument(BaseModel):
         _bk = _book_key(book_metadata, pdf_name)
         _bk_uuid = _book_uuid(_bk)
         _pg_uuid = _page_uuid(_bk, _seq) if _seq is not None else None
-        _doi = _extract_doi(book_metadata)
+        # The *display* DOI: the canonical value when there is one, else the
+        # looked-up value from external_ids. Keying above deliberately used
+        # _book_key (extract_doi only), so enrichment cannot shift book_uuid.
+        _doi = _display_doi(book_metadata)
+        _oclc = _external_link(book_metadata, "oclc")
+        _worldcat = _external_link(book_metadata, "worldcat_url")
 
         return BibliographyDocument(
             doc_id=doc_id,
@@ -429,6 +442,8 @@ class BibliographyDocument(BaseModel):
             book_uuid=_bk_uuid,
             page_uuid=_pg_uuid,
             doi=_doi,
+            oclc=_oclc,
+            worldcat_url=_worldcat,
             page_display=page_label,
             shelf_marks_mentioned=mentioned,
             shelf_marks_mentioned_raw=shelf_marks_mentioned_raw,

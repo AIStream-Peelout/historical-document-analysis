@@ -501,6 +501,10 @@ class ElasticsearchGenizahProcessor:
                     "page_uuid": {"type": "keyword"},
                     "page_seq": {"type": "integer"},
                     "doi": {"type": "keyword"},
+                    # Outbound links for the web app. Populated from the
+                    # metadata's external_ids block, which never feeds book_key.
+                    "oclc": {"type": "keyword"},
+                    "worldcat_url": {"type": "keyword"},
                     "shelf_mark": {"type": "keyword"},
                     "description": {"type": "text", "analyzer": "multilingual"},
                     "full_text_content": {"type": "text", "analyzer": "multilingual"},
