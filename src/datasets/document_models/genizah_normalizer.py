@@ -405,6 +405,38 @@ class ShelfmarkNormalizer(EntityNormalizer):
         return "_".join(normalized_parts)
 
     @staticmethod
+    def loose_key(shelfmark: str) -> str:
+        """Separator-insensitive join key that preserves digit boundaries.
+
+        Ad-hoc alphanumeric squashing (``"".join(c for c in s if
+        c.isalnum())``) conflates dotted classmark numbers — ``ENA NS 2.26``
+        and ``ENA NS 22.6`` both squash to ``enans226``, a real collision
+        observed between an unrelated training and benchmark fragment. This
+        key stays insensitive to separator style and case (``T-S AS 18.170``
+        ≈ ``TS AS 18 170``) but writes a ``|`` marker wherever a separator
+        stood between two digit runs, so dotted numbers cannot merge.
+        Leading zeros are stripped from digit runs (``018`` ≈ ``18``).
+
+        Intended for fuzzy joins and decontamination checks; never a display
+        form. For cross-catalog forms (TEI ``MS-TS-...``), pass through
+        :meth:`to_canonical_id` first.
+
+        :param shelfmark: Raw or canonical shelfmark string.
+        :returns: Lowercase collision-resistant key.
+        """
+        out: List[str] = []
+        pending_sep = False
+        for ch in shelfmark.lower():
+            if ch.isalnum():
+                if pending_sep and out and out[-1].isdigit() and ch.isdigit():
+                    out.append("|")
+                pending_sep = False
+                out.append(ch)
+            else:
+                pending_sep = True
+        return re.sub(r"\d+", lambda m: str(int(m.group())), "".join(out))
+
+    @staticmethod
     def generate_variants(canonical_id: str) -> List[str]:
         """
         Generate common variant formats for a canonical ID.
@@ -689,6 +721,22 @@ class ShelfmarkNormalizer(EntityNormalizer):
             "collection": mapped.get("collection"),
             "subcollection": mapped.get("subcollection"),
         }
+
+
+def test_loose_key():
+    """Test the digit-boundary-safe fuzzy join key."""
+    lk = ShelfmarkNormalizer.loose_key
+    # The observed collision: dotted numbers must NOT merge.
+    assert lk("ENA NS 2.26") != lk("ENA NS 22.6"), "digit-boundary collision"
+    assert lk("ENA NS 2.26") == "enans2|26"
+    # Separator style and case insensitivity.
+    assert lk("T-S AS 18.170") == lk("TS AS 18 170") == lk("t.s.as.18.170")
+    # Leading zeros in digit runs.
+    assert lk("T-S AS 018.0170") == lk("T-S AS 18.170")
+    # Canonical IDs route to the same key as their source forms.
+    assert lk(ShelfmarkNormalizer.to_canonical_id("MS-TS-AS-00018-00170")) == \
+        lk("T-S AS 18.170")
+    print("✓ loose_key: collision-safety, separator/case/zero insensitivity")
 
 
 def test_normalization():

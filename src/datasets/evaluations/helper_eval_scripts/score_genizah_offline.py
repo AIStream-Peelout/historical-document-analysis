@@ -221,7 +221,17 @@ def main() -> None:
                         default=Path("transcription_results/paper_table"))
     parser.add_argument("--no-wandb", action="store_true")
     parser.add_argument("--wandb-run-name", default="genizah-offline-scoring-v1")
+    parser.add_argument("--script-tags", type=Path,
+                        default=_BENCH_DIR / "genizah_test_v1_script_tags.json",
+                        help="EVAL-ONLY language/script sidecar "
+                             "(build_script_tags.py); enables the per-script "
+                             "stratification table")
     args = parser.parse_args()
+
+    script_tags = {}
+    if args.script_tags.exists():
+        script_tags = {k: v.get("bucket", "untagged")
+                       for k, v in json.load(open(args.script_tags)).items()}
 
     docs = load_benchmark(args.benchmark)
     rows = []
@@ -260,6 +270,7 @@ def main() -> None:
                 len_ratio=round(len(hyp) / len(gt_ink), 3) if gt_ink else None,
                 gt_letters=len(gt_letters), hyp_letters=len(hyp_letters),
                 repaired_gt=bool(d.get("_repaired_duplication")),
+                script_bucket=script_tags.get(doc_id, "untagged"),
             )
 
         # Tier A requires convergence of the order-blind system AND a VLM.
@@ -326,6 +337,40 @@ def main() -> None:
         w.writerows(summary)
     print(f"\nWrote {long_csv} and {summary_csv}")
 
+    by_script = []
+    if script_tags:
+        groups = collections.defaultdict(list)
+        for r in rows:
+            groups[(r["model"], r["script_bucket"])].append(r)
+        print(f"\nPer-script stratification (eval-only sidecar; "
+              f"{len(set(script_tags.values()))} buckets):")
+        print(f"{'model':30s} {'bucket':14s} {'n':>3s} {'subst':>6s} "
+              f"{'ngramP':>7s} {'F1':>6s}")
+        for (model, bucket), rs in sorted(groups.items()):
+            modes = collections.Counter(r["failure_mode"] for r in rs)
+            rec = dict(
+                model=model, script_bucket=bucket, n=len(rs),
+                pct_substantive=round(modes["substantive"] / len(rs), 3),
+                pct_abstained=round(modes["abstained"] / len(rs), 3),
+                pct_loop_collapse=round(modes["loop_collapse"] / len(rs), 3),
+                pct_hallucinated=round(modes["hallucinated"] / len(rs), 3),
+                ngram_precision_median=round(statistics.median(
+                    [r["ngram_precision"] for r in rs]), 4),
+                aligned_f1_median=round(statistics.median(
+                    [r["aligned_f1"] for r in rs]), 4),
+            )
+            by_script.append(rec)
+            print(f"{model:30s} {bucket:14s} {rec['n']:3d} "
+                  f"{rec['pct_substantive']:6.0%} "
+                  f"{rec['ngram_precision_median']:7.3f} "
+                  f"{rec['aligned_f1_median']:6.3f}")
+        by_script_csv = args.out_dir / "genizah_offline_by_script.csv"
+        with open(by_script_csv, "w", newline="") as fh:
+            w = csv.DictWriter(fh, fieldnames=list(by_script[0].keys()))
+            w.writeheader()
+            w.writerows(by_script)
+        print(f"Wrote {by_script_csv}")
+
     if args.no_wandb:
         return
     import wandb
@@ -339,12 +384,17 @@ def main() -> None:
                     tier_a_overlap=TIER_A_OVERLAP),
         tags=["paper", "genizah", "offline-scoring"],
     )
-    wandb.log({
+    tables = {
         "paper/genizah_offline_long": wandb.Table(
             columns=list(rows[0].keys()), data=[list(r.values()) for r in rows]),
         "paper/genizah_offline_summary": wandb.Table(
             columns=list(summary[0].keys()), data=[list(r.values()) for r in summary]),
-    })
+    }
+    if by_script:
+        tables["paper/genizah_offline_by_script"] = wandb.Table(
+            columns=list(by_script[0].keys()),
+            data=[list(r.values()) for r in by_script])
+    wandb.log(tables)
     print(f"W&B: {run.url}")
     wandb.finish()
 
