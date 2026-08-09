@@ -67,6 +67,15 @@ KRAKEN_MODEL = str(_REPO / "src/datasets/raw_data/cairo_genizah/custom_model_wei
 CONTAINMENT_DROP = 0.12   # benchmark audit threshold
 GT_RATIO_FLAG = 2.5       # GT letters vs Kraken letters
 MIN_KRAKEN_LETTERS = 150  # below this, Kraken read too little to be evidence
+# Strong-evidence tier: at >=500 letters read, "Kraken produced garbage" is no
+# longer a plausible explanation for near-zero containment on a Hebrew-script
+# page — the image is simply not the transcribed page. Verified on the JTS ENA
+# family that the CONVERSE (tiny reads) is instrument blindness (graph-paper
+# backing defeats binarization), so weak reads are never drop evidence.
+STRONG_KRAKEN_LETTERS = 500
+STRONG_CONTAINMENT = 0.05
+WEAK_SUPERSET_RATIO = 4.0
+MANUAL_DROPS = _CLEANUP_DIR / "misalignment_manual_drops.json"
 
 
 def _norm(s: str) -> str:
@@ -126,7 +135,8 @@ def metadata_flags(manifest_path: Path, flags_path: Path) -> Dict[str, Dict[str,
             continue
         pgpids = {p.strip() for f in hit for p in str(f["pgpids"]).split(";") if p.strip()}
         sig = {"matched": True, "join": False, "side_both": False,
-               "multi_iiif": False, "n_pgp_docs": len(pgpids)}
+               "multi_iiif": False, "n_pgp_docs": len(pgpids), "languages": []}
+        langs: Set[str] = set()
         for pid in pgpids:
             d = doc_by_id.get(pid)
             if d is None:
@@ -134,6 +144,9 @@ def metadata_flags(manifest_path: Path, flags_path: Path) -> Dict[str, Dict[str,
             sig["join"] = sig["join"] or "+" in d["shelfmark"]
             sig["side_both"] = sig["side_both"] or "recto and verso" in d["side"]
             sig["multi_iiif"] = sig["multi_iiif"] or ";" in d["iiif_urls"]
+            if d["languages_primary"]:
+                langs.update(p.strip() for p in d["languages_primary"].split(";"))
+        sig["languages"] = sorted(langs)
         sig["strong"] = sig["join"] or sig["multi_iiif"]
         sig["at_risk"] = sig["strong"] or sig["side_both"]
         flags[r["doc_id"]] = sig
@@ -225,17 +238,40 @@ def build_report(flags_path: Path, results_path: Path, report_path: Path) -> Dic
     rows = [json.loads(l) for l in open(results_path)]
     by_id = {r["doc_id"]: r for r in rows}
 
-    drop, review_wrong_page, review_superset, weak_read = [], [], [], []
+    manual = json.loads(MANUAL_DROPS.read_text()) if MANUAL_DROPS.exists() else {}
+    drop, review_wrong_page, review_superset = [], [], []
+    review_weak_superset, weak_read = [], []
     for doc_id, r in by_id.items():
         if "error" in r:
             weak_read.append(doc_id)
             continue
+        if doc_id in manual:
+            drop.append({"doc_id": doc_id, **r, "mode": "manual",
+                         "reason": manual[doc_id]})
+            continue
         sig = flags.get(doc_id, {})
-        low = (r["containment"] < CONTAINMENT_DROP
+        # Kraken is a Hebrew-script instrument: on Arabic-script pages it
+        # force-decodes cursive into voluminous Hebrew-alphabet garbage, so
+        # containment evidence is void there (verified: T-S Ar. docs read
+        # 800+ letters at containment 0 while correctly paired). Any PGP
+        # language that is Arabic-but-not-Judaeo-Arabic voids kraken drops.
+        arabic_possible = any(
+            "arabic" in l.lower() and "judaeo" not in l.lower()
+            and "judeo" not in l.lower()
+            for l in sig.get("languages", []))
+        low = (not arabic_possible
+               and r["containment"] < CONTAINMENT_DROP
                and r["kraken_letters"] >= MIN_KRAKEN_LETTERS)
-        superset = (r["gt_ratio"] >= GT_RATIO_FLAG
+        strong = (not arabic_possible
+                  and r["containment"] < STRONG_CONTAINMENT
+                  and r["kraken_letters"] >= STRONG_KRAKEN_LETTERS)
+        superset = (not arabic_possible
+                    and r["gt_ratio"] >= GT_RATIO_FLAG
                     and r["kraken_letters"] >= MIN_KRAKEN_LETTERS)
-        if low and sig.get("at_risk"):
+        if strong:
+            drop.append({"doc_id": doc_id, **r, "signals": sig,
+                         "mode": "wrong_page_strong"})
+        elif low and sig.get("at_risk"):
             drop.append({"doc_id": doc_id, **r, "signals": sig})
         elif low:
             review_wrong_page.append({"doc_id": doc_id, **r})
@@ -244,26 +280,36 @@ def build_report(flags_path: Path, results_path: Path, report_path: Path) -> Dic
         elif superset:
             review_superset.append({"doc_id": doc_id, **r})
         elif r["kraken_letters"] < MIN_KRAKEN_LETTERS:
+            if r["gt_ratio"] >= WEAK_SUPERSET_RATIO:
+                review_weak_superset.append({"doc_id": doc_id, **r})
             weak_read.append(doc_id)
 
     report = {
         "containment_drop_threshold": CONTAINMENT_DROP,
         "gt_ratio_flag_threshold": GT_RATIO_FLAG,
         "min_kraken_letters": MIN_KRAKEN_LETTERS,
+        "strong_kraken_letters": STRONG_KRAKEN_LETTERS,
+        "strong_containment": STRONG_CONTAINMENT,
+        "weak_superset_ratio": WEAK_SUPERSET_RATIO,
         "n_scored": len(by_id),
         "n_drop": len(drop),
         "n_review_wrong_page": len(review_wrong_page),
         "n_review_superset": len(review_superset),
+        "n_review_weak_superset": len(review_weak_superset),
         "n_weak_read": len(weak_read),
         "drop": sorted(drop, key=lambda r: r.get("containment", 0)),
         "review_wrong_page": sorted(review_wrong_page, key=lambda r: r["containment"]),
         "review_superset": sorted(review_superset, key=lambda r: -r["gt_ratio"]),
+        "review_weak_superset": sorted(review_weak_superset,
+                                       key=lambda r: -r["gt_ratio"]),
         "weak_read": sorted(weak_read),
     }
     report_path.write_text(json.dumps(report, ensure_ascii=False, indent=1))
     print(f"report: scored={report['n_scored']} drop={report['n_drop']} "
           f"review_wrong_page={report['n_review_wrong_page']} "
-          f"review_superset={report['n_review_superset']} weak={report['n_weak_read']}")
+          f"review_superset={report['n_review_superset']} "
+          f"weak_superset={report['n_review_weak_superset']} "
+          f"weak={report['n_weak_read']}")
     return report
 
 
