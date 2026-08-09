@@ -66,12 +66,16 @@ def resolve_adapter(repo: str, revision: str, path: "Path | None") -> Path:
     """
     if path is not None:
         return path if path.is_file() else path / "adapter_model.safetensors"
+    import os
+
     from huggingface_hub import hf_hub_download
 
+    token = os.getenv("HF1_TOKEN") or os.getenv("HF_TOKEN")
     for name in ("last-checkpoint/adapter_model.safetensors",
                  "adapter_model.safetensors"):
         try:
-            return Path(hf_hub_download(repo, name, revision=revision or None))
+            return Path(hf_hub_download(repo, name, revision=revision or None,
+                                        token=token))
         except Exception:
             continue
     raise FileNotFoundError(f"no adapter_model.safetensors in {repo}@{revision}")
