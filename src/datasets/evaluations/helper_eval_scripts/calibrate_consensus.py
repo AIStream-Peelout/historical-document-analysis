@@ -61,6 +61,7 @@ THRESHOLDS = [round(x * 0.05, 2) for x in range(19)]  # 0.00 .. 0.90
 # Figure palette (dataviz reference instance).
 _BLUE = "#2a78d6"
 _ORANGE = "#eb6834"
+_AQUA = "#1baf7a"
 _RED = "#d03b3b"
 _MUTED = "#898781"
 _GRID = "#e1e0d9"
@@ -180,12 +181,21 @@ def sweep(rows: list) -> list:
         acc_a = [r for r in acc if r["tier"] == "A"]
         rej_a = [r for r in rej if r["tier"] == "A"]
         bad = [r for r in acc if r["vlm_mode"] in ("hallucinated", "loop_collapse")]
+        # Compound production gate: the loop screen needs no GT (loop_ratio on
+        # the hypothesis alone), so it can run before the agreement gate.
+        acc_s = [r for r in acc if r["vlm_mode"] != "loop_collapse"]
+        acc_s_a = [r for r in acc_s if r["tier"] == "A"]
+        bad_s = [r for r in acc_s if r["vlm_mode"] == "hallucinated"]
         curve.append(dict(
             threshold=x,
             n_accept=len(acc),
             pct_docs=round(len(acc) / len(rows), 3),
             pct_chars=round(sum(r["gt_letters"] for r in acc) / total_chars, 3),
             n_bad_accepted=len(bad),
+            pct_docs_screened=round(len(acc_s) / len(rows), 3),
+            n_bad_screened=len(bad_s),
+            vlm_cer_med_accept_A_screened=round(statistics.median(
+                [r["vlm_cer"] for r in acc_s_a]), 4) if acc_s_a else None,
             n_accept_tierA=len(acc_a),
             vlm_cer_med_accept_A=round(statistics.median(
                 [r["vlm_cer"] for r in acc_a]), 4) if acc_a else None,
@@ -242,18 +252,19 @@ def make_figure(rows: list, curve: list, out_png: Path) -> None:
     ax.set_title("Agreement predicts accuracy", color=_INK, fontsize=11, loc="left")
     ax.legend(frameon=False, fontsize=9, labelcolor=_INK)
 
-    # Panel B: acceptance vs threshold.
+    # Panel B: acceptance vs threshold (raw gate vs loop-screened gate).
     ax = axes[1]
     xs = [c["threshold"] for c in curve]
     ax.plot(xs, [c["pct_docs"] * 100 for c in curve], color=_BLUE, linewidth=2)
-    ax.plot(xs, [c["pct_chars"] * 100 for c in curve], color=_BLUE,
-            linewidth=2, linestyle="--")
-    ax.annotate("% fragments", (xs[-6], curve[-6]["pct_docs"] * 100),
-                textcoords="offset points", xytext=(6, 8),
+    ax.plot(xs, [c["pct_docs_screened"] * 100 for c in curve], color=_AQUA,
+            linewidth=2)
+    ax.annotate("agreement only", (xs[4], curve[4]["pct_docs"] * 100),
+                textcoords="offset points", xytext=(8, 8),
                 color=_BLUE, fontsize=9)
-    ax.annotate("% characters", (xs[-6], curve[-6]["pct_chars"] * 100),
-                textcoords="offset points", xytext=(6, -14),
-                color=_BLUE, fontsize=9)
+    ax.annotate("+ loop screen (GT-free)",
+                (xs[4], curve[4]["pct_docs_screened"] * 100),
+                textcoords="offset points", xytext=(8, -16),
+                color=_AQUA, fontsize=9)
     ax.set_xlabel("auto-accept threshold X", color=_INK, fontsize=10)
     ax.set_ylabel("share auto-accepted (%)", color=_INK, fontsize=10)
     ax.set_title("Coverage of the gate", color=_INK, fontsize=11, loc="left")
@@ -328,25 +339,27 @@ def main() -> None:
         """
         return (f"{value:.3f}" if value is not None else "—").rjust(width)
 
-    print(f"\n{'X':>5s} {'acc%':>6s} {'chars%':>7s} {'bad':>4s} {'nA':>4s} "
-          f"{'CER_A(v18b)':>12s} {'CER_A(krkn)':>12s} {'ngramGT':>8s} "
-          f"{'rejCER_A':>9s}")
+    print(f"\n{'X':>5s} {'acc%':>6s} {'chars%':>7s} {'bad':>4s} "
+          f"{'scr%':>6s} {'sbad':>5s} {'CER_A(scr)':>11s} "
+          f"{'CER_A(krkn)':>12s} {'ngramGT':>8s} {'rejCER_A':>9s}")
     for c in curve:
         print(f"{c['threshold']:5.2f} {c['pct_docs']:6.1%} {c['pct_chars']:7.1%} "
-              f"{c['n_bad_accepted']:4d} {c['n_accept_tierA']:4d} "
-              f"{fmt(c['vlm_cer_med_accept_A'], 12)} "
+              f"{c['n_bad_accepted']:4d} {c['pct_docs_screened']:6.1%} "
+              f"{c['n_bad_screened']:5d} "
+              f"{fmt(c['vlm_cer_med_accept_A_screened'], 11)} "
               f"{fmt(c['htr_cer_med_accept_A'], 12)} "
               f"{fmt(c['vlm_ngram_gt_med_accept'], 8)} "
               f"{fmt(c['vlm_cer_med_reject_A'], 9)}")
 
-    # Operating points.
-    clean = [c for c in curve if c["n_bad_accepted"] == 0]
+    # Operating point: the compound gate (loop screen is GT-free, so it is
+    # always available in production) at the lowest hallucination-free X.
+    clean = [c for c in curve if c["n_bad_screened"] == 0 and c["threshold"] > 0]
     if clean:
         best = min(clean, key=lambda c: c["threshold"])
-        print(f"\nlowest hallucination-free threshold: X={best['threshold']:.2f} "
-              f"→ accepts {best['pct_docs']:.0%} of fragments "
-              f"({best['pct_chars']:.0%} of characters) at Tier-A median CER "
-              f"{best['vlm_cer_med_accept_A']}")
+        print(f"\ncompound gate (loop screen + agreement ≥ X): lowest "
+              f"hallucination-free X={best['threshold']:.2f} → accepts "
+              f"{best['pct_docs_screened']:.0%} of fragments at Tier-A median "
+              f"CER {best['vlm_cer_med_accept_A_screened']}")
 
     # Agreement-bin evidence (Tier A only).
     bins = [(0.0, 0.2), (0.2, 0.4), (0.4, 0.6), (0.6, 1.01)]
