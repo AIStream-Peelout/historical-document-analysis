@@ -177,6 +177,7 @@ async def classify_transcription_errors(
     judge_model: str = AgentConfig.GEMINI_ANALYSIS_MODEL,
     judge_base_url: Optional[str] = None,
     max_chars: int = 6000,
+    attempts: int = 2,
 ) -> Optional[Dict]:
     """Classify the error types in one transcription using a judge LLM.
 
@@ -202,19 +203,29 @@ async def classify_transcription_errors(
         gt=ground_truth[:max_chars],
         hyp=hypothesis[:max_chars],
     )
-    if judge_base_url:
-        raw = await lm_studio_complete_text(
-            model_id=judge_model, prompt=prompt, base_url=judge_base_url
+    # Local judges emit unparseable output on a noticeable fraction of calls
+    # (~18% measured for a 35B MoE), spread evenly across inputs rather than
+    # driven by any input property — i.e. sampling noise, not a hard failure.
+    # Re-asking recovers most of them; the second attempt appends an explicit
+    # format reminder rather than repeating an identical request.
+    for attempt in range(attempts):
+        ask = prompt if attempt == 0 else (
+            prompt + "\n\nRespond with ONLY the JSON object, no prose, no "
+            "markdown fences, no explanation."
         )
-    else:
-        raw = await call_gemini_text_only(judge_model, prompt, timeout=90)
+        if judge_base_url:
+            raw = await lm_studio_complete_text(
+                model_id=judge_model, prompt=ask, base_url=judge_base_url
+            )
+        else:
+            raw = await call_gemini_text_only(judge_model, ask, timeout=90)
 
-    data = _parse_judge_json(raw or "")
-    if data is None:
+        data = _parse_judge_json(raw or "")
+        if data is not None:
+            return _validate_classification(data)
         print(f"    ✗ [judge] Unparseable classification response "
-              f"({len(raw or '')} chars)")
-        return None
-    return _validate_classification(data)
+              f"({len(raw or '')} chars, attempt {attempt + 1}/{attempts})")
+    return None
 
 
 # ============================================================================

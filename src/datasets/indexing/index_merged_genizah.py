@@ -13,7 +13,7 @@ are still stored for display and surfaced provenance fields
 
 Run (needs ES creds in env: ELASTIC_SEARCH_HOST / ELASTIC_USER / ELASTIC_PASSWORD)::
 
-    python -m src.datasets.indexing.index_merged_genizah --index genizah_merged_v1
+    python -m src.datasets.indexing.index_merged_genizah --index genizah_merged_v2
     python -m src.datasets.indexing.index_merged_genizah --limit 200   # smoke test
 """
 
@@ -28,7 +28,10 @@ from typing import Iterator, List, Optional
 import dotenv
 
 from src.datasets.document_models.genizah_document import GenizahDocument
-from src.datasets.indexing.elastic_index_genizah import ElasticsearchGenizahProcessor
+from src.datasets.indexing.elastic_index_genizah import (
+    ElasticsearchGenizahProcessor,
+    es_config_from_env,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,28 +42,39 @@ DEFAULT_MERGED = os.path.join(
 )
 
 
-def iter_merged_documents(path: str, limit: Optional[int] = None) -> Iterator[GenizahDocument]:
+def iter_merged_documents(
+    path: str,
+    limit: Optional[int] = None,
+    skip: int = 0,
+) -> Iterator[GenizahDocument]:
     """Yield GenizahDocuments built from each line of the merged JSONL.
 
     :param path: Path to ``merged_shelfmarks.jsonl``.
-    :param limit: Optional cap on the number of documents (for smoke tests).
+    :param limit: Optional cap on the number of yielded documents (for smoke tests).
+    :param skip: Number of leading JSONL lines to skip (resume support; lines
+        are processed in file order and indexing is idempotent by ``_id``).
     :yields: GenizahDocument instances.
     """
+    yielded = 0
     with open(path, encoding="utf-8") as fh:
         for i, line in enumerate(fh):
-            if limit is not None and i >= limit:
+            if i < skip:
+                continue
+            if limit is not None and yielded >= limit:
                 return
             line = line.strip()
             if line:
+                yielded += 1
                 yield GenizahDocument.from_merged_format(json.loads(line))
 
 
 def index_merged(
     merged_path: str = DEFAULT_MERGED,
-    index_name: str = "genizah_merged_v1",
+    index_name: str = "genizah_merged_v2",
     text_only: bool = True,
     batch_size: int = 100,
     limit: Optional[int] = None,
+    skip: int = 0,
 ) -> None:
     """Build and index all merged documents into Elasticsearch.
 
@@ -69,22 +83,35 @@ def index_merged(
     :param text_only: Use text-only embeddings (no image fetching).
     :param batch_size: Documents per indexing batch.
     :param limit: Optional cap for smoke testing.
+    :param skip: Skip the first N JSONL lines (resume an interrupted run).
     """
     dotenv.load_dotenv(os.path.join(_REPO_ROOT, ".env"))
-    from src.embeddings.embedding_models import NomicsEmbedding
+    from src.embeddings.qwen_text_embedding import (
+        EMBEDDING_DIMS,
+        QwenTextEmbedding,
+        build_index_meta,
+    )
 
-    embedding_model = NomicsEmbedding(text_only=text_only)
-    es_config = {
-        "hosts": [{"host": os.environ["ELASTIC_SEARCH_HOST"], "port": 443, "scheme": "https"}],
-        "basic_auth": (os.environ["ELASTIC_USER"], os.environ["ELASTIC_PASSWORD"]),
-    }
+    if not text_only:
+        raise ValueError(
+            "Multimodal indexing is no longer supported: embeddings are "
+            "text-only (Qwen3-Embedding-0.6B)."
+        )
+    embedding_model = QwenTextEmbedding()
+    es_config = es_config_from_env()
     processor = ElasticsearchGenizahProcessor(
-        embedding_model, elasticsearch_config=es_config, index_name=index_name
+        embedding_model,
+        elasticsearch_config=es_config,
+        index_name=index_name,
+        embedding_dims=EMBEDDING_DIMS,
+        index_meta=build_index_meta(embedding_model),
     )
 
     batch: List[GenizahDocument] = []
     total = 0
-    for doc in iter_merged_documents(merged_path, limit=limit):
+    if skip:
+        logger.info("Resuming: skipping first %d merged records", skip)
+    for doc in iter_merged_documents(merged_path, limit=limit, skip=skip):
         batch.append(doc)
         if len(batch) >= batch_size:
             processor.process_documents(batch)
@@ -102,9 +129,11 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--merged", default=DEFAULT_MERGED)
-    parser.add_argument("--index", default="genizah_merged_v1")
+    parser.add_argument("--index", default="genizah_merged_v2")
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--skip", type=int, default=0,
+                        help="Skip the first N merged records (resume an interrupted run).")
     parser.add_argument("--multimodal", action="store_true",
                         help="Use multimodal embeddings (fetch images) instead of text-only.")
     args = parser.parse_args()
@@ -114,6 +143,7 @@ def main() -> None:
         text_only=not args.multimodal,
         batch_size=args.batch_size,
         limit=args.limit,
+        skip=args.skip,
     )
 
 

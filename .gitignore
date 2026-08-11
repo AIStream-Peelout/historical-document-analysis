@@ -18,3 +18,19 @@ transcription_results
 src/datasets/processed/
 models/
 .venv-mlx/
+src/finetuning/qwen_hebrew/assets/
+
+# W&B artifact downloads (regenerable from the W&B API; thousands of PNG/table files)
+artifacts/
+**/artifacts/
+
+# Evaluation outputs: raw model transcriptions, downloaded page/fragment images,
+# and per-run result dumps. All regenerable or archived in W&B.
+**/genizah_images/
+**/transcription_raw_outputs/
+transcription_raw_outputs_archive_*/
+**/transcription_raw_outputs_archive_*/
+**/transcription_results/
+**/talmud_results/
+
+# Paper source lives in the separate genizah-paper repository (split 2026-08-05).

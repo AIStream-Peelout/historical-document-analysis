@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from typing import Dict, List, Optional
@@ -36,6 +37,12 @@ from src.models.llm.transcription.claude_transcriber import (
     ClaudeConfig,
 )
 
+# ChatGPT (flag-gated — expensive, off by default)
+from src.models.llm.transcription.openai_transcriber import (
+    transcribe_with_openai,
+    OpenAIConfig,
+)
+
 # LLM-judge error-type classification
 from src.datasets.evaluations.error_classifier import (
     classify_transcription_errors,
@@ -50,6 +57,7 @@ from src.datasets.evaluations.metrics import (
     wer_pair,
     char_count_ratio,
     flag_failure_modes,
+    cer_ink_pair,
 )
 
 
@@ -96,12 +104,38 @@ class EvalConfig:
 _lm_studio_models: List[str] = []
 _lm_studio_base_url: str = EvalConfig.LM_STUDIO_BASE_URL
 _claude_models: List[str] = []   # e.g. ["claude-opus-4-8", "claude-sonnet-5"]
+_openai_models: List[str] = []   # e.g. ["gpt-5.2"]
 
 # LLM judge for error-type classification (text-only, cheap — Gemini Flash
 # by default so it adds no new provider cost).
 _judge_model: str = AgentConfig.GEMINI_ANALYSIS_MODEL
 _judge_base_url: Optional[str] = None
 _run_error_analysis: bool = True
+
+# Retry economics: when True, extra-model outputs already saved under
+# RAW_OUTPUTS_DIR are reused instead of re-calling the (paid) model — so a
+# strict-mode retry only re-buys the models that actually failed.
+_reuse_cached: bool = False
+
+
+def _load_cached_output(doc_id: str, model_key: str) -> Optional[str]:
+    """Return a previously saved raw output for reuse, if enabled.
+
+    :param doc_id: Document identifier
+    :type doc_id: str
+    :param model_key: Sanitized model key used as the raw-output filename
+    :type model_key: str
+    :return: Cached transcription text, or None when absent/disabled
+    :rtype: Optional[str]
+    """
+    if not _reuse_cached:
+        return None
+    path = EvalConfig.RAW_OUTPUTS_DIR / doc_id / f"{model_key}.txt"
+    if path.exists():
+        text = path.read_text(encoding='utf-8').strip()
+        if text:
+            return text
+    return None
 
 # Text-only LLM used to reconstruct reading-order text from raw OCR output.
 # BOTH OCR engines (Google Vision, Kraken) are routed through this same model
@@ -133,6 +167,7 @@ def extra_model_keys() -> List[str]:
     """
     keys = [model_key_from_id(m) for m in _lm_studio_models]
     keys += [model_key_from_id(m) for m in _claude_models]
+    keys += [model_key_from_id(m) for m in _openai_models]
     return keys
 
 
@@ -155,7 +190,12 @@ def scored_model_keys() -> List[str]:
     :return: Ordered list of model state keys
     :rtype: List[str]
     """
-    keys = ['gemini_flash', 'gemini_pro'] + extra_model_keys()
+    keys = []
+    if AgentConfig.USE_GEMINI_FLASH:
+        keys.append('gemini_flash')
+    if AgentConfig.USE_GEMINI_PRO:
+        keys.append('gemini_pro')
+    keys += extra_model_keys()
     if AgentConfig.USE_VISION_OCR:
         keys.append('vision_ocr_seg')
     if AgentConfig.USE_KRAKEN:
@@ -259,11 +299,16 @@ def evaluate_transcription(ground_truth: str, hypothesis: str, model_name: str) 
 
     cer_s, cer_l = cer_pair(hyp_clean, gt_clean)
     wer_s, wer_l = wer_pair(hyp_clean, gt_clean)
+    # Visible-ink CER: both sides stripped of editorial apparatus / damage
+    # markers — the headline metric for the Genizah paper benchmark.
+    cer_ink, cer_ink_lenient = cer_ink_pair(hypothesis, ground_truth)
 
     return {
         'model': model_name,
         'cer': cer_s,
         'cer_lenient': cer_l,
+        'cer_ink': cer_ink,
+        'cer_ink_lenient': cer_ink_lenient,
         'wer': wer_s,
         'wer_lenient': wer_l,
         'char_count_ratio': char_count_ratio(hypothesis, ground_truth),
@@ -586,6 +631,104 @@ Last processed: {self.progress['last_processed_doc']}
 # W&B Logging
 # ============================================================================
 
+def _default_run_name(batch_info: dict, num_docs: int) -> str:
+    """Build a self-describing W&B run name from the active configuration.
+
+    e.g. ``genizah_test_v1-150docs-locals3+claude2+openai1+gemini+ocr-20260729``
+    — the benchmark, its size, and which model families took part, so a run
+    is identifiable months later without opening its config.
+
+    :param batch_info: Batch metadata from :class:`BatchManager`.
+    :type batch_info: dict
+    :param num_docs: Number of documents in this batch.
+    :type num_docs: int
+    :return: Descriptive run name.
+    :rtype: str
+    """
+    parts = []
+    if _lm_studio_models:
+        parts.append(f"locals{len(_lm_studio_models)}")
+    if _claude_models:
+        parts.append(f"claude{len(_claude_models)}")
+    if _openai_models:
+        parts.append(f"openai{len(_openai_models)}")
+    gemini = [
+        n for n, on in (("flash", AgentConfig.USE_GEMINI_FLASH),
+                        ("pro", AgentConfig.USE_GEMINI_PRO)) if on
+    ]
+    if gemini:
+        parts.append("gemini_" + "+".join(gemini))
+    ocr = [
+        n for n, on in (("vision", AgentConfig.USE_VISION_OCR),
+                        ("kraken", AgentConfig.USE_KRAKEN)) if on
+    ]
+    if ocr:
+        parts.append("ocr_" + "+".join(ocr))
+    benchmark = EvalConfig.CATALOG_PATH.stem.replace("_catalog", "")
+    lineup = "-".join(parts) if parts else "nomodels"
+    suffix = "" if batch_info["total_batches"] == 1 else f"-b{batch_info['batch_num']}"
+    return f"{benchmark}-{num_docs}docs-{lineup}{suffix}-{time.strftime('%Y%m%d-%H%M')}"
+
+
+def log_incremental_tables(
+        text_rows: List[list],
+        metrics_rows: List[list],
+        analysis_rows: List[list],
+) -> None:
+    """Re-log the benchmark tables to W&B with stable names.
+
+    Called after EVERY document (not just at the end of the batch) so the
+    tables are viewable while a long run is in flight and survive a crash —
+    the fragment harness previously logged them only after the final
+    document, so an interrupted run left no tables at all.  Stable keys mean
+    W&B replaces the previous version rather than appending a new panel.
+
+    :param text_rows: Accumulated text-comparison rows.
+    :type text_rows: List[list]
+    :param metrics_rows: Accumulated per-model metrics rows.
+    :type metrics_rows: List[list]
+    :param analysis_rows: Accumulated analysis rows (may be empty).
+    :type analysis_rows: List[list]
+    """
+    payload = {}
+    if text_rows:
+        payload["benchmark/text_comparison"] = wandb.Table(
+            columns=[
+                "fragment_id", "image", "ground_truth",
+                *scored_model_keys(),
+                # raw OCR shown for inspection only — no metrics
+                *[f"{k}_raw" for k in raw_ocr_keys()],
+                "consensus", "consensus_strategy",
+            ],
+            data=text_rows,
+        )
+    if metrics_rows:
+        payload["benchmark/metrics"] = wandb.Table(
+            columns=[
+                "fragment_id", "model",
+                "cer", "cer_lenient", "cer_ink",
+                "wer", "wer_lenient",
+                "char_count_ratio", "similarity",
+                "char_count", "gt_char_count", "char_diff",
+                "processing_time_sec", "exact_match",
+                "failure_mode_flags",
+            ],
+            data=metrics_rows,
+        )
+    if analysis_rows:
+        payload["benchmark/analysis"] = wandb.Table(
+            columns=[
+                "fragment_id", "catalog_description", "content_summary",
+                "translation_sample", "coherence_assessment", "catalog_alignment",
+                "recommended_model", "reasoning", "key_observations",
+                "analysis_time_sec",
+            ],
+            data=analysis_rows,
+        )
+    if payload:
+        wandb.log(payload)
+
+
 def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
     """Log comprehensive metrics and return table rows for batch logging."""
 
@@ -663,6 +806,7 @@ def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
         'vision_ocr_seg': 'Vision OCR → LLM extraction',
         'kraken_seg': 'Kraken → LLM extraction',
         **{model_key_from_id(m): f'Claude ({m})' for m in _claude_models},
+        **{model_key_from_id(m): f'ChatGPT ({m})' for m in _openai_models},
     }
     model_display_names = [
         (key, _FIXED_DISPLAY_NAMES.get(key, key)) for key in scored_model_keys()
@@ -679,6 +823,7 @@ def log_to_wandb(state: TranscriptionState, run_name: str) -> tuple:
                 model_name,
                 model_metrics.get('cer'),
                 model_metrics.get('cer_lenient'),
+                model_metrics.get('cer_ink'),
                 model_metrics.get('wer'),
                 model_metrics.get('wer_lenient'),
                 model_metrics.get('char_count_ratio'),
@@ -780,11 +925,25 @@ async def evaluate_document(doc_id: str, metadata: dict, wandb_run, batch_num: i
     # ── Extra benchmark models (same prompt as Gemini Flash) ────────────────
     prompt = _fragment_prompt(doc_id)
 
-    if _lm_studio_models:
-        print(f"  🖥  LM Studio: {', '.join(model_key_from_id(m) for m in _lm_studio_models)}...")
+    lm_models_to_run = []
+    for model_id in _lm_studio_models:
+        cached = _load_cached_output(doc_id, model_key_from_id(model_id))
+        if cached:
+            print(f"  ♻️  [{model_key_from_id(model_id)}] reusing cached output")
+            final_state[f'{model_key_from_id(model_id)}_result'] = {
+                'text': cached,
+                'model': model_key_from_id(model_id),
+                'char_count': len(cached),
+                'processing_time': 0.0,
+            }
+        else:
+            lm_models_to_run.append(model_id)
+
+    if lm_models_to_run:
+        print(f"  🖥  LM Studio: {', '.join(model_key_from_id(m) for m in lm_models_to_run)}...")
         t0 = time.time()
         lm_results = await lm_studio_transcribe_batch(
-            model_ids=_lm_studio_models,
+            model_ids=lm_models_to_run,
             image_path=str(image_path),
             prompt=prompt,
             base_url=_lm_studio_base_url,
@@ -806,6 +965,16 @@ async def evaluate_document(doc_id: str, metadata: dict, wandb_run, batch_num: i
 
     for claude_model in _claude_models:
         key = model_key_from_id(claude_model)
+        cached = _load_cached_output(doc_id, key)
+        if cached:
+            print(f"  ♻️  [{key}] reusing cached output")
+            final_state[f'{key}_result'] = {
+                'text': cached,
+                'model': claude_model,
+                'char_count': len(cached),
+                'processing_time': 0.0,
+            }
+            continue
         print(f"  🤖 Claude ({claude_model})...")
         t0 = time.time()
         claude_text = await transcribe_with_claude(
@@ -821,6 +990,36 @@ async def evaluate_document(doc_id: str, metadata: dict, wandb_run, batch_num: i
             }
             final_state['model_times'][key] = claude_elapsed
             print(f"    ✓ Extracted {len(claude_text)} chars in {claude_elapsed:.1f}s")
+        else:
+            final_state[f'{key}_result'] = None
+
+    for openai_model in _openai_models:
+        key = model_key_from_id(openai_model)
+        cached = _load_cached_output(doc_id, key)
+        if cached:
+            print(f"  ♻️  [{key}] reusing cached output")
+            final_state[f'{key}_result'] = {
+                'text': cached,
+                'model': openai_model,
+                'char_count': len(cached),
+                'processing_time': 0.0,
+            }
+            continue
+        print(f"  🤖 ChatGPT ({openai_model})...")
+        t0 = time.time()
+        openai_text = await transcribe_with_openai(
+            str(image_path), prompt, model=openai_model
+        )
+        openai_elapsed = time.time() - t0
+        if openai_text:
+            final_state[f'{key}_result'] = {
+                'text': openai_text,
+                'model': openai_model,
+                'char_count': len(openai_text),
+                'processing_time': openai_elapsed,
+            }
+            final_state['model_times'][key] = openai_elapsed
+            print(f"    ✓ Extracted {len(openai_text)} chars in {openai_elapsed:.1f}s")
         else:
             final_state[f'{key}_result'] = None
 
@@ -886,27 +1085,10 @@ async def evaluate_document(doc_id: str, metadata: dict, wandb_run, batch_num: i
               f"Strategy={final_state['consensus_strategy']}")
 
     # ── LLM-judge error-type classification ─────────────────────────────────
-    # A cheap text-only judge labels WHAT kind of errors each model made
-    # (character confusion, canonical completion, omission, ...) — aggregated
-    # into per-type percentages and severities in the W&B summary.
+    # Judging is deferred to a sequential end-of-run phase in main() so a
+    # local LM Studio judge never forces per-doc model swaps against the
+    # vision models — see the "Error classification phase" block there.
     final_state['_error_classifications'] = []
-    if _run_error_analysis:
-        print(f"  🧪 Error classification (judge: {_judge_model})...")
-        for model_key in scored_model_keys():
-            result = final_state.get(f'{model_key}_result')
-            if not result or not result.get('text'):
-                continue
-            classification = await classify_transcription_errors(
-                result['text'], ground_truth,
-                judge_model=_judge_model, judge_base_url=_judge_base_url,
-            )
-            if classification:
-                final_state['_error_classifications'].append({
-                    'doc_id': doc_id, 'model': model_key, **classification,
-                })
-                types = [e['type'] for e in classification['errors']] or ['none']
-                print(f"    [{model_key}] {classification['overall_quality']}: "
-                      f"{', '.join(types)}")
 
     # Log to W&B and get table rows
     text_row, metrics_rows, analysis_row = log_to_wandb(final_state, wandb_run.name)
@@ -934,11 +1116,22 @@ async def main(
         lm_studio_base_url: str = EvalConfig.LM_STUDIO_BASE_URL,
         use_claude: bool = False,
         claude_models: Optional[List[str]] = None,
+        use_openai: bool = False,
+        openai_models: Optional[List[str]] = None,
+        catalog_path: Optional[str] = None,
         segmentation_model: str = AgentConfig.GEMINI_FLASH_MODEL,
         segmentation_base_url: Optional[str] = None,
         judge_model: str = AgentConfig.GEMINI_ANALYSIS_MODEL,
         judge_base_url: Optional[str] = None,
         skip_error_analysis: bool = False,
+        strict: bool = False,
+        reuse_cached: bool = False,
+        skip_flash: bool = False,
+        skip_pro: bool = False,
+        skip_vision_ocr: bool = False,
+        skip_kraken: bool = False,
+        skip_analysis: bool = False,
+        wandb_run_name: Optional[str] = None,
 ):
     """Main evaluation pipeline with batch processing support.
 
@@ -962,6 +1155,15 @@ async def main(
     :param claude_models: Claude model IDs to score side by side (e.g.
         ["claude-opus-4-8", "claude-sonnet-5"]). Ignored unless use_claude.
     :type claude_models: Optional[List[str]]
+    :param use_openai: Include ChatGPT models in the benchmark. Off by
+        default — tokens are expensive.
+    :type use_openai: bool
+    :param openai_models: OpenAI model IDs to score (e.g. ["gpt-5.2"]).
+        Ignored unless use_openai.
+    :type openai_models: Optional[List[str]]
+    :param catalog_path: Override the evaluation catalog JSON (e.g. the
+        frozen final benchmark file). Defaults to EvalConfig.CATALOG_PATH.
+    :type catalog_path: Optional[str]
     :param segmentation_model: Text-only LLM that reconstructs reading-order
         text from raw OCR output. Both Vision OCR and Kraken are routed
         through this same model.
@@ -976,10 +1178,18 @@ async def main(
     :type judge_base_url: Optional[str]
     :param skip_error_analysis: Disable the LLM-judge error classification.
     :type skip_error_analysis: bool
+    :param strict: Only mark a document completed when EVERY scored model
+        produced output; otherwise it stays failed and is retried on the
+        next run. Use for paid, run-once benchmark runs.
+    :type strict: bool
+    :param reuse_cached: Reuse extra-model outputs saved under
+        RAW_OUTPUTS_DIR instead of re-calling the model — pass on
+        strict-mode retries so only failed models are re-bought.
+    :type reuse_cached: bool
     """
-    global _lm_studio_models, _lm_studio_base_url, _claude_models
+    global _lm_studio_models, _lm_studio_base_url, _claude_models, _openai_models
     global _segmentation_model, _segmentation_base_url
-    global _judge_model, _judge_base_url, _run_error_analysis
+    global _judge_model, _judge_base_url, _run_error_analysis, _reuse_cached
 
     print("=" * 80)
     print("Cairo Genizah Transcription Evaluation - BATCH MODE")
@@ -989,11 +1199,26 @@ async def main(
     _lm_studio_models = list(lm_studio_models) if lm_studio_models else []
     _lm_studio_base_url = lm_studio_base_url
     _claude_models = list(claude_models) if (use_claude and claude_models) else []
+    _openai_models = list(openai_models) if (use_openai and openai_models) else []
+    if catalog_path:
+        EvalConfig.CATALOG_PATH = Path(catalog_path)
     _segmentation_model = segmentation_model
     _segmentation_base_url = segmentation_base_url
     _judge_model = judge_model
     _judge_base_url = judge_base_url
     _run_error_analysis = not skip_error_analysis
+    _reuse_cached = reuse_cached
+    # Model-family toggles (locals-only / pieced-together benchmark runs).
+    if skip_flash:
+        AgentConfig.USE_GEMINI_FLASH = False
+    if skip_pro:
+        AgentConfig.USE_GEMINI_PRO = False
+    if skip_vision_ocr:
+        AgentConfig.USE_VISION_OCR = False
+    if skip_kraken:
+        AgentConfig.USE_KRAKEN = False
+    if skip_analysis:
+        AgentConfig.USE_ANALYSIS = False
 
     if _lm_studio_models:
         print(f"\n🖥  Checking LM Studio at {_lm_studio_base_url} ...")
@@ -1015,6 +1240,9 @@ async def main(
             "\n⚠️  ANTHROPIC_API_KEY is not set — Claude auth will fall back to "
             "an `ant auth login` profile if one exists."
         )
+
+    if _openai_models and not (os.getenv("OPEN_AI_API_KEY") or os.getenv("OPENAI_API_KEY")):
+        print("\n⚠️  OPEN_AI_API_KEY is not set — ChatGPT calls will fail.")
 
     # Setup
     EvalConfig.IMAGES_DIR.mkdir(exist_ok=True)
@@ -1068,6 +1296,9 @@ async def main(
     # Check if batch already completed
     if batch_manager.is_batch_completed(batch_info['batch_num']):
         print(f"\n⚠️  Batch {batch_info['batch_num']} already completed!")
+        if not sys.stdin.isatty():
+            print("Non-interactive session — exiting instead of re-running.")
+            return
         proceed = input("Process anyway? (y/n): ")
         if proceed.lower() != 'y':
             print("Exiting...")
@@ -1103,6 +1334,7 @@ async def main(
     print(f"   Analysis: {'✓' if AgentConfig.USE_ANALYSIS else '✗'}")
     print(f"   LM Studio: {', '.join(_lm_studio_models) if _lm_studio_models else '✗'}")
     print(f"   Claude: {', '.join(_claude_models) if _claude_models else '✗'}")
+    print(f"   ChatGPT: {', '.join(_openai_models) if _openai_models else '✗'}")
     print(f"   OCR extraction model: {_segmentation_model}"
           + (f" (LM Studio @ {_segmentation_base_url})" if _segmentation_base_url else " (Gemini)"))
     print(f"   Error-type judge: {_judge_model if _run_error_analysis else '✗'}")
@@ -1112,7 +1344,7 @@ async def main(
     wandb_run = wandb.init(
         project=EvalConfig.WANDB_PROJECT,
         entity=EvalConfig.WANDB_ENTITY,
-        name=f"batch-{batch_info['batch_num']}-of-{batch_info['total_batches']}-{time.strftime('%Y%m%d-%H%M%S')}",
+        name=wandb_run_name or _default_run_name(batch_info, len(batch_docs)),
         tags=[
             f"batch_{batch_info['batch_num']}",
             f"docs_{start_doc}_to_{batch_info['end_doc']}",
@@ -1130,12 +1362,14 @@ async def main(
                     ("gemini_3_flash", AgentConfig.USE_GEMINI_FLASH),
                     ("gemini_3_pro", AgentConfig.USE_GEMINI_PRO)
                 ] if enabled
-            ] + _lm_studio_models + _claude_models,
+            ] + _lm_studio_models + _claude_models + _openai_models,
             "flash_timeout": AgentConfig.GEMINI_FLASH_TIMEOUT,
             "pro_timeout": AgentConfig.GEMINI_PRO_TIMEOUT,
             "lm_studio_models": _lm_studio_models,
             "lm_studio_base_url": _lm_studio_base_url if _lm_studio_models else None,
             "claude_models": _claude_models,
+            "openai_models": _openai_models,
+            "catalog_path": str(EvalConfig.CATALOG_PATH),
             "ocr_segmentation_model": _segmentation_model,
             "ocr_segmentation_base_url": _segmentation_base_url,
             "error_judge_model": _judge_model if _run_error_analysis else None,
@@ -1168,7 +1402,24 @@ async def main(
                 all_metrics_rows.extend(result['_metrics_rows'])
                 if result.get('_analysis_row'):
                     analysis_rows.append(result['_analysis_row'])
-                batch_manager.mark_doc_completed(doc_id)
+                missing = [
+                    k for k in scored_model_keys() if not result.get(f'{k}_result')
+                ]
+                if strict and missing:
+                    # Run-once semantics: a doc with ANY missing model output
+                    # stays failed so --auto-next retries it, instead of
+                    # silently shipping a benchmark row with holes.
+                    reason = f"strict: missing model outputs {missing}"
+                    print(f"  ⚠️  {reason} — doc will be retried")
+                    failed_docs.append({'doc_id': doc_id, 'reason': reason})
+                    batch_manager.mark_doc_failed(doc_id, reason)
+                else:
+                    batch_manager.mark_doc_completed(doc_id)
+                # Re-log tables after every document so they are viewable
+                # mid-run and survive an interrupted run.
+                log_incremental_tables(
+                    text_comparison_rows, all_metrics_rows, analysis_rows
+                )
             else:
                 failed_docs.append({'doc_id': doc_id, 'reason': 'No result returned'})
                 batch_manager.mark_doc_failed(doc_id, 'No result returned')
@@ -1188,51 +1439,37 @@ async def main(
     # LOG BATCH TABLES TO W&B
     # ========================================================================
 
-    print("\n📊 Logging batch tables to W&B...")
+    print("\n📊 Logging final batch tables to W&B...")
+    log_incremental_tables(text_comparison_rows, all_metrics_rows, analysis_rows)
 
-    if text_comparison_rows:
-        text_table = wandb.Table(
-            columns=[
-                "fragment_id", "image", "ground_truth",
-                *scored_model_keys(),
-                # raw OCR shown for inspection only — no metrics
-                *[f"{k}_raw" for k in raw_ocr_keys()],
-                "consensus", "consensus_strategy"
-            ],
-            data=text_comparison_rows
-        )
-        wandb.log({f"batch_{batch_info['batch_num']}_text_comparison": text_table})
-
-    if all_metrics_rows:
-        metrics_table = wandb.Table(
-            columns=[
-                "fragment_id", "model",
-                "cer", "cer_lenient",
-                "wer", "wer_lenient",
-                "char_count_ratio", "similarity",
-                "char_count", "gt_char_count", "char_diff",
-                "processing_time_sec", "exact_match",
-                "failure_mode_flags",
-            ],
-            data=all_metrics_rows
-        )
-        wandb.log({f"batch_{batch_info['batch_num']}_metrics": metrics_table})
-
-    if analysis_rows:
-        analysis_table = wandb.Table(
-            columns=[
-                "fragment_id", "catalog_description", "content_summary",
-                "translation_sample", "coherence_assessment", "catalog_alignment",
-                "recommended_model", "reasoning", "key_observations", "analysis_time_sec"
-            ],
-            data=analysis_rows
-        )
-        wandb.log({f"batch_{batch_info['batch_num']}_analysis": analysis_table})
-
-    # ── Error-type classification: per-doc table + benchmark summary ────────
-    all_classifications = [
-        c for r in results for c in r.get('_error_classifications', [])
-    ]
+    # ── Error-type classification phase (sequential, end of run) ────────────
+    # Runs AFTER the batch tables are safely logged, in the same W&B run.
+    # With a local judge (--judge-base-url) this costs zero API tokens and
+    # exactly one model swap for the whole run instead of two per document.
+    all_classifications = []
+    if _run_error_analysis and results:
+        judge_where = f" @ {_judge_base_url}" if _judge_base_url else " (Gemini)"
+        print(f"\n🧪 Error classification phase — judge: {_judge_model}{judge_where}, "
+              f"{len(results)} docs...")
+        for r in results:
+            gt = r.get('ground_truth', '')
+            if not gt:
+                continue
+            for model_key in scored_model_keys():
+                result = r.get(f'{model_key}_result')
+                if not result or not result.get('text'):
+                    continue
+                classification = await classify_transcription_errors(
+                    result['text'], gt,
+                    judge_model=_judge_model, judge_base_url=_judge_base_url,
+                )
+                if classification:
+                    all_classifications.append({
+                        'doc_id': r['doc_id'], 'model': model_key, **classification,
+                    })
+                    types = [e['type'] for e in classification['errors']] or ['none']
+                    print(f"    [{r['doc_id']}/{model_key}] "
+                          f"{classification['overall_quality']}: {', '.join(types)}")
     if all_classifications:
         error_table = wandb.Table(
             columns=ERROR_TABLE_COLUMNS,
@@ -1268,11 +1505,13 @@ async def main(
 
             if model_results:
                 avg_cer = sum(m['cer'] for m in model_results) / len(model_results)
+                avg_ink = sum(m.get('cer_ink', m['cer']) for m in model_results) / len(model_results)
                 avg_similarity = sum(m['similarity'] for m in model_results) / len(model_results)
                 avg_time = sum(m['processing_time'] for m in model_results) / len(model_results)
 
                 print(f"\n{model_name.upper().replace('_', ' ')}:")
                 print(f"  Avg CER: {avg_cer:.3f}")
+                print(f"  Avg ink CER: {avg_ink:.3f}")
                 print(f"  Avg Similarity: {avg_similarity:.3f}")
                 print(f"  Avg Time: {avg_time:.1f}s")
                 print(f"  Processed: {len(model_results)}/{len(results)}")
@@ -1392,6 +1631,51 @@ if __name__ == "__main__":
              '(comma-separated). Default: claude-opus-4-8,claude-sonnet-5'
     )
     parser.add_argument(
+        '--use-openai',
+        action='store_true',
+        help='Include ChatGPT in the benchmark (off by default — tokens are expensive)'
+    )
+    parser.add_argument(
+        '--openai-models',
+        type=lambda s: [m.strip() for m in s.split(',') if m.strip()],
+        default=[OpenAIConfig.DEFAULT_MODEL],
+        metavar='MODEL[,MODEL,...]',
+        help='OpenAI model IDs to score when --use-openai is set '
+             f'(comma-separated). Default: {OpenAIConfig.DEFAULT_MODEL}'
+    )
+    parser.add_argument(
+        '--catalog',
+        default=None,
+        help='Override the evaluation catalog JSON (e.g. the frozen final '
+             'benchmark file). Default: EvalConfig.CATALOG_PATH'
+    )
+    parser.add_argument(
+        '--strict',
+        action='store_true',
+        help='Only mark a document completed when every scored model produced '
+             'output (run-once benchmark semantics; incomplete docs are retried)'
+    )
+    parser.add_argument(
+        '--reuse-cached',
+        action='store_true',
+        help='Reuse extra-model outputs already saved under transcription_raw_outputs '
+             'instead of re-calling the model (pass on strict-mode retries so only '
+             'failed models are re-bought). Archive stale outputs before a fresh run.'
+    )
+    parser.add_argument('--skip-flash', action='store_true',
+                        help='Disable Gemini Flash (locals-only / pieced runs)')
+    parser.add_argument('--skip-pro', action='store_true',
+                        help='Disable Gemini Pro')
+    parser.add_argument('--skip-vision-ocr', action='store_true',
+                        help='Disable Google Vision OCR pipeline')
+    parser.add_argument('--skip-kraken', action='store_true',
+                        help='Disable Kraken pipeline')
+    parser.add_argument('--skip-analysis', action='store_true',
+                        help='Disable the Gemini analysis step')
+    parser.add_argument('--wandb-run-name', default=None,
+                        help='W&B run name. Default: a self-describing name built from '
+                             'the benchmark, doc count, and participating model families')
+    parser.add_argument(
         '--judge-model',
         default=AgentConfig.GEMINI_ANALYSIS_MODEL,
         help='Text-only LLM that classifies error types vs the ground truth. '
@@ -1434,9 +1718,20 @@ if __name__ == "__main__":
         lm_studio_base_url=args.lm_studio_base_url,
         use_claude=args.use_claude,
         claude_models=args.claude_models,
+        use_openai=args.use_openai,
+        openai_models=args.openai_models,
+        catalog_path=args.catalog,
         segmentation_model=args.segmentation_model,
         segmentation_base_url=args.segmentation_base_url,
         judge_model=args.judge_model,
         judge_base_url=args.judge_base_url,
         skip_error_analysis=args.skip_error_analysis,
+        strict=args.strict,
+        reuse_cached=args.reuse_cached,
+        skip_flash=args.skip_flash,
+        skip_pro=args.skip_pro,
+        skip_vision_ocr=args.skip_vision_ocr,
+        skip_kraken=args.skip_kraken,
+        skip_analysis=args.skip_analysis,
+        wandb_run_name=args.wandb_run_name,
     ))

@@ -39,7 +39,9 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
+from src.datasets.document_models.institution_normalizer import InstitutionNormalizer
 from src.datasets.document_models.scholar_normalizer import ScholarRegistry, display_form
+from src.datasets.document_models import biblical_person_classifier as bib
 
 logging.basicConfig(
     level=logging.INFO,
@@ -204,12 +206,20 @@ class GenizahBiblioImporter:
             display = _canonical_to_display(canonical_shelfmark)
             canonical = ShelfmarkNormalizer.to_canonical_id(display) or canonical_shelfmark
             inst_info = ShelfmarkNormalizer.get_institution_info(display)
+            # ShelfmarkNormalizer.INSTITUTION_MAPPING and InstitutionNormalizer's
+            # canonical dict are separately maintained; normalising here is a
+            # safety net so this pipeline's Institution nodes always converge
+            # with the ones the LLM/enriched pipeline creates via
+            # InstitutionNormalizer, even if the two tables ever drift apart.
+            institution = inst_info.get('institution')
+            if institution:
+                institution = InstitutionNormalizer.normalize(institution)
 
             for citation in entry.get('citations', []):
                 rows.append({
                     'canonical_shelfmark': canonical,
                     'display_shelfmark':   display,
-                    'institution':         inst_info.get('institution'),
+                    'institution':         institution,
                     'collection':          inst_info.get('collection'),
                     'subcollection':       inst_info.get('subcollection'),
                     'citation':            citation,
@@ -297,11 +307,21 @@ class GenizahBiblioImporter:
                     'language':   language or None,
                 })
 
-            # 4. Ensure Scholar nodes (one per author) and WROTE relationships
+            # 4. Ensure author nodes and WROTE relationships. Modern authors
+            # are Scholars; known pre-modern authors are historical Persons.
             if author and title:
                 for individual_author in _split_authors(author):
-                    tx.run("""
-                        MERGE (s:Scholar {name: $author})
+                    author_label = (
+                        "Person"
+                        if bib.is_known_historical_author(individual_author)
+                        else "Scholar"
+                    )
+                    # The label is selected from the two constants above, not
+                    # from input data. Historical authors must retain the
+                    # WROTE edge; dropping them avoids a split identity only by
+                    # losing valid authorship information.
+                    tx.run(f"""
+                        MERGE (s:{author_label} {{name: $author}})
                         SET s.data_sources = CASE
                             WHEN 'biblio' IN coalesce(s.data_sources, []) THEN coalesce(s.data_sources, [])
                             ELSE coalesce(s.data_sources, []) + ['biblio']

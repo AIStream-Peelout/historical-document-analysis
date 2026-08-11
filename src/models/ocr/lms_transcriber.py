@@ -68,8 +68,11 @@ class LMStudioConfig:
     connect_timeout_s: float = 5.0
     """Fail fast if LM Studio isn't running."""
 
-    max_retries: int = 2
-    """Retry on transient errors (OOM recovery, context window overflow)."""
+    max_retries: int = 4
+    """Retry on transient errors (OOM recovery, context window overflow).
+    Multi-model benchmark runs evict/reload models on every swap, and the
+    first request(s) to a just-evicted model can 400 with "Model unloaded"
+    before the JIT load completes — extra attempts make swaps reliable."""
 
     retry_delay_s: float = 5.0
 

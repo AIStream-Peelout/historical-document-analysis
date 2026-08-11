@@ -95,6 +95,53 @@ _AMBIGUOUS: Set[str] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Known Genizah-era / medieval (Geonic-Rishonim) historical authors.
+#
+# These figures are famous enough to have written classical works ("author
+# of the Guide for the Perplexed", "author of the Kuzari"), so the Pass-3
+# scholar heuristic (_SCHOLAR_ROLE_HINTS in coreference_resolver.py) — which
+# treats an "author"/"editor"/"translator" role as evidence of a MODERN
+# post-discovery scholar — misfires on them and mislabels them Scholar. They
+# are not biblical/Talmudic either (so the gazetteer above doesn't catch
+# them), just historical individuals whose own writings happen to be
+# discussed academically. Audited 2026-07-17: Maimonides, Saadia Gaon, and
+# Yehuda ha-Levi were each found split across a Scholar node (mislabeled,
+# from the academic-literature pipeline) and a separate correct Person node
+# (from the FJP/KTIV merge pipeline) — this gazetteer stops the mislabeling
+# at the source. Extend freely; a false negative here just leaves the
+# existing (imperfect) role-hint behavior, while a false positive would
+# wrongly force a real modern scholar into Person, so keep entries limited
+# to genuinely unambiguous pre-modern names.
+# ---------------------------------------------------------------------------
+_KNOWN_HISTORICAL_AUTHORS: Set[str] = {
+    "maimonides", "moses maimonides", "moshe ben maimon", "rambam",
+    "abraham maimonides", "abraham maimuni",
+    "saadia gaon", "saadiah gaon", "rav saadia gaon", "rasag",
+    "yehuda ha-levi", "judah ha-levi", "yehuda halevi", "judah halevi",
+    "hai gaon", "rav hai gaon", "sherira gaon", "rav sherira gaon",
+    "rashi", "solomon ibn gabirol", "shlomo ibn gabirol",
+    "abraham ibn ezra", "moses ibn ezra", "nahmanides", "ramban",
+    "bahya ibn paquda", "yehuda al-harizi", "judah al-harizi",
+    "shmuel ha-nagid", "samuel ha-nagid",
+    "al-maqrizi", "abraham bar hayya",
+}
+
+
+def is_known_historical_author(name: str) -> bool:
+    """Return True if *name* is a known pre-modern (Geonic/Rishonim-era) author.
+
+    Used to override the Pass-3 scholar role-heuristic, which otherwise
+    mislabels these figures as ``Scholar`` because they were literally
+    authors/translators of classical works — just not modern, post-discovery
+    ones.
+
+    :param name: Raw person name.
+    :returns: True if the name is a known historical (not modern) author.
+    """
+    return _fold(name) in _KNOWN_HISTORICAL_AUTHORS
+
+
 def lookup(name: str) -> Optional[str]:
     """Deterministic gazetteer classification of a person name.
 

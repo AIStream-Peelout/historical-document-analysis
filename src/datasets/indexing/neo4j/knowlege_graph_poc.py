@@ -39,6 +39,8 @@ from dotenv import load_dotenv
 from tqdm import tqdm
 
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
+from src.datasets.document_models.institution_normalizer import InstitutionNormalizer
+from src.datasets.document_models import biblical_person_classifier as bib
 
 # Configure logging
 logging.basicConfig(
@@ -255,6 +257,14 @@ class PrincetonGenizahKG:
                 canonical = ShelfmarkNormalizer.to_canonical_id(shelfmark)
                 inst_info = ShelfmarkNormalizer.get_institution_info(shelfmark)
                 institution = inst_info.get('institution') or doc_data.get('library')
+                # Canonicalise before it ever becomes a MERGE key. Without this,
+                # this PGP-CSV path creates its own un-normalized Institution
+                # node ("Jewish Theological Seminary Library") alongside the
+                # canonical one other pipelines create via InstitutionNormalizer
+                # ("Jewish Theological Seminary") -- same real institution, two
+                # nodes, "circles inside circles" duplicate map pins.
+                if institution:
+                    institution = InstitutionNormalizer.normalize(institution)
                 collection  = inst_info.get('collection')
                 subcollection = inst_info.get('subcollection')
 
@@ -468,6 +478,17 @@ class PrincetonGenizahKG:
                     doc_data.get('authors', ''),
                     str(doc_data.get('year', '')),
                 )
+                raw_authors = doc_data.get('authors', '') or ''
+                author_names = [a.strip() for a in raw_authors.split(';') if a.strip()]
+                scholar_authors = [
+                    author for author in author_names
+                    if not bib.is_known_historical_author(author)
+                ]
+                historical_authors = [
+                    author for author in author_names
+                    if bib.is_known_historical_author(author)
+                ]
+                authors = ';'.join(scholar_authors) or None
                 query = """
                 MERGE (b:BookArticle {article_id: $article_id})
                 SET b.title        = $title,
@@ -512,8 +533,30 @@ class PrincetonGenizahKG:
                     'url':          doc_data.get('url'),
                     'citation':     citation,
                     'source_type':  doc_data.get('source_type'),
-                    'authors':      doc_data.get('authors'),
+                    'authors':      authors,
                 })
+
+                # Preserve authorship for known pre-modern writers while
+                # keeping them out of the Scholar label. The main query above
+                # handles modern authors in bulk; this small list is normally
+                # empty and is written separately because Neo4j labels cannot
+                # be parameterized.
+                for historical_author in historical_authors:
+                    tx.run("""
+                        MATCH (b:BookArticle {article_id: $article_id})
+                        MERGE (p:Person {name: $author})
+                        SET p.data_sources = CASE
+                            WHEN 'pgp' IN coalesce(p.data_sources, [])
+                            THEN coalesce(p.data_sources, [])
+                            ELSE coalesce(p.data_sources, []) + ['pgp']
+                        END
+                        MERGE (p)-[r:WROTE]->(b)
+                        SET r.data_sources = CASE
+                            WHEN 'pgp' IN coalesce(r.data_sources, [])
+                            THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + ['pgp']
+                        END
+                    """, article_id=article_id, author=historical_author)
 
         batch_size = 100
         with self.driver.session(database=self.database) as session:

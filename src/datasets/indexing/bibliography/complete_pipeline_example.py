@@ -44,7 +44,11 @@ from src.models.llm.academic.add_full_text_to_structured import add_full_text_to
 from src.models.llm.academic.llm_client import LLMClient
 from src.models.llm.academic.entity_tagger import EntityTagger, _safe_tag
 from src.models.llm.academic.coreference_resolver import CoreferenceResolver
-from src.models.llm.academic.relationship_extractor import RelationExtractor
+from src.models.llm.academic.relationship_extractor import (
+    PIPELINE_VERSION,
+    RelationExtractor,
+    _RELATIONS_ROOT,
+)
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -204,7 +208,11 @@ def run_complete_pipeline(
     # ------------------------------------------------------------------
     # Steps 3–5: Passes 2–4 (entity tagging → coref → relations)
     # ------------------------------------------------------------------
-    run_tag = _safe_tag(lms_model) if backend == "lm_studio" else ""
+    run_tag = (
+        f"{PIPELINE_VERSION}_{_safe_tag(lms_model)}"
+        if backend == "lm_studio"
+        else ""
+    )
     client = LLMClient(backend=backend, lms_model=lms_model)
 
     print(f"Step 3: Pass 2 entity tagging (run_tag={run_tag or 'default'})...")
@@ -237,14 +245,14 @@ def check_pipeline_status(example_file: str, lms_model: str = DEFAULT_LMS_MODEL)
     example_file_path = Path(example_file)
     pdf_name = example_file_path.stem
     full_output_path = data_root / example_file_path.parent / pdf_name
-    run_tag = _safe_tag(lms_model)
+    run_tag = f"{PIPELINE_VERSION}_{_safe_tag(lms_model)}"
 
     ocr_json_path = full_output_path / f"{pdf_name}_ocr_results.json"
     structured = list(full_output_path.rglob("*_structured.json")) if full_output_path.exists() else []
     entities_dir = full_output_path / f"entities_{run_tag}"
     entity_files = list(entities_dir.glob("page_*_entities.json")) if entities_dir.exists() else []
     resolved_path = full_output_path / f"book_entities_resolved_{run_tag}.json"
-    relations_path = (data_root / "relations_v2" / pdf_name / run_tag / "book_relations.json")
+    relations_path = _RELATIONS_ROOT / pdf_name / run_tag / "book_relations.json"
 
     print(f"Status for {example_file}  (run_tag={run_tag})")
     print(f"  OCR:        {'✅' if ocr_json_path.exists() else '❌'}  {ocr_json_path}")

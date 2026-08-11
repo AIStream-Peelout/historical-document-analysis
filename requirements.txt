@@ -1,5 +1,6 @@
-transformers>=4.4.0
-torch>=2.2.0
+transformers==4.57.6  # pinned: embedding contract (Qwen3-Embedding-0.6B)
+torch==2.8.0  # pinned: embedding contract
+sentence-transformers==5.6.1  # pinned: embedding contract
 torchvision>=0.15.0
 Pillow>=9.0.0
 numpy>=1.21.0

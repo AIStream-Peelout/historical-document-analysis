@@ -77,6 +77,54 @@ def extract_doi(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
     return doi if doi.startswith("10.") else None
 
 
+def display_doi(metadata: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Return a DOI suitable for *showing and linking*, never for keying.
+
+    :func:`extract_doi` deliberately reads only the canonical positions, because
+    whatever it returns becomes the book key and so changes ``book_uuid`` and
+    every ``page_uuid``. Enrichment therefore writes looked-up DOIs to
+    ``external_ids.doi`` instead, where they cannot re-key anything. This reader
+    sees both: the canonical value first, then the enrichment block.
+
+    ``external_ids.doi_candidate`` is *not* consulted. A candidate matched on
+    title but not on work type, which is the signature of a review carrying the
+    reviewed book's title, and a reader must never be linked to a review
+    believing it is the work.
+
+    :param metadata: Book metadata dict (may be ``None``).
+    :returns: The DOI string (normalised, no prefix), or ``None``.
+    """
+    canonical = extract_doi(metadata)
+    if canonical:
+        return canonical
+    if not metadata:
+        return None
+    external = metadata.get("external_ids")
+    if not isinstance(external, dict):
+        return None
+    raw = external.get("doi")
+    if not raw:
+        return None
+    doi = normalize_book_key(str(raw))
+    return doi if doi.startswith("10.") else None
+
+
+def external_link(metadata: Optional[Dict[str, Any]], name: str) -> Optional[str]:
+    """Read a precomputed link out of the ``external_ids`` enrichment block.
+
+    :param metadata: Book metadata dict (may be ``None``).
+    :param name: Key within ``external_ids`` (``worldcat_url``, ``oclc``, …).
+    :returns: The value, or ``None``.
+    """
+    if not metadata:
+        return None
+    external = metadata.get("external_ids")
+    if not isinstance(external, dict):
+        return None
+    value = external.get(name)
+    return str(value) if value else None
+
+
 def book_key(metadata: Optional[Dict[str, Any]], stem: str) -> str:
     """Resolve the canonical book key: DOI if available, else directory stem.
 

@@ -87,6 +87,21 @@ Return ONLY the Tosafot transcription.""",
 }
 
 
+# ── Task C: Genizah fragment transcription ────────────────────────────────────
+# Targets come from src.datasets.cleaning.clean_genizah_transcriptions: flat
+# reading-order text (line breaks were lost upstream), damage gaps rendered as
+# "[...]". The prompt therefore asks for reading order, not line preservation.
+
+FRAGMENT_TRANSCRIBE_PROMPT = """This image is a manuscript fragment from the Cairo Genizah — \
+handwritten Hebrew script (the language may be Hebrew, Judeo-Arabic, or Aramaic).
+
+Transcribe the text exactly as written, in reading order. Mark unclear characters with [?].
+Where text is lost or illegible due to damage, write [...].
+Do NOT correct, restore, or complete from memory.
+
+Return ONLY the transcription."""
+
+
 def prompt_for(task: str, section: str) -> str:
     """Return the training prompt for a task/section pair.
 

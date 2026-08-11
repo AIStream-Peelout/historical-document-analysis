@@ -67,10 +67,16 @@ _CANONICAL: dict[str, str] = {
     "british library":          "British Library, London",
 
     # ── John Rylands Library ────────────────────────────────────────────────
+    # "Rylands Genizah"/"Rylands Genizah Fragments" are how the Genizah
+    # collection at this library gets named in-text; without these aliases
+    # they geocode as bare strings and land on the Cape Town neighbourhood
+    # also named "Rylands".
     "john rylands library, university of manchester":   "John Rylands Library, University of Manchester",
     "john rylands library":                             "John Rylands Library, University of Manchester",
     "john rylands":                                     "John Rylands Library, University of Manchester",
     "rylands library":                                  "John Rylands Library, University of Manchester",
+    "rylands genizah":                                  "John Rylands Library, University of Manchester",
+    "rylands":                                           "John Rylands Library, University of Manchester",
 
     # ── Alliance Israélite Universelle ──────────────────────────────────────
     "alliance israélite universelle, paris":    "Alliance Israélite Universelle, Paris",
@@ -139,6 +145,16 @@ _CANONICAL: dict[str, str] = {
     "butler library":               "Columbia University Library",
     "columbia university":          "Columbia University Library",
 
+    # ── University of Michigan ───────────────────────────────────────────────
+    # Holds the P.Mich. papyrus collection (incl. Genizah-adjacent fragments).
+    # "Harlan Graduate Library" = the Harlan Hatcher Graduate Library in Ann
+    # Arbor — without these aliases it geocodes to the town of Harlan, KY.
+    "harlan hatcher graduate library":  "Harlan Hatcher Graduate Library, University of Michigan",
+    "harlan graduate library":          "Harlan Hatcher Graduate Library, University of Michigan",
+    "hatcher graduate library":         "Harlan Hatcher Graduate Library, University of Michigan",
+    "university of michigan library":   "Harlan Hatcher Graduate Library, University of Michigan",
+    "michigan collection":              "Harlan Hatcher Graduate Library, University of Michigan",
+
     # ── Brandeis University ──────────────────────────────────────────────────
     "brandeis university":  "Brandeis University",
 
@@ -195,6 +211,8 @@ _METADATA: dict[str, dict[str, str]] = {
         {"city": "Cairo", "country": "Egypt", "region": "North Africa"},
     "Columbia University Library":
         {"city": "New York", "country": "United States", "region": "North America"},
+    "Harlan Hatcher Graduate Library, University of Michigan":
+        {"city": "Ann Arbor", "country": "United States", "region": "North America"},
     "Brandeis University":
         {"city": "Waltham", "country": "United States", "region": "North America"},
     "Ben-Gurion University of the Negev":

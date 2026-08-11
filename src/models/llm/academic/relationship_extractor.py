@@ -85,11 +85,28 @@ dotenv.load_dotenv(_project_root / ".env")
 
 from src.models.llm.academic.llm_client import LLMClient  # noqa: E402
 from src.datasets.document_models.scholar_normalizer import ScholarRegistry  # noqa: E402
+from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
 _data_root     = _project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" / "academic_literature"
-_RELATIONS_V2  = _data_root / "relations_v2"   # output root — separate from old enriched_relations/
+
+# Pipeline data version. BUMP THIS whenever a change to Pass 2/3/4 logic would
+# produce different output for the same inputs, so a re-run lands in a NEW
+# directory instead of silently overwriting the previous generation's
+# artifacts. The version also flows into the per-book run tag (see
+# run_kg_overnight.RUN_TAG), which is what names the resolved-entity files, so
+# bumping it protects BOTH the relations output and the Pass-3 output.
+#
+# History:
+#   v2 — 2026-06-21 full-corpus run (qwen3.6-35b-a3b). Baseline currently in Neo4j.
+#   v3 — adds the Hebrew citation-evidence detector, the shelfmark-as-Institution
+#        reject rule, and the historical-author gazetteer (all landed 2026-07),
+#        none of which have ever been executed against the corpus.
+PIPELINE_VERSION = "v3"
+
+_RELATIONS_ROOT = _data_root / f"relations_{PIPELINE_VERSION}"  # output root
+_RELATIONS_V2   = _data_root / "relations_v2"  # previous generation — read-only, kept for comparison
 _OUTPUT_FILE   = "book_relations.json"
 _REJECTED_FILE = "book_relations_rejected.json"
 _RESOLVED_FILE = "book_entities_resolved.json"
@@ -355,13 +372,45 @@ _CITE_PUBLISHER_RE = re.compile(r'\bpublisher\b|location of|[A-Z][a-z]+:\s+[A-Z]
 _CITE_AUTHOR_YEAR_RE = re.compile(r'[A-Z][A-Za-zäöüéè]+,\s+[A-Z]\.')
 _YEAR_RE = re.compile(r'\b(1[5-9]\d\d|20\d\d)\b')
 
+# Hebrew equivalents of the above. The Latin-script patterns above miss
+# Hebrew-language academic citations entirely (no "ed."/"trans."/capitalised
+# "Lastname, F." shape exists in Hebrew) — audited 2026-07-17: 28% of live
+# COLLABORATED_WITH edges have Hebrew evidence text, and most are exactly
+# this co-editor-citation-clique noise, just never caught because the
+# detector only had English patterns.
+_CITE_EDITOR_RE_HE = re.compile(r'(עורך|עורכים|עורכת|בעריכת|בעריכה|תרגם|תרגמה|מתרגם|מתרגמת|תרגום)')
+# Page/siman-reference abbreviation ("עמ' 123", "עמ קכח", "סי' קט") —
+# practically never appears in a substantive in-text quote, only in a
+# citation/reference (עמ' = page, סי' = siman/paragraph in rabbinic
+# literature citations).
+#
+# The abbreviation marker is REQUIRED: bare "עמ" followed directly by another
+# letter is the ordinary verb עמד / עמדו / עמדה ("stood", "served", "was
+# appointed"), which is everywhere in Hebrew historical prose. An earlier
+# version made the apostrophe optional (`עמ['׳״]?`), so `עמד` matched and
+# roughly 31 of 32 bibliography_citation rejects on a Hebrew book were
+# substantive prose — including an entire merchant-correspondence network.
+# A real page reference always has either an apostrophe/gershayim ("עמ'
+# 123") or whitespace before the number ("עמ קכח"); the verb has neither.
+_CITE_PAGE_RE_HE = re.compile(r"(?:עמ['׳״]|עמ(?=\s)|סי['׳״])\s*[\dא-ת]")
+# Publisher/city colon inside a parenthetical, e.g. "(ירושלים: יד יצחק
+# בן־צבי, תשנ..." — the Hebrew analogue of "City: Publisher". Stands alone
+# (mirrors _CITE_PUBLISHER_RE, which isn't AND-ed with a year either):
+# evidence strings are sometimes truncated mid-citation before the year's
+# gershayim mark ever appears, so requiring a co-occurring year missed this
+# exact shape live. The match only requires the opening "(...:" shape, not
+# a closing ")", to tolerate that truncation.
+_CITE_PUBLISHER_RE_HE = re.compile(r'\([^)\n]{0,60}:')
+
 
 def _is_citation_evidence(evidence: str) -> bool:
     """Return True if *evidence* looks like a bibliography/reference citation.
 
     Catches editor/translator credits ("ed. X, Y, Z"), publisher-location
     phrasing, and "Lastname, F. … <year>" citation shapes — the patterns that
-    drive the COLLABORATED_WITH co-editor clique and per-citation WROTE noise.
+    drive the COLLABORATED_WITH co-editor clique and per-citation WROTE noise
+    — plus the Hebrew equivalents (עורכים/בעריכת, עמ' page refs, and a
+    parenthetical "(City: Publisher..." shape).
 
     :param evidence: The relation's evidence string.
     :returns: True if it is a citation rather than substantive content.
@@ -374,6 +423,12 @@ def _is_citation_evidence(evidence: str) -> bool:
     if _CITE_PUBLISHER_RE.search(ev):
         return True
     if _CITE_AUTHOR_YEAR_RE.search(ev) and _YEAR_RE.search(ev):
+        return True
+    if _CITE_EDITOR_RE_HE.search(ev):
+        return True
+    if _CITE_PAGE_RE_HE.search(ev):
+        return True
+    if _CITE_PUBLISHER_RE_HE.search(ev):
         return True
     return False
 
@@ -503,6 +558,10 @@ def _compact_relations(
     4. **Language/concept endpoints** — drop relations whose endpoint is a
        language/script/linguistic term (Judaeo-Arabic, imāla, Hebrew…).
     5. **Vague endpoints** — drop bare "Fragment"/"the manuscript"/etc.
+    5b. **Shelfmark-as-Institution** — drop relations where an "Institution"
+        endpoint is actually a shelfmark string (per
+        :meth:`ShelfmarkNormalizer.is_probable_shelfmark`), e.g. a mistyped
+        HELD_AT object like "ENA 3902.5 verso".
     6. **Provenance** — ORIGINATED_FROM only from Person/Fragment (drops
        publisher cities, institution addresses, scholar regions).
     7. **Type pairing** — drop triples violating :data:`ALLOWED_RELATIONS`
@@ -557,6 +616,25 @@ def _compact_relations(
             continue
 
         st, ot = r["subject_type"], r["object_type"]
+
+        # 5b. shelfmark mistyped as Institution — the model sometimes emits a
+        # HELD_AT (Fragment -> Institution) relation where the "institution"
+        # slot is actually another shelfmark string (e.g. "Bodl. MS. Heb. b.
+        # 12", "ENA 3902.5 verso"). These are real shelfmarks, not repository
+        # names, and geocoding them as institutions produces nonsense pins
+        # (e.g. "ENA ..." matching the Japanese city Ena).
+        #
+        # Only the strict "standard" classification is used (anchor + a
+        # digit), not classify_shelfmark's looser "berlin" bucket — that one
+        # also matches real institution names like "Jüdische
+        # Gemeindebibliothek (Berlin)" on a bare substring/prefix check, which
+        # would wrongly reject genuine HELD_AT relations to that library.
+        if st == "Institution" and ShelfmarkNormalizer.classify_shelfmark(subj) == "standard":
+            reject(r, "institution_is_shelfmark")
+            continue
+        if ot == "Institution" and ShelfmarkNormalizer.classify_shelfmark(obj) == "standard":
+            reject(r, "institution_is_shelfmark")
+            continue
 
         # 6. provenance: ORIGINATED_FROM only from Person/Fragment
         if rel == "ORIGINATED_FROM" and st not in _PROVENANCE_SUBJECTS:
@@ -675,12 +753,23 @@ class RelationExtractor:
                              if self.run_tag else _RESOLVED_FILE)
         resolved_path = book_dir / resolved_filename
         if not resolved_path.exists() and self.run_tag:
-            resolved_path = book_dir / _RESOLVED_FILE
-            logger.info(f"  {book_dir.name}: no tagged resolved file, using default")
+            # HARD FAILURE, deliberately. The old behavior fell back to the
+            # untagged book_entities_resolved.json — i.e. a PREVIOUS
+            # generation's Pass-3 output — and still stamped the result with
+            # the current pipeline_version (2026-08 audit finding). In a
+            # corpus run that turned any Pass-3 failure into v3-labeled
+            # relations built on stale June entities, with only an INFO log.
+            # Raising makes the driver mark the book failed (no sentinel), so
+            # it is retried instead of silently mixed across generations.
+            raise FileNotFoundError(
+                f"{book_dir.name}: tagged resolved file {resolved_filename!r} "
+                f"not found — Pass 3 has not completed for this run tag. "
+                f"Refusing to fall back to the untagged previous-generation "
+                f"file; run Pass 3 first.")
 
-        # Output: relations_v2/<book_name>/ for Gemini,
-        #         relations_v2/<book_name>/<run_tag>/ for LMS runs
-        out_dir = _RELATIONS_V2 / book_dir.name
+        # Output: relations_<version>/<book_name>/ for Gemini,
+        #         relations_<version>/<book_name>/<run_tag>/ for LMS runs
+        out_dir = _RELATIONS_ROOT / book_dir.name
         if self.run_tag:
             out_dir = out_dir / self.run_tag
         out_dir.mkdir(parents=True, exist_ok=True)
@@ -771,29 +860,38 @@ class RelationExtractor:
         extracted_at = datetime.now(timezone.utc).isoformat()
 
         output = {
-            "source_book":    source_book,
-            "extracted_at":   extracted_at,
-            "model_used":     model_used,
-            "relation_count": len(accepted),
-            "relations":      accepted,
+            "source_book":     source_book,
+            "pipeline_version": PIPELINE_VERSION,
+            "extracted_at":    extracted_at,
+            "model_used":      model_used,
+            "relation_count":  len(accepted),
+            "relations":       accepted,
         }
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(output, f, indent=2, ensure_ascii=False)
 
         rejected_path = out_dir / _REJECTED_FILE
         rejected_output = {
-            "source_book":    source_book,
-            "extracted_at":   extracted_at,
-            "model_used":     model_used,
-            "relation_count": len(rejected),
-            "relations":      rejected,
+            "source_book":     source_book,
+            "pipeline_version": PIPELINE_VERSION,
+            "extracted_at":    extracted_at,
+            "model_used":      model_used,
+            "relation_count":  len(rejected),
+            "relations":       rejected,
         }
         with open(rejected_path, "w", encoding="utf-8") as f:
             json.dump(rejected_output, f, indent=2, ensure_ascii=False)
 
+        # len(all_relations) - accepted - rejected = exact duplicates, which
+        # _compact_relations drops without recording in either list. Count
+        # them separately — the old log lumped them into "rejected", which
+        # made the log disagree with the rejected file (240 vs 193 confusion
+        # in the 2026-08 audit).
+        n_dupes = len(all_relations) - len(accepted) - len(rejected)
         logger.info(
             f"  {source_book}: wrote {len(accepted)} relations → {output_path.name} "
-            f"({len(all_relations) - len(accepted)} rejected → {rejected_path.name})"
+            f"({len(rejected)} rejected → {rejected_path.name}; "
+            f"{n_dupes} exact duplicate(s) dropped)"
         )
         return len(accepted)
 
@@ -810,12 +908,18 @@ class RelationExtractor:
         :param overwrite: Re-extract books that already have output.
         :returns: Counts dict.
         """
+        # Tagged runs write book_entities_resolved_<run_tag>.json; globbing the
+        # untagged name found 0 books for any tagged run (same class of bug as
+        # the resolver's CLI discovery — 2026-08 audit).
+        resolved_glob = (_RESOLVED_FILE.replace(".json", f"_{self.run_tag}.json")
+                         if self.run_tag else _RESOLVED_FILE)
         book_dirs = sorted(set(
-            p.parent for p in root.rglob(_RESOLVED_FILE)
+            p.parent for p in root.rglob(resolved_glob)
         ))
 
         counts = {"books": len(book_dirs), "relations": 0, "skipped": 0}
-        logger.info(f"Found {len(book_dirs)} books with resolved entities")
+        logger.info(f"Found {len(book_dirs)} books with resolved entities "
+                    f"({resolved_glob})")
 
         for book_dir in book_dirs:
             logger.info(f"Book: {book_dir.relative_to(root)}")

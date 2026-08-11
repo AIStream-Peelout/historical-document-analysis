@@ -86,6 +86,12 @@ from src.models.llm.transcription.claude_transcriber import (
     ClaudeConfig,
 )
 
+# ChatGPT (flag-gated — expensive, off by default)
+from src.models.llm.transcription.openai_transcriber import (
+    transcribe_with_openai,
+    OpenAIConfig,
+)
+
 # LLM-judge error-type classification
 from src.datasets.evaluations.error_classifier import (
     classify_transcription_errors,
@@ -121,6 +127,17 @@ _MAX_CELL_CHARS = 3000  # W&B renders long strings slowly; cap per cell
 _lm_studio_models: List[str] = []
 _lm_studio_base_url: str = LMStudioConfig.base_url  # "http://localhost:1234/v1"
 _claude_models: List[str] = []   # e.g. ["claude-opus-4-8", "claude-sonnet-5"]
+_openai_models: List[str] = []   # e.g. ["gpt-5.2"]
+
+
+def _api_models() -> List[str]:
+    """All flag-gated paid API models (Claude then ChatGPT), in table order.
+
+    :return: Combined model-ID list driving columns, summaries, and judges
+    :rtype: List[str]
+    """
+    return _claude_models + _openai_models
+
 
 # LLM judge for error-type classification (text-only; Gemini Flash default).
 _judge_model: str = AgentConfig.GEMINI_ANALYSIS_MODEL
@@ -171,11 +188,11 @@ def _section_columns() -> List[str]:
     # ── Identity ──────────────────────────────────────────────────────────────
     cols = ["image", "doc_id", "ground_truth"]
 
-    claude_keys = [_lm_key(m) for m in _claude_models]
+    claude_keys = [_lm_key(m) for m in _api_models()]
 
     # ── Text outputs (all models together) ───────────────────────────────────
     cols += ["gemini_pro", "gemini_flash"]
-    cols += claude_keys                    # Claude tiers side by side
+    cols += claude_keys                    # Claude/ChatGPT tiers side by side
     cols += lm_keys                        # open-weight VLMs
     cols += [
         "vision_ocr_raw",                  # flat full-page OCR (no section split)
@@ -289,7 +306,7 @@ def _append_section_table_rows(
             _cell(pro_text),
             _cell(flash_text),
         ]
-        for model_id in _claude_models:
+        for model_id in _api_models():
             c_text = (claude_sections.get(model_id) or {}).get(section, "")
             row.append(_cell(c_text))
         for model_id in _lm_studio_models:
@@ -311,7 +328,7 @@ def _append_section_table_rows(
             _cer(flash_section_metrics, section, "cer_strict"),
             _cer(flash_section_metrics, section, "cer_lenient"),
         ]
-        for model_id in _claude_models:
+        for model_id in _api_models():
             c_mets = claude_section_metrics.get(model_id) or {}
             row += [
                 _cer(c_mets, section, "cer_strict"),
@@ -947,6 +964,7 @@ async def evaluate_talmud_document(
         skip_lm_studio: bool = False,
         skip_vision_ocr: bool = False,
         claude_models: Optional[List[str]] = None,
+        openai_models: Optional[List[str]] = None,
         batch_num: Optional[int] = None,
         segmentation_model: str = AgentConfig.GEMINI_FLASH_MODEL,
         segmentation_base_url: Optional[str] = None,
@@ -1093,6 +1111,34 @@ async def evaluate_talmud_document(
         state["_claude_section_metrics"][claude_model] = c_metrics
         state["model_times"][ckey] = claude_t_total
 
+    # ── ChatGPT — 3 section-extraction calls per model (flag-gated) ──────────
+    # Outputs share the _claude_sections/_claude_section_metrics containers:
+    # tables, summaries, and the judge all iterate _api_models() over them.
+    for openai_model in (openai_models or []):
+        okey = _lm_key(openai_model)
+        print(f"  🤖 ChatGPT ({openai_model}, per-section extraction)...")
+        o_t_total = 0.0
+        o_sections: Dict[str, str] = {}
+        o_metrics: Dict = {}
+        for section in SECTION_KEYS:
+            t0 = time.time()
+            text = await transcribe_with_openai(
+                str(image_path), SECTION_EXTRACT_PROMPTS[section],
+                model=openai_model,
+            )
+            text = (text or "").strip()
+            o_t_total += time.time() - t0
+            o_sections[section] = text
+            o_metrics[section] = _score_section_output(
+                section, text, gt_sections.get(section, "")
+            )
+            await asyncio.sleep(1)
+        o_overall = compute_section_metrics(o_sections, gt_sections)
+        o_metrics["overall"] = o_overall.get("overall", {})
+        state["_claude_sections"][openai_model] = o_sections
+        state["_claude_section_metrics"][openai_model] = o_metrics
+        state["model_times"][okey] = o_t_total
+
     # ── Kraken (flat HTR → segmentation) ─────────────────────────────────────
     kraken_flat = ""
     if not skip_kraken:
@@ -1152,40 +1198,10 @@ async def evaluate_talmud_document(
     pro_full   = "\n".join(pro_sections_d.get(k, "")   for k in SECTION_KEYS)
     flash_full = "\n".join(flash_sections_d.get(k, "") for k in SECTION_KEYS)
 
-    # ── LLM-judge error-type classification (full page per model) ────────────
-    if _run_error_analysis:
-        def _join_sections(secs: Dict[str, str]) -> str:
-            return "\n".join(secs.get(k, "") for k in SECTION_KEYS)
-
-        judge_candidates: Dict[str, str] = {}
-        if pro_full.strip():
-            judge_candidates["pro"] = pro_full
-        if flash_full.strip():
-            judge_candidates["flash"] = flash_full
-        for mid, secs in state["_claude_sections"].items():
-            judge_candidates[_lm_key(mid)] = _join_sections(secs)
-        for mid, secs in state["_lm_sections"].items():
-            judge_candidates[_lm_key(mid)] = _join_sections(secs)
-        if state["_vision_sections"]:
-            judge_candidates["vision_ocr_seg"] = _join_sections(state["_vision_sections"])
-        if state["_kraken_sections"]:
-            judge_candidates["kraken_seg"] = _join_sections(state["_kraken_sections"])
-
-        print(f"  🧪 Error classification (judge: {_judge_model})...")
-        for label, hyp_text in judge_candidates.items():
-            if not hyp_text.strip():
-                continue
-            classification = await classify_transcription_errors(
-                hyp_text, full_gt,
-                judge_model=_judge_model, judge_base_url=_judge_base_url,
-            )
-            if classification:
-                _error_classifications.append(
-                    {"doc_id": doc_id, "model": label, **classification}
-                )
-                types = [e["type"] for e in classification["errors"]] or ["none"]
-                print(f"    [{label}] {classification['overall_quality']}: "
-                      f"{', '.join(types)}")
+    # ── LLM-judge error-type classification ──────────────────────────────────
+    # Judging is deferred to a sequential end-of-run phase in run_talmud_eval
+    # so a local LM Studio judge never forces per-page model swaps against the
+    # vision models — see _judge_all_results().
 
     # For the section tables we show the segmented OCR text per section;
     # for the full-page table we show the raw flat text.
@@ -1272,6 +1288,8 @@ async def run_talmud_eval(
         skip_lm_studio: bool = False,
         use_claude: bool = False,
         claude_models: Optional[List[str]] = None,
+        use_openai: bool = False,
+        openai_models: Optional[List[str]] = None,
         segmentation_model: str = AgentConfig.GEMINI_FLASH_MODEL,
         segmentation_base_url: Optional[str] = None,
         judge_model: str = AgentConfig.GEMINI_ANALYSIS_MODEL,
@@ -1279,14 +1297,16 @@ async def run_talmud_eval(
         skip_error_analysis: bool = False,
         wandb_project: str = EvalConfig.WANDB_PROJECT,
         wandb_run_name: Optional[str] = None,
+        only_docs: Optional[List[str]] = None,
 ) -> None:
-    global _lm_studio_models, _lm_studio_base_url, _claude_models
+    global _lm_studio_models, _lm_studio_base_url, _claude_models, _openai_models
     global _judge_model, _judge_base_url, _run_error_analysis
 
     # ── Set module-level config (drives dynamic column generation) ────────────
     _lm_studio_models = [] if (skip_lm_studio or not lm_studio_models) else lm_studio_models
     _lm_studio_base_url = lm_studio_base_url
     _claude_models = list(claude_models) if (use_claude and claude_models) else []
+    _openai_models = list(openai_models) if (use_openai and openai_models) else []
     _judge_model = judge_model
     _judge_base_url = judge_base_url
     _run_error_analysis = not skip_error_analysis
@@ -1296,6 +1316,8 @@ async def run_talmud_eval(
             "⚠️  ANTHROPIC_API_KEY is not set — Claude auth will fall back to "
             "an `ant auth login` profile if one exists."
         )
+    if _openai_models and not (os.getenv("OPEN_AI_API_KEY") or os.getenv("OPENAI_API_KEY")):
+        print("⚠️  OPEN_AI_API_KEY is not set — ChatGPT calls will fail.")
 
     TALMUD_RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     EvalConfig.RAW_OUTPUTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1344,6 +1366,13 @@ async def run_talmud_eval(
             )
         )
 
+    if only_docs:
+        wanted = set(only_docs)
+        doc_ids = [d for d in doc_ids if d in wanted]
+        missing_ids = wanted - set(doc_ids)
+        if missing_ids:
+            print(f"⚠️  --only_docs entries not found in images/GT: {sorted(missing_ids)}")
+
     if max_documents:
         doc_ids = doc_ids[:max_documents]
 
@@ -1366,11 +1395,13 @@ async def run_talmud_eval(
             "lm_studio_models": _lm_studio_models,
             "lm_studio_base_url": _lm_studio_base_url if _lm_studio_models else None,
             "claude_models": _claude_models,
+            "openai_models": _openai_models,
             "error_judge_model": _judge_model if _run_error_analysis else None,
         },
         tags=["talmud", "section-eval", "kraken"]
              + ([f"lm-studio:{_lm_key(m)}" for m in _lm_studio_models])
-             + ([f"claude:{_lm_key(m)}" for m in _claude_models]),
+             + ([f"claude:{_lm_key(m)}" for m in _claude_models])
+             + ([f"openai:{_lm_key(m)}" for m in _openai_models]),
     )
 
     all_results: List[Dict] = []
@@ -1389,6 +1420,7 @@ async def run_talmud_eval(
                 skip_kraken=skip_kraken,
                 skip_lm_studio=not _lm_studio_models,
                 claude_models=_claude_models,
+                openai_models=_openai_models,
                 batch_num=1,
                 segmentation_model=segmentation_model,
                 segmentation_base_url=segmentation_base_url,
@@ -1402,8 +1434,64 @@ async def run_talmud_eval(
         if i < len(doc_ids) - 1:
             await asyncio.sleep(AgentConfig.DELAY_BETWEEN_DOCS)
 
+    await _judge_all_results(all_results)
     _log_summary(all_results)
     wandb.finish()
+
+
+async def _judge_all_results(all_results: List[Dict]) -> None:
+    """Sequential end-of-run error classification for every model output.
+
+    Runs AFTER the document loop (section tables are already logged per doc)
+    in the same W&B run. With a local judge (--judge_base_url) this costs
+    zero API tokens and exactly one model swap for the whole run instead of
+    two per page.
+
+    :param all_results: Per-document state dicts from the evaluation loop.
+    :type all_results: List[Dict]
+    """
+    if not _run_error_analysis or not all_results:
+        return
+    judge_where = f" @ {_judge_base_url}" if _judge_base_url else " (Gemini)"
+    print(f"\n🧪 Error classification phase — judge: {_judge_model}{judge_where}, "
+          f"{len(all_results)} pages...")
+
+    def _join_sections(secs: Dict[str, str]) -> str:
+        return "\n".join(secs.get(k, "") for k in SECTION_KEYS)
+
+    for state in all_results:
+        doc_id = state["doc_id"]
+        full_gt = state["ground_truth"]
+        judge_candidates: Dict[str, str] = {}
+        pro_full = _join_sections(state["_pro_sections"])
+        flash_full = _join_sections(state["_flash_sections"])
+        if pro_full.strip():
+            judge_candidates["pro"] = pro_full
+        if flash_full.strip():
+            judge_candidates["flash"] = flash_full
+        for mid, secs in state["_claude_sections"].items():
+            judge_candidates[_lm_key(mid)] = _join_sections(secs)
+        for mid, secs in state["_lm_sections"].items():
+            judge_candidates[_lm_key(mid)] = _join_sections(secs)
+        if state["_vision_sections"]:
+            judge_candidates["vision_ocr_seg"] = _join_sections(state["_vision_sections"])
+        if state["_kraken_sections"]:
+            judge_candidates["kraken_seg"] = _join_sections(state["_kraken_sections"])
+
+        for label, hyp_text in judge_candidates.items():
+            if not hyp_text.strip():
+                continue
+            classification = await classify_transcription_errors(
+                hyp_text, full_gt,
+                judge_model=_judge_model, judge_base_url=_judge_base_url,
+            )
+            if classification:
+                _error_classifications.append(
+                    {"doc_id": doc_id, "model": label, **classification}
+                )
+                types = [e["type"] for e in classification["errors"]] or ["none"]
+                print(f"    [{doc_id}/{label}] {classification['overall_quality']}: "
+                      f"{', '.join(types)}")
 
 
 def _log_summary(results: List[Dict]) -> None:
@@ -1424,7 +1512,7 @@ def _log_summary(results: List[Dict]) -> None:
         ("vision_ocr_seg", "vision_ocr_seg_cer_strict",    "vision_ocr_seg_cer_lenient"),
         ("kraken_seg",     "kraken_seg_cer_strict",        "kraken_seg_cer_lenient"),
     ]
-    for model_id in _claude_models + _lm_studio_models:
+    for model_id in _api_models() + _lm_studio_models:
         k = _lm_key(model_id)
         model_cer_cols.append((k, f"{k}_cer_strict", f"{k}_cer_lenient"))
 
@@ -1477,6 +1565,20 @@ if __name__ == "__main__":
     p.add_argument("--skip_flash",       action="store_true")
     p.add_argument("--skip_pro",         action="store_true")
     p.add_argument("--skip_kraken",      action="store_true")
+    p.add_argument("--skip_vision_ocr",  action="store_true")
+    p.add_argument(
+        "--only_docs",
+        default=None,
+        help="Comma-separated doc IDs, or @path to a JSON file holding either "
+             "a list of IDs or a dict with a list under the given --only_docs_key. "
+             "Restricts the run to those pages (for fill runs on missing pages).",
+    )
+    p.add_argument(
+        "--only_docs_key",
+        default=None,
+        help="Key to select when --only_docs points at a JSON dict "
+             "(e.g. 'claude' or 'gemini' in closed_model_fill_lists.json).",
+    )
     p.add_argument("--skip_lm_studio",   action="store_true")
 
     # LM Studio VLM models
@@ -1506,6 +1608,21 @@ if __name__ == "__main__":
         metavar="MODEL[,MODEL,...]",
         help="Claude model IDs to score side by side when --use_claude is set "
              "(comma-separated). Default: claude-opus-4-8,claude-sonnet-5",
+    )
+
+    # ChatGPT (flag-gated — expensive, off by default)
+    p.add_argument(
+        "--use_openai",
+        action="store_true",
+        help="Include ChatGPT in the benchmark (off by default — tokens are expensive).",
+    )
+    p.add_argument(
+        "--openai_models",
+        type=lambda s: [m.strip() for m in s.split(",") if m.strip()],
+        default=[OpenAIConfig.DEFAULT_MODEL],
+        metavar="MODEL[,MODEL,...]",
+        help="OpenAI model IDs to score when --use_openai is set "
+             f"(comma-separated). Default: {OpenAIConfig.DEFAULT_MODEL}",
     )
 
     # LLM-judge error-type classification
@@ -1550,6 +1667,19 @@ if __name__ == "__main__":
 
     args = p.parse_args()
 
+    only_docs = None
+    if args.only_docs:
+        if args.only_docs.startswith("@"):
+            payload = json.loads(Path(args.only_docs[1:]).read_text())
+            if isinstance(payload, dict):
+                if not args.only_docs_key:
+                    raise SystemExit("--only_docs points at a dict; pass --only_docs_key")
+                only_docs = payload[args.only_docs_key]
+            else:
+                only_docs = payload
+        else:
+            only_docs = [d.strip() for d in args.only_docs.split(",") if d.strip()]
+
     asyncio.run(run_talmud_eval(
         images_dir=args.images_dir,
         gt_dir=args.gt_dir,
@@ -1564,9 +1694,12 @@ if __name__ == "__main__":
         skip_flash=args.skip_flash,
         skip_pro=args.skip_pro,
         skip_kraken=args.skip_kraken,
+        skip_vision_ocr=args.skip_vision_ocr,
         skip_lm_studio=args.skip_lm_studio,
         use_claude=args.use_claude,
         claude_models=args.claude_models,
+        use_openai=args.use_openai,
+        openai_models=args.openai_models,
         segmentation_model=args.segmentation_model,
         segmentation_base_url=args.segmentation_base_url,
         judge_model=args.judge_model,
@@ -1574,4 +1707,5 @@ if __name__ == "__main__":
         skip_error_analysis=args.skip_error_analysis,
         wandb_project=args.wandb_project,
         wandb_run_name=args.wandb_run_name,
+        only_docs=only_docs,
     ))

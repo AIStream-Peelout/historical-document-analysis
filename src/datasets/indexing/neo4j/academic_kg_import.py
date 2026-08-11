@@ -82,6 +82,10 @@ from src.datasets.document_models.institution_normalizer import InstitutionNorma
 from src.datasets.document_models.place_normalizer import PlaceNormalizer  # noqa: E402
 from src.datasets.document_models.person_normalizer import PersonNormalizer  # noqa: E402
 from src.datasets.document_models.scholar_normalizer import ScholarRegistry  # noqa: E402
+from src.datasets.document_models import biblical_person_classifier as bib  # noqa: E402
+from src.models.llm.academic.relationship_extractor import (  # noqa: E402
+    PIPELINE_VERSION, _RELATIONS_ROOT,
+)
 from src.datasets.document_models import corpus_ids  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -229,10 +233,23 @@ def _person_label(name: str, declared: str) -> str:
     Person is reserved for historical figures from the Genizah documents
     themselves, while modern researchers always belong under Scholar.
 
+    A known pre-modern historical author (Maimonides, Saadia Gaon, Yehuda
+    ha-Levi, ...) is exempted from the ScholarRegistry promotion below, even
+    if they ever appear as a metadata "author" (e.g. a book that is a modern
+    edition/translation of one of their own classical works would list them
+    as an author). Audited 2026-07-17: this import-time re-check is a second,
+    independent place a historical figure can end up mislabeled Scholar,
+    separate from the Pass-3 role-hint fix in coreference_resolver.py's
+    _classify_people — closing it here too so the "Person = historical
+    figures" invariant holds regardless of what any future book's metadata
+    says, not just for the specific books in the corpus today.
+
     :param name: Canonical (already-normalised) person name.
     :param declared: Label declared by the extraction (Person/Scholar/Entity).
     :returns: Final label to use for the MERGE.
     """
+    if bib.is_known_historical_author(name):
+        return "Person"
     if declared in ("Person", "Scholar", "Entity") and \
             ScholarRegistry.instance().is_known_scholar(name):
         return "Scholar"
@@ -1136,6 +1153,7 @@ class AcademicKGImporter:
         enriched_only: bool = False,
         relations_only: bool = False,
         include_legacy: bool = False,
+        relations_root: Optional[Path] = None,
     ):
         if not dry_run:
             self.ensure_constraints()
@@ -1160,8 +1178,13 @@ class AcademicKGImporter:
                 totals[f"enriched_{k}"] += v
 
         if not enhanced_only and not enriched_only:
-            logger.info("━━━ Pass 4: book_relations.json files ━━━")
-            counts = self.import_all_relations(enhanced_root, dry_run=dry_run)
+            # Scope the Pass-4 search to the CURRENT pipeline version's output
+            # root. Searching the whole corpus root would rglob across every
+            # relations_v*/ generation at once and import them all together,
+            # mixing versions in the graph.
+            root = relations_root if relations_root is not None else _RELATIONS_ROOT
+            logger.info(f"━━━ Pass 4: book_relations.json files ({root.name}) ━━━")
+            counts = self.import_all_relations(root, dry_run=dry_run)
             for k, v in counts.items():
                 totals[f"relations_{k}"] += v
 
@@ -1277,6 +1300,9 @@ def main():
                              "pipeline imports only Pass 4 book_relations.json.")
     parser.add_argument("--dir", "-d", metavar="SUBDIR", default=None,
                         help="Limit to a subdirectory under academic_literature/.")
+    parser.add_argument("--relations-root", metavar="DIR", default=None,
+                        help=f"Pass-4 output root to import (default: relations_{PIPELINE_VERSION}). "
+                             "Point at another relations_v*/ to import a previous generation.")
     parser.add_argument("--enriched-dir", metavar="DIR", default=None,
                         help="Path to enriched_relations/ directory (default: auto-detected).")
     args = parser.parse_args()
@@ -1299,6 +1325,18 @@ def main():
 
     enriched_root = Path(args.enriched_dir) if args.enriched_dir else _enriched_root
 
+    if args.relations_root:
+        relations_root = Path(args.relations_root)
+    elif args.dir:
+        # Pass-4 output is flattened under relations_<version>/<book-name>, so
+        # the input book directory's basename is the corresponding relations
+        # subtree.  Never fall back to the whole version root when --dir was
+        # explicitly supplied: that would turn a scoped import into a corpus-
+        # wide database write.
+        relations_root = _RELATIONS_ROOT / enhanced_root.name
+    else:
+        relations_root = _RELATIONS_ROOT
+
     importer = AcademicKGImporter(uri, user, password, database=database)
     try:
         importer.import_all(
@@ -1309,6 +1347,7 @@ def main():
             enriched_only=args.enriched_only,
             relations_only=args.relations_only,
             include_legacy=args.include_legacy,
+            relations_root=relations_root,
         )
     finally:
         importer.close()

@@ -60,7 +60,8 @@ def load_model(
     return model, processor, model.config.__dict__
 
 
-def transcribe(model, processor, config: Dict, image_path: str, prompt: str) -> str:
+def transcribe(model, processor, config: Dict, image_path: str, prompt: str,
+               max_tokens: int = MAX_GEN_TOKENS) -> str:
     """Generate a transcription for one image.
 
     :param model: Loaded mlx-vlm model.
@@ -79,7 +80,7 @@ def transcribe(model, processor, config: Dict, image_path: str, prompt: str) -> 
         processor,
         formatted,
         image=[image_path],
-        max_tokens=MAX_GEN_TOKENS,
+        max_tokens=max_tokens,
         temperature=0.0,
         verbose=False,
     )
@@ -121,7 +122,8 @@ def select_val_samples(dataset_dir: Path, num_samples: int, seed: int) -> List[D
 
 
 def evaluate_samples(
-    model, processor, config: Dict, samples: List[Dict], shift_images: int = 0
+    model, processor, config: Dict, samples: List[Dict], shift_images: int = 0,
+    max_tokens: int = MAX_GEN_TOKENS,
 ) -> List[Dict]:
     """Transcribe and score a list of samples.
 
@@ -141,7 +143,8 @@ def evaluate_samples(
         for i, row in enumerate(samples):
             image_row = samples[(i + shift_images) % n]["image"]
             image_path = resolve_image_path(image_row, scratch)
-            hyp = transcribe(model, processor, config, image_path, row["question"])
+            hyp = transcribe(model, processor, config, image_path, row["question"],
+                             max_tokens=max_tokens)
             hyp_n = normalize_whitespace(hyp)
             ref_n = normalize_whitespace(row["answer"])
             strict, lenient = cer_pair(hyp_n, ref_n)
@@ -211,6 +214,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--dataset_dir", type=Path, default=DEFAULT_DATASET_DIR)
     parser.add_argument("--num_samples", type=int, default=30)
     parser.add_argument("--seed", type=int, default=SAMPLE_SEED)
+    parser.add_argument("--max_tokens", type=int, default=MAX_GEN_TOKENS,
+                        help="Generation budget cap (collapse outputs stop here).")
+    parser.add_argument("--min_pixels", type=int, default=200_704,
+                        help="Processor lower pixel bound — raising it upscales "
+                             "small crops (e.g. 3200000 gives narrow rashi columns "
+                             "2x linear magnification).")
+    parser.add_argument("--max_pixels", type=int, default=1_800_000)
     parser.add_argument("--wandb", action="store_true", help="Log summary to W&B.")
     parser.add_argument(
         "--save_outputs", type=Path, default=None,
@@ -219,9 +229,14 @@ def main(argv: Optional[List[str]] = None) -> None:
     args = parser.parse_args(argv)
 
     print(f"Model: {args.model}" + (f" + adapter {args.adapter}" if args.adapter else ""))
-    model, processor, config = load_model(args.model, args.adapter)
+    print(f"Resolution policy: min={args.min_pixels} max={args.max_pixels}")
+    model, processor, config = load_model(
+        args.model, args.adapter,
+        min_pixels=args.min_pixels, max_pixels=args.max_pixels,
+    )
     samples = select_val_samples(args.dataset_dir, args.num_samples, args.seed)
-    results = evaluate_samples(model, processor, config, samples)
+    results = evaluate_samples(model, processor, config, samples,
+                               max_tokens=args.max_tokens)
     summary = summarize(results)
 
     if args.save_outputs:
