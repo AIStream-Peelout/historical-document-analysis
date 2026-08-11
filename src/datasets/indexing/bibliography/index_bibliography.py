@@ -174,11 +174,11 @@ def index_bibliography_to_elasticsearch(
         root_dir: str,
         metadata_file: str,
         index_name: str = "genizah_bibliography_v1.0.0",
-        embedding_mode: Literal["text_only", "image_only", "hybrid"] = "hybrid",
+        embedding_mode: Literal["text_only", "image_only", "hybrid"] = "text_only",
         image_dir: Optional[str] = None,
         embeddings_model: Optional[QwenTextEmbedding] = None,
 ) -> None:
-    """Index academic literature structured pages into Elasticsearch using Nomic embeddings.
+    """Index academic literature structured pages using Qwen text embeddings.
 
     :param root_dir: Directory containing the structured page JSON files (recursive).
     :type root_dir: str
@@ -187,9 +187,9 @@ def index_bibliography_to_elasticsearch(
     :type metadata_file: str
     :param index_name: Name of the Elasticsearch index to write to.
     :type index_name: str
-    :param embedding_mode: Embedding mode to use. Options: "text_only" (text embeddings only),
-                           "image_only" (image embeddings only), or "hybrid" (combined text and image).
-                           Defaults to "hybrid".
+    :param embedding_mode: Embedding mode. Only ``"text_only"`` is supported;
+                           the other literal values remain temporarily for a
+                           clear compatibility error at older call sites.
     :type embedding_mode: Literal["text_only", "image_only", "hybrid"]
     :param image_dir: Optional directory containing images for the bibliography pages.
                       Images should be named to match document IDs or page numbers.
@@ -207,7 +207,7 @@ def index_bibliography_to_elasticsearch(
             root_dir="/Users/isaac1/.../academic_literature/cairo_to_manchester_1_structured",
             metadata_file="/Users/isaac1/.../cairo_to_manchester_metadata.json",
             index_name="genizah_bibliography_v1.0.0",
-            embedding_mode="hybrid",
+            embedding_mode="text_only",
             image_dir="/Users/isaac1/.../academic_literature/cairo_to_manchester_1/images",
         )
     """

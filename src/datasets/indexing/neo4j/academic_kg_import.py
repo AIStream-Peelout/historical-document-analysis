@@ -1325,6 +1325,18 @@ def main():
 
     enriched_root = Path(args.enriched_dir) if args.enriched_dir else _enriched_root
 
+    if args.relations_root:
+        relations_root = Path(args.relations_root)
+    elif args.dir:
+        # Pass-4 output is flattened under relations_<version>/<book-name>, so
+        # the input book directory's basename is the corresponding relations
+        # subtree.  Never fall back to the whole version root when --dir was
+        # explicitly supplied: that would turn a scoped import into a corpus-
+        # wide database write.
+        relations_root = _RELATIONS_ROOT / enhanced_root.name
+    else:
+        relations_root = _RELATIONS_ROOT
+
     importer = AcademicKGImporter(uri, user, password, database=database)
     try:
         importer.import_all(
@@ -1335,7 +1347,7 @@ def main():
             enriched_only=args.enriched_only,
             relations_only=args.relations_only,
             include_legacy=args.include_legacy,
-            relations_root=Path(args.relations_root) if args.relations_root else None,
+            relations_root=relations_root,
         )
     finally:
         importer.close()

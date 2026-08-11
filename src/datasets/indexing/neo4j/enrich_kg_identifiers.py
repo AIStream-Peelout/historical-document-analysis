@@ -331,13 +331,23 @@ def resolve_doi(
             if item_type in acceptable:
                 journal = container if item_type == "journal-article" else ""
                 return doi, journal, candidate_title, False, ""
+
+        # A same-title result of the wrong type is commonly a review of the
+        # requested work.  Never write that DOI onto an explicitly typed node:
+        # the serving side would link readers to the review as though it were
+        # the book.  Untyped nodes may retain an unverified candidate because
+        # there is no local type evidence with which to reject it.
+        item_types = ", ".join(sorted({candidate[2] for candidate in candidates}))
+        return (
+            "",
+            "",
+            candidates[0][1],
+            False,
+            f"crossref type(s) '{item_types}' rejected for node type '{kind}'",
+        )
     doi, candidate_title, item_type, container = candidates[0]
     journal = container if item_type == "journal-article" else ""
-    note = (
-        f"crossref type '{item_type}' vs node type '{kind}'; may be a review"
-        if acceptable
-        else f"node states no source_type; crossref type '{item_type}' unverified"
-    )
+    note = f"node states no source_type; crossref type '{item_type}' unverified"
     return doi, journal, candidate_title, True, note
 
 

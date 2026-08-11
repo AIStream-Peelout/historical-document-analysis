@@ -478,19 +478,17 @@ class PrincetonGenizahKG:
                     doc_data.get('authors', ''),
                     str(doc_data.get('year', '')),
                 )
-                # Drop known pre-modern historical authors (Maimonides,
-                # Saadia Gaon, ...) from the Scholar-creation list below —
-                # PGP bibliography "authors" is almost always modern
-                # secondary scholarship, but a primary-source edition/
-                # translation entry could legitimately list one of them,
-                # and WROTE->BookArticle would otherwise mislabel them
-                # Scholar the same way the academic-literature pipeline once
-                # did (see biblical_person_classifier.is_known_historical_author).
                 raw_authors = doc_data.get('authors', '') or ''
-                authors = ';'.join(
-                    a for a in raw_authors.split(';')
-                    if a.strip() and not bib.is_known_historical_author(a.strip())
-                ) or None
+                author_names = [a.strip() for a in raw_authors.split(';') if a.strip()]
+                scholar_authors = [
+                    author for author in author_names
+                    if not bib.is_known_historical_author(author)
+                ]
+                historical_authors = [
+                    author for author in author_names
+                    if bib.is_known_historical_author(author)
+                ]
+                authors = ';'.join(scholar_authors) or None
                 query = """
                 MERGE (b:BookArticle {article_id: $article_id})
                 SET b.title        = $title,
@@ -537,6 +535,28 @@ class PrincetonGenizahKG:
                     'source_type':  doc_data.get('source_type'),
                     'authors':      authors,
                 })
+
+                # Preserve authorship for known pre-modern writers while
+                # keeping them out of the Scholar label. The main query above
+                # handles modern authors in bulk; this small list is normally
+                # empty and is written separately because Neo4j labels cannot
+                # be parameterized.
+                for historical_author in historical_authors:
+                    tx.run("""
+                        MATCH (b:BookArticle {article_id: $article_id})
+                        MERGE (p:Person {name: $author})
+                        SET p.data_sources = CASE
+                            WHEN 'pgp' IN coalesce(p.data_sources, [])
+                            THEN coalesce(p.data_sources, [])
+                            ELSE coalesce(p.data_sources, []) + ['pgp']
+                        END
+                        MERGE (p)-[r:WROTE]->(b)
+                        SET r.data_sources = CASE
+                            WHEN 'pgp' IN coalesce(r.data_sources, [])
+                            THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + ['pgp']
+                        END
+                    """, article_id=article_id, author=historical_author)
 
         batch_size = 100
         with self.driver.session(database=self.database) as session:

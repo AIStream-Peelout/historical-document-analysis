@@ -6,6 +6,9 @@ serving side does not guess: a URL stored in ``doi`` yields
 ISBN yields a WorldCat 404. So the cleaners are the contract.
 """
 
+import json
+from typing import Any, Dict
+
 import pytest
 
 from src.datasets.indexing.neo4j.enrich_kg_identifiers import (
@@ -17,6 +20,7 @@ from src.datasets.indexing.neo4j.enrich_kg_identifiers import (
     doi_from_url,
     group_works,
     match_join_keys,
+    resolve_doi,
 )
 
 
@@ -105,6 +109,70 @@ def test_doi_from_url(url, expected):
 ])
 def test_tier_follows_the_contract_priority(fields, tier):
     assert WorkIdentifiers(title="t", **fields).tier == tier
+
+
+class _StubHttpClient:
+    """Return one fixed Crossref response.
+
+    :param item: Crossref work item returned by :meth:`get`.
+    """
+
+    def __init__(self, item: Dict[str, Any]) -> None:
+        self.item = item
+
+    def get(self, _url: str) -> str:
+        """Return the configured item in a Crossref response envelope.
+
+        :param _url: Ignored request URL.
+        :returns: JSON response body.
+        """
+        return json.dumps({"message": {"items": [self.item]}})
+
+
+def test_resolve_doi_rejects_same_title_review_for_typed_book() -> None:
+    """A review DOI must never become the reviewed book's direct link."""
+    client = _StubHttpClient({
+        "DOI": "10.2307/601931",
+        "title": ["Jewish Marriage in Palestine"],
+        "type": "journal-article",
+        "container-title": ["Journal of the American Oriental Society"],
+    })
+
+    doi, journal, matched, unverified, note = resolve_doi(
+        client,
+        "Jewish Marriage in Palestine",
+        "",
+        None,
+        "book",
+    )
+
+    assert doi == ""
+    assert journal == ""
+    assert matched == "Jewish Marriage in Palestine"
+    assert unverified is False
+    assert "rejected" in note
+
+
+def test_resolve_doi_keeps_untyped_match_quarantined_as_unverified() -> None:
+    """An untyped node may retain the candidate with an audit flag."""
+    client = _StubHttpClient({
+        "DOI": "10.2307/601931",
+        "title": ["Jewish Marriage in Palestine"],
+        "type": "journal-article",
+        "container-title": ["Journal of the American Oriental Society"],
+    })
+
+    doi, journal, _matched, unverified, _note = resolve_doi(
+        client,
+        "Jewish Marriage in Palestine",
+        "",
+        None,
+        "",
+    )
+
+    assert doi == "10.2307/601931"
+    assert journal == "Journal of the American Oriental Society"
+    assert unverified is True
 
 
 # --------------------------------------------------------------------------

@@ -257,7 +257,7 @@ def discover_indexing_tasks(
 def index_all_bibliography(
     root_dir: str,
     index_name: str = "genizah_bibliography_v1.0.0",
-    embedding_mode: str = "hybrid",
+    embedding_mode: str = "text_only",
     suffix: str = "*_gemini_gemini_2.5_flash",
     dry_run: bool = False,
 ) -> None:
@@ -271,8 +271,8 @@ def index_all_bibliography(
     :param index_name: Name of the Elasticsearch index to write to.
                        Defaults to "genizah_bibliography_v1.0.0".
     :type index_name: str
-    :param embedding_mode: Embedding mode to use. Options: "text_only", "image_only", or "hybrid".
-                           Defaults to "hybrid".
+    :param embedding_mode: Embedding mode. Only ``"text_only"`` is supported.
+                           Defaults to ``"text_only"``.
     :type embedding_mode: str
     :param suffix: Suffix pattern for structured directories.
                    Defaults to "*_gemini_gemini_2.5_flash".
@@ -288,7 +288,7 @@ def index_all_bibliography(
         index_all_bibliography(
             root_dir="/Users/isaac1/.../academic_literature",
             index_name="genizah_bibliography_v1.0.0",
-            embedding_mode="hybrid",
+            embedding_mode="text_only",
             suffix="*_gemini_gemini_2.5_flash",
             dry_run=False,
         )
@@ -392,4 +392,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

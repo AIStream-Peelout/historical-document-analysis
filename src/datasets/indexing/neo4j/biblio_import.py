@@ -307,21 +307,21 @@ class GenizahBiblioImporter:
                     'language':   language or None,
                 })
 
-            # 4. Ensure Scholar nodes (one per author) and WROTE relationships
+            # 4. Ensure author nodes and WROTE relationships. Modern authors
+            # are Scholars; known pre-modern authors are historical Persons.
             if author and title:
                 for individual_author in _split_authors(author):
-                    # Skip known pre-modern historical authors (Maimonides,
-                    # Saadia Gaon, ...) -- biblio.json's 28.7k citations are
-                    # mostly modern secondary scholarship, but a primary-
-                    # source edition/translation citation could legitimately
-                    # list one of them as "author", which would otherwise
-                    # mislabel them Scholar (see
-                    # biblical_person_classifier.is_known_historical_author
-                    # and the same guard in knowlege_graph_poc.py).
-                    if bib.is_known_historical_author(individual_author):
-                        continue
-                    tx.run("""
-                        MERGE (s:Scholar {name: $author})
+                    author_label = (
+                        "Person"
+                        if bib.is_known_historical_author(individual_author)
+                        else "Scholar"
+                    )
+                    # The label is selected from the two constants above, not
+                    # from input data. Historical authors must retain the
+                    # WROTE edge; dropping them avoids a split identity only by
+                    # losing valid authorship information.
+                    tx.run(f"""
+                        MERGE (s:{author_label} {{name: $author}})
                         SET s.data_sources = CASE
                             WHEN 'biblio' IN coalesce(s.data_sources, []) THEN coalesce(s.data_sources, [])
                             ELSE coalesce(s.data_sources, []) + ['biblio']
