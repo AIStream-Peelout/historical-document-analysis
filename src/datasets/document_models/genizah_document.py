@@ -1072,6 +1072,7 @@ class GenizahDocument(BaseModel):
             es_doc["image_preferred_source"] = meta.get("image_preferred_source")
             es_doc["has_ktiv_images"] = bool(meta.get("ktiv_images"))
             es_doc["ktiv_iiif_manifest_url"] = meta.get("ktiv_iiif_manifest_url")
+            es_doc["has_ktiv_transcription"] = bool(meta.get("ktiv_transcription_pages"))
 
         # Add embedding if provided
         if embedding is not None:
@@ -1515,6 +1516,21 @@ class GenizahDocument(BaseModel):
             related_places.extend(rec.get("related_places") or [])
             bibliography.extend(rec.get("bibliography") or [])
 
+        # KTIV "Academic transcription" (viewer word annotations, flattened to
+        # per-page line text by the merge). Same unified list as FJP entries so
+        # they are searched identically; the section name carries the lineage,
+        # mirroring the "FJP <key>" convention above.
+        ktiv_transcription = sources.get("ktiv_transcription") or {}
+        for page_no, page in enumerate(ktiv_transcription.get("pages") or [], 1):
+            page_text = (page.get("text") or "").strip()
+            if not page_text:
+                continue
+            lines = {str(i + 1): ln.strip()
+                     for i, ln in enumerate(page_text.split("\n")) if ln.strip()}
+            label = page.get("image_name") or page.get("fl") or f"page {page_no}"
+            transcriptions.append(TranscriptionSection(
+                name=f"KTIV Academic transcription ({label})", lines=lines))
+
         # Enrich people/places from PGP documents (the 'mentioned' / place columns).
         for d in pgp_docs:
             for nm in _split_names(d.get("mentioned")):
@@ -1566,6 +1582,8 @@ class GenizahDocument(BaseModel):
                 "ktiv_images": (images.get("ktiv") or {}).get("image_urls") or [],
                 "ktiv_iiif_manifest_url": (images.get("ktiv") or {}).get("iiif_manifest_url"),
                 "ktiv_scholarly_entry_count": ktiv.get("scholarly_entry_count"),
+                "ktiv_transcription_pages": ktiv_transcription.get("page_count") or 0,
+                "ktiv_transcription_file": ktiv_transcription.get("file"),
             },
         )
         return instance

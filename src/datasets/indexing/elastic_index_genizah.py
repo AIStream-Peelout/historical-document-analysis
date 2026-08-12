@@ -495,6 +495,7 @@ class ElasticsearchGenizahProcessor:
                     "sources_present": {"type": "keyword"},
                     "image_preferred_source": {"type": "keyword"},
                     "has_ktiv_images": {"type": "boolean"},
+                    "has_ktiv_transcription": {"type": "boolean"},
                     "ktiv_iiif_manifest_url": {"type": "keyword"},
                     # Cross-store join keys (shared with the Neo4j KG).
                     "book_uuid": {"type": "keyword"},

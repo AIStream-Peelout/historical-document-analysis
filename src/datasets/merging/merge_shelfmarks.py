@@ -46,7 +46,11 @@ from src.datasets.merging.institution_tokens import (  # noqa: E402
     institution_token,
     resolve_token,
 )
-from src.datasets.merging.ktiv_images import gcs_url, ktiv_image_manifest  # noqa: E402
+from src.datasets.merging.ktiv_images import (  # noqa: E402
+    gcs_url,
+    image_folders,
+    ktiv_image_sources,
+)
 
 RAW_DIR = os.path.join(_REPO_ROOT, "src", "datasets", "raw_data", "cairo_genizah")
 PGP_FRAGMENTS = os.path.join(RAW_DIR, "pgp_raw", "data", "fragments.csv")
@@ -54,8 +58,9 @@ PGP_DOCUMENTS = os.path.join(RAW_DIR, "pgp_raw", "data", "documents.csv")
 FJP_FILE = os.path.join(
     RAW_DIR, "fjp_all", "merged_princeton_friedberger_all_documents_final.json"
 )
-KTIV_GLOB = os.path.join(RAW_DIR, "ktiv", "*.json")
-KTIV_ZIP_GLOB = os.path.join(RAW_DIR, "ktiv", "*.zip")
+KTIV_DIR = os.path.join(RAW_DIR, "ktiv")
+KTIV_GLOB = os.path.join(KTIV_DIR, "*.json")
+KTIV_ZIP_GLOB = os.path.join(KTIV_DIR, "*.zip")
 DEFAULT_OUT_DIR = os.path.join(RAW_DIR, "merged")
 
 MERGED_JSONL = "merged_shelfmarks.jsonl"
@@ -64,6 +69,8 @@ STATE_FILE = "merge_state.json"          # snapshot of id-sets for run-over-run 
 DIFF_FILE = "merge_diff.json"            # what changed since the previous run
 IMAGE_GAP_FILE = "image_gap_targets.jsonl"  # worklist of records lacking images
 IMAGE_GAP_CSV = "image_gap_targets.csv"     # same worklist, collection-sorted CSV
+KTIV_IMAGES_MISSING_FILE = "ktiv_images_missing.jsonl"  # scraped but imageless
+KTIV_IMAGES_MISSING_CSV = "ktiv_images_missing.csv"
 
 # Collection anchors used to detect and split FJP multi-shelfmark strings.
 _ANCHOR_RE = re.compile(
@@ -271,8 +278,67 @@ def index_ktiv_zips(pattern: str = KTIV_ZIP_GLOB) -> Dict[str, List[str]]:
     return {k: sorted(v) for k, v in by_sysnum.items()}
 
 
+def _is_blocked_scrape(doc: dict) -> bool:
+    """Return True for a scrape saved off a bot-challenge / unrendered page.
+
+    Auto-scrape runs occasionally hit the site's interstitial challenge page
+    ("Just a moment...") and save a record with no content. Such files carry no
+    identifying fields at all, so they are noise — but their ``page_url`` still
+    names the manuscript, which the merge report surfaces for re-scraping.
+
+    :param doc: Parsed KTIV manuscript JSON.
+    :returns: True when the scrape captured a challenge page / nothing at all.
+    """
+    if (doc.get("page_title") or "").startswith("Just a moment"):
+        return True
+    return not any((
+        doc.get("sys_num"),
+        doc.get("shelf_mark"),
+        doc.get("shelfmarks"),
+        doc.get("scholarly_entries"),
+    ))
+
+
+def _ktiv_fallback_shelfmarks(doc: dict) -> List[str]:
+    """Derive shelfmark strings for a KTIV record whose ``shelf_mark`` is null.
+
+    Join pages (צירוף) render no shelfmark element, so the scraper stores
+    ``null`` — but the page title still enumerates every constituent, e.g.
+    ``"Ms. T-S 10 J 5.6, Ms. T-S 20.113, Cambridge University Library, צירוף
+    מכתב | Ktiv | Item page"``. Each ``Ms.`` segment is combined with the
+    institution segment into a full shelfmark string. The ``shelfmarks`` block's
+    own entry is preferred when present (single-shelfmark pages).
+
+    :param doc: Parsed KTIV manuscript JSON.
+    :returns: Full shelfmark strings (one per constituent), possibly empty.
+    """
+    block = ((doc.get("shelfmarks") or {}).get("shelfmark") or {})
+    for field in ("canonical", "value"):
+        if isinstance(block, dict) and block.get(field):
+            return [block[field]]
+
+    head = (doc.get("page_title") or "").split("|")[0]
+    segments = [s.strip() for s in head.split(",") if s.strip()]
+    marks = [s for s in segments if s.startswith("Ms.")]
+    institution = next(
+        (s for s in segments
+         if not s.startswith("Ms.") and re.search(r"[A-Za-z]", s)),
+        "",
+    )
+    if not marks or not institution:
+        return []
+    # Comma-join so the normalizer's KTIV "<Institution>, ... Ms. <core>" split
+    # fires (it requires a comma before the " Ms. " delimiter).
+    return [f"{institution}, {mark}" for mark in marks]
+
+
 def load_ktiv(alias: Dict[str, str]) -> Tuple[Dict[str, dict], dict]:
     """Load KTIV manuscripts, de-duplicating ``(1)`` copies (keep richest).
+
+    Records without a ``shelf_mark`` are not dropped wholesale: bot-challenge
+    junk is counted (and listed) separately, and join pages are recovered from
+    their page title — the record is registered under EVERY constituent
+    shelfmark, mirroring how multi-shelfmark FJP strings are exploded.
 
     :param alias: PGP alias map.
     :returns: ``(by_cid, stats)`` mapping canonical id -> the chosen KTIV record.
@@ -280,8 +346,16 @@ def load_ktiv(alias: Dict[str, str]) -> Tuple[Dict[str, dict], dict]:
     best: Dict[str, dict] = {}
     files = glob.glob(KTIV_GLOB)
     bad: List[str] = []
+    blocked: List[str] = []
     empty_cid = 0
+    recovered = 0
+    join_constituents = 0
     for fpath in files:
+        # Transcription bundles saved by the viewer flow live in the same
+        # directory but are page-annotation payloads, not manuscript records —
+        # they are loaded separately by :func:`load_ktiv_transcriptions`.
+        if os.path.basename(fpath).endswith("_transcription.json"):
+            continue
         # KTIV is scraped incrementally over months; a single malformed scrape
         # must not abort a merge of the whole (eventually 200k+) corpus.
         try:
@@ -291,29 +365,132 @@ def load_ktiv(alias: Dict[str, str]) -> Tuple[Dict[str, dict], dict]:
             bad.append(os.path.basename(fpath))
             continue
         sm = doc.get("shelf_mark") or ""
-        core = ShelfmarkNormalizer.to_canonical_id(sm)
-        if not core:
-            empty_cid += 1
+        if sm:
+            marks = [sm]
+        elif _is_blocked_scrape(doc):
+            blocked.append(os.path.basename(fpath))
             continue
-        # The KTIV shelf_mark head names the holding library; resolve from it.
-        cid = combine(resolve_token(sm) or institution_token(sm), core)
+        else:
+            marks = _ktiv_fallback_shelfmarks(doc)
+            if not marks:
+                empty_cid += 1
+                continue
+            recovered += 1
+            if len(marks) > 1:
+                join_constituents += len(marks)
         # JTS dual-shelfmark bridge: KTIV records a new shelfmark (Lutzki / MS /
         # Rabbinica) for items that also bear an old ENA number, carried in
         # shelfmarks.additional as "Adler, Elkan Nathan Ms. <ENA-number>". ENA is
         # the identifier PGP/FJP use, so re-key under it to make them join.
-        ena_cid = _ktiv_ena_alias(doc)
-        if ena_cid:
-            cid = ena_cid
-        key = alias.get(cid, cid)
-        incumbent = best.get(key)
-        if incumbent is None or _ktiv_richness(doc) > _ktiv_richness(incumbent):
-            best[key] = doc
+        # (Only meaningful for single-shelfmark records; a join spans fragments.)
+        ena_cid = _ktiv_ena_alias(doc) if len(marks) == 1 else None
+        for mark in marks:
+            core = ShelfmarkNormalizer.to_canonical_id(mark)
+            if not core:
+                empty_cid += 1
+                continue
+            # The KTIV shelf_mark head names the holding library; resolve from it.
+            cid = ena_cid or combine(
+                resolve_token(mark) or institution_token(mark), core
+            )
+            key = alias.get(cid, cid)
+            incumbent = best.get(key)
+            if incumbent is None or _ktiv_richness(doc) > _ktiv_richness(incumbent):
+                best[key] = doc
     return best, {
         "files": len(files),
         "distinct": len(best),
         "empty_shelfmark": empty_cid,
+        "shelfmark_recovered": recovered,
+        "join_constituents": join_constituents,
+        "blocked_scrapes": len(blocked),
+        "blocked_files": sorted(blocked),
         "unparseable_files": bad,
     }
+
+
+def _transcription_page_lines(page: dict) -> List[str]:
+    """Extract the text lines of one transcription-bundle page.
+
+    Handles both bundle shapes the scraper produces: the background-API shape
+    (a W3C AnnotationPage with one word Annotation per item, where items whose
+    id names a ``BreackLine`` [sic — NLI's spelling] mark line ends) and the
+    viewer-panel DOM shape (pre-built ``lines``).
+
+    :param page: One entry of a bundle's ``pages`` list.
+    :returns: The page's text lines (words joined by spaces).
+    """
+    if page.get("lines"):
+        return [line for line in page["lines"] if line]
+    items = ((page.get("annotation_page") or {}).get("items")) or []
+    lines: List[str] = []
+    current: List[str] = []
+    for item in items:
+        item_id = str(item.get("id") or "").lower()
+        if "breakline" in item_id or "breackline" in item_id:
+            if current:
+                lines.append(" ".join(current))
+                current = []
+            continue
+        word = ((item.get("body") or {}).get("value") or "").strip()
+        if word:
+            current.append(word)
+    if current:
+        lines.append(" ".join(current))
+    return lines
+
+
+def load_ktiv_transcriptions(
+    pattern: Optional[str] = None,
+) -> Dict[str, dict]:
+    """Load viewer-scraped transcription bundles, keyed by manuscript sys_num.
+
+    The scraper's viewer flow saves ``ktiv_<docid>_transcription.json`` files:
+    per-page W3C AnnotationPages with one word-level Annotation each (text,
+    editorial sigla, SVG polygon on the image). The full payload is large
+    (~100KB/page), so the merge keeps a compact summary — the flattened plain
+    text per page (words joined in served reading order) plus the source
+    filename as a pointer back to the word-level data. Duplicate downloads of
+    one manuscript keep the copy with the most words.
+
+    :param pattern: Glob for transcription bundles (defaults to the KTIV dir).
+    :returns: ``sys_num -> {file, ie, page_count, pages:[{fl, image_name,
+        text, lines, words}]}`` where ``text`` joins lines with newlines.
+    """
+    pattern = pattern or os.path.join(KTIV_DIR, "*_transcription.json")
+    best: Dict[str, dict] = {}
+    for fpath in glob.glob(pattern):
+        try:
+            with open(fpath, encoding="utf-8") as fh:
+                doc = json.load(fh)
+        except (json.JSONDecodeError, OSError):
+            continue
+        m = _KTIV_ZIP_SYSNUM_RE.search(doc.get("doc_id") or os.path.basename(fpath))
+        if not m:
+            continue
+        pages = []
+        for page in doc.get("pages") or []:
+            lines = _transcription_page_lines(page)
+            pages.append({
+                "fl": page.get("fl"),
+                "image_name": page.get("image_name"),
+                "text": "\n".join(lines),
+                "lines": len(lines),
+                "words": sum(len(line.split()) for line in lines),
+            })
+        summary = {
+            "file": os.path.basename(fpath),
+            "ie": doc.get("ie"),
+            "page_count": len(pages),
+            "pages": pages,
+        }
+        incumbent = best.get(m.group(1))
+        if incumbent is None or (
+            sum(p["words"] for p in pages)
+            > sum(p["words"] for p in incumbent["pages"])
+        ):
+            best[m.group(1)] = summary
+    return best
 
 
 _KTIV_ADLER_RE = re.compile(r"(?:Adler|Elkan\s+Nathan).*?Ms\.?\s*(.+)$", re.IGNORECASE)
@@ -373,6 +550,7 @@ def build_merged_record(
     ktiv: Optional[dict],
     ktiv_zips: Optional[Dict[str, List[str]]] = None,
     ktiv_images: Optional[Dict[str, List[str]]] = None,
+    ktiv_transcriptions: Optional[Dict[str, dict]] = None,
 ) -> dict:
     """Assemble one merged record from the per-source blocks for *cid*.
 
@@ -385,6 +563,8 @@ def build_merged_record(
     :param ktiv: Chosen KTIV record, or ``None``.
     :param ktiv_zips: ``sys_num -> [zip basenames]`` index from
         :func:`index_ktiv_zips`, used to point at the KTIV image archives.
+    :param ktiv_transcriptions: ``sys_num -> transcription summary`` from
+        :func:`load_ktiv_transcriptions` (flattened per-page full text).
     :returns: The merged record dict.
     """
     pgp_frag = (pgp or {}).get("fragment") or {}
@@ -425,6 +605,7 @@ def build_merged_record(
     ktiv_sysnum = ktiv.get("sys_num")
     ktiv_zip_files = (ktiv_zips or {}).get(ktiv_sysnum or "", []) if ktiv else []
     ktiv_image_paths = (ktiv_images or {}).get(ktiv_sysnum or "", []) if ktiv else []
+    ktiv_trans = (ktiv_transcriptions or {}).get(ktiv_sysnum or "") if ktiv else None
     images = {
         "fjp": fjp_images,
         "ktiv": {
@@ -448,10 +629,15 @@ def build_merged_record(
     }
 
     # Institution: prefer the normalizer's prefix mapping, else the source's own
-    # institution label (e.g. FJP "Baltimore", KTIV holding library).
+    # institution label (e.g. FJP "Baltimore", KTIV holding library — the
+    # shelf_mark head "<Institution>, <City>, ... Ms. <core>" names it).
+    ktiv_inst_head = (
+        (ktiv.get("shelf_mark") or "").split(" Ms.")[0].split(",")[0].strip()
+    )
     institution = _first(
         inst_info.get("institution"),
         pgp_frag.get("library"),
+        ktiv_inst_head,
         fjp0.get("institution") if fjp0.get("institution") != "Unknown" else None,
     )
 
@@ -469,6 +655,7 @@ def build_merged_record(
             "pgp": pgp,
             "fjp": fjp_recs,
             "ktiv": ktiv or None,
+            "ktiv_transcription": ktiv_trans,
         },
     }
 
@@ -499,6 +686,8 @@ def record_is_rich(record: dict) -> bool:
     if record.get("description"):
         return True
     sources = record.get("sources") or {}
+    if sources.get("ktiv_transcription"):
+        return True
     ktiv = sources.get("ktiv") or {}
     if ktiv.get("scholarly_entries") or ktiv.get("full_catalog"):
         return True
@@ -605,8 +794,10 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
 
     Outputs in *out_dir*: ``merged_shelfmarks.jsonl`` (the corpus),
     ``image_gap_targets.jsonl`` (records lacking images — KTIV scrape worklist),
-    ``merge_report.json`` (stats + coverage + image gap + run-over-run diff
-    summary), ``merge_diff.json`` (full per-id deltas vs the previous run), and
+    ``ktiv_images_missing.jsonl`` (KTIV-scraped records with no local image
+    source — the image-acquisition backlog), ``merge_report.json`` (stats +
+    coverage + image gap + backlog + run-over-run diff summary),
+    ``merge_diff.json`` (full per-id deltas vs the previous run), and
     ``merge_state.json`` (id-set snapshot used for the next run's diff).
 
     :param out_dir: Output directory.
@@ -617,11 +808,27 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
     fjp_by_cid, fjp_stats = load_fjp(alias)
     ktiv_by_cid, ktiv_stats = load_ktiv(alias)
     ktiv_zips = index_ktiv_zips()
-    ktiv_images = ktiv_image_manifest(glob.glob(KTIV_ZIP_GLOB))
+    # Image pointers come from the zip archives AND the loose-image folders the
+    # scraper's IIIF fallback leaves behind (zip wins when both exist).
+    ktiv_sources = ktiv_image_sources(
+        glob.glob(KTIV_ZIP_GLOB), image_folders(KTIV_DIR)
+    )
+    ktiv_images = {
+        sys_num: [object_path for object_path, _ in source.entries]
+        for sys_num, source in ktiv_sources.items()
+    }
     ktiv_stats["zip_archives"] = sum(len(v) for v in ktiv_zips.values())
     ktiv_stats["zip_manuscripts"] = len(ktiv_zips)
     ktiv_stats["image_manuscripts"] = len(ktiv_images)
     ktiv_stats["image_objects"] = sum(len(v) for v in ktiv_images.values())
+    ktiv_stats["image_source_breakdown"] = dict(collections.Counter(
+        source.kind for source in ktiv_sources.values()
+    ))
+    ktiv_transcriptions = load_ktiv_transcriptions()
+    ktiv_stats["transcribed_manuscripts"] = len(ktiv_transcriptions)
+    ktiv_stats["transcribed_pages"] = sum(
+        t["page_count"] for t in ktiv_transcriptions.values()
+    )
 
     all_ids = set(pgp_records) | set(fjp_by_cid) | set(ktiv_by_cid)
     counts: collections.Counter = collections.Counter()
@@ -629,6 +836,7 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
     pgp_covered_ids: List[str] = []
     ktiv_only_ids: List[str] = []
     gap_rows: List[dict] = []
+    backlog_rows: List[dict] = []
 
     out_path = os.path.join(out_dir, MERGED_JSONL)
     with open(out_path, "w", encoding="utf-8") as out:
@@ -636,7 +844,9 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
             pgp = pgp_records.get(cid)
             fjp = fjp_by_cid.get(cid, [])
             ktiv = ktiv_by_cid.get(cid)
-            record = build_merged_record(cid, pgp, fjp, ktiv, ktiv_zips, ktiv_images)
+            record = build_merged_record(
+                cid, pgp, fjp, ktiv, ktiv_zips, ktiv_images, ktiv_transcriptions
+            )
             out.write(json.dumps(record, ensure_ascii=False) + "\n")
             counts[",".join(record["sources_present"])] += 1
 
@@ -656,7 +866,22 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
                     "has_rich_metadata": record_is_rich(record),
                 })
 
+            # KTIV-scraped but no local images: a different backlog than the
+            # scrape worklist above — these need their IMAGES fetched, not a
+            # (re-)scrape of the catalog record.
+            if ktiv and not (record["images"]["ktiv"] or {}).get("populated"):
+                backlog_rows.append({
+                    "institution": record["institution"] or "(unknown)",
+                    "canonical_id": cid,
+                    "shelfmark_display": record["shelfmark_display"],
+                    "sys_num": ktiv.get("sys_num"),
+                    "pnx_id": ktiv.get("pnx_id"),
+                    "iiif_manifest_url": _ktiv_manifest_url(ktiv),
+                    "page_url": ktiv.get("page_url"),
+                })
+
     image_gap = _write_image_gap(out_dir, gap_rows)
+    ktiv_image_backlog = _write_ktiv_backlog(out_dir, backlog_rows)
 
     state = {
         "all_ids": sorted(all_ids),
@@ -681,11 +906,70 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
         "source_combinations": dict(counts),
         "coverage": compute_coverage(pgp_records, fjp_by_cid, ktiv_by_cid),
         "image_gap": image_gap,
+        "ktiv_image_backlog": ktiv_image_backlog,
         "diff_summary": diff.get("counts", {"baseline": True}),
         "output": out_path,
     }
     _write_json(os.path.join(out_dir, REPORT_FILE), report)
     return report
+
+
+def _ktiv_manifest_url(ktiv: dict) -> Optional[str]:
+    """Return a usable IIIF manifest URL for a KTIV record.
+
+    Prefers the URL scraped off the item page; falls back to the NLI's
+    deterministic manifest location derived from the system number, so even
+    records scraped before the URL was captured get a fetchable pointer.
+
+    :param ktiv: Raw KTIV record.
+    :returns: An ``https`` manifest URL, or ``None`` when underivable.
+    """
+    url = ktiv.get("iiif_manifest_url") or ""
+    if url.startswith("http"):
+        return url
+    sys_num = ktiv.get("sys_num")
+    if sys_num:
+        return (
+            "https://iiif.nli.org.il/IIIFv21/DOCID/"
+            f"PNX_MANUSCRIPTS{sys_num}-1/manifest"
+        )
+    return None
+
+
+def _write_ktiv_backlog(out_dir: str, backlog_rows: List[dict]) -> dict:
+    """Write the KTIV images-missing worklist (JSONL + CSV) and roll it up.
+
+    These are manuscripts whose catalog record IS scraped but for which no
+    local image source (zip or folder) exists — the image-acquisition backlog,
+    as opposed to :func:`_write_image_gap`'s not-yet-scraped worklist.
+
+    :param out_dir: Output directory.
+    :param backlog_rows: One dict per imageless KTIV record (see :func:`merge`).
+    :returns: The ``ktiv_image_backlog`` report section.
+    """
+    rows = sorted(
+        backlog_rows, key=lambda r: (r["institution"], r["canonical_id"])
+    )
+    fields = ["institution", "canonical_id", "shelfmark_display", "sys_num",
+              "pnx_id", "iiif_manifest_url", "page_url"]
+
+    jsonl_path = os.path.join(out_dir, KTIV_IMAGES_MISSING_FILE)
+    csv_path = os.path.join(out_dir, KTIV_IMAGES_MISSING_CSV)
+    with open(jsonl_path, "w", encoding="utf-8") as jl:
+        for r in rows:
+            jl.write(json.dumps(r, ensure_ascii=False) + "\n")
+    with open(csv_path, "w", encoding="utf-8", newline="") as cf:
+        writer = csv.DictWriter(cf, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+    by_institution = collections.Counter(r["institution"] for r in rows)
+    return {
+        "scraped_without_images": len(rows),
+        "by_institution": dict(by_institution.most_common()),
+        "worklist_jsonl": jsonl_path,
+        "worklist_csv": csv_path,
+    }
 
 
 def _write_image_gap(out_dir: str, gap_rows: List[dict]) -> dict:

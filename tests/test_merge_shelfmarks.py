@@ -5,12 +5,24 @@ several fragments in one string (joins / ranges). Those must be exploded so each
 constituent shelfmark is captured rather than lost to a garbage canonical id.
 """
 
+import json
+
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer as SN
+from src.datasets.merging.institution_tokens import (
+    combine,
+    institution_token,
+    resolve_token,
+)
 from src.datasets.merging.merge_shelfmarks import (
+    _is_blocked_scrape,
     _ktiv_ena_alias,
+    _ktiv_fallback_shelfmarks,
+    _ktiv_manifest_url,
+    _write_ktiv_backlog,
     build_merged_record,
     diff_against_snapshot,
     index_ktiv_zips,
+    load_ktiv_transcriptions,
     looks_multi,
     record_has_image,
     record_is_rich,
@@ -116,12 +128,180 @@ def test_merged_record_points_at_ktiv_images():
     assert rec["images"]["preferred_source"] == "ktiv"
 
 
+def test_ktiv_only_record_gets_institution_from_shelfmark_head():
+    ktiv = {"pnx_id": "PNX_3", "sys_num": "999999999999999998",
+            "shelf_mark": "Berlin, Staatsbibliothek, Germany Ms. Or. 123"}
+    rec = build_merged_record("Berlin_Or_123", None, [], ktiv, {}, {})
+    assert rec["institution"] == "Berlin"
+
+
 def test_merged_record_falls_back_to_fjp_when_ktiv_not_populated():
     ktiv = {"pnx_id": "PNX_2", "sys_num": "999999999999999999", "shelf_mark": "x"}
     fjp = [("Cambridge CUL: T-S 1.1", {"images": ["x_1r.jpg"]})]
     rec = build_merged_record("X_1", None, fjp, ktiv, {}, {})
     assert rec["images"]["ktiv"]["populated"] is False
     assert rec["images"]["preferred_source"] == "fjp"
+
+
+# ── KTIV null-shelfmark handling (joins, blocked scrapes) ─────────────────────
+
+def test_blocked_scrape_detected_by_challenge_title_or_empty_content():
+    assert _is_blocked_scrape({"page_title": "Just a moment..."})
+    assert _is_blocked_scrape({"page_title": "x", "shelfmarks": {},
+                               "scholarly_entries": []})
+    assert not _is_blocked_scrape({"page_title": "x",
+                                   "shelfmarks": {"system_no": "1"}})
+
+
+def test_join_page_title_yields_all_constituent_shelfmarks():
+    # Join pages (צירוף) render no shelfmark element; the title enumerates the
+    # constituents, each of which must canonicalize to its PGP-joinable id.
+    doc = {"page_title": ("Ms. T-S 10 J 5.6, Ms. T-S 20.113, "
+                          "Cambridge University Library, צירוף מכתב | Ktiv | Item page")}
+    marks = _ktiv_fallback_shelfmarks(doc)
+    cids = [
+        combine(resolve_token(m) or institution_token(m), SN.to_canonical_id(m))
+        for m in marks
+    ]
+    assert cids == ["Cambridge_CUL_T_S_10J5_6", "Cambridge_CUL_T_S_20_113"]
+
+
+def test_fallback_prefers_shelfmarks_block_over_title():
+    doc = {
+        "shelfmarks": {"shelfmark": {
+            "value": "Cambridge University Library, Cambridge, England Ms. T-S 10 K 6"
+        }},
+        "page_title": "Ms. Something Else | Ktiv",
+    }
+    assert _ktiv_fallback_shelfmarks(doc) == [
+        "Cambridge University Library, Cambridge, England Ms. T-S 10 K 6"
+    ]
+
+
+def test_fallback_empty_when_title_has_no_marks():
+    assert _ktiv_fallback_shelfmarks({"page_title": "כתב יד | Ktiv"}) == []
+    assert _ktiv_fallback_shelfmarks({}) == []
+
+
+# ── KTIV transcription bundles ────────────────────────────────────────────────
+
+def _write_bundle(tmp_path, name, doc_id, pages):
+    bundle = {
+        "source": "nli_ktiv_viewer",
+        "doc_id": doc_id,
+        "ie": "IE202603440",
+        "pages": [
+            {"fl": fl, "annotation_page": {
+                "items": [{"body": {"value": w}} for w in words]}}
+            for fl, words in pages
+        ],
+    }
+    (tmp_path / name).write_text(json.dumps(bundle), encoding="utf-8")
+
+
+def test_load_ktiv_transcriptions_flattens_words_per_page(tmp_path):
+    _write_bundle(
+        tmp_path,
+        "ktiv_PNX_MANUSCRIPTS990051173350205171-1_transcription.json",
+        "PNX_MANUSCRIPTS990051173350205171-1",
+        [("FL111", ["בשעת", "עשייה"]), ("FL222", ["אשר"])],
+    )
+    by_sysnum = load_ktiv_transcriptions(str(tmp_path / "*_transcription.json"))
+    summary = by_sysnum["990051173350205171"]
+    assert summary["page_count"] == 2
+    assert summary["pages"][0]["text"] == "בשעת עשייה"
+    assert summary["pages"][0]["words"] == 2
+    assert summary["ie"] == "IE202603440"
+
+
+def test_load_ktiv_transcriptions_splits_lines_on_break_markers(tmp_path):
+    bundle = {
+        "doc_id": "PNX_MANUSCRIPTS990000000000000002-1",
+        "ie": "IE9",
+        "pages": [{"fl": "FL1", "annotation_page": {"items": [
+            {"id": "0 oldVer", "body": {"value": "שורה"}},
+            {"id": "1 oldVer", "body": {"value": "ראשונה"}},
+            {"id": "/supplementing/t0-BreackLine", "body": {"value": ""}},
+            {"id": "2 oldVer", "body": {"value": "שנייה"}},
+        ]}}],
+    }
+    (tmp_path / "ktiv_x_transcription.json").write_text(
+        json.dumps(bundle), encoding="utf-8")
+    by_sysnum = load_ktiv_transcriptions(str(tmp_path / "*_transcription.json"))
+    page = by_sysnum["990000000000000002"]["pages"][0]
+    assert page["text"] == "שורה ראשונה\nשנייה"
+    assert page["lines"] == 2
+
+
+def test_load_ktiv_transcriptions_accepts_dom_captured_lines(tmp_path):
+    # The viewer-panel DOM fallback saves pre-built lines instead of an
+    # AnnotationPage; both shapes must land in the same summary format.
+    bundle = {
+        "doc_id": "PNX_MANUSCRIPTS990000000000000003-1",
+        "ie": None,
+        "pages": [{"fl": None, "image_name": "Frag. 001r",
+                   "lines": ["שורה אחת", "שורה שתיים"],
+                   "text": "שורה אחת\nשורה שתיים"}],
+    }
+    (tmp_path / "ktiv_dom_transcription.json").write_text(
+        json.dumps(bundle), encoding="utf-8")
+    by_sysnum = load_ktiv_transcriptions(str(tmp_path / "*_transcription.json"))
+    page = by_sysnum["990000000000000003"]["pages"][0]
+    assert page["text"] == "שורה אחת\nשורה שתיים"
+    assert page["image_name"] == "Frag. 001r"
+    assert page["words"] == 4
+
+
+def test_load_ktiv_transcriptions_keeps_richest_duplicate(tmp_path):
+    _write_bundle(tmp_path, "ktiv_a_transcription.json",
+                  "PNX_MANUSCRIPTS990000000000000001-1", [("FL1", ["א"])])
+    _write_bundle(tmp_path, "ktiv_a(1)_transcription.json",
+                  "PNX_MANUSCRIPTS990000000000000001-1",
+                  [("FL1", ["א", "ב", "ג"])])
+    by_sysnum = load_ktiv_transcriptions(str(tmp_path / "*_transcription.json"))
+    assert by_sysnum["990000000000000001"]["pages"][0]["words"] == 3
+
+
+def test_merged_record_carries_transcription_and_counts_as_rich():
+    ktiv = {"pnx_id": "PNX_9", "sys_num": "990051173350205171", "shelf_mark": "x"}
+    trans = {"990051173350205171": {"file": "t.json", "ie": "IE1",
+                                    "page_count": 1,
+                                    "pages": [{"fl": "FL1", "text": "שלום", "words": 1}]}}
+    rec = build_merged_record("X_1", None, [], ktiv, {}, {}, trans)
+    assert rec["sources"]["ktiv_transcription"]["pages"][0]["text"] == "שלום"
+    assert record_is_rich(rec)
+
+
+# ── KTIV images-missing backlog ───────────────────────────────────────────────
+
+def test_ktiv_manifest_url_scraped_then_constructed():
+    assert _ktiv_manifest_url(
+        {"iiif_manifest_url": "https://iiif.nli.org.il/x/manifest"}
+    ) == "https://iiif.nli.org.il/x/manifest"
+    assert _ktiv_manifest_url({"sys_num": "990051236050205171"}) == (
+        "https://iiif.nli.org.il/IIIFv21/DOCID/"
+        "PNX_MANUSCRIPTS990051236050205171-1/manifest"
+    )
+    assert _ktiv_manifest_url({}) is None
+
+
+def test_write_ktiv_backlog_emits_sorted_worklist(tmp_path):
+    rows = [
+        {"institution": "B-inst", "canonical_id": "B_2", "shelfmark_display": "B 2",
+         "sys_num": "2", "pnx_id": "PNX_2", "iiif_manifest_url": None,
+         "page_url": None},
+        {"institution": "A-inst", "canonical_id": "A_1", "shelfmark_display": "A 1",
+         "sys_num": "1", "pnx_id": "PNX_1", "iiif_manifest_url": "https://m",
+         "page_url": "https://p"},
+    ]
+    section = _write_ktiv_backlog(str(tmp_path), rows)
+    assert section["scraped_without_images"] == 2
+    assert section["by_institution"] == {"A-inst": 1, "B-inst": 1}
+    lines = [json.loads(l) for l in
+             open(section["worklist_jsonl"], encoding="utf-8")]
+    assert [r["canonical_id"] for r in lines] == ["A_1", "B_2"]
+    assert open(section["worklist_csv"], encoding="utf-8").readline().startswith(
+        "institution,canonical_id")
 
 
 def test_diff_baseline_when_no_previous():
