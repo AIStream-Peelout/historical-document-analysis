@@ -20,6 +20,7 @@ Usage (from repo root, long runs via nohup + absolute paths):
 import argparse
 import asyncio
 import json
+import shutil
 import time
 import urllib.request
 from pathlib import Path
@@ -172,7 +173,8 @@ def _row(rec: dict, vlm_text: str, htr_text: str, gate, timings: dict,
     )
 
 
-async def run(inventory: Path, out_dir: Path, limit: int) -> None:
+async def run(inventory: Path, out_dir: Path, limit: int,
+              delete_images: bool = False, min_free_gb: float = 0.0) -> None:
     """Process the inventory sequentially with per-document resume.
 
     :param inventory: Inventory JSONL path.
@@ -181,6 +183,12 @@ async def run(inventory: Path, out_dir: Path, limit: int) -> None:
     :type out_dir: Path
     :param limit: Maximum number of new documents to process (0 = all).
     :type limit: int
+    :param delete_images: Remove each image after processing (long unattended
+        runs; images are re-downloadable from GCS).
+    :type delete_images: bool
+    :param min_free_gb: Stop gracefully when free disk falls below this
+        (0 disables the guard).
+    :type min_free_gb: float
     """
     out_dir.mkdir(parents=True, exist_ok=True)
     images_dir = out_dir / "images"
@@ -202,10 +210,18 @@ async def run(inventory: Path, out_dir: Path, limit: int) -> None:
     counts = {}
     with open(results_path, "a", encoding="utf-8") as fh:
         for i, rec in enumerate(todo, 1):
+            if min_free_gb:
+                free_gb = shutil.disk_usage(out_dir).free / 1e9
+                if free_gb < min_free_gb:
+                    print(f"STOPPING: {free_gb:.1f}GB free < "
+                          f"--min-free-gb {min_free_gb}", flush=True)
+                    break
             t0 = time.time()
             row = await process_doc(rec, images_dir)
             fh.write(json.dumps(row, ensure_ascii=False) + "\n")
             fh.flush()
+            if delete_images:
+                (images_dir / rec["image_file"]).unlink(missing_ok=True)
             counts[row["tier"]] = counts.get(row["tier"], 0) + 1
             print(f"[{i}/{len(todo)}] {rec['canonical_id']}: "
                   f"{row['tier']} ({row['reason']}, agree {row['agreement']:.2f}) "
@@ -221,8 +237,14 @@ def main() -> None:
     parser.add_argument("--out-dir", type=Path, default=DEFAULT_DIR)
     parser.add_argument("--limit", type=int, default=0,
                         help="max new documents this run (0 = all)")
+    parser.add_argument("--delete-images", action="store_true",
+                        help="remove each image after processing")
+    parser.add_argument("--min-free-gb", type=float, default=0.0,
+                        help="stop gracefully below this much free disk")
     args = parser.parse_args()
-    asyncio.run(run(args.inventory, args.out_dir, args.limit))
+    asyncio.run(run(args.inventory, args.out_dir, args.limit,
+                    delete_images=args.delete_images,
+                    min_free_gb=args.min_free_gb))
 
 
 if __name__ == "__main__":
