@@ -21,7 +21,10 @@ import json
 import time
 from pathlib import Path
 
-from src.datasets.consensus.linewise import transcribe_linewise
+from src.datasets.consensus.linewise import (
+    transcribe_linewise,
+    transcribe_sections,
+)
 from src.datasets.evaluations.helper_eval_scripts.score_genizah_offline import (
     load_benchmark,
 )
@@ -62,7 +65,10 @@ async def run(mode: str, limit: int) -> None:
     if VLM_MODEL not in models:
         raise RuntimeError(f"{VLM_MODEL} not served by LM Studio")
 
-    out_key = OUTPUT_MODEL_KEY + ("_adv" if mode == "adversarial" else "")
+    if mode == "sections":
+        out_key = "qwen3_vl_8b_heb_v18b_sections"
+    else:
+        out_key = OUTPUT_MODEL_KEY + ("_adv" if mode == "adversarial" else "")
     _DETAILS.mkdir(parents=True, exist_ok=True)
     docs = load_benchmark("verified")
     todo = []
@@ -79,8 +85,14 @@ async def run(mode: str, limit: int) -> None:
     for i, (d, img, out_path) in enumerate(todo, 1):
         t0 = time.time()
         try:
-            result = await transcribe_linewise(str(img), d["doc_id"],
-                                               VLM_MODEL, mode=mode)
+            if mode == "sections":
+                result = await transcribe_sections(str(img), d["doc_id"],
+                                                   VLM_MODEL)
+                units = result["bands"]
+            else:
+                result = await transcribe_linewise(str(img), d["doc_id"],
+                                                   VLM_MODEL, mode=mode)
+                units = result["lines"]
         except Exception as exc:
             print(f"[{i}/{len(todo)}] {d['doc_id']} FAILED: {exc}", flush=True)
             continue
@@ -88,9 +100,9 @@ async def run(mode: str, limit: int) -> None:
         out_path.write_text(result["text"], encoding="utf-8")
         detail_path = _DETAILS / f"{d['doc_id']}.{mode}.jsonl"
         with open(detail_path, "w", encoding="utf-8") as fh:
-            for line in result["lines"]:
-                fh.write(json.dumps(line, ensure_ascii=False) + "\n")
-        print(f"[{i}/{len(todo)}] {d['doc_id']}: {len(result['lines'])} lines, "
+            for unit in units:
+                fh.write(json.dumps(unit, ensure_ascii=False) + "\n")
+        print(f"[{i}/{len(todo)}] {d['doc_id']}: {len(units)} units, "
               f"{len(result['text'])} chars in {time.time() - t0:.0f}s",
               flush=True)
     print("done")
@@ -99,8 +111,8 @@ async def run(mode: str, limit: int) -> None:
 def main() -> None:
     """CLI entry point."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("blind", "adversarial"),
-                        default="blind")
+    parser.add_argument("--mode", choices=("blind", "adversarial", "sections"),
+                        default="sections")
     parser.add_argument("--limit", type=int, default=0)
     args = parser.parse_args()
     asyncio.run(run(args.mode, args.limit))
