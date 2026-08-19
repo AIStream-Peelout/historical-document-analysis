@@ -60,7 +60,22 @@ models in the LM Studio UI, loading `google/gemma-4-31b-qat` (crashes the whole
 LM Studio server), `docker compose build backend && up -d backend` (that is a
 production deploy), modifying prod databases.
 
-## 5. If something shared looks broken
+## 5. RAM: a balancing act, not a free-for-all
+
+LM Studio keeps ~54 GB of prod models resident on a 128 GB machine; the web app
+containers need more. A job that needs exceptional RAM must:
+
+1. First exhaust the alternatives — a smaller/quantized model, sequential instead
+   of concurrent requests, smaller context, running off-hours, waiting for idle.
+2. Only when there is no other option, the Genizah web app or the RAG framework
+   **may** be taken offline temporarily for that job — **ask the user first and
+   get explicit approval for that specific occasion**, never pre-emptively or
+   silently, and restore it immediately afterwards.
+3. Never let memory pressure crash the Mac: that takes down everything,
+   production included. The objective is to run experiments while the website
+   keeps serving uninterrupted.
+
+## 6. If something shared looks broken
 
 Diagnose read-only — `docker ps`, `docker logs genizah_search-backend-1`,
 `curl localhost:8000/health`, `curl localhost:1234/api/v0/models`,
