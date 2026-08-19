@@ -129,7 +129,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--merged", default=DEFAULT_MERGED)
-    parser.add_argument("--index", default="genizah_merged_v2")
+    parser.add_argument("--index", default="genizah_merged_v4")
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--skip", type=int, default=0,
