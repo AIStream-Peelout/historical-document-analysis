@@ -442,13 +442,21 @@ def build_rows(bundles: List[dict], ktiv_dir: Path, images_dir: Path,
                              page_im.width, page_im.height))
             stats["rows_page"] += 1
 
-            for label, desc, answer in rng.sample(
-                    region_candidates(page),
-                    min(REGION_ROWS_PER_PAGE, len(region_candidates(page)))):
+            # Column tasks are the most valuable region rows and only exist on
+            # multi-column pages, so they are always emitted; the remaining
+            # region types are sampled REGION_ROWS_PER_PAGE per page.
+            cands = region_candidates(page)
+            column_cands = [c for c in cands if c[0] in ("right_column", "left_column")]
+            other_cands = [c for c in cands if c[0] not in ("right_column", "left_column")]
+            chosen = column_cands + rng.sample(
+                other_cands, min(REGION_ROWS_PER_PAGE, len(other_cands)))
+            for label, desc, answer in chosen:
                 rows.append(_row(page_path, region_prompt(desc), answer,
                                  "region_transcribe", label, f"{stem}_{label}",
                                  page_im.width, page_im.height))
                 stats["rows_region"] += 1
+                if label.endswith("_column"):
+                    stats["rows_region_column"] += 1
 
             lh = page["line_h"]
             for c_idx, col in enumerate(page["columns"]):

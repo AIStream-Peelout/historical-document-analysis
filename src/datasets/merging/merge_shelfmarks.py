@@ -409,35 +409,220 @@ def load_ktiv(alias: Dict[str, str]) -> Tuple[Dict[str, dict], dict]:
     }
 
 
+_SVG_PATH_RE = re.compile(r'd="M([^"]+)"')
+_BREAK_ID_RE = re.compile(r"brea[ck]kline", re.IGNORECASE)   # NLI spells it "BreackLine"
+_DOTS_RE = re.compile(r"^\.+$")
+
+
+def _annotation_bbox(item: dict) -> Optional[List[float]]:
+    """Axis-aligned box ``[x1, y1, x2, y2]`` of an annotation's SVG selector.
+
+    NLI serves each fragment's location as ``<svg><path d="M x,y x,y ... z"/>``
+    in image pixel coordinates.
+
+    :param item: One W3C Annotation from an AnnotationPage.
+    :returns: The bounding box, or ``None`` when the item carries no polygon
+        (line-break markers do not).
+    """
+    selector = ((item.get("target") or {}).get("selector")) or {}
+    value = selector.get("value") if isinstance(selector, dict) else None
+    if not isinstance(value, str):
+        return None
+    m = _SVG_PATH_RE.search(value)
+    if not m:
+        return None
+    xs: List[float] = []
+    ys: List[float] = []
+    for token in m.group(1).replace("z", " ").replace("Z", " ").split():
+        parts = token.split(",")
+        if len(parts) != 2:
+            continue
+        try:
+            xs.append(float(parts[0]))
+            ys.append(float(parts[1]))
+        except ValueError:
+            continue
+    if not xs:
+        return None
+    return [min(xs), min(ys), max(xs), max(ys)]
+
+
+def _fragments_touch(a: Optional[List[float]], b: Optional[List[float]]) -> bool:
+    """Whether two fragment boxes abut, i.e. were cut from one word box.
+
+    Fragments of a word are contiguous (gaps of 0–0.01 px on live pages) while
+    neighbouring words sit ≥ ~0.1 line-heights apart, so a tolerance of 2 px
+    or 2 % of the line height separates them cleanly. Horizontal neighbours
+    (either writing direction) need vertical overlap; vertical neighbours — a
+    gloss written down the margin, whose fragments share the column exactly —
+    need the same x-extent, so a word written above a line is never glued to
+    it.
+
+    :param a: One fragment's box.
+    :param b: Another fragment's box (same line).
+    :returns: ``True`` when the boxes touch as parts of one word would.
+    """
+    if not a or not b:
+        return False
+    ah, bh = a[3] - a[1], b[3] - b[1]
+    aw, bw = a[2] - a[0], b[2] - b[0]
+    y_overlap = min(a[3], b[3]) - max(a[1], b[1])
+    if y_overlap > 0.5 * min(ah, bh):
+        tol = max(2.0, 0.02 * max(ah, bh))
+        if abs(a[0] - b[2]) <= tol or abs(b[0] - a[2]) <= tol:
+            return True
+    x_overlap = min(a[2], b[2]) - max(a[0], b[0])
+    if x_overlap > 0.5 * min(aw, bw):
+        tol = max(2.0, 0.02 * max(aw, bw))
+        if (abs(a[0] - b[0]) <= tol and abs(a[2] - b[2]) <= tol
+                and (abs(b[1] - a[3]) <= tol or abs(a[1] - b[3]) <= tol)):
+            return True
+    return False
+
+
+def _same_word(a: dict, b: dict) -> bool:
+    """Whether two fragments of one line are pieces of the same word.
+
+    NLI's annotation data is one item per *sigla run*, not per word: a word is
+    split wherever its editorial status changes (``ע`` + ``שייה``\\ *tear/blur*)
+    or an illegible dot-run begins or ends. Two touching fragments therefore
+    belong to one word only when their sigla differ or one of them is dots;
+    touching fragments with identical sigla are two words whose boxes happen
+    to abut (or a word-box format that leaves no gaps), and stay separate.
+
+    :param a: One fragment (``text``, ``sigla``, ``bbox``).
+    :param b: Another fragment of the same line.
+    :returns: ``True`` when the two are one word.
+    """
+    if not _fragments_touch(a["bbox"], b["bbox"]):
+        return False
+    if _DOTS_RE.match(a["text"]) or _DOTS_RE.match(b["text"]):
+        return True
+    return (a["sigla"] or None) != (b["sigla"] or None)
+
+
+_RTL_LETTER_RE = re.compile("[\u0590-\u06FF]")   # Hebrew and Arabic blocks
+
+
+def _word_from_fragments(fragments: List[dict]) -> dict:
+    """Assemble one word from its fragments (all touching, one line).
+
+    Text order comes from the geometry, not from the served order: NLI appends
+    a lacuna marked later to the end of the line's items, so ``ינן`` followed
+    by ``......`` sitting to its right is really ``......ינן``. Horizontal
+    fragments are read right-to-left for Hebrew/Arabic script (left-to-right
+    otherwise); a gloss written down the margin (fragments sharing one column)
+    keeps its served order, which is its reading order.
+
+    :param fragments: The word's fragments in served order, each with
+        ``text``, ``sigla``, ``bbox`` and ``idx``.
+    :returns: ``{"text", "bbox", "sigla", "fragments"}``.
+    """
+    ordered = list(fragments)
+    boxes = [f["bbox"] for f in fragments]
+    if len(fragments) > 1 and all(boxes):
+        widths = [b[2] - b[0] for b in boxes]
+        tol = max(2.0, 0.02 * max(widths))
+        vertical = all(abs(b[0] - boxes[0][0]) <= tol and abs(b[2] - boxes[0][2]) <= tol
+                       for b in boxes)
+        if not vertical:
+            rtl = any(_RTL_LETTER_RE.search(f["text"]) for f in fragments)
+            ordered.sort(key=(lambda f: -f["bbox"][2]) if rtl else (lambda f: f["bbox"][0]))
+    sigla: List[str] = []
+    for f in ordered:
+        for code in (f["sigla"] or "").split():
+            if code not in sigla:
+                sigla.append(code)
+    bbox = None
+    if all(boxes):
+        bbox = [min(b[0] for b in boxes), min(b[1] for b in boxes),
+                max(b[2] for b in boxes), max(b[3] for b in boxes)]
+    return {"text": "".join(f["text"] for f in ordered), "bbox": bbox,
+            "sigla": sigla, "fragments": len(fragments)}
+
+
+def _line_words(fragments: List[dict]) -> List[dict]:
+    """Merge one line's fragments into words.
+
+    Fragments are clustered by :func:`_same_word` (transitively, so an
+    illegible run that abuts two fragments bridges them into one word), each
+    cluster becomes a word, and words keep the served order of their first
+    fragment.
+
+    :param fragments: The line's fragments in served order (with ``idx``).
+    :returns: The line's words.
+    """
+    parent = list(range(len(fragments)))
+
+    def find(i: int) -> int:
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    for j in range(len(fragments)):
+        for i in range(j):
+            if _same_word(fragments[i], fragments[j]):
+                parent[find(j)] = find(i)
+    clusters: Dict[int, List[dict]] = {}
+    for i, fragment in enumerate(fragments):
+        clusters.setdefault(find(i), []).append(fragment)
+    return [_word_from_fragments(group)
+            for _, group in sorted(clusters.items(), key=lambda kv: kv[1][0]["idx"])]
+
+
+def annotation_page_lines(page: dict) -> List[List[dict]]:
+    """Rebuild the words of one API-shape transcription page, line by line.
+
+    The scraper's API bundles hold NLI's raw AnnotationPage, whose items are
+    fragments (one per sigla run — see :func:`_same_word`) in served order,
+    with ``BreackLine`` items marking line ends. Joining fragments with spaces
+    is what produced the over-spaced text (``י ע שה`` for ``יעשה``); this
+    merges fragments back into words using the SVG boxes NLI serves with each
+    one. Words keep the fragments' polygons and sigla, so a consumer can cut
+    line images from the boxes or mask uncertain letters.
+
+    :param page: One entry of an API-shape bundle's ``pages`` list (must carry
+        ``annotation_page``).
+    :returns: Lines, each a list of word dicts ``{"text", "bbox": [x1, y1, x2,
+        y2] | None, "sigla": [codes], "fragments": n}``. Empty lines are kept
+        (a consumer may want the line index) — see
+        :func:`_transcription_page_lines` for the text-only view.
+    """
+    items = ((page.get("annotation_page") or {}).get("items")) or []
+    line_fragments: List[List[dict]] = [[]]
+    for idx, item in enumerate(items):
+        if _BREAK_ID_RE.search(str(item.get("id") or "")):
+            line_fragments.append([])
+            continue
+        text = ((item.get("body") or {}).get("value") or "").strip()
+        if not text:
+            continue
+        sigla = ((item.get("body") or {}).get("sigla") or "").strip() or None
+        line_fragments[-1].append(
+            {"text": text, "sigla": sigla, "bbox": _annotation_bbox(item), "idx": idx})
+    return [_line_words(fragments) for fragments in line_fragments]
+
+
 def _transcription_page_lines(page: dict) -> List[str]:
     """Extract the text lines of one transcription-bundle page.
 
-    Handles both bundle shapes the scraper produces: the background-API shape
-    (a W3C AnnotationPage with one word Annotation per item, where items whose
-    id names a ``BreackLine`` [sic — NLI's spelling] mark line ends) and the
-    viewer-panel DOM shape (pre-built ``lines``).
+    Handles both bundle shapes the scraper produces: the API shape (a W3C
+    AnnotationPage, whose fragments are merged back into words by
+    :func:`annotation_page_lines`) and the viewer-panel DOM shape (pre-built
+    ``lines`` — flattened text only, whose intra-word spacing cannot be
+    repaired here).
 
     :param page: One entry of a bundle's ``pages`` list.
-    :returns: The page's text lines (words joined by spaces).
+    :returns: The page's non-empty text lines (words joined by spaces).
     """
     if page.get("lines"):
         return [line for line in page["lines"] if line]
-    items = ((page.get("annotation_page") or {}).get("items")) or []
-    lines: List[str] = []
-    current: List[str] = []
-    for item in items:
-        item_id = str(item.get("id") or "").lower()
-        if "breakline" in item_id or "breackline" in item_id:
-            if current:
-                lines.append(" ".join(current))
-                current = []
-            continue
-        word = ((item.get("body") or {}).get("value") or "").strip()
-        if word:
-            current.append(word)
-    if current:
-        lines.append(" ".join(current))
-    return lines
+    return [
+        " ".join(word["text"] for word in line)
+        for line in annotation_page_lines(page)
+        if line
+    ]
 
 
 def load_ktiv_transcriptions(
@@ -445,17 +630,22 @@ def load_ktiv_transcriptions(
 ) -> Dict[str, dict]:
     """Load viewer-scraped transcription bundles, keyed by manuscript sys_num.
 
-    The scraper's viewer flow saves ``ktiv_<docid>_transcription.json`` files:
-    per-page W3C AnnotationPages with one word-level Annotation each (text,
-    editorial sigla, SVG polygon on the image). The full payload is large
-    (~100KB/page), so the merge keeps a compact summary — the flattened plain
-    text per page (words joined in served reading order) plus the source
-    filename as a pointer back to the word-level data. Duplicate downloads of
-    one manuscript keep the copy with the most words.
+    The scraper's viewer flow saves ``ktiv_<docid>_transcription.json`` files
+    in one of two shapes: the API shape (per-page W3C AnnotationPages — text,
+    editorial sigla and an SVG polygon per fragment, merged into words here by
+    :func:`annotation_page_lines`) and the older viewer-panel DOM shape
+    (pre-built lines with NLI's fragment spacing baked in). The full payload is
+    large (~100KB/page), so the merge keeps a compact summary — the plain text
+    per page plus the source filename as a pointer back to the word-level
+    data. Duplicate downloads of one manuscript keep the copy with the most
+    pages, then an API-shape copy over a DOM one (its words are whole), then
+    the one with the most words.
 
     :param pattern: Glob for transcription bundles (defaults to the KTIV dir).
-    :returns: ``sys_num -> {file, ie, page_count, pages:[{fl, image_name,
-        text, lines, words}]}`` where ``text`` joins lines with newlines.
+    :returns: ``sys_num -> {file, shape, ie, page_count, pages:[{fl,
+        image_name, text, lines, words, fragments}]}`` where ``text`` joins
+        lines with newlines and ``fragments`` counts NLI's raw items (API
+        shape only).
     """
     pattern = pattern or os.path.join(KTIV_DIR, "*_transcription.json")
     best: Dict[str, dict] = {}
@@ -469,27 +659,42 @@ def load_ktiv_transcriptions(
         if not m:
             continue
         pages = []
+        shape = "dom"
         for page in doc.get("pages") or []:
             lines = _transcription_page_lines(page)
-            pages.append({
+            entry = {
                 "fl": page.get("fl"),
                 "image_name": page.get("image_name"),
                 "text": "\n".join(lines),
                 "lines": len(lines),
                 "words": sum(len(line.split()) for line in lines),
-            })
+            }
+            if page.get("annotation_page") and not page.get("lines"):
+                shape = "api"
+                entry["fragments"] = sum(
+                    1 for item in (page["annotation_page"].get("items") or [])
+                    if not _BREAK_ID_RE.search(str(item.get("id") or ""))
+                    and ((item.get("body") or {}).get("value") or "").strip()
+                )
+            pages.append(entry)
         summary = {
             "file": os.path.basename(fpath),
+            "shape": shape,
             "ie": doc.get("ie"),
             "page_count": len(pages),
             "pages": pages,
         }
+        rank = (
+            len(pages),
+            shape == "api",
+            sum(p["words"] for p in pages),
+        )
         incumbent = best.get(m.group(1))
-        if incumbent is None or (
-            sum(p["words"] for p in pages)
-            > sum(p["words"] for p in incumbent["pages"])
-        ):
+        if incumbent is None or rank > incumbent["_rank"]:
+            summary["_rank"] = rank
             best[m.group(1)] = summary
+    for summary in best.values():
+        summary.pop("_rank", None)
     return best
 
 
