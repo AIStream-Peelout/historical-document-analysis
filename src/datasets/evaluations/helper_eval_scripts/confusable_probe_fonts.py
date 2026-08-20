@@ -12,6 +12,12 @@ Queueing: the job waits until LM Studio reports no model GENERATING for
 IDLE_POLLS consecutive polls (so it never competes with a user experiment),
 with a hard cap after which it proceeds anyway.
 
+Rashi-type faces are fetched into assets/extra_fonts (gitignored, like Noto):
+    curl -sL -o Solitreo-Regular.ttf \\
+      https://github.com/google/fonts/raw/main/ofl/solitreo/Solitreo-Regular.ttf
+    curl -sL https://downloads.sourceforge.net/project/culmus/culmus/0.140/culmus-0.140.tar.gz \\
+      | tar xz --strip-components=1 culmus-0.140/StamAshkenazCLM.ttf culmus-0.140/StamSefaradCLM.ttf
+
 Usage (from src/datasets/evaluations):
     PYTHONPATH=<repo> python helper_eval_scripts/confusable_probe_fonts.py \\
         [--models qwen3-vl-8b-heb-v18b-step700,qwen3-vl-8b-heb-v17-step800] \\
@@ -60,7 +66,15 @@ IDLE_POLLS = 5
 POLL_S = 60
 WAIT_CAP_S = 6 * 3600
 
+_ASSETS = str(_REPO / "src/finetuning/qwen_hebrew/assets/extra_fonts")
 UNSEEN_FONTS = {
+    # Rashi-type / manuscript-adjacent faces (the user's actual failure case;
+    # downloaded OFL/GPL-FE, see assets/extra_fonts): Solitreo is Ladino
+    # cursive — the nearest open relative of Genizah documentary hands; the
+    # Culmus STA"M faces are sofer calligraphic square.
+    "Solitreo": f"{_ASSETS}/Solitreo-Regular.ttf",
+    "StamAshkenaz": f"{_ASSETS}/StamAshkenazCLM.ttf",
+    "StamSefarad": f"{_ASSETS}/StamSefaradCLM.ttf",
     "ArialUnicode": "/Library/Fonts/Arial Unicode.ttf",
     "ArialHebrew": "/System/Library/Fonts/ArialHB.ttc",
     "LucidaGrande": "/System/Library/Fonts/LucidaGrande.ttc",
@@ -142,6 +156,60 @@ def build_slice(per_font: int, rng: random.Random) -> list:
             img.save(path, "JPEG", quality=92)
             rows.append(dict(font=name, seen=(name == "NotoRashi"), mode=mode, gt=gt,
                              image_path=str(path), width=img.width, height=img.height))
+    with open(OUT_DIR / "slice.jsonl", "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return rows
+
+
+def top_up_slice(rows: list, per_font: int) -> list:
+    """Render samples for configured fonts missing from an existing slice.
+
+    Fonts added to :data:`UNSEEN_FONTS` after a slice was built (e.g. the
+    downloaded Rashi-type faces) get their own rows appended; existing rows
+    and their model outputs stay valid.  Each font's RNG is seeded stably
+    from its name so later additions never perturb earlier renders.
+
+    :param rows: Current slice rows.
+    :type rows: list
+    :param per_font: Samples per font.
+    :type per_font: int
+    :return: Slice rows including any newly rendered fonts.
+    :rtype: list
+    """
+    import zlib
+
+    have = {r["font"] for r in rows}
+    missing = {name: path for name, path in UNSEEN_FONTS.items()
+               if name not in have and os.path.exists(path)}
+    if not missing:
+        return rows
+    words = _corpus_words()
+    img_dir = OUT_DIR / "images"
+    mode_names = [m[0] for m in MODES]
+    mode_fns = {m[0]: m[1] for m in MODES}
+    mode_w = [m[2] for m in MODES]
+    new_rows = []
+    for name, path in missing.items():
+        # Only feed characters the font can render — letters-only coverage was
+        # verified, but punctuation like geresh/gershayim may be absent and
+        # would render as tofu boxes, unfairly punishing the font's CER.
+        from fontTools.ttLib import TTCollection, TTFont
+        font_obj = (TTCollection(path).fonts[0] if path.lower().endswith(".ttc")
+                    else TTFont(path, lazy=True))
+        cmap = set((font_obj.getBestCmap() or {}).keys())
+        rng = random.Random(SEED ^ zlib.crc32(name.encode()))
+        for i in range(per_font):
+            mode = rng.choices(mode_names, weights=mode_w)[0]
+            text = mode_fns[mode](rng, words)
+            text = "".join(ch for ch in text
+                           if ch in " \n" or ord(ch) in cmap)
+            img, gt = render_block(text, rng, [Path(path)])
+            ipath = img_dir / f"{name}_{i:03d}.jpg"
+            img.save(ipath, "JPEG", quality=92)
+            new_rows.append(dict(font=name, seen=False, mode=mode, gt=gt,
+                                 image_path=str(ipath), width=img.width, height=img.height))
+    rows = rows + new_rows
     with open(OUT_DIR / "slice.jsonl", "w", encoding="utf-8") as fh:
         for r in rows:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
@@ -254,6 +322,7 @@ def main() -> None:
     rng = random.Random(SEED)
     slice_path = OUT_DIR / "slice.jsonl"
     rows = [json.loads(l) for l in open(slice_path)] if slice_path.exists() else build_slice(args.per_font, rng)
+    rows = top_up_slice(rows, args.per_font)
     log(f"slice: {len(rows)} samples over {len({r['font'] for r in rows})} fonts")
     if not args.no_wait:
         wait_for_idle(log)
