@@ -409,8 +409,15 @@ def crop_lines(im: PILImage.Image, col_lines: List[Dict], start: int, k: int,
           else bot_c + half_pitch) + margin
     x0 = min(l["box"][0] for l in seg) - pad_x * line_h
     x1 = max(l["box"][2] for l in seg) + pad_x * line_h
-    return im.crop((int(max(x0, 0)), int(max(y0, 0)),
-                    int(min(x1, im.width)), int(min(y1, im.height))))
+    # Boxes may poke past the frame within the page gate's 2% slack; a line
+    # hugging an edge can then clamp inverted (right < left). Degenerate
+    # intersections return a 1x1 crop, which every caller's minimum-size
+    # check already rejects.
+    left, top = int(max(x0, 0)), int(max(y0, 0))
+    right, bottom = int(min(x1, im.width)), int(min(y1, im.height))
+    if right <= left or bottom <= top:
+        return im.crop((0, 0, 1, 1))
+    return im.crop((left, top, right, bottom))
 
 
 def norm_box(box: Tuple[float, float, float, float], width: int,
@@ -846,6 +853,10 @@ def build(ktiv_dir: Path, images_dir: Path, output_dir: Path, limit: int = 0,
 
 def main() -> None:
     """CLI entry point."""
+    import dotenv
+
+    dotenv.load_dotenv(_REPO / ".env")
+    os.environ.setdefault("HF_TOKEN", os.environ.get("HF1_TOKEN", ""))
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     parser = argparse.ArgumentParser()
     parser.add_argument("--ktiv-dir", type=Path, default=KTIV_DIR)
