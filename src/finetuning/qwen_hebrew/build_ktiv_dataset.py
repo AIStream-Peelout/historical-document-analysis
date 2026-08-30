@@ -70,6 +70,8 @@ _REPO = Path(__file__).resolve().parents[3]
 KTIV_DIR = _REPO / "src/datasets/raw_data/cairo_genizah/ktiv"
 BENCH_PATH = (_REPO / "src/datasets/raw_data/cairo_genizah/evaluations/"
               "genizah_test_v1/genizah_test_v1_verified.json")
+RELIGIOUS_BENCH_PATH = (_REPO / "src/datasets/raw_data/cairo_genizah/evaluations/"
+                        "genizah_religious_v1/genizah_religious_v1.json")
 DEFAULT_OUT = _REPO / "src/datasets/processed/genizah_ktiv_v1"
 DEFAULT_IMAGES = _REPO / "src/datasets/raw_data/cairo_genizah/ktiv_dataset_v1/images"
 
