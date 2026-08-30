@@ -1,7 +1,7 @@
-# File name: test_colab_notebook_v19c.py
+# File name: test_colab_notebook_v20a.py
 # Date: 8/30/26
 # Author: Isaac Godfried. Coded originally by Claude Fable 5.
-"""CPU-only validation of the v1.9c genizah-focus Colab notebook.
+"""CPU-only validation of the v2.0a genizah Colab notebook.
 
 Same harness pattern as ``test_colab_notebook_v19b.py``, adapted to the v1.9c
 protocol: ONE variable vs v19b = the 8 merger linears train FULL-WEIGHT via
@@ -29,15 +29,15 @@ from typing import List, Optional
 import pytest
 
 _REPO = Path(__file__).resolve().parents[1]
-NB_PATH = _REPO / "src/finetuning/qwen_hebrew/colab/genizah_focus_v19c.ipynb"
+NB_PATH = _REPO / "src/finetuning/qwen_hebrew/colab/genizah_v20a.ipynb"
 
 INSTRUCTION_PART = "<|im_start|>user\n"
 RESPONSE_PART = "<|im_start|>assistant\n"
-V18B_WARM_START_SHA = "c80313f8208558df5fd774be257b146c4b4749d6"
-KTIV_SHA = "ccf3a25ecd39da3e444d453310ac7169dfd603f8"
+V19A_WARM_START_SHA = "43e21bd7a6fedd323879fc5ea2c298df90a92784"
+KTIV2_SHA = "1bb20e209a3b3095fc84dad7c928da4310269fd3"
 GENIZAH_SHA = "57366ad378946918731ad0012d699acc7d9ed31c"
 SYNTH3_SHA = "59abcf7c30fb6753b9df89f0a099b07a68059013"
-MIXTURE = "probabilities=[0.30, 0.20, 0.20, 0.08, 0.07, 0.10, 0.05]"
+MIXTURE = "_probs = [0.30, 0.19, 0.15, 0.07, 0.07, 0.09, 0.05, GROUNDING_SHARE]"
 N_TOWER = 108
 N_MERGER = 8
 
@@ -146,68 +146,80 @@ def test_install_triplet_pinned(raw_cells: List[str]) -> None:
     assert 'version("transformers") == "4.57.6"' in install
 
 
-def test_control_pins_identical_to_v19a(code_cells: List[str]) -> None:
-    """v1.9b is a control: every data revision + warm start matches v19a."""
-    assert _pinned_sha(code_cells, "WARM_REVISION") == V18B_WARM_START_SHA
-    assert _pinned_sha(code_cells, "KTIV_REVISION") == KTIV_SHA
+def test_v20_data_pins(code_cells: List[str]) -> None:
+    """v2.0a pins the mash-fixed KTIV v2 build + the v1.9 control sources."""
+    assert _pinned_sha(code_cells, "KTIV2_REVISION") == KTIV2_SHA
     assert _pinned_sha(code_cells, "GENIZAH_REVISION") == GENIZAH_SHA
     assert _pinned_sha(code_cells, "SYNTH3_REVISION") == SYNTH3_SHA
-    data_cell = _find_cell(code_cells, "KTIV_REVISION")
+    data_cell = _find_cell(code_cells, "KTIV2_REVISION")
     assert "assert len(_sha) == 40" in data_cell, "runtime pin gate missing"
-    assert '"isaacmg/genizah_ktiv_v1"' in data_cell
+    assert '"isaacmg/genizah_ktiv_v2"' in data_cell
     assert '"isaacmg/synthetic_hebrew_v3"' in data_cell
+    assert '"isaacmg/genizah_ktiv_v1"' not in data_cell, "v1 dataset leaked into v2.0"
 
 
-def test_merger_variable_and_creation_gate(code_cells: List[str]) -> None:
-    """Full-weight arm ON, merger NOT LoRA-targeted, clones count-asserted."""
-    cell = _find_cell(code_cells, "MERGER_FULL_WEIGHT")
-    assert "MERGER_FULL_WEIGHT = True" in cell
-    assert "TRAIN_VISION_LORA = True" in cell, "vision LoRA must stay ON (v19a recipe)"
-    assert "get_peft_regex" in cell, "must use unsloth's own target regex"
-    assert "deepstack_merger_list" in cell, "DeepStack injectors must be listed"
-    assert "target_modules=base_regex" in cell, \
-        "merger must NOT be LoRA-targeted (that is v19b)"
-    assert "modules_to_save=MERGER_MODULES" in cell
+def test_grounding_tasks_loaded_and_validated(code_cells: List[str]) -> None:
+    """The four grounding families load, and their hygiene gates exist."""
+    cell = _find_cell(code_cells, "GROUNDING_TASKS")
+    assert '("locate", "read_box", "layout_qa", "grounded_page")' in cell
+    assert "bad locate box" in cell, "locate coordinate validation missing"
+    assert "grounded_page payload" in cell
+    assert '"bbox_2d = [" in q' in cell, "read_box prompt validation missing"
+    assert "0 <= v <= 1000" in cell
+
+
+def test_merger_knob_tri_state(code_cells: List[str]) -> None:
+    """MERGER_MODE must default to frozen and drive all three configs."""
+    cell = _find_cell(code_cells, "MERGER_MODE")
+    assert 'MERGER_MODE = "frozen"' in cell, "default must be the safe v1.9a config"
+    assert 'assert MERGER_MODE in ("frozen", "lora", "full")' in cell
+    assert 'if MERGER_MODE == "lora" else base_regex' in cell
+    assert 'modules_to_save=MERGER_MODULES if MERGER_MODE == "full" else None' in cell
+    assert "deepstack_merger_list" in cell
     assert f"len(_tower_lora) == {N_TOWER}" in cell
-    assert "assert not _merger_lora" in cell, "must forbid merger LoRA"
-    assert f"len(_merger_full) == {N_MERGER}" in cell, \
-        "creation gate must require all 8 full-weight clones"
-    # the creation gate must run BEFORE the warm start loads
-    assert cell.index(f"len(_merger_full) == {N_MERGER}") \
-        < cell.index("set_peft_model_state_dict")
+    for gate in ('assert not _merger_lora and not _merger_full',
+                 'len(_merger_lora) == 8 and not _merger_full',
+                 'len(_merger_full) == 8 and not _merger_lora'):
+        assert gate in cell, f"per-mode creation gate missing: {gate}"
+    assert cell.index("len(_merger_full) == 8") < cell.index("set_peft_model_state_dict")
 
 
 def test_merger_quantization_gate(code_cells: List[str]) -> None:
     """modules_to_save cannot clone 4-bit weights — the gate must precede it."""
-    cell = _find_cell(code_cells, "MERGER_FULL_WEIGHT")
+    cell = _find_cell(code_cells, "MERGER_MODE")
+    assert 'if MERGER_MODE == "full":' in cell
     assert "Linear4bit" in cell, "un-quantized merger gate missing"
     assert "assert not _quantized" in cell
     assert cell.index("assert not _quantized") < cell.index("get_peft_model")
 
 
-def test_warm_start_tower_live_and_merger_identity(code_cells: List[str]) -> None:
-    """Warm start: tower adapter live (108/108), merger at identity (all zero)."""
+def test_warm_start_flagship_and_knob_compatibility(code_cells: List[str]) -> None:
+    """Warm start = v1.9a flagship; knob must match the checkpoint contents."""
     cell = _find_cell(code_cells, "set_peft_model_state_dict")
+    assert _pinned_sha(code_cells, "WARM_REVISION") == V19A_WARM_START_SHA
+    assert '"isaacmg/qwen3-vl-8b-hebrew-v19a-ckpt"' in cell
     assert f"len(_wv) == {N_TOWER}" in cell, "warm-start tower check missing"
-    assert cell.index("set_peft_model_state_dict") < cell.index(f"len(_wv) == {N_TOWER}")
-    assert "torch.allclose" in cell, "merger clone-identity check missing"
+    assert "_loaded_merger_full" in cell and "_loaded_merger_lora" in cell, \
+        "knob-vs-checkpoint compatibility guard missing"
+    assert "MERGER_MODE == 'full'" in cell.replace('"', "'"), \
+        "full-merger warm ckpt must force the knob"
+    assert "torch.allclose" in cell, "identity check for fresh clones missing"
     assert "_sd.setdefault(" in cell, \
         "missing-merger-key injection absent — PEFT modules_to_save load KeyErrors"
-    assert "original_module.weight" in cell
-    assert cell.index("set_peft_model_state_dict") < cell.index("torch.allclose")
     trainer_cell = _find_cell(code_cells, "SFTTrainer")
-    assert '"isaacmg/qwen3-vl-8b-hebrew-v19c-ckpt"' in trainer_cell
-    assert 'run_name="genizah_focus_v19c"' in trainer_cell
+    assert '"isaacmg/qwen3-vl-8b-hebrew-v20a-ckpt"' in trainer_cell
+    assert 'run_name="genizah_v20a"' in trainer_cell
 
 
 def test_no_prior_version_leakage_in_code(code_cells: List[str]) -> None:
     """No v19a/v19b repo/output/run identifiers may survive in code cells."""
     joined = "\n".join(code_cells)
-    for bad in ("hebrew-v19a-ckpt", "hebrew-v19a-merged", "outputs_v19a",
-                "genizah_focus_v19a", '"v19a-merged"',
-                "hebrew-v19b-ckpt", "hebrew-v19b-merged", "outputs_v19b",
-                "genizah_focus_v19b", '"v19b-merged"'):
+    for bad in ("hebrew-v19b-ckpt", "hebrew-v19b-merged", "outputs_v19a",
+                "outputs_v19b", "outputs_v19c", "genizah_focus_v19a",
+                "genizah_focus_v19b", "genizah_focus_v19c",
+                '"v19b-merged"', '"v19c-merged"'):
         assert bad not in joined, f"prior-version identifier leaked: {bad}"
+    # v19a-ckpt (warm start) and v19c-ckpt (documented alternative) are allowed
 
 
 def test_collator_uses_safe_arguments(code_cells: List[str]) -> None:
@@ -256,15 +268,14 @@ def test_vision_fix_hook(code_cells: List[str]) -> None:
 
 
 def test_gradient_flow_gate_covers_tower_and_merger(code_cells: List[str]) -> None:
-    """The pre-training gate must be per-tensor over 108 tower + 8 merger."""
+    """Per-tensor grad gate over 108 tower + the knob's merger family."""
     cell = _find_cell(code_cells, "loss.backward()")
     assert '".visual.blocks." in n' in cell
     assert f"len(tower_g) == {N_TOWER}" in cell and "min(tower_g) > 0" in cell
-    assert f"len(mrg_g) == {N_MERGER}" in cell and "min(mrg_g) > 0" in cell, \
-        "merger grad gate missing or aggregate-only"
-    assert '".modules_to_save." in n' in cell, \
-        "merger grads must be read from the full-weight clones, not LoRA"
-    assert "max(lang_g) > 0" in cell, "language grads must always be verified"
+    assert "mrg_lora_g" in cell and "mrg_full_g" in cell
+    assert 'MERGER_MODE == "lora"' in cell and 'MERGER_MODE == "full"' in cell
+    assert "not mrg_lora_g and not mrg_full_g" in cell, "frozen-mode guard missing"
+    assert "max(lang_g) > 0" in cell
     assert "zero_grad" in cell
     cells = list(code_cells)
     assert cells.index(cell) < cells.index(_find_cell(cells, "SFTTrainer"))
@@ -280,8 +291,8 @@ def test_throughput_cell_gated_and_before_training(code_cells: List[str]) -> Non
     assert cells.index(cell) < cells.index(_find_cell(cells, "SFTTrainer"))
 
 
-def test_schedule_identical_to_v19b(code_cells: List[str]) -> None:
-    """Same schedule SHAPE as v19b (per-step comparable) + the LR tripwire."""
+def test_schedule_and_tripwire(code_cells: List[str]) -> None:
+    """v1.9-lineage schedule + the full-merger LR tripwire note."""
     cell = _find_cell(code_cells, "SFTTrainer")
     assert "max_steps=2000" in cell
     assert "learning_rate=5e-5" in cell
@@ -295,30 +306,32 @@ def test_ckpt_repo_public_from_start(code_cells: List[str]) -> None:
     assert "hub_private_repo=True" not in cell
 
 
-def test_export_gated_on_tower_and_merger_movement(code_cells: List[str]) -> None:
-    """Export may not run unless the tower moved AND clones left identity."""
+def test_export_gated_per_knob(code_cells: List[str]) -> None:
+    """Export gates must follow the knob; v20a repos named."""
     cell = _find_cell(code_cells, "push_to_hub_merged")
     assert "if TRAIN_VISION_LORA:" in cell
-    assert "if MERGER_FULL_WEIGHT:" in cell
-    assert f"== {N_TOWER}" in cell
-    assert f"len(_moved) == {N_MERGER}" in cell, "clone-movement gate missing"
-    assert "torch.allclose" in cell and "original_module.weight" in cell
-    assert '"isaacmg/qwen3-vl-8b-hebrew-v19c-merged"' in cell
+    assert 'MERGER_MODE == "lora"' in cell and 'MERGER_MODE == "full"' in cell
+    assert f"len(_moved) == {N_MERGER}" in cell
+    assert '"isaacmg/qwen3-vl-8b-hebrew-v20a-merged"' in cell
     assert cell.index(f"len(_moved) == {N_MERGER}") < cell.index("push_to_hub_merged")
 
 
-def test_mixture_ktiv_led_with_replay(code_cells: List[str]) -> None:
-    """KTIV pages must lead; synth3 + talmud replay retained; sums to 1."""
+def test_mixture_ktiv_led_with_grounding_share(code_cells: List[str]) -> None:
+    """KTIV pages lead; grounding rides the GROUNDING_SHARE knob; sums to 1."""
     cell = _find_cell(code_cells, "interleave_datasets(")
-    head = cell.split("interleave_datasets(")[1][:220]
+    head = cell.split("interleave_datasets(")[1][:260]
     assert "ktiv_pages" in head.split(",")[0], "ktiv_pages must be first"
+    assert "grounding]" in head.replace("\n", "").replace(" ", ""), \
+        "grounding dataset missing from the mixture"
+    assert "GROUNDING_SHARE = 0.08" in cell
     assert MIXTURE in cell
-    probs = json.loads(MIXTURE.split("=", 1)[1])
-    assert abs(sum(probs) - 1.0) < 1e-9
+    assert "abs(sum(_probs) - 1.0) < 1e-9" in cell
     assert 'stopping_strategy="all_exhausted"' in cell
     eval_cell = _find_cell(code_cells, "concatenate_datasets")
-    for name in ("ktiv_val", "genizah_val", "talmud_val", "synth3_eval"):
+    for name in ("ktiv2_val", "genizah_val", "talmud_val", "synth3_eval"):
         assert name in eval_cell, f"eval must cover {name}"
+    for task in ('"locate"', '"read_box"', '"layout_qa"'):
+        assert task in eval_cell, f"grounding eval slice missing: {task}"
 
 
 def test_masking_markers_match_real_chat_template(code_cells: List[str]) -> None:
@@ -416,8 +429,8 @@ def _run_resume(code_cells: List[str], files: List[str],
         return files
 
     ns = {"list_repo_files": fake_list,
-          "snapshot_download": lambda *a, **k: "outputs_v19c",
-          "CKPT_REPO": "x/y", "OUT_DIR": "outputs_v19c",
+          "snapshot_download": lambda *a, **k: "outputs_v20a",
+          "CKPT_REPO": "x/y", "OUT_DIR": "outputs_v20a",
           "print": lambda *a, **k: None}
     exec(block, ns)
     return ns["resume_dir"]
@@ -428,7 +441,7 @@ def test_resume_last_checkpoint_contract(code_cells: List[str]) -> None:
     assert _run_resume(code_cells, [], raise_exc=RuntimeError("404")) is None
     assert _run_resume(code_cells, ["README.md"]) is None
     assert (_run_resume(code_cells, ["last-checkpoint/adapter_model.safetensors"])
-            == "outputs_v19c/last-checkpoint")
+            == "outputs_v20a/last-checkpoint")
 
 
 if __name__ == "__main__":
