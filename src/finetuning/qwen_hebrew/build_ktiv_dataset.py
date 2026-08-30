@@ -47,10 +47,19 @@ from typing import Dict, Iterator, List, Optional, Tuple
 from datasets import Dataset, DatasetDict, Features, Image, Value
 from PIL import Image as PILImage
 
+from src.finetuning.qwen_hebrew.ktiv_bundles import (
+    bundle_shape,
+    bundle_sys_num,
+    select_bundles,
+)
 from src.finetuning.qwen_hebrew.ktiv_layout import (
     GAP_TOKEN,
+    _median_height,
+    cluster_lines,
+    extract_words,
     hebrew_letters,
     reconstruct_page,
+    split_columns,
 )
 from src.finetuning.qwen_hebrew.prompts import FRAGMENT_TRANSCRIBE_PROMPT
 
@@ -79,6 +88,17 @@ LINE_ROWS_PER_PAGE = 2
 SECTION_LINES = (4, 8)
 LINE_MIN_WORDS = 4
 LINE_MIN_WIDTH_PX = 600
+# v20 grounding/QA rows (design: docs/v20_grounding_qa_design.md). Emitted only
+# for geometry-mode pages; all coordinates are 0-1000 normalized to the
+# ORIGINAL scan frame (invariant under the aspect-preserving page rescale).
+LOCATE_ROWS_PER_PAGE = 2
+READBOX_ROWS_PER_PAGE = 1
+LAYOUT_QA_ROWS_PER_PAGE = 1
+GROUNDED_PAGE_FRACTION = 0.15
+GROUNDED_PAGE_MAX_LINES = 20
+LOCATE_PHRASE_WORDS = (2, 3)
+LOCATE_MIN_PHRASE_LETTERS = 8
+READBOX_MIN_LETTERS = 15
 
 FEATURES = Features({
     "image": Image(),
@@ -103,6 +123,27 @@ Do NOT correct, restore, or complete from memory. Do not transcribe any other pa
 
 Return ONLY the transcription."""
 
+_LOCATE_PROMPT = ('Locate the exact Hebrew phrase "{phrase}" on this manuscript '
+                  'page. Respond with ONLY a JSON object '
+                  '{{"bbox_2d": [x1, y1, x2, y2]}} giving the phrase\'s bounding '
+                  'box, coordinates normalized to 0-1000. No other text.')
+_READBOX_PROMPT = ('Transcribe ONLY the Hebrew text inside the region bbox_2d = '
+                   '[{x0}, {y0}, {x1}, {y1}] (coordinates normalized 0-1000) on '
+                   'this manuscript page, exactly as written. Mark unclear '
+                   'characters with [?]. Return the text alone, no commentary.')
+_GROUNDED_PROMPT = ('Transcribe this manuscript page line by line. Respond with '
+                    'ONLY a JSON array; each element '
+                    '{"text": "...", "bbox_2d": [x1, y1, x2, y2]} gives one '
+                    'line\'s transcription and its bounding box, coordinates '
+                    'normalized to 0-1000. Preserve reading order.')
+_QA_COLUMNS_PROMPT = ('How many columns of text does this manuscript page have? '
+                      'Answer with the number only.')
+_QA_FIRST_LINE_PROMPT = ('Transcribe ONLY the {which} line of this manuscript '
+                         'page, exactly as written. Return the text alone.')
+_QA_FIND_LINE_PROMPT = ('Which line of this manuscript page contains the phrase '
+                        '"{phrase}"? Return that full line\'s transcription '
+                        'alone, exactly as written.')
+
 _HEB_RE = re.compile(r"[א-ת]")
 
 
@@ -118,27 +159,26 @@ def region_prompt(region: str) -> str:
 
 
 def load_bundles(ktiv_dir: Path) -> List[dict]:
-    """Load API-shape transcription bundles.
+    """Load API-shape transcription bundles, one per manuscript.
 
-    :param ktiv_dir: Directory holding ``*_transcription.json`` files.
+    Re-scrapes leave duplicate ``..._transcription(1).json`` siblings that a
+    plain ``*_transcription.json`` glob would miss entirely; selection is
+    delegated to :func:`ktiv_bundles.select_bundles` (API shape > newer file
+    > richer content), so a re-scraped word-box bundle supersedes its older
+    DOM-flat sibling.
+
+    :param ktiv_dir: Directory holding ``*_transcription*.json`` files.
     :type ktiv_dir: Path
-    :return: Bundles with ``sys_num`` attached, DOM-shape bundles excluded.
+    :return: Winning bundles with ``sys_num`` attached, sorted by sys_num;
+        manuscripts whose best bundle is DOM-shape are excluded.
     :rtype: List[dict]
     """
     out = []
-    for path in sorted(glob.glob(str(ktiv_dir / "*_transcription.json"))):
-        try:
-            with open(path, encoding="utf-8") as fh:
-                doc = json.load(fh)
-        except (json.JSONDecodeError, OSError):
+    for sys_num, (path, doc) in sorted(select_bundles(ktiv_dir).items()):
+        if bundle_shape(doc) != "api":
             continue
-        if doc.get("source") != "nli_ktiv_viewer":
-            continue
-        m = re.search(r"(\d{18})", doc.get("doc_id") or os.path.basename(path))
-        if not m:
-            continue
-        doc["sys_num"] = m.group(1)
-        doc["bundle_file"] = os.path.basename(path)
+        doc["sys_num"] = bundle_sys_num(doc, path) or sys_num
+        doc["bundle_file"] = path.name
         out.append(doc)
     return out
 
@@ -371,6 +411,233 @@ def crop_lines(im: PILImage.Image, col_lines: List[Dict], start: int, k: int,
                     int(min(x1, im.width)), int(min(y1, im.height))))
 
 
+def norm_box(box: Tuple[float, float, float, float], width: int,
+             height: int) -> List[int]:
+    """Normalize a pixel box to 0-1000 integer coordinates.
+
+    :param box: (x0, y0, x1, y1) in the original scan frame.
+    :type box: Tuple[float, float, float, float]
+    :param width: Original image width in pixels.
+    :type width: int
+    :param height: Original image height in pixels.
+    :type height: int
+    :return: ``[x0, y0, x1, y1]`` ints in 0-1000.
+    :rtype: List[int]
+    """
+    x0, y0, x1, y1 = box
+    return [round(1000 * x0 / width), round(1000 * y0 / height),
+            round(1000 * x1 / width), round(1000 * y1 / height)]
+
+
+def locate_candidates(items: List[dict], page_text: str) -> List[Tuple[str, Tuple]]:
+    """Phrases of consecutive words that are letter-unique on the page.
+
+    Works from raw word geometry (fragments allowed — uniqueness is judged on
+    the letters alone, so annotation word-splitting cannot break the match).
+
+    :param items: AnnotationPage items of the page.
+    :type items: List[dict]
+    :param page_text: The page's reconstructed GT text.
+    :type page_text: str
+    :return: ``(phrase, pixel_box)`` pairs, at most one per line.
+    :rtype: List[Tuple[str, Tuple]]
+    """
+    words = [w for w in extract_words(items)
+             if not w["gap"] and len(_HEB_RE.findall(w["text"])) >= 2]
+    if not words:
+        return []
+    page_letters = "".join(_HEB_RE.findall(page_text))
+    lh = _median_height(words)
+    out = []
+    for col in split_columns(words, lh):
+        for line in cluster_lines(col, lh):
+            ws = [w for w in line if not w["gap"]
+                  and len(_HEB_RE.findall(w["text"])) >= 2]
+            found = None
+            for i in range(len(ws) - 1):
+                for span in (max(LOCATE_PHRASE_WORDS), min(LOCATE_PHRASE_WORDS)):
+                    seg = ws[i:i + span]
+                    if len(seg) < span:
+                        continue
+                    letters = "".join(_HEB_RE.findall("".join(w["text"] for w in seg)))
+                    if len(letters) < LOCATE_MIN_PHRASE_LETTERS \
+                            or page_letters.count(letters) != 1:
+                        continue
+                    box = (min(w["box"][0] for w in seg), min(w["box"][1] for w in seg),
+                           max(w["box"][2] for w in seg), max(w["box"][3] for w in seg))
+                    found = (" ".join(w["text"] for w in seg), box)
+                    break
+                if found:
+                    break
+            if found:
+                out.append(found)
+    return out
+
+
+def grounding_rows(page: Dict, items: List[dict], page_path: Path, stem: str,
+                   orig_w: int, orig_h: int, page_w: int, page_h: int,
+                   rng: random.Random) -> List[Dict]:
+    """Grounding + layout-QA rows for one geometry-mode page.
+
+    Emits up to :data:`LOCATE_ROWS_PER_PAGE` ``locate`` rows,
+    :data:`READBOX_ROWS_PER_PAGE` ``read_box`` rows, one ``layout_qa`` row,
+    and (for a :data:`GROUNDED_PAGE_FRACTION` sample of short-enough pages)
+    one ``grounded_page`` row.  Pages reconstructed without trustworthy
+    geometry (served-breakline fallback) emit nothing.
+
+    :param page: Output of :func:`reconstruct_page`.
+    :type page: Dict
+    :param items: The page's AnnotationPage items (word geometry source).
+    :type items: List[dict]
+    :param page_path: Saved page JPEG path.
+    :type page_path: Path
+    :param stem: Row stem prefix.
+    :type stem: str
+    :param orig_w: ORIGINAL scan width (the boxes' frame).
+    :type orig_w: int
+    :param orig_h: Original scan height.
+    :type orig_h: int
+    :param page_w: Saved (rescaled) page image width.
+    :type page_w: int
+    :param page_h: Saved page image height.
+    :type page_h: int
+    :param rng: Seeded RNG.
+    :type rng: random.Random
+    :return: Dataset rows.
+    :rtype: List[Dict]
+    """
+    if page.get("mode") != "geometry":
+        return []
+    rows: List[Dict] = []
+    cands = locate_candidates(items, page["text"])
+    rng.shuffle(cands)
+    for j, (phrase, box) in enumerate(cands[:LOCATE_ROWS_PER_PAGE]):
+        answer = json.dumps({"bbox_2d": norm_box(box, orig_w, orig_h)})
+        rows.append(_row(page_path, _LOCATE_PROMPT.format(phrase=phrase), answer,
+                         "locate", "phrase", f"{stem}_loc{j}", page_w, page_h))
+    readable = [ln for ln in page["lines"]
+                if hebrew_letters(ln["text"]) >= READBOX_MIN_LETTERS
+                and GAP_TOKEN not in ln["text"]]
+    for j, ln in enumerate(rng.sample(readable,
+                                      min(READBOX_ROWS_PER_PAGE, len(readable)))):
+        b = norm_box(ln["box"], orig_w, orig_h)
+        rows.append(_row(page_path,
+                         _READBOX_PROMPT.format(x0=b[0], y0=b[1], x1=b[2], y1=b[3]),
+                         ln["text"], "read_box", "line", f"{stem}_rb{j}",
+                         page_w, page_h))
+    qa = _layout_qa_row(page, cands, page_path, stem, page_w, page_h, rng)
+    if qa is not None:
+        rows.append(qa)
+    if 4 <= len(page["lines"]) <= GROUNDED_PAGE_MAX_LINES \
+            and rng.random() < GROUNDED_PAGE_FRACTION:
+        payload = [{"text": ln["text"],
+                    "bbox_2d": norm_box(ln["box"], orig_w, orig_h)}
+                   for ln in page["lines"]]
+        rows.append(_row(page_path, _GROUNDED_PROMPT,
+                         json.dumps(payload, ensure_ascii=False),
+                         "grounded_page", "page", f"{stem}_grounded",
+                         page_w, page_h))
+    return rows
+
+
+def _layout_qa_row(page: Dict, locate_cands: List[Tuple[str, Tuple]],
+                   page_path: Path, stem: str, page_w: int, page_h: int,
+                   rng: random.Random) -> Optional[Dict]:
+    """One templated layout-QA row (answers derivable from reconstruction).
+
+    :param page: Output of :func:`reconstruct_page`.
+    :type page: Dict
+    :param locate_cands: Unique phrases (reused for the find-line template).
+    :type locate_cands: List[Tuple[str, Tuple]]
+    :param page_path: Saved page JPEG path.
+    :type page_path: Path
+    :param stem: Row stem prefix.
+    :type stem: str
+    :param page_w: Saved page image width.
+    :type page_w: int
+    :param page_h: Saved page image height.
+    :type page_h: int
+    :param rng: Seeded RNG.
+    :type rng: random.Random
+    :return: One row, or None when no template applies.
+    :rtype: Optional[Dict]
+    """
+    templates = ["columns", "edge_line"]
+    if locate_cands:
+        templates.append("find_line")
+    kind = rng.choice(templates)
+    if kind == "columns":
+        q, a = _QA_COLUMNS_PROMPT, str(len(page["columns"]))
+    elif kind == "edge_line":
+        which = rng.choice(("first", "last"))
+        line = page["lines"][0 if which == "first" else -1]
+        q, a = _QA_FIRST_LINE_PROMPT.format(which=which), line["text"]
+    else:
+        phrase, box = rng.choice(locate_cands)
+        cy = (box[1] + box[3]) / 2
+        host = min(page["lines"],
+                   key=lambda ln: abs((ln["box"][1] + ln["box"][3]) / 2 - cy)
+                   if ln["box"][0] <= (box[0] + box[2]) / 2 <= ln["box"][2] else 1e12)
+        letters = "".join(_HEB_RE.findall(phrase))
+        if letters not in "".join(_HEB_RE.findall(host["text"])):
+            return None
+        q, a = _QA_FIND_LINE_PROMPT.format(phrase=phrase), host["text"]
+    return _row(page_path, q, a, "layout_qa", kind, f"{stem}_qa", page_w, page_h)
+
+
+def exclude_benchmark_manuscripts(bundles: List[dict],
+                                  ktiv_dir: Path) -> Tuple[List[dict], Dict]:
+    """Drop manuscripts that belong to any eval benchmark.
+
+    Two id-level layers on top of the text-shingle check in
+    :func:`build_rows` (which catches page-text overlap but not a benchmark
+    manuscript's OTHER pages — same-hand leakage):
+
+    * every religious-benchmark manuscript, by exact sys_num;
+    * every manuscript whose loose shelfmark key appears in the frozen
+      PGP-131 benchmark (same physical fragment reachable through two
+      sources), via :class:`DecontamGate`'s inventory.
+
+    :param bundles: API-shape bundles with ``sys_num`` attached.
+    :type bundles: List[dict]
+    :param ktiv_dir: KTIV raw directory (metadata JSONs for shelfmarks).
+    :type ktiv_dir: Path
+    :return: (kept bundles, counts-by-reason dict).
+    :rtype: Tuple[List[dict], Dict]
+    """
+    from src.datasets.evaluations.helper_eval_scripts.decontam_gate import DecontamGate
+
+    religious_sys = set()
+    if RELIGIOUS_BENCH_PATH.exists():
+        religious_sys = {d["sys_num"] for d in
+                         json.load(open(RELIGIOUS_BENCH_PATH))["docs"]}
+    shelf_by_sys: Dict[str, str] = {}
+    for f in ktiv_dir.glob("ktiv_*.json"):
+        if "_transcription" in f.name:
+            continue
+        try:
+            meta = json.loads(f.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+        s = str(meta.get("sys_num")
+                or (meta.get("shelfmarks") or {}).get("system_no") or "")
+        sm = meta.get("shelf_mark") or (meta.get("shelfmarks") or {}).get("shelf_mark") or ""
+        if s and sm and s not in shelf_by_sys:
+            shelf_by_sys[s] = sm
+    gate = DecontamGate()
+    kept, excl = [], Counter()
+    for doc in bundles:
+        if doc["sys_num"] in religious_sys:
+            excl["religious_benchmark_ms"] += 1
+            continue
+        key = gate.loose_key(shelf_by_sys.get(doc["sys_num"], ""))
+        if key and key in gate.bench_keys:
+            excl["pgp131_shelfmark"] += 1
+            continue
+        kept.append(doc)
+    return kept, dict(excl)
+
+
 def build_rows(bundles: List[dict], ktiv_dir: Path, images_dir: Path,
                shingles: set, rng: random.Random, limit: int = 0) -> Tuple[List[Dict], Dict]:
     """Process bundles into dataset rows plus a stats dict.
@@ -399,22 +666,23 @@ def build_rows(bundles: List[dict], ktiv_dir: Path, images_dir: Path,
         sys_num = doc["sys_num"]
         pages = []
         for p in doc.get("pages") or []:
-            page = reconstruct_page(((p.get("annotation_page") or {}).get("items")) or [])
+            items = ((p.get("annotation_page") or {}).get("items")) or []
+            page = reconstruct_page(items)
             reason = page_gate(page) if page["lines"] else "empty"
             stats[f"page_{reason or 'pass'}"] += 1
             if reason:
                 continue
-            pages.append((p.get("fl") or "", page))
+            pages.append((p.get("fl") or "", page, items))
         if not pages:
             continue
         # Decontamination at manuscript level.
         if shingles and any(shingle_hits(pg["text"], shingles) >= DECONTAM_MIN_HITS
-                            for _, pg in pages):
+                            for _, pg, _i in pages):
             contaminated.append(sys_num)
             stats["ms_contaminated"] += 1
             continue
         stats["ms_kept"] += 1
-        for fl, page in pages:
+        for fl, page, items in pages:
             found = find_zip_member(ktiv_dir, sys_num, fl)
             if not found:
                 stats["page_no_image"] += 1
@@ -441,6 +709,12 @@ def build_rows(bundles: List[dict], ktiv_dir: Path, images_dir: Path,
                              "fragment_transcribe", "ktiv_page", stem,
                              page_im.width, page_im.height))
             stats["rows_page"] += 1
+
+            for g_row in grounding_rows(page, items, page_path, stem,
+                                        im.width, im.height,
+                                        page_im.width, page_im.height, rng):
+                rows.append(g_row)
+                stats[f"rows_{g_row['task']}"] += 1
 
             # Column tasks are the most valuable region rows and only exist on
             # multi-column pages, so they are always emitted; the remaining
@@ -541,9 +815,12 @@ def build(ktiv_dir: Path, images_dir: Path, output_dir: Path, limit: int = 0,
     """
     bundles = load_bundles(ktiv_dir)
     logger.info("API-shape bundles: %d", len(bundles))
-    shingles = benchmark_shingles(BENCH_PATH)
+    bundles, excl = exclude_benchmark_manuscripts(bundles, ktiv_dir)
+    logger.info("benchmark exclusions: %s", excl)
+    shingles = benchmark_shingles(BENCH_PATH) | benchmark_shingles(RELIGIOUS_BENCH_PATH)
     rows, stats = build_rows(bundles, ktiv_dir, images_dir, shingles,
                              random.Random(SPLIT_SEED), limit)
+    stats["benchmark_exclusions"] = excl
     train, val = split_by_manuscript(rows, VAL_FRACTION, SPLIT_SEED)
     stats.update(n_rows=len(rows), n_train=len(train), n_val=len(val),
                  letters_page_rows=sum(hebrew_letters(r["answer"]) for r in rows

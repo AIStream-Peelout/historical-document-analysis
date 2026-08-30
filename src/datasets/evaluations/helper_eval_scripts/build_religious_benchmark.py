@@ -40,6 +40,7 @@ from PIL import Image
 Image.MAX_IMAGE_PIXELS = None   # KTIV native scans can exceed PIL's bomb limit
 
 from src.datasets.evaluations.helper_eval_scripts.decontam_gate import DecontamGate
+from src.finetuning.qwen_hebrew.ktiv_bundles import pick_best_bundle
 from src.finetuning.qwen_hebrew.ktiv_layout import reconstruct_page, hebrew_letters
 
 _REPO = Path(__file__).resolve().parents[4]
@@ -54,35 +55,41 @@ TALMUD_PAGE_BUDGET = 140    # all non-Talmud pages kept; Talmud capped here
 
 
 def _bundle_for(sys_num: str) -> dict:
-    """Load the transcription bundle for a sys_num (richest if duplicated).
+    """Load the transcription bundle for a sys_num.
+
+    Duplicate scrape files are resolved by the shared policy in
+    ``ktiv_bundles`` (API shape > newer file > richer content), so a
+    re-scraped word-box bundle supersedes its older DOM-flat sibling.
 
     :param sys_num: NLI system number.
     :type sys_num: str
     :return: Parsed bundle dict, or {} if none.
     :rtype: dict
     """
-    best, best_n = {}, -1
-    for f in KT.glob(f"*{sys_num}*_transcription*.json"):
-        try:
-            d = json.loads(f.read_text())
-        except (json.JSONDecodeError, OSError):
-            continue
-        n = sum(len((p.get("text") or "")) for p in d.get("pages") or []) or \
-            sum(len((p.get("annotation_page") or {}).get("items") or []) for p in d.get("pages") or [])
-        if n > best_n:
-            best, best_n = d, n
-    return best
+    winner = pick_best_bundle(KT.glob(f"*{sys_num}*_transcription*.json"))
+    return winner[1] if winner else {}
 
 
-def _meta_for(sys_num: str) -> dict:
-    """Load a metadata record for a sys_num (for shelfmark + genre).
+_META_INDEX: dict = {}
 
-    :param sys_num: NLI system number.
-    :type sys_num: str
-    :return: Metadata dict, or {}.
+
+def _ktiv_meta_index() -> dict:
+    """Index KTIV metadata files by their INTERNAL sys_num (built once).
+
+    Metadata JSONs are named by shelfmark (e.g. ``ktiv_Cambridge_..._T-S_K_25_151.json``)
+    while only transcription/image files carry the sys_num in their NAME, so a
+    filename glob can never find metadata for a sys_num — the sys_num lives
+    inside the JSON.  This scans every non-transcription ``ktiv_*.json`` once
+    and maps ``sys_num -> parsed metadata dict``, preferring the record with a
+    non-empty ``shelf_mark`` (then the larger file) when duplicated.
+
+    :return: Mapping of sys_num to metadata dict.
     :rtype: dict
     """
-    for f in KT.glob(f"*{sys_num}*.json"):
+    if _META_INDEX:
+        return _META_INDEX
+    best_rank: dict = {}
+    for f in KT.glob("ktiv_*.json"):
         if f.name.endswith("_transcription.json") or "_transcription(" in f.name:
             continue
         try:
@@ -90,9 +97,26 @@ def _meta_for(sys_num: str) -> dict:
         except (json.JSONDecodeError, OSError):
             continue
         s = d.get("sys_num") or (d.get("shelfmarks") or {}).get("system_no")
-        if str(s) == sys_num:
-            return d
-    return {}
+        if not s:
+            continue
+        s = str(s)
+        sm = d.get("shelf_mark") or (d.get("shelfmarks") or {}).get("shelf_mark") or ""
+        rank = (bool(sm), f.stat().st_size)
+        if s not in best_rank or rank > best_rank[s]:
+            best_rank[s] = rank
+            _META_INDEX[s] = d
+    return _META_INDEX
+
+
+def _meta_for(sys_num: str) -> dict:
+    """Load the metadata record for a sys_num (for shelfmark + genre).
+
+    :param sys_num: NLI system number.
+    :type sys_num: str
+    :return: Metadata dict, or {}.
+    :rtype: dict
+    """
+    return _ktiv_meta_index().get(str(sys_num), {})
 
 
 def _dom_page_text(page: dict) -> str:

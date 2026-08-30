@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report every shelfmark in Elasticsearch that has no images, grouped by collection.
 
-The merged Genizah index (``genizah_merged_v2``) unions PGP + FJP + KTIV
+The merged Genizah index (``genizah_merged_v4``) unions PGP + FJP + KTIV
 shelfmarks, but only records with an FJP image filename or a downloaded KTIV
 scan carry ``image_urls``. Everything else is a fragment we hold *metadata* for
 and no picture of — the KTIV scrape worklist.
@@ -43,7 +43,7 @@ from src.datasets.indexing.elastic_index_genizah import es_config_from_env
 from src.datasets.merging.institution_tokens import _REGISTRY, institution_token, resolve_token
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-DEFAULT_INDEX = "genizah_merged_v2"
+DEFAULT_INDEX = "genizah_merged_v4"
 DEFAULT_OUT_DIR = _REPO_ROOT / "src/datasets/raw_data/cairo_genizah/merged"
 PAGE_SIZE = 1000
 
