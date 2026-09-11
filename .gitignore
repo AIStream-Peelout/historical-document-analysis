@@ -37,3 +37,6 @@ transcription_raw_outputs_archive_*/
 
 # built grounding viewer (13 MB, embeds page images) — rebuild with viewer/build_viewer.py
 src/datasets/evaluations/grounding_eval/viewer/grounding_viewer.html
+
+# the Space needs its pip manifest despite the blanket *.txt rule above
+!spaces/genizah_reader/requirements.txt
