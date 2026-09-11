@@ -114,7 +114,9 @@ def main() -> int:
     deadline = time.time() + a.hours * 3600
     while True:
         try:
-            run = find_run(api, project, a.run)
+            # a fresh Api per poll: Api.runs() caches the project's run list per instance, so a run
+            # created after the first poll would never be seen by the original instance
+            run = find_run(wandb.Api(timeout=60), project, a.run)
             train, evals = _points(run, "train/loss"), _points(run, "eval/loss")
         except LookupError as e:
             print(f"{e} — waiting", flush=True)
