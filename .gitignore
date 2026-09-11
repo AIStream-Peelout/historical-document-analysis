@@ -44,3 +44,6 @@ src/datasets/evaluations/grounding_eval/viewer/grounding_viewer.html
 # article export scratch (headless Firefox profile, superseded exports)
 article/build/ffprofile/
 article/build/assets_prev_*/
+
+# column-transcription probe raw cache (crops + per-column decodes)
+src/datasets/evaluations/transcription_raw_outputs_probe_columns/
