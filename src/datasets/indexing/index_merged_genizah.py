@@ -70,7 +70,7 @@ def iter_merged_documents(
 
 def index_merged(
     merged_path: str = DEFAULT_MERGED,
-    index_name: str = "genizah_merged_v4",
+    index_name: str = "genizah_merged_v5",
     text_only: bool = True,
     batch_size: int = 100,
     limit: Optional[int] = None,
