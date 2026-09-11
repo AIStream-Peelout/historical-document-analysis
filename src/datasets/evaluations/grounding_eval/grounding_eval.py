@@ -20,6 +20,11 @@ Usage:
   --build            write grounding_eval.jsonl (CPU only)
   --run MODE         run v19a on one mode (locate|read_box|grounded)
   --limit N          cap queries
+  --no-results       don't overwrite the canonical *_results.json
+  --preds-dir DIR    per-query dump dir (raw output + parsed boxes; default preds/)
+
+Every --run also dumps ``preds/{mode}_{model}.json`` (raw model output, parsed
+boxes/text, per-query scores) — the input of ``viewer/build_viewer.py``.
 """
 import argparse
 import asyncio
@@ -31,6 +36,7 @@ import re
 import statistics
 import sys
 import zipfile
+from datetime import datetime
 from pathlib import Path
 
 REPO = Path("/Users/isaac/Documents/GitHub/historical-document-analysis")
@@ -47,7 +53,7 @@ from src.datasets.evaluations.metrics import cer_pair  # noqa: E402
 BENCH = REPO / "src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1"
 KT = REPO / "src/datasets/raw_data/cairo_genizah/ktiv"
 OUT = Path(__file__).parent / "grounding_eval.jsonl"
-MODEL = "qwen3-vl-8b-heb-v19a-step1300"
+MODEL = "qwen3-vl-8b-heb-v19a-step1300"   # default; override with --model
 _HEB = re.compile(r"[א-ת]")
 _JSON_BOX = re.compile(r"\[\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\]")
 
@@ -169,13 +175,26 @@ def build(n_pages=24, seed=20260830):
     print(f"built {len(rows)} queries over {pages_used} pages: {by}")
 
 
-async def run(mode, limit):
-    """Run v19a on one mode and score."""
-    from src.models.ocr.lms_transcriber import transcribe_with_lm_studio
+async def run(mode, limit, model=None, write_results=True, preds_dir=None):
+    """Run one model on one mode, score it, and persist per-query predictions.
+
+    :param mode: ``locate`` | ``read_box`` | ``grounded``.
+    :param limit: Cap on the number of queries (0 = all).
+    :param model: LM Studio model key (default ``MODEL``).
+    :param write_results: Write the aggregate ``*_results.json`` next to this
+        file. Pass False for re-decodes that must not overwrite the canonical
+        scores (e.g. decoding for the viewer).
+    :param preds_dir: Directory for the per-query prediction dump (raw model
+        output + parsed boxes/text + scores); default ``preds/`` next to this
+        file. The grounding viewer is built from these dumps.
+    """
+    model = model or MODEL
+    preds_dir = Path(preds_dir) if preds_dir else Path(__file__).with_name("preds")
+    from src.models.ocr.lms_transcriber import DEFAULT_CONFIG, transcribe_with_lm_studio
     rows = [json.loads(l) for l in open(OUT)]
     rows = [r for r in rows if r["mode"] == mode][:limit or None]
-    print(f"{mode}: {len(rows)} queries vs {MODEL}")
-    res = []
+    print(f"{mode}: {len(rows)} queries vs {model}")
+    res, preds = [], []
     for i, r in enumerate(rows, 1):
         if mode == "locate":
             prompt = P_LOCATE.format(phrase=r["phrase"])
@@ -184,8 +203,11 @@ async def run(mode, limit):
             prompt = P_READBOX.format(x0=b[0], y0=b[1], x1=b[2], y1=b[3])
         else:
             prompt = P_GROUNDED
-        out = await transcribe_with_lm_studio(MODEL, r["image"], prompt,
+        out = await transcribe_with_lm_studio(model, r["image"], prompt,
                                               max_tokens=3500 if mode == "grounded" else 300)
+        pred = {k: v for k, v in r.items() if k != "mode"}
+        pred.update(idx=i - 1, raw=out, ok=False)
+        preds.append(pred)
         if not out or not out.strip():
             res.append(dict(ok=False))
             continue
@@ -196,34 +218,47 @@ async def run(mode, limit):
             pb = [int(v) for v in m.groups()]
             g = r["gt_box"]
             cx, cy = (pb[0] + pb[2]) / 2, (pb[1] + pb[3]) / 2
-            res.append(dict(ok=True, iou=iou(pb, g),
-                            hit=int(g[0] <= cx <= g[2] and g[1] <= cy <= g[3])))
+            score = dict(ok=True, iou=iou(pb, g),
+                         hit=int(g[0] <= cx <= g[2] and g[1] <= cy <= g[3]))
+            res.append(score)
+            pred.update(score, pred_box=pb)
         elif mode == "read_box":
             cer, _ = cer_pair(out, r["gt_text"])
             # coverage: is the answer roughly this line and not the whole page?
-            res.append(dict(ok=True, cer=cer,
-                            len_ratio=len(_HEB.findall(out)) / max(1, len(_HEB.findall(r["gt_text"])))))
+            score = dict(ok=True, cer=cer,
+                         len_ratio=len(_HEB.findall(out)) / max(1, len(_HEB.findall(r["gt_text"]))))
+            res.append(score)
+            pred.update(score, pred_text=out.strip())
         else:
             try:
                 arr = json.loads(re.search(r"\[.*\]", out, re.S).group(0))
                 assert isinstance(arr, list)
             except Exception:
                 res.append(dict(ok=False)); continue
-            pairs = []
+            pairs, lines = [], []
             for pl in arr:
-                t, b = str(pl.get("text", "")), pl.get("bbox_2d")
-                if not t or not (isinstance(b, list) and len(b) == 4):
+                if not isinstance(pl, dict):
                     continue
-                best = max(r["gt_lines"], key=lambda g:
-                           difflib.SequenceMatcher(a=t, b=g["text"]).ratio())
+                t, b = str(pl.get("text", "")), pl.get("bbox_2d")
+                if not t or not (isinstance(b, list) and len(b) == 4
+                                 and all(isinstance(v, (int, float)) for v in b)):
+                    continue
+                best_i, best = max(enumerate(r["gt_lines"]), key=lambda g:
+                                   difflib.SequenceMatcher(a=t, b=g[1]["text"]).ratio())
                 sim = difflib.SequenceMatcher(a=t, b=best["text"]).ratio()
+                line = dict(text=t, box=[float(v) for v in b], gt_idx=best_i,
+                            sim=round(sim, 4), matched=sim >= 0.5)
                 if sim >= 0.5:
-                    pairs.append((iou([float(v) for v in b], best["box"]),
-                                  cer_pair(t, best["text"])[0]))
-            res.append(dict(ok=True, n_lines=len(arr), matched=len(pairs),
-                            gt_n=len(r["gt_lines"]),
-                            miou=statistics.median([p[0] for p in pairs]) if pairs else 0.0,
-                            mcer=statistics.median([p[1] for p in pairs]) if pairs else None))
+                    li, lc = iou(line["box"], best["box"]), cer_pair(t, best["text"])[0]
+                    pairs.append((li, lc))
+                    line.update(iou=li, cer=lc)
+                lines.append(line)
+            score = dict(ok=True, n_lines=len(arr), matched=len(pairs),
+                         gt_n=len(r["gt_lines"]),
+                         miou=statistics.median([p[0] for p in pairs]) if pairs else 0.0,
+                         mcer=statistics.median([p[1] for p in pairs]) if pairs else None)
+            res.append(score)
+            pred.update(score, pred_lines=lines)
         if i % 10 == 0:
             print(f"  {i}/{len(rows)}", flush=True)
     ok = [r for r in res if r.get("ok")]
@@ -239,8 +274,17 @@ async def run(mode, limit):
         print(f"   lines matched {sum(r['matched'] for r in ok)}/{sum(r['gt_n'] for r in ok)}  "
               f"median line-IoU {statistics.median(r['miou'] for r in ok):.3f}  "
               f"median line-CER {statistics.median(r['mcer'] for r in ok if r['mcer'] is not None):.3f}")
-    Path(__file__).with_name(f"grounding_eval_{mode}_results.json").write_text(
-        json.dumps(res, ensure_ascii=False, indent=1))
+    preds_dir.mkdir(exist_ok=True)
+    pfile = preds_dir / f"{mode}_{model}.json"
+    pfile.write_text(json.dumps(dict(
+        model=model, mode=mode, n=len(rows),
+        decoded_at=datetime.now().isoformat(timespec="seconds"),
+        temperature=DEFAULT_CONFIG.temperature, preds=preds), ensure_ascii=False, indent=1))
+    print(f"   preds -> {pfile}")
+    if write_results:
+        suffix = "" if model == MODEL else f"_{model.rsplit(chr(45), 2)[-2]}_{model.rsplit(chr(45), 1)[-1]}"
+        Path(__file__).with_name(f"grounding_eval_{mode}{suffix}_results.json").write_text(
+            json.dumps(res, ensure_ascii=False, indent=1))
 
 
 if __name__ == "__main__":
@@ -248,8 +292,13 @@ if __name__ == "__main__":
     ap.add_argument("--build", action="store_true")
     ap.add_argument("--run", choices=("locate", "read_box", "grounded"))
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--model", default=None)
+    ap.add_argument("--no-results", action="store_true",
+                    help="skip writing *_results.json (keeps the canonical scores untouched)")
+    ap.add_argument("--preds-dir", default=None,
+                    help="where to write the per-query prediction dump (default: preds/)")
     args = ap.parse_args()
     if args.build:
         build()
     if args.run:
-        asyncio.run(run(args.run, args.limit))
+        asyncio.run(run(args.run, args.limit, args.model, not args.no_results, args.preds_dir))

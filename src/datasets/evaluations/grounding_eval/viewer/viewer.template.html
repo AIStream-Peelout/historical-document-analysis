@@ -1,0 +1,704 @@
+<meta charset="utf-8">
+<title>Genizah Grounding Viewer</title>
+<meta name="description" content="Predicted vs ground-truth bounding boxes on Cairo Genizah pages for the Qwen3-VL Hebrew grounding eval.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Frank+Ruhl+Libre:wght@400;500&display=swap">
+<style>
+:root{
+  --bg:#eceef2; --panel:#ffffff; --panel-2:#f4f5f8; --line:#d8dce4; --ink:#1b2130; --muted:#5d6676; --faint:#8a93a4;
+  --accent:#1f5fbf; --accent-ink:#ffffff; --sel:#fff3bf; --sel-line:#e0a800;
+  --gt:#0b9c7c; --m0:#d6336c; --m1:#e8590c; --m2:#6741d9; --m3:#1c7ed6;
+  --overlap:#5c3d99; --good:#2b8a3e; --warn:#e67700; --bad:#c92a2a;
+  --stage:#20242c; --stage-ink:#e6e8ee;
+  --shadow:0 1px 2px rgba(20,28,45,.08),0 6px 18px rgba(20,28,45,.06);
+  --sans:"IBM Plex Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,monospace;
+  --heb:"Frank Ruhl Libre","David","Times New Roman",serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#12151b; --panel:#191d25; --panel-2:#20252f; --line:#2d3441; --ink:#e7eaf0; --muted:#a4adbe; --faint:#6e778a;
+    --accent:#6ea8ff; --accent-ink:#0b1220; --sel:#3b3418; --sel-line:#e8b923;
+    --gt:#3ddbb6; --m0:#ff6b9d; --m1:#ffa94d; --m2:#a58bff; --m3:#4dabf7;
+    --overlap:#b197fc; --good:#51cf66; --warn:#ffa94d; --bad:#ff6b6b;
+    --stage:#0c0f14; --stage-ink:#d7dbe3;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.3);
+    color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#12151b; --panel:#191d25; --panel-2:#20252f; --line:#2d3441; --ink:#e7eaf0; --muted:#a4adbe; --faint:#6e778a;
+  --accent:#6ea8ff; --accent-ink:#0b1220; --sel:#3b3418; --sel-line:#e8b923;
+  --gt:#3ddbb6; --m0:#ff6b9d; --m1:#ffa94d; --m2:#a58bff; --m3:#4dabf7;
+  --overlap:#b197fc; --good:#51cf66; --warn:#ffa94d; --bad:#ff6b6b;
+  --stage:#0c0f14; --stage-ink:#d7dbe3;
+  --shadow:0 1px 2px rgba(0,0,0,.4),0 6px 18px rgba(0,0,0,.3);
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.45 var(--sans);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+h1,h2,h3{margin:0;font-weight:600;text-wrap:balance}
+h2{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted)}
+button{font:inherit;color:inherit;background:none;border:0;padding:0;cursor:pointer}
+button:focus-visible,input:focus-visible,[tabindex]:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.heb{font-family:var(--heb);direction:rtl;unicode-bidi:plaintext;font-size:18px;line-height:1.5}
+.muted{color:var(--muted)} .faint{color:var(--faint)}
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;font-size:12.5px}
+
+/* ---------- header ---------- */
+.top{display:flex;align-items:center;gap:22px;padding:9px 16px;background:var(--panel);border-bottom:1px solid var(--line);flex:0 0 auto;min-height:56px}
+.brand{display:flex;flex-direction:column;gap:1px;flex:0 0 auto}
+.brand h1{font-size:16px;letter-spacing:-.01em}
+.brand .sub{font-size:12px;color:var(--muted)}
+.stats{display:flex;gap:10px;flex-wrap:wrap;align-items:center;min-width:0}
+.stat{display:flex;flex-direction:column;gap:2px;padding:6px 10px 6px 12px;border:1px solid var(--line);border-left:4px solid var(--c,var(--accent));border-radius:4px;background:var(--panel-2)}
+.stat .who{font-size:11.5px;font-weight:600;color:var(--c,var(--ink))}
+.stat .vals{display:flex;gap:12px;flex-wrap:wrap}
+.stat .v{display:flex;flex-direction:column;line-height:1.15}
+.stat .v b{font-family:var(--mono);font-weight:500;font-size:14px;font-variant-numeric:tabular-nums}
+.stat .v span{font-size:10.5px;color:var(--muted)}
+.stat .canon{font-size:10.5px;color:var(--faint);font-family:var(--mono)}
+.top .help{margin-left:auto;flex:0 0 auto;font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:5px 9px}
+.top .help:hover{background:var(--panel-2)}
+
+/* ---------- shell ---------- */
+.app{flex:1 1 auto;display:grid;grid-template-columns:292px minmax(0,1fr) 400px;min-height:0}
+.rail,.inspector{background:var(--panel);overflow:auto;min-height:0;display:flex;flex-direction:column}
+.rail{border-right:1px solid var(--line)} .inspector{border-left:1px solid var(--line)}
+.block{padding:12px 14px;border-bottom:1px solid var(--line)}
+.block h2{margin-bottom:8px}
+.stage{display:flex;flex-direction:column;min-width:0;min-height:0;background:var(--stage)}
+
+/* models */
+.model{display:flex;align-items:flex-start;gap:9px;padding:6px 0}
+.model input{margin:3px 0 0;accent-color:var(--c)}
+.model .sw{width:12px;height:12px;border-radius:2px;background:var(--c);margin-top:4px;flex:0 0 auto}
+.model .name{font-weight:600;font-size:13.5px;color:var(--c)}
+.model .meta{font-size:11.5px;color:var(--muted);font-family:var(--mono)}
+.model .modes{display:flex;gap:4px;margin-top:3px;flex-wrap:wrap}
+.model .modes i{font-style:normal;font-size:10px;padding:1px 5px;border-radius:3px;background:var(--panel-2);border:1px solid var(--line);color:var(--muted)}
+.model .modes i.on{color:var(--c);border-color:var(--c)}
+
+/* segmented */
+.seg{display:flex;border:1px solid var(--line);border-radius:5px;overflow:hidden}
+.seg button{flex:1;padding:7px 4px;font-size:12.5px;font-weight:500;color:var(--muted);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;gap:1px;text-align:center;line-height:1.2}
+.seg button:last-child{border-right:0}
+.seg button small{font-family:var(--mono);font-size:10.5px;color:var(--faint)}
+.seg button[aria-pressed="true"]{background:var(--accent);color:var(--accent-ink)}
+.seg button[aria-pressed="true"] small{color:var(--accent-ink);opacity:.8}
+.seg button:hover:not([aria-pressed="true"]){background:var(--panel-2)}
+
+/* pages */
+.pages{flex:1 1 auto;overflow:auto;padding:6px 8px 12px}
+.page{display:grid;grid-template-columns:44px 1fr auto;gap:9px;align-items:center;width:100%;text-align:left;padding:6px;border-radius:5px;border:1px solid transparent}
+.page:hover{background:var(--panel-2)}
+.page[aria-current="true"]{background:var(--sel);border-color:var(--sel-line)}
+.page:disabled{opacity:.45;cursor:default} .page:disabled:hover{background:none}
+.page img{width:44px;height:44px;object-fit:cover;border-radius:3px;background:var(--stage);display:block}
+.page .t{min-width:0}
+.page .sm{font-size:12.5px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.page .g{font-size:11px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.page .k{font-family:var(--mono);font-size:11.5px;text-align:right;color:var(--muted);line-height:1.25}
+.page .k b{font-weight:500;color:var(--ink)}
+
+/* toolbar */
+.toolbar{display:flex;align-items:center;gap:6px;padding:7px 10px;background:var(--panel);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.tg{display:inline-flex;align-items:center;gap:6px;padding:5px 9px;border:1px solid var(--line);border-radius:4px;font-size:12.5px;color:var(--muted);background:var(--panel)}
+.tg .dot{width:9px;height:9px;border-radius:2px;background:var(--c,currentColor);opacity:.35}
+.tg[aria-pressed="true"]{color:var(--ink);border-color:var(--ink);background:var(--panel-2)}
+.tg[aria-pressed="true"] .dot{opacity:1}
+.tg kbd{font:10.5px var(--mono);color:var(--faint);border:1px solid var(--line);border-radius:3px;padding:0 4px;margin-left:2px}
+.toolbar .sep{width:1px;height:20px;background:var(--line);margin:0 4px}
+.toolbar .sl{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.toolbar input[type=range]{width:90px;accent-color:var(--accent)}
+.toolbar .zoom{margin-left:auto;display:inline-flex;gap:4px;align-items:center}
+.zb{min-width:28px;height:28px;padding:0 8px;border:1px solid var(--line);border-radius:4px;font-family:var(--mono);font-size:12.5px;color:var(--ink);background:var(--panel)}
+.zb:hover{background:var(--panel-2)}
+.zlvl{font-family:var(--mono);font-size:12px;color:var(--muted);min-width:44px;text-align:center}
+
+/* viewport */
+.viewport{flex:1 1 auto;position:relative;overflow:hidden;cursor:grab;touch-action:none}
+.viewport.drag{cursor:grabbing}
+.canvas{position:absolute;left:0;top:0;box-shadow:0 0 0 1px rgba(255,255,255,.08),0 12px 40px rgba(0,0,0,.45)}
+.canvas img{display:block;width:100%;height:100%;user-select:none;-webkit-user-drag:none;pointer-events:none}
+.canvas svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.box{fill:var(--c);stroke:var(--c);stroke-width:var(--sw);fill-opacity:var(--fo);vector-effect:non-scaling-stroke;cursor:pointer}
+.box.gt{--c:var(--gt)}
+.box.pred.dash{stroke-dasharray:var(--da)}
+.box.dim{opacity:.38}
+.box.sel{stroke-width:calc(var(--sw)*1.8);filter:drop-shadow(0 0 calc(3px/var(--z)) rgba(0,0,0,.7))}
+.box.hi{stroke-width:calc(var(--sw)*1.6)}
+.box.hover{fill-opacity:calc(var(--fo) + .18)}
+.ov{fill:var(--overlap);fill-opacity:calc(var(--fo)*2 + .12);stroke:var(--overlap);stroke-width:var(--sw);stroke-dasharray:var(--da);vector-effect:non-scaling-stroke;pointer-events:none}
+.ctr{stroke:var(--c);stroke-width:var(--sw);vector-effect:non-scaling-stroke;pointer-events:none}
+.ctr.hit{fill:var(--c)} .ctr.miss{fill:none}
+.lbl{font-family:var(--sans);font-size:var(--fs);font-weight:500;fill:var(--stage-ink);stroke:var(--stage);stroke-width:calc(var(--fs)*.28);paint-order:stroke fill;stroke-linejoin:round;pointer-events:none;letter-spacing:.01em}
+.lbl.heb{font-family:var(--heb);font-size:calc(var(--fs)*1.25);font-weight:500}
+.lbl.k{fill:var(--c)}
+.legend{display:flex;gap:14px;flex-wrap:wrap;align-items:center;padding:6px 12px;font-size:11.5px;color:var(--stage-ink);background:rgba(0,0,0,.25);border-top:1px solid rgba(255,255,255,.08)}
+.legend i{display:inline-block;width:14px;height:10px;border:2px solid var(--c);background:color-mix(in srgb,var(--c) 25%,transparent);vertical-align:-1px;margin-right:5px;border-radius:1px}
+.legend i.dash{border-style:dashed}
+.legend .ramp i{border:0;height:8px;width:10px}
+.tip{position:fixed;z-index:20;pointer-events:none;background:var(--panel);color:var(--ink);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:5px;padding:6px 9px;font-size:12.5px;max-width:360px;display:none}
+.tip .heb{font-size:17px}
+.tip .m{font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+.empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:var(--stage-ink);font-size:14px;opacity:.75;pointer-events:none}
+
+/* inspector */
+.qlist{padding:6px 8px;border-bottom:1px solid var(--line)}
+.qrow{display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;width:100%;text-align:left;padding:6px 7px;border-radius:5px;border:1px solid transparent}
+.qrow:hover{background:var(--panel-2)}
+.qrow[aria-current="true"]{background:var(--sel);border-color:var(--sel-line)}
+.qrow .n{font-family:var(--mono);font-size:11.5px;color:var(--faint);text-align:right}
+.qrow .heb{font-size:16px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.qrow .chips{display:flex;gap:4px}
+.chip{font-family:var(--mono);font-size:11px;padding:1px 6px;border-radius:3px;border:1px solid var(--c,var(--line));color:var(--c,var(--muted));font-variant-numeric:tabular-nums;white-space:nowrap}
+.chip.na{border-style:dashed;color:var(--faint)}
+.chip .d{display:inline-block;width:6px;height:6px;border-radius:50%;background:currentColor;margin-right:4px;vertical-align:1px}
+.chip .d.miss{background:transparent;box-shadow:inset 0 0 0 1.5px currentColor}
+.detail{padding:12px 14px;display:flex;flex-direction:column;gap:14px}
+.detail .phrase{font-size:26px;line-height:1.3}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:3px 12px;font-size:12.5px}
+.kv dt{color:var(--muted)} .kv dd{margin:0;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.card{border:1px solid var(--line);border-left:4px solid var(--c,var(--line));border-radius:4px;padding:9px 11px;background:var(--panel-2);display:flex;flex-direction:column;gap:7px}
+.card .h{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.card .h b{color:var(--c);font-weight:600;font-size:13px}
+.card .h .num{color:var(--muted)}
+.metrics{display:flex;gap:14px;flex-wrap:wrap}
+.metrics .v{display:flex;flex-direction:column;line-height:1.15}
+.metrics .v b{font-family:var(--mono);font-weight:500;font-size:15px;font-variant-numeric:tabular-nums}
+.metrics .v span{font-size:10.5px;color:var(--muted)}
+.good{color:var(--good)} .warn{color:var(--warn)} .bad{color:var(--bad)}
+.txt{display:flex;flex-direction:column;gap:2px}
+.txt .who{font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.txt .heb{font-size:19px;padding:6px 8px;border-radius:4px;background:var(--panel);border:1px solid var(--line);white-space:pre-wrap;word-break:break-word}
+.txt .heb mark{background:color-mix(in srgb,var(--c) 28%,transparent);color:inherit;border-radius:2px;text-decoration:underline;text-decoration-color:var(--c);text-underline-offset:2px}
+.txt .heb mark.miss{background:color-mix(in srgb,var(--bad) 22%,transparent);text-decoration-color:var(--bad)}
+details.raw summary{cursor:pointer;font-size:12px;color:var(--muted)}
+details.raw pre{font:11.5px/1.4 var(--mono);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:8px;margin:6px 0 0;direction:ltr;unicode-bidi:plaintext}
+.lines{width:100%;border-collapse:collapse;font-size:12px}
+.lines th{font-weight:500;color:var(--muted);text-align:left;padding:3px 6px;border-bottom:1px solid var(--line);font-size:11px}
+.lines td{padding:4px 6px;border-bottom:1px solid var(--line);vertical-align:top}
+.lines tr{cursor:pointer} .lines tr:hover td{background:var(--panel)}
+.lines tr[aria-current="true"] td{background:var(--sel)}
+.lines td.heb{font-size:15px;line-height:1.35;max-width:150px}
+.lines td.num{text-align:right;white-space:nowrap}
+.lines .un{color:var(--faint);font-style:italic}
+.note{font-size:12px;color:var(--muted);padding:12px 14px;border-top:1px solid var(--line);margin-top:auto}
+.note code{font-family:var(--mono);font-size:11.5px}
+.overlay-help{position:fixed;inset:0;background:rgba(0,0,0,.45);display:none;align-items:center;justify-content:center;z-index:30}
+.overlay-help.on{display:flex}
+.overlay-help .box{background:var(--panel);color:var(--ink);border-radius:8px;padding:20px 24px;max-width:560px;box-shadow:var(--shadow);font-size:13.5px}
+.overlay-help h3{font-size:15px;margin-bottom:10px}
+.overlay-help dl{display:grid;grid-template-columns:auto 1fr;gap:6px 14px;margin:0}
+.overlay-help kbd{font:12px var(--mono);border:1px solid var(--line);border-radius:3px;padding:1px 6px;background:var(--panel-2)}
+.overlay-help p{margin:10px 0 0;color:var(--muted)}
+@media (max-width:1100px){
+  body{height:auto;min-height:100vh;overflow:auto}
+  .app{grid-template-columns:1fr;grid-template-rows:auto minmax(60vh,1fr) auto}
+  .rail{border-right:0;border-bottom:1px solid var(--line);max-height:40vh}
+  .inspector{border-left:0;border-top:1px solid var(--line);max-height:60vh}
+  .top .stats{display:none}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+</style>
+
+<header class="top">
+  <div class="brand"><h1>Genizah Grounding Viewer</h1><span class="sub" id="sub"></span></div>
+  <div class="stats" id="stats"></div>
+  <button class="help" id="helpBtn" aria-haspopup="dialog">Keys ?</button>
+</header>
+<div class="app">
+  <aside class="rail">
+    <section class="block"><h2>Models (predicted boxes)</h2><div id="models"></div></section>
+    <section class="block"><h2>Task</h2><div class="seg" id="modes" role="group"></div></section>
+    <section class="block" style="padding-bottom:4px;border-bottom:0"><h2>Pages</h2></section>
+    <div class="pages" id="pages"></div>
+    <div class="note" id="note"></div>
+  </aside>
+  <main class="stage">
+    <div class="toolbar" id="toolbar">
+      <button class="tg" data-layer="gt" aria-pressed="true" style="--c:var(--gt)"><span class="dot"></span>Ground truth<kbd>G</kbd></button>
+      <button class="tg" data-layer="pred" aria-pressed="true"><span class="dot"></span>Predicted<kbd>P</kbd></button>
+      <button class="tg" data-layer="overlap" aria-pressed="true" style="--c:var(--overlap)"><span class="dot"></span>Overlap<kbd>O</kbd></button>
+      <button class="tg" data-layer="labels" aria-pressed="true"><span class="dot"></span>Labels<kbd>L</kbd></button>
+      <span class="sep"></span>
+      <button class="tg" id="onlyBtn" aria-pressed="false">Selected only<kbd>S</kbd></button>
+      <button class="tg" id="rampBtn" aria-pressed="false">Color by IoU<kbd>C</kbd></button>
+      <span class="sep"></span>
+      <label class="sl">Fill <input type="range" id="fill" min="0" max="60" value="16"></label>
+      <div class="zoom">
+        <button class="zb" id="zOut" title="Zoom out">−</button>
+        <span class="zlvl" id="zlvl">100%</span>
+        <button class="zb" id="zIn" title="Zoom in">+</button>
+        <button class="zb" id="zFit" title="Fit page (F)">Fit</button>
+        <button class="zb" id="z100" title="1 embedded pixel = 1 screen pixel">1:1</button>
+        <button class="zb" id="zSel" title="Center on selection (Enter)">⌖</button>
+      </div>
+    </div>
+    <div class="viewport" id="viewport">
+      <div class="canvas" id="canvas"><img id="img" alt=""><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+      <div class="empty" id="empty" hidden></div>
+    </div>
+    <div class="legend" id="legend"></div>
+  </main>
+  <aside class="inspector">
+    <div class="qlist" id="qlist"></div>
+    <div class="detail" id="detail"></div>
+  </aside>
+</div>
+<div class="tip" id="tip"></div>
+<div class="overlay-help" id="help" role="dialog" aria-modal="true" aria-label="Keyboard shortcuts">
+  <div class="box">
+    <h3>Keyboard</h3>
+    <dl>
+      <dt><kbd>←</kbd> <kbd>→</kbd></dt><dd>previous / next query (crosses pages)</dd>
+      <dt><kbd>[</kbd> <kbd>]</kbd></dt><dd>previous / next page</dd>
+      <dt><kbd>G</kbd> <kbd>P</kbd> <kbd>O</kbd> <kbd>L</kbd></dt><dd>toggle ground truth / predicted / overlap / labels</dd>
+      <dt><kbd>S</kbd> <kbd>C</kbd></dt><dd>selected-only · color predicted boxes by IoU</dd>
+      <dt><kbd>1</kbd>…<kbd>4</kbd></dt><dd>toggle model 1…4</dd>
+      <dt><kbd>F</kbd> <kbd>Enter</kbd></dt><dd>fit page · center on selection</dd>
+      <dt><kbd>Esc</kbd></dt><dd>close this</dd>
+    </dl>
+    <p>Wheel zooms around the cursor, drag pans, click a box to select it. Coordinates are 0–1000 normalized to the scan; the box list shows them as stored.</p>
+  </div>
+</div>
+
+<script>
+const DATA = /*__DATA__*/;
+(() => {
+const D = DATA;
+const MODES = ['locate', 'read_box', 'grounded'];
+const MODE_LABEL = {locate: 'Locate phrase', read_box: 'Read box', grounded: 'Grounded page'};
+const MODE_HINT = {locate: 'phrase → box', read_box: 'box → text', grounded: 'page → lines + boxes'};
+const PALETTE = ['var(--m0)', 'var(--m1)', 'var(--m2)', 'var(--m3)'];
+const colorOf = {}; D.models.forEach((m, i) => { colorOf[m.key] = PALETTE[i % PALETTE.length]; });
+const pageById = Object.fromEntries(D.pages.map(p => [p.id, p]));
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'}[c]));
+const fmt = (x, d = 3) => (x === null || x === undefined || Number.isNaN(x)) ? '—' : Number(x).toFixed(d);
+const pct = (a, b) => b ? Math.round(100 * a / b) + '%' : '—';
+const runOf = (model, mode) => (D.runs[model] || {})[mode];
+const predOf = (model, mode, idx) => { const r = runOf(model, mode); return r ? r.preds[idx] : null; };
+const hasMode = (model, mode) => !!runOf(model, mode);
+const iouOf = (a, b) => {
+  const ix = Math.max(0, Math.min(a[2], b[2]) - Math.max(a[0], b[0]));
+  const iy = Math.max(0, Math.min(a[3], b[3]) - Math.max(a[1], b[1]));
+  const inter = ix * iy;
+  const ar = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - inter;
+  return ar > 0 ? inter / ar : 0;
+};
+const interBox = (a, b) => {
+  const r = [Math.max(a[0], b[0]), Math.max(a[1], b[1]), Math.min(a[2], b[2]), Math.min(a[3], b[3])];
+  return (r[2] > r[0] && r[3] > r[1]) ? r : null;
+};
+const rampClass = v => v === null || v === undefined ? '' : v >= 0.5 ? 'good' : v >= 0.25 ? 'warn' : 'bad';
+const rampColor = v => v >= 0.5 ? 'var(--good)' : v >= 0.25 ? 'var(--warn)' : 'var(--bad)';
+const cerClass = v => v === null || v === undefined ? '' : v <= 0.1 ? 'good' : v <= 0.3 ? 'warn' : 'bad';
+const median = arr => { const a = arr.filter(v => v !== null && v !== undefined).sort((x, y) => x - y); if (!a.length) return null; const m = a.length >> 1; return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2; };
+
+// ---------- state ----------
+const newest = D.models.find(m => MODES.some(mode => hasMode(m.key, mode)));
+const state = {
+  mode: 'locate', page: D.pages[0].id, q: 0, line: null,
+  visible: new Set(newest ? [newest.key] : []),
+  layers: {gt: true, pred: true, overlap: true, labels: true},
+  only: false, ramp: false, fill: 0.16,
+  z: 1, tx: 0, ty: 0,
+};
+const order = {}; MODES.forEach(m => { order[m] = D.pages.flatMap(p => p.q[m]); });
+const visibleModels = () => D.models.filter(m => state.visible.has(m.key));
+const modelsFor = mode => visibleModels().filter(m => hasMode(m.key, mode));
+const page = () => pageById[state.page];
+const query = () => D.queries[state.mode][state.q];
+const toPx = (box, p) => [box[0] * p.w / 1000, box[1] * p.h / 1000, box[2] * p.w / 1000, box[3] * p.h / 1000];
+const shortShelf = s => ((s || '').replace(/^.*?\b(?:England|USA|UK|France|Russia|Hungary|Israel)\b,?\s+/, '').replace(/^Ms\.?\s+/i, '').trim()) || s;
+const instOf = s => /Cambridge University/i.test(s) ? 'CUL' : /British Library/i.test(s) ? 'BL' : /Jewish Theological/i.test(s) ? 'JTS' : /Bodleian/i.test(s) ? 'Bodl.' : /Manchester/i.test(s) ? 'JRL' : (s || '').split(',')[0];
+const dupTag = {}; { const seen = {}; D.pages.forEach(p => { const k = p.shelf_mark; seen[k] = (seen[k] || 0) + 1; dupTag[p.id] = seen[k]; }); const tot = {}; D.pages.forEach(p => { tot[p.shelf_mark] = (tot[p.shelf_mark] || 0) + 1; }); D.pages.forEach(p => { dupTag[p.id] = tot[p.shelf_mark] > 1 ? ` (${dupTag[p.id]})` : ''; }); }
+
+// ---------- hash ----------
+function readHash() {
+  const h = new URLSearchParams(location.hash.slice(1));
+  if (MODES.includes(h.get('m'))) state.mode = h.get('m');
+  if (pageById[h.get('p')]) state.page = h.get('p');
+  const q = parseInt(h.get('q'), 10);
+  if (!Number.isNaN(q) && D.queries[state.mode][q] && D.queries[state.mode][q].page === state.page) state.q = q;
+  else if (page().q[state.mode].length) state.q = page().q[state.mode][0];
+  else { state.q = order[state.mode][0]; state.page = D.queries[state.mode][state.q].page; }
+  const v = (h.get('v') || '').split(',').filter(k => D.runs[k]);
+  if (v.length) state.visible = new Set(v);
+}
+function writeHash() {
+  const h = new URLSearchParams({m: state.mode, p: state.page, q: state.q, v: [...state.visible].join(',')});
+  history.replaceState(null, '', '#' + h.toString());
+}
+
+// ---------- rail ----------
+function renderModels() {
+  const el = $('models');
+  if (!D.models.length) { el.innerHTML = '<div class="muted" style="font-size:12.5px">No prediction dumps yet — run <code>grounding_eval.py --run MODE --model KEY --no-results</code>, then rebuild.</div>'; return; }
+  el.innerHTML = D.models.map((m, i) => {
+    const run = D.runs[m.key]; const any = MODES.find(md => run[md]);
+    const when = any ? (run[any].decoded_at || '').slice(0, 16).replace('T', ' ') : '';
+    return `<label class="model" style="--c:${colorOf[m.key]}">
+      <input type="checkbox" data-model="${esc(m.key)}" ${state.visible.has(m.key) ? 'checked' : ''}>
+      <span class="sw" style="${i > 0 ? 'background:repeating-linear-gradient(90deg,var(--c) 0 3px,transparent 3px 5px)' : ''}"></span>
+      <span><div class="name">${esc(m.label)} <span class="faint" style="font-weight:400;font-size:11px">${i + 1}</span></div>
+      <div class="meta">${esc(m.key)}</div>
+      <div class="meta">${when ? 'decoded ' + esc(when) : ''}${any && run[any].temperature !== undefined ? ' · T=' + run[any].temperature : ''}</div>
+      <div class="modes">${MODES.map(md => `<i class="${run[md] ? 'on' : ''}">${md}</i>`).join('')}</div></span></label>`;
+  }).join('');
+  el.querySelectorAll('input').forEach(cb => cb.addEventListener('change', () => {
+    if (cb.checked) state.visible.add(cb.dataset.model); else state.visible.delete(cb.dataset.model);
+    refresh();
+  }));
+}
+function renderModes() {
+  $('modes').innerHTML = MODES.map(m => `<button data-mode="${m}" aria-pressed="${state.mode === m}" title="${MODE_HINT[m]}">${MODE_LABEL[m]}<small>${D.queries[m].length}</small></button>`).join('');
+  $('modes').querySelectorAll('button').forEach(b => b.addEventListener('click', () => setMode(b.dataset.mode)));
+}
+function pageMetric(p) {
+  const m = modelsFor(state.mode)[0]; if (!m) return '';
+  const ps = p.q[state.mode].map(i => predOf(m.key, state.mode, i)).filter(x => x && x.ok);
+  if (!ps.length) return '<span class="faint">—</span>';
+  if (state.mode === 'locate') { const v = median(ps.map(x => x.iou)); return `<b class="${rampClass(v)}">${fmt(v, 2)}</b> IoU<br>${ps.filter(x => x.hit).length}/${p.q.locate.length} hit`; }
+  if (state.mode === 'read_box') { const v = median(ps.map(x => x.cer)); return `<b class="${cerClass(v)}">${fmt(v, 2)}</b> CER`; }
+  const x = ps[0]; return `<b class="${rampClass(x.miou)}">${fmt(x.miou, 2)}</b> ln-IoU<br>${x.matched}/${x.gt_n} lines`;
+}
+function renderPages() {
+  $('pages').innerHTML = D.pages.map(p => `<button class="page" data-page="${p.id}" aria-current="${p.id === state.page}" ${p.q[state.mode].length ? '' : 'disabled title="no ' + MODE_LABEL[state.mode].toLowerCase() + ' queries on this page"'}>
+    <img src="${p.thumb}" alt="">
+    <span class="t"><div class="sm" title="${esc(p.shelf_mark)} · ${esc(p.id)}">${esc(shortShelf(p.shelf_mark))}${dupTag[p.id]}</div><div class="g">${esc(instOf(p.shelf_mark))} · ${esc(p.genre)} · ${p.q[state.mode].length} ${state.mode === 'grounded' ? 'page' : 'quer' + (p.q[state.mode].length === 1 ? 'y' : 'ies')}</div></span>
+    <span class="k">${pageMetric(p)}</span></button>`).join('');
+  $('pages').querySelectorAll('.page').forEach(b => b.addEventListener('click', () => setPage(b.dataset.page)));
+}
+function renderNote() {
+  const n = D.pages.length, q = MODES.map(m => D.queries[m].length).reduce((a, b) => a + b, 0);
+  $('sub').textContent = `${q} queries on ${n} KTIV pages · built ${D.built_at.slice(0, 16).replace('T', ' ')}`;
+  $('note').innerHTML = `Ground truth = KTIV word/line geometry (0–1000 normalized). Predictions are a fresh temperature-${newest ? (runOf(newest.key, 'locate') || {}).temperature ?? '0.1' : '0.1'} decode; the muted <em>card</em> numbers are the canonical eval run, which differs by decode noise. Images embedded at ≤${D.image_max_side}px.`;
+}
+
+// ---------- stats ----------
+function statHTML(m, mode) {
+  const r = runOf(m.key, mode); if (!r) return '';
+  const s = r.summary, c = r.canonical; let vals = '', canon = '';
+  if (mode === 'locate') {
+    vals = v(fmt(s.median_iou), 'median IoU') + v(pct(s.hit, s.ok), 'center hit') + v(pct(s.iou50, s.ok), 'IoU ≥ .5') + v(`${s.ok}/${s.n}`, 'parsed');
+    if (c) canon = `card run · IoU ${fmt(c.median_iou)} · hit ${pct(c.hit, c.ok)} · ≥.5 ${pct(c.iou50, c.ok)}`;
+  } else if (mode === 'read_box') {
+    vals = v(fmt(s.median_cer), 'median CER') + v(fmt(s.median_len_ratio, 2), 'len ratio') + v(`${s.ok}/${s.n}`, 'parsed');
+    if (c) canon = `card run · CER ${fmt(c.median_cer)} · len ${fmt(c.median_len_ratio, 2)}`;
+  } else {
+    vals = v(`${s.matched}/${s.gt_n}`, 'lines matched') + v(fmt(s.median_line_iou), 'median line IoU') + v(fmt(s.median_line_cer), 'median line CER') + v(`${s.ok}/${s.n}`, 'parsed');
+    if (c) canon = `card run · ${c.matched}/${c.gt_n} · IoU ${fmt(c.median_line_iou)} · CER ${fmt(c.median_line_cer)}`;
+  }
+  return `<div class="stat" style="--c:${colorOf[m.key]}"><div class="who">${esc(m.label)}</div><div class="vals">${vals}</div>${canon ? `<div class="canon">${canon}</div>` : ''}</div>`;
+  function v(b, l) { return `<div class="v"><b>${b}</b><span>${l}</span></div>`; }
+}
+function renderStats() { $('stats').innerHTML = modelsFor(state.mode).map(m => statHTML(m, state.mode)).join(''); }
+
+// ---------- stage ----------
+let lastImg = null;
+function renderStage() {
+  const p = page(); const img = $('img'); const cv = $('canvas');
+  if (lastImg !== p.id) { img.src = p.src; lastImg = p.id; }
+  cv.style.width = p.w + 'px'; cv.style.height = p.h + 'px';
+  $('svg').setAttribute('viewBox', `0 0 ${p.w} ${p.h}`);
+  drawOverlay();
+  applyTransform();
+  renderLegend();
+}
+function boxAttr(b, p) { const [x0, y0, x1, y1] = toPx(b, p); return `x="${x0.toFixed(1)}" y="${y0.toFixed(1)}" width="${Math.max(0.5, x1 - x0).toFixed(1)}" height="${Math.max(0.5, y1 - y0).toFixed(1)}"`; }
+function label(text, x, y, cls, anchor) { if (!state.layers.labels || !text) return ''; return `<text class="lbl ${cls || ''}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" text-anchor="${anchor || 'start'}">${esc(text)}</text>`; }
+function drawOverlay() {
+  const p = page(); const mode = state.mode; const models = modelsFor(mode); const L = state.layers;
+  let s = ''; const pad = 3 / state.z;
+  const q = query();
+  const isSel = idx => idx === state.q;
+  const predStyle = (m, i) => `style="--c:${colorOf[m.key]}${state.ramp && i !== undefined && i !== null ? ';--c:' + rampColor(i) : ''}"`;
+  const dash = m => D.models.indexOf(m) > 0 ? 'dash' : '';
+  if (mode === 'locate' || mode === 'read_box') {
+    for (const idx of p.q[mode]) {
+      if (state.only && !isSel(idx)) continue;
+      const qq = D.queries[mode][idx]; const sel = isSel(idx); const dim = sel ? '' : 'dim';
+      const [gx0, gy0, gx1, gy1] = toPx(qq.gt_box, p);
+      if (L.gt) {
+        s += `<rect class="box gt ${sel ? 'sel' : dim}" ${boxAttr(qq.gt_box, p)} data-q="${idx}" data-tip="gt"></rect>`;
+        s += label(mode === 'locate' ? qq.phrase : `line ${p.q[mode].indexOf(idx) + 1}`, gx1, gy0 - pad, 'heb', 'end');
+      }
+      if (mode === 'locate' && L.pred) for (const m of models) {
+        const pr = predOf(m.key, mode, idx); if (!pr || !pr.pred_box) continue;
+        const b = pr.pred_box; const [x0, y0, x1, y1] = toPx(b, p);
+        s += `<rect class="box pred ${dash(m)} ${sel ? 'sel' : dim}" ${predStyle(m, pr.iou)} ${boxAttr(b, p)} data-q="${idx}" data-model="${esc(m.key)}" data-tip="pred"></rect>`;
+        s += `<circle class="ctr ${pr.hit ? 'hit' : 'miss'} ${sel ? '' : dim}" ${predStyle(m, pr.iou)} cx="${((x0 + x1) / 2).toFixed(1)}" cy="${((y0 + y1) / 2).toFixed(1)}" r="${(4 / state.z).toFixed(2)}"></circle>`;
+        if (L.overlap) { const ib = interBox(b, qq.gt_box); if (ib) s += `<rect class="ov ${sel ? '' : dim}" ${boxAttr(ib, p)}></rect>`; }
+        s += label(`IoU ${fmt(pr.iou, 2)}${pr.hit ? '' : ' · miss'}`, x0, y1 + 12 / state.z + pad, 'k', 'start').replace('class="lbl k"', `class="lbl k" style="--c:${colorOf[m.key]}"`);
+      }
+    }
+  } else {
+    const gl = q.gt_lines; const sel = state.line;
+    const matchedTo = j => models.flatMap(m => ((predOf(m.key, 'grounded', q.idx) || {}).pred_lines || []).map((ln, i) => ({m, ln, i})).filter(x => x.ln.matched && x.ln.gt_idx === j));
+    if (L.gt) gl.forEach((g, j) => {
+      const hi = sel && ((sel.type === 'gt' && sel.j === j) || (sel.type === 'pred' && sel.gt === j));
+      if (state.only && sel && !hi) return;
+      const [x0, y0, x1, y1] = toPx(g.box, p);
+      s += `<rect class="box gt ${hi ? 'sel' : (sel ? 'dim' : '')}" ${boxAttr(g.box, p)} data-gt="${j}" data-tip="gtline"></rect>`;
+      s += label(String(j + 1), x1 + pad, y0 + 11 / state.z, '', 'start');
+    });
+    if (L.pred) for (const m of models) {
+      const pr = predOf(m.key, 'grounded', q.idx); if (!pr || !pr.pred_lines) continue;
+      pr.pred_lines.forEach((ln, i) => {
+        const hi = sel && ((sel.type === 'pred' && sel.model === m.key && sel.i === i) || (sel.type === 'gt' && ln.matched && ln.gt_idx === sel.j));
+        if (state.only && sel && !hi) return;
+        const [x0, y0, x1, y1] = toPx(ln.box, p);
+        s += `<rect class="box pred ${dash(m)} ${hi ? 'sel' : (sel ? 'dim' : '')}" ${predStyle(m, ln.matched ? ln.iou : 0)} ${boxAttr(ln.box, p)} data-model="${esc(m.key)}" data-line="${i}" data-tip="predline"></rect>`;
+        if (L.overlap && ln.matched) { const ib = interBox(ln.box, gl[ln.gt_idx].box); if (ib) s += `<rect class="ov ${hi || !sel ? '' : 'dim'}" ${boxAttr(ib, p)}></rect>`; }
+        s += label(`${i + 1}${ln.matched ? ' · ' + fmt(ln.iou, 2) : ' · unmatched'}`, x0 - pad, y1 - 2 / state.z, 'k', 'end').replace('class="lbl k"', `class="lbl k" style="--c:${colorOf[m.key]}"`);
+      });
+    }
+  }
+  $('svg').innerHTML = s;
+  const noPred = state.layers.pred && models.length === 0;
+  $('empty').hidden = !(noPred && D.models.length);
+  $('empty').textContent = noPred ? `No selected model has a ${MODE_LABEL[state.mode].toLowerCase()} decode yet — tick one on the left` : '';
+}
+function renderLegend() {
+  const models = modelsFor(state.mode);
+  let s = `<span><i style="--c:var(--gt)"></i>KTIV ground truth</span>`;
+  models.forEach((m, k) => { s += `<span><i class="${D.models.indexOf(m) > 0 ? 'dash' : ''}" style="--c:${colorOf[m.key]}"></i>${esc(m.label)}${state.mode === 'locate' ? ' (dot = predicted center; filled = inside GT)' : ''}</span>`; });
+  if (state.layers.overlap) s += `<span><i style="--c:var(--overlap)"></i>overlap (intersection)</span>`;
+  if (state.ramp) s += `<span class="ramp"><i style="background:var(--bad)"></i>IoU &lt; .25 <i style="background:var(--warn)"></i>&lt; .5 <i style="background:var(--good)"></i>≥ .5</span>`;
+  $('legend').innerHTML = s;
+}
+
+// ---------- zoom / pan ----------
+const vp = $('viewport');
+function applyTransform() {
+  const p = page(); const cv = $('canvas');
+  cv.style.width = (p.w * state.z) + 'px'; cv.style.height = (p.h * state.z) + 'px';
+  cv.style.left = state.tx + 'px'; cv.style.top = state.ty + 'px';
+  const svg = $('svg');
+  svg.style.setProperty('--z', state.z);
+  svg.style.setProperty('--sw', (1.6 / state.z) + 'px');
+  svg.style.setProperty('--da', `${6 / state.z} ${4 / state.z}`);
+  svg.style.setProperty('--fs', (12 / state.z) + 'px');
+  svg.style.setProperty('--fo', state.fill);
+  $('zlvl').textContent = Math.round(state.z * 100) + '%';
+}
+function fit() {
+  const p = page(); const r = vp.getBoundingClientRect();
+  if (r.width < 20 || r.height < 20) return;
+  state.z = Math.max(0.05, Math.min(r.width / p.w, r.height / p.h) * 0.96);
+  state.tx = (r.width - p.w * state.z) / 2; state.ty = (r.height - p.h * state.z) / 2;
+  drawOverlay(); applyTransform();
+}
+function zoomAt(f, mx, my) {
+  const nz = Math.min(12, Math.max(0.05, state.z * f));
+  state.tx = mx - (mx - state.tx) * (nz / state.z); state.ty = my - (my - state.ty) * (nz / state.z); state.z = nz;
+  drawOverlay(); applyTransform();
+}
+function selectionBox() {
+  const p = page(); const q = query(); if (!q) return null;
+  if (state.mode !== 'grounded') return q.gt_box;
+  const sel = state.line; if (!sel) return null;
+  if (sel.type === 'gt') return q.gt_lines[sel.j].box;
+  const pr = predOf(sel.model, 'grounded', q.idx); return pr && pr.pred_lines[sel.i] ? pr.pred_lines[sel.i].box : null;
+}
+function centerOn(box, onlyIfHidden) {
+  if (!box) return; const p = page(); const r = vp.getBoundingClientRect();
+  const [x0, y0, x1, y1] = toPx(box, p);
+  const sx0 = x0 * state.z + state.tx, sy0 = y0 * state.z + state.ty, sx1 = x1 * state.z + state.tx, sy1 = y1 * state.z + state.ty;
+  if (onlyIfHidden && sx0 >= 0 && sy0 >= 0 && sx1 <= r.width && sy1 <= r.height) return;
+  state.tx = r.width / 2 - (x0 + x1) / 2 * state.z; state.ty = r.height / 2 - (y0 + y1) / 2 * state.z;
+  applyTransform();
+}
+vp.addEventListener('wheel', e => { e.preventDefault(); const r = vp.getBoundingClientRect(); zoomAt(Math.exp(-e.deltaY * 0.0016), e.clientX - r.left, e.clientY - r.top); }, {passive: false});
+let drag = null;
+vp.addEventListener('pointerdown', e => { if (e.button !== 0) return; drag = {x: e.clientX, y: e.clientY, tx: state.tx, ty: state.ty, moved: false}; vp.setPointerCapture(e.pointerId); });
+vp.addEventListener('pointermove', e => {
+  if (drag) { const dx = e.clientX - drag.x, dy = e.clientY - drag.y; if (Math.hypot(dx, dy) > 3) { drag.moved = true; vp.classList.add('drag'); } state.tx = drag.tx + dx; state.ty = drag.ty + dy; applyTransform(); }
+  const t = e.target.closest && e.target.closest('[data-tip]'); showTip(t, e);
+});
+vp.addEventListener('pointerup', e => {
+  const moved = drag && drag.moved; drag = null; vp.classList.remove('drag');
+  if (moved) return;
+  const t = e.target.closest && e.target.closest('[data-tip]'); if (!t) return;
+  if (t.dataset.q !== undefined) { setQuery(+t.dataset.q, false); }
+  else if (t.dataset.gt !== undefined) { state.line = {type: 'gt', j: +t.dataset.gt}; refreshSel(); }
+  else if (t.dataset.line !== undefined) { const pr = predOf(t.dataset.model, 'grounded', query().idx); const ln = pr.pred_lines[+t.dataset.line]; state.line = {type: 'pred', model: t.dataset.model, i: +t.dataset.line, gt: ln.matched ? ln.gt_idx : null}; refreshSel(); }
+});
+vp.addEventListener('pointerleave', () => showTip(null));
+vp.addEventListener('dblclick', e => { if (!e.target.closest('[data-tip]')) fit(); });
+$('zIn').onclick = () => { const r = vp.getBoundingClientRect(); zoomAt(1.25, r.width / 2, r.height / 2); };
+$('zOut').onclick = () => { const r = vp.getBoundingClientRect(); zoomAt(0.8, r.width / 2, r.height / 2); };
+$('zFit').onclick = fit;
+$('z100').onclick = () => { const r = vp.getBoundingClientRect(); zoomAt(1 / state.z, r.width / 2, r.height / 2); };
+$('zSel').onclick = () => centerOn(selectionBox(), false);
+
+function showTip(t, e) {
+  const tip = $('tip'); if (!t) { tip.style.display = 'none'; return; }
+  const q = query(); const p = page(); let html = '';
+  if (t.dataset.tip === 'gt') { const qq = D.queries[state.mode][+t.dataset.q]; html = `<div class="heb">${esc(state.mode === 'locate' ? qq.phrase : qq.gt_text)}</div><div class="m">GT ${qq.gt_box.join(', ')}</div>`; }
+  else if (t.dataset.tip === 'pred') { const pr = predOf(t.dataset.model, 'locate', +t.dataset.q); const m = D.models.find(x => x.key === t.dataset.model); html = `<div><b style="color:${colorOf[m.key]}">${esc(m.label)}</b></div><div class="m">pred ${pr.pred_box.join(', ')} · IoU ${fmt(pr.iou)} · ${pr.hit ? 'center inside GT' : 'center outside GT'}</div>`; }
+  else if (t.dataset.tip === 'gtline') { const g = q.gt_lines[+t.dataset.gt]; html = `<div class="m">GT line ${+t.dataset.gt + 1}</div><div class="heb">${esc(g.text)}</div><div class="m">${g.box.join(', ')}</div>`; }
+  else if (t.dataset.tip === 'predline') { const m = D.models.find(x => x.key === t.dataset.model); const ln = predOf(m.key, 'grounded', q.idx).pred_lines[+t.dataset.line]; html = `<div class="m"><b style="color:${colorOf[m.key]}">${esc(m.label)}</b> line ${+t.dataset.line + 1}${ln.matched ? ` → GT ${ln.gt_idx + 1} · IoU ${fmt(ln.iou)} · CER ${fmt(ln.cer)}` : ' · unmatched (sim ' + fmt(ln.sim, 2) + ')'}</div><div class="heb">${esc(ln.text)}</div><div class="m">${ln.box.map(v => Math.round(v)).join(', ')}</div>`; }
+  tip.innerHTML = html; tip.style.display = 'block';
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(window.innerWidth - w - 8, e.clientX + 14) + 'px'; tip.style.top = Math.min(window.innerHeight - h - 8, e.clientY + 14) + 'px';
+  vp.querySelectorAll('.box.hover').forEach(x => x.classList.remove('hover')); t.classList.add('hover');
+}
+
+// ---------- inspector ----------
+function diffChars(a, b) {
+  const n = a.length, m = b.length; if (n * m > 400000) return null;
+  const dp = Array.from({length: n + 1}, () => new Uint16Array(m + 1));
+  for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--) dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+  const out = []; let i = 0, j = 0;
+  while (i < n && j < m) { if (a[i] === b[j]) { out.push(['=', a[i]]); i++; j++; } else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push(['-', a[i]]); i++; } else { out.push(['+', b[j]]); j++; } }
+  while (i < n) out.push(['-', a[i++]]); while (j < m) out.push(['+', b[j++]]);
+  return out;
+}
+function diffHTML(gt, pred) {
+  const ops = diffChars(gt, pred); if (!ops) return {gt: esc(gt), pred: esc(pred)};
+  const g = ops.filter(o => o[0] !== '+').map(o => o[0] === '-' ? `<mark class="miss">${esc(o[1])}</mark>` : esc(o[1])).join('');
+  const p = ops.filter(o => o[0] !== '-').map(o => o[0] === '+' ? `<mark>${esc(o[1])}</mark>` : esc(o[1])).join('');
+  return {gt: g, pred: p};
+}
+function textBlock(who, html, c) { return `<div class="txt" style="--c:${c || 'var(--gt)'}"><div class="who">${who}</div><div class="heb" dir="rtl">${html || '<span class="faint">(empty)</span>'}</div></div>`; }
+function rawBlock(raw) { return `<details class="raw"><summary>raw model output</summary><pre>${esc(raw ?? '(no output)')}</pre></details>`; }
+function chipFor(m, idx) {
+  const pr = predOf(m.key, state.mode, idx); const c = colorOf[m.key];
+  if (!pr || !pr.ok) return `<span class="chip na" style="--c:${c}">${pr ? 'no parse' : '—'}</span>`;
+  if (state.mode === 'locate') return `<span class="chip ${rampClass(pr.iou)}" style="--c:${c}"><span class="d ${pr.hit ? '' : 'miss'}"></span>${fmt(pr.iou, 2)}</span>`;
+  if (state.mode === 'read_box') return `<span class="chip ${cerClass(pr.cer)}" style="--c:${c}">CER ${fmt(pr.cer, 2)}</span>`;
+  return `<span class="chip" style="--c:${c}">${pr.matched}/${pr.gt_n} · ${fmt(pr.miou, 2)}</span>`;
+}
+function renderQList() {
+  const p = page(); const models = modelsFor(state.mode);
+  if (state.mode === 'grounded') { $('qlist').innerHTML = `<div style="padding:8px 7px"><h2>Page</h2><div style="font-size:13px">${esc(p.shelf_mark)}</div><div class="muted" style="font-size:12px">${esc(p.genre)} · ${query().gt_lines.length} GT lines · ${p.n_columns} column${p.n_columns == 1 ? '' : 's'} · <span class="mono">${esc(p.id)}</span></div></div>`; return; }
+  $('qlist').innerHTML = `<div style="padding:6px 7px 2px"><h2>${MODE_LABEL[state.mode]} queries on this page</h2></div>` + p.q[state.mode].map((idx, k) => {
+    const q = D.queries[state.mode][idx];
+    return `<button class="qrow" data-q="${idx}" aria-current="${idx === state.q}"><span class="n">${k + 1}</span><span class="heb" dir="rtl">${esc(state.mode === 'locate' ? q.phrase : q.gt_text)}</span><span class="chips">${models.map(m => chipFor(m, idx)).join('')}</span></button>`;
+  }).join('');
+  $('qlist').querySelectorAll('.qrow').forEach(b => b.addEventListener('click', () => setQuery(+b.dataset.q, true)));
+}
+function renderDetail() {
+  const q = query(); const p = page(); const models = modelsFor(state.mode); let s = '';
+  if (!q) { $('detail').innerHTML = ''; return; }
+  if (state.mode === 'locate') {
+    s += `<div><div class="phrase heb" dir="rtl">${esc(q.phrase)}</div><dl class="kv"><dt>GT box</dt><dd>${q.gt_box.join(', ')}</dd><dt>size</dt><dd>${q.gt_box[2] - q.gt_box[0]} × ${q.gt_box[3] - q.gt_box[1]} ‰</dd><dt>page</dt><dd>${esc(shortShelf(p.shelf_mark))}</dd></dl></div>`;
+    for (const m of models) {
+      const pr = predOf(m.key, 'locate', q.idx); const c = colorOf[m.key];
+      s += `<div class="card" style="--c:${c}"><div class="h"><b>${esc(m.label)}</b>${pr && pr.pred_box ? `<span class="num">${pr.pred_box.join(', ')}</span>` : ''}</div>`;
+      if (!pr) s += `<div class="muted">not decoded</div>`;
+      else if (!pr.ok) s += `<div class="bad">no box parsed from the output</div>` + rawBlock(pr.raw);
+      else {
+        const b = pr.pred_box; const ib = interBox(b, q.gt_box);
+        s += `<div class="metrics"><div class="v"><b class="${rampClass(pr.iou)}">${fmt(pr.iou)}</b><span>IoU</span></div><div class="v"><b class="${pr.hit ? 'good' : 'bad'}">${pr.hit ? 'yes' : 'no'}</b><span>center in GT</span></div><div class="v"><b>${b[2] - b[0]} × ${b[3] - b[1]}</b><span>pred size ‰</span></div><div class="v"><b>${ib ? Math.round(100 * (ib[2] - ib[0]) * (ib[3] - ib[1]) / ((q.gt_box[2] - q.gt_box[0]) * (q.gt_box[3] - q.gt_box[1]))) + '%' : '0%'}</b><span>of GT covered</span></div><div class="v"><b>${Math.round((b[0] + b[2]) / 2 - (q.gt_box[0] + q.gt_box[2]) / 2)}, ${Math.round((b[1] + b[3]) / 2 - (q.gt_box[1] + q.gt_box[3]) / 2)}</b><span>center offset ‰</span></div></div>` + rawBlock(pr.raw);
+      }
+      s += `</div>`;
+    }
+  } else if (state.mode === 'read_box') {
+    s += `<div><dl class="kv"><dt>prompt box</dt><dd>${q.gt_box.join(', ')}</dd><dt>GT letters</dt><dd>${(q.gt_text.match(/[א-ת]/g) || []).length}</dd><dt>page</dt><dd>${esc(shortShelf(p.shelf_mark))}</dd></dl></div>`;
+    s += textBlock('KTIV ground truth', esc(q.gt_text));
+    for (const m of models) {
+      const pr = predOf(m.key, 'read_box', q.idx); const c = colorOf[m.key];
+      s += `<div class="card" style="--c:${c}"><div class="h"><b>${esc(m.label)}</b></div>`;
+      if (!pr) s += `<div class="muted">not decoded</div>`;
+      else if (!pr.ok) s += `<div class="bad">empty output</div>`;
+      else {
+        const d = diffHTML(q.gt_text, pr.pred_text);
+        s += `<div class="metrics"><div class="v"><b class="${cerClass(pr.cer)}">${fmt(pr.cer)}</b><span>CER</span></div><div class="v"><b class="${pr.len_ratio > 1.5 || pr.len_ratio < 0.6 ? 'warn' : ''}">${fmt(pr.len_ratio, 2)}</b><span>length ratio</span></div></div>`;
+        s += textBlock('GT, missed letters marked', d.gt) + textBlock('model output, extra letters marked', d.pred, c) + rawBlock(pr.raw);
+      }
+      s += `</div>`;
+    }
+  } else {
+    for (const m of models) {
+      const pr = predOf(m.key, 'grounded', q.idx); const c = colorOf[m.key];
+      s += `<div class="card" style="--c:${c}"><div class="h"><b>${esc(m.label)}</b>${pr && pr.ok ? `<span class="num">${pr.n_lines} lines returned</span>` : ''}</div>`;
+      if (!pr) { s += `<div class="muted">not decoded</div></div>`; continue; }
+      if (!pr.ok) { s += `<div class="bad">JSON array could not be parsed (counted as a failure)</div>` + rawBlock(pr.raw) + `</div>`; continue; }
+      s += `<div class="metrics"><div class="v"><b>${pr.matched}/${pr.gt_n}</b><span>GT lines matched</span></div><div class="v"><b class="${rampClass(pr.miou)}">${fmt(pr.miou)}</b><span>median line IoU</span></div><div class="v"><b class="${cerClass(pr.mcer)}">${fmt(pr.mcer)}</b><span>median line CER</span></div></div>`;
+      s += `<table class="lines"><thead><tr><th>#</th><th>model line</th><th>→ GT</th><th class="num">IoU</th><th class="num">CER</th></tr></thead><tbody>`;
+      pr.pred_lines.forEach((ln, i) => {
+        const cur = state.line && state.line.type === 'pred' && state.line.model === m.key && state.line.i === i;
+        s += `<tr data-model="${esc(m.key)}" data-i="${i}" aria-current="${!!cur}"><td class="num faint">${i + 1}</td><td class="heb" dir="rtl">${esc(ln.text)}</td>` +
+          (ln.matched ? `<td class="heb" dir="rtl"><span class="faint" style="font:11px var(--mono)">${ln.gt_idx + 1}</span> ${esc(q.gt_lines[ln.gt_idx].text)}</td><td class="num ${rampClass(ln.iou)}">${fmt(ln.iou, 2)}</td><td class="num ${cerClass(ln.cer)}">${fmt(ln.cer, 2)}</td>` : `<td class="un" colspan="3">no GT line with ≥ .5 similarity (best ${fmt(ln.sim, 2)})</td>`) + `</tr>`;
+      });
+      s += `</tbody></table>`;
+      const hitGt = new Set(pr.pred_lines.filter(l => l.matched).map(l => l.gt_idx));
+      const missed = q.gt_lines.map((g, j) => j).filter(j => !hitGt.has(j));
+      if (missed.length) s += `<div class="muted" style="font-size:12px">GT lines never matched: ${missed.map(j => j + 1).join(', ')}</div>`;
+      s += rawBlock(pr.raw) + `</div>`;
+    }
+    if (!models.length) s += `<div class="muted">Tick a model with a grounded decode to see its lines.</div>`;
+  }
+  $('detail').innerHTML = s;
+  $('detail').querySelectorAll('tr[data-i]').forEach(tr => tr.addEventListener('click', () => {
+    const pr = predOf(tr.dataset.model, 'grounded', query().idx); const ln = pr.pred_lines[+tr.dataset.i];
+    state.line = {type: 'pred', model: tr.dataset.model, i: +tr.dataset.i, gt: ln.matched ? ln.gt_idx : null};
+    refreshSel(); centerOn(ln.box, true);
+  }));
+}
+
+// ---------- transitions ----------
+function setMode(mode) {
+  if (state.mode === mode) return;
+  state.mode = mode; state.line = null;
+  const p = page(); state.q = p.q[mode].length ? p.q[mode][0] : order[mode][0];
+  if (!p.q[mode].length) state.page = D.queries[mode][state.q].page;
+  renderModes(); refresh(); fit();
+}
+function setPage(id, q) {
+  const changed = id !== state.page; state.page = id; state.line = null;
+  state.q = q ?? (page().q[state.mode][0] ?? state.q);
+  refresh(); if (changed) fit();
+}
+function setQuery(idx, center) {
+  const q = D.queries[state.mode][idx]; if (!q) return;
+  if (q.page !== state.page) { setPage(q.page, idx); if (center) centerOn(q.gt_box, true); return; }
+  state.q = idx; state.line = null; refreshSel(); if (center) centerOn(q.gt_box, true);
+}
+function step(d) { const o = order[state.mode]; const i = o.indexOf(state.q); setQuery(o[(i + d + o.length) % o.length], true); }
+function stepPage(d) { const i = D.pages.findIndex(p => p.id === state.page); setPage(D.pages[(i + d + D.pages.length) % D.pages.length].id); }
+function refreshSel() { drawOverlay(); renderQList(); renderDetail(); writeHash(); }
+function refresh() { renderStats(); renderPages(); renderStage(); renderQList(); renderDetail(); writeHash(); }
+
+// ---------- toolbar ----------
+$('toolbar').querySelectorAll('[data-layer]').forEach(b => b.addEventListener('click', () => toggleLayer(b.dataset.layer)));
+function toggleLayer(k) { state.layers[k] = !state.layers[k]; $('toolbar').querySelector(`[data-layer="${k}"]`).setAttribute('aria-pressed', state.layers[k]); drawOverlay(); renderLegend(); }
+$('onlyBtn').onclick = () => { state.only = !state.only; $('onlyBtn').setAttribute('aria-pressed', state.only); drawOverlay(); };
+$('rampBtn').onclick = () => { state.ramp = !state.ramp; $('rampBtn').setAttribute('aria-pressed', state.ramp); drawOverlay(); renderLegend(); };
+$('fill').addEventListener('input', e => { state.fill = e.target.value / 100; applyTransform(); });
+$('helpBtn').onclick = () => $('help').classList.toggle('on');
+$('help').addEventListener('click', e => { if (e.target === $('help')) $('help').classList.remove('on'); });
+document.addEventListener('keydown', e => {
+  if (e.target.matches('input,textarea')) return;
+  const k = e.key;
+  if (k === 'Escape') $('help').classList.remove('on');
+  else if (k === 'ArrowRight') step(1); else if (k === 'ArrowLeft') step(-1);
+  else if (k === ']') stepPage(1); else if (k === '[') stepPage(-1);
+  else if (k === 'g' || k === 'G') toggleLayer('gt'); else if (k === 'p' || k === 'P') toggleLayer('pred');
+  else if (k === 'o' || k === 'O') toggleLayer('overlap'); else if (k === 'l' || k === 'L') toggleLayer('labels');
+  else if (k === 's' || k === 'S') $('onlyBtn').click(); else if (k === 'c' || k === 'C') $('rampBtn').click();
+  else if (k === 'f' || k === 'F') fit(); else if (k === 'Enter') centerOn(selectionBox(), false);
+  else if (k === '?') $('help').classList.toggle('on');
+  else if (/^[1-4]$/.test(k)) { const m = D.models[+k - 1]; if (m) { const cb = $('models').querySelector(`input[data-model="${CSS.escape(m.key)}"]`); cb.checked = !cb.checked; cb.dispatchEvent(new Event('change')); } }
+  else return;
+  e.preventDefault();
+});
+window.addEventListener('resize', () => applyTransform());
+window.addEventListener('hashchange', () => { const before = state.page + state.mode; readHash(); state.line = null; renderModels(); renderModes(); refresh(); if (before !== state.page + state.mode) fit(); });
+
+// ---------- boot ----------
+readHash();
+renderModels(); renderModes(); renderNote();
+refresh();
+$('img').addEventListener('load', () => { if (!$('img').dataset.fitted) { $('img').dataset.fitted = '1'; fit(); } }, {once: false});
+requestAnimationFrame(fit);
+})();
+</script>

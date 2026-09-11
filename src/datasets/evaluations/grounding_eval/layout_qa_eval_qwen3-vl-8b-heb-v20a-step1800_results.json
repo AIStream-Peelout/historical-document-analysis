@@ -1,0 +1,1099 @@
+{
+ "model": "qwen3-vl-8b-heb-v20a-step1800",
+ "summary": {
+  "columns": {
+   "n": 45,
+   "accuracy": 1.0
+  },
+  "edge_line": {
+   "n": 33,
+   "median_cer": 0.2857142857142857,
+   "exact_rate": 0.12121212121212122
+  },
+  "find_line": {
+   "n": 42,
+   "median_cer": 0.24158249158249157,
+   "exact_rate": 0.21428571428571427,
+   "has_phrase_rate": 0.7857142857142857
+  }
+ },
+ "rows": [
+  {
+   "stem": "ktiv_990051091910205171_FL203736345_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "שאינו יכול לשחוט אותוהברחוק מקום:",
+   "pred": "שא צו יכול לשחוט אות הברחוק מקום:",
+   "cer": 0.09090909090909091,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053595960205171_FL202306876_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"ת.ה.. בגבולין נמצ\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "הת.ה.. [...] בגבולין נמצא שאין דינו",
+   "pred": "הרי זה ל' בגבולין נמצ ף שאין דינו",
+   "cer": 0.34285714285714286,
+   "exact": false,
+   "has_phrase": false
+  },
+  {
+   "stem": "ktiv_990051998900205171_FL202120374_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"ית וכל יום\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "ית וכל יום שיש בו קרבן מוסף לא",
+   "pred": "ית וכל יום ש בו קרבן מוסף לא",
+   "cer": 0.06666666666666667,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053370160205171_FL202591014_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the last line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "לכי הא דר' אבון הוה שקיל ואזיל [...] חוריה דר' ירמיה",
+   "pred": "לכי הא דר' אבון הוה שקיל ואזיל והא קא דר' יוחנן",
+   "cer": 0.2692307692307692,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990051167370205171_FL203111370_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the last line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "לות בשוב יי את שיבת ציון היינו כחלמים אמ' שבעין שנין [...]",
+   "pred": "בשוב אתה שיבת עון היינו גזרת אמ' רב ענן שת",
+   "cer": 0.46551724137931033,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990052000360205171_FL202137791_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"של ניקה אותו\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "של [...] ניקה אותו עד שהכיר [...]",
+   "pred": "של ניקה אותו עד שהכניסו",
+   "cer": 0.42424242424242425,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053644020205171_FL201873534_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the last line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "אמות",
+   "pred": "אמות",
+   "cer": 0.0,
+   "exact": true
+  },
+  {
+   "stem": "ktiv_990051087570205171_FL202435946_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"תא כלו וכן\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "טמאה לא תאכלו וכן האוכל כזית מדג טמא",
+   "pred": "תא כלו וכן האוכלין בלא",
+   "cer": 0.5,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053608580205171_FL202318898_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053595960205171_FL202306875_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051103660205171_FL201679558_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"שני עדים מעידין\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "שני עדים מעידין עליו שנטמא אינו מב [...] א קרבן על",
+   "pred": "שני עדים מעידין עליו שנטמא אינו מב אקרבן על",
+   "cer": 0.14,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051092050205171_FL202437533_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the last line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "צי ההו..אה שהוציא זה",
+   "pred": "[...] ה הוציא את",
+   "cer": 0.55,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990051939760205171_FL202452883_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051086270205171_FL202434389_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"לכאן טורף או\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "לכאן טורף או לא נכנס או ש",
+   "pred": "לכאן טורף או לא נכנס או ש",
+   "cer": 0.0,
+   "exact": true,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051999740205171_FL202131531_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"לבנים חדשים\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "לבנים חדשים ומגוהצין א ר",
+   "pred": "לבנים חדשים מני והצין: אסר",
+   "cer": 0.25,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053589630205171_FL202302227_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053581230205171_FL202399593_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051731340205171_FL202475532_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051932350205171_FL202065179_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053572930205171_FL202295250_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"ויבעול כדי להנות\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "ויבעול כדי להנות אלא ישים על לבו שיאכל וישתה",
+   "pred": "ויבעול כדי להנות אלא ישים על לבו שיגפל ושתה",
+   "cer": 0.06818181818181818,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051998690205171_FL202114637_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990001507570205171_FL202577388_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the last line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "בר לקישא אכתפך רמי בר לקישא למיא א' [...]",
+   "pred": "צריך שיא [...] כתחזק חמי ר' לקישא למיא",
+   "cer": 0.6585365853658537,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053588610205171_FL202301788_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053372130205171_FL202598907_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "ומרגליות והדר ליה מיני דכוורי דמיקרי כרשי נחית בר אמוראי לאתויי אתי קא",
+   "pred": "ומגליות וחדר ליה פיס רב חסדא דמיקרי ברש נתינה בר אמוראי לא תני אתיה קא",
+   "cer": 0.3,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053575550205171_FL202296535_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"ולד ואין אמו\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "ולד ואין אמו טמאה לידה ט ואי זו היא צורת",
+   "pred": "ולד ואין אמו טמאה לידה פ' ואי זו היא צורת",
+   "cer": 0.05,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051173000205171_FL203727639_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "2",
+   "pred": "2",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990039294170205171_FL201489535_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"אין אוסרין עליו\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "אין אוסרין עליו ול..ה החמירו [...]",
+   "pred": "אין אוסרין עליו ילכה האמירו",
+   "cer": 0.29411764705882354,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051164650205171_FL201512642_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "ויבן אמ' רב חסדא ואמרי לה במתניתא מלמד",
+   "pred": "ויבן אמ' רב חסדא ואמרי לה במתניתא מל",
+   "cer": 0.05263157894736842,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053603220205171_FL202315244_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"והוא ששלקן לשתות\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "[...] והוא ששלקן לשתות מימיהן שמימי שלקות",
+   "pred": "א ששלקן לשתות מימיהן שמימי שלקנ [...]",
+   "cer": 0.3902439024390244,
+   "exact": false,
+   "has_phrase": false
+  },
+  {
+   "stem": "ktiv_990053584430205171_FL202300767_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053570430205171_FL202910467_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"שמעון בן מנסיא\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "ר' שמעון בן מנסיא א [...] אילו שבע מדות",
+   "pred": "ר' שמעון בן מנסיא אמ' אילו שביעית",
+   "cer": 0.28205128205128205,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990052000340205171_FL202137578_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the last line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "בו כדי של [...]",
+   "pred": "לכל",
+   "cer": 0.8666666666666667,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053593610205171_FL202305279_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"קום מן הבטן\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "החופה [...] קום מן הבטן שאם יקרע",
+   "pred": "התולא ה ום מן הבטן שאני יקרע",
+   "cer": 0.34375,
+   "exact": false,
+   "has_phrase": false
+  },
+  {
+   "stem": "ktiv_990051103660205171_FL201679554_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "2",
+   "pred": "2",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053644020205171_FL201873533_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051164250205171_FL201511269_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "2",
+   "pred": "2",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053598500205171_FL202309346_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"או שהיתה אם\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "או שהיתה אם על גבי אם או שהיה",
+   "pred": "או שהיתה אם על גבי אם או שהיה",
+   "cer": 0.0,
+   "exact": true,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053571220205171_FL202823149_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051930880205171_FL202062122_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "אמ' ר' יוחנן בור דם אסור לבקרו ואסור להזכיר שמו",
+   "pred": "אמ' ר' יוחנן בורדם אסור לבקרו ואסור להזכיר שמו",
+   "cer": 0.02127659574468085,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053575290205171_FL202295962_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"ודבר זה תיקון\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "בין ממטלילי ט ודבר זה תיקון גדול הוא ואנשים ממטל [...]",
+   "pred": "בין ממטלטל ודבר זה תיקון גדול הוא ואנשים מחו",
+   "cer": 0.24074074074074073,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053588610205171_FL202301787_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"לחים הרי מקומן\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "לחים הרי מקומן נחשב כאילו הוא אויר וכאילו אינם",
+   "pred": "לחים הרי מקומן נחשב כאילו הוא אויר וכאילו אינם",
+   "cer": 0.0,
+   "exact": true,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051999090205171_FL202982160_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "2",
+   "pred": "2",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053370160205171_FL202591013_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990052001920205171_FL202148784_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"אחות אב. י'ב'\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "אחות אב. י'ב' שלא לבעול אחות אם. י'ג' שלא",
+   "pred": "אחות אב. י'ב' שלא לבעול אחות אם. י'ג' שלא",
+   "cer": 0.0,
+   "exact": true,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051930880205171_FL202062121_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"מיהא דתניא\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "מיהא דתניא ר' יוסי בן [...] דס אמ' משום ר' אליעזר א [...] ן מבקרין",
+   "pred": "מיהא דתניא ר' יוסי בן פיסדס אמ' משום ר' אליעזר אין",
+   "cer": 0.2878787878787879,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051091910205171_FL203736346_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053575490205171_FL202296403_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051930800205171_FL202450964_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "גנז ספר רפואות והודו לו כיתת נחש נחשת והודו לו גירר",
+   "pred": "אינו שפ..ת פירות והורו לו ברכת נחש נחשת והודו לו אד",
+   "cer": 0.35294117647058826,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053603580205171_FL202315735_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051998840205171_FL202119206_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"רים עד שיחטאו\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "[...] רים עד שיחטאו כמעשה",
+   "pred": "רים עד שיחטאו כמענשה",
+   "cer": 0.28,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051176800205171_FL202473247_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "ן חמרא לחב [...] ה [...] פ [...] חד ז [...]",
+   "pred": "הכלי",
+   "cer": 0.9767441860465116,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990051930800205171_FL202450963_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051998840205171_FL202119207_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "2",
+   "pred": "2",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051932600205171_FL203740348_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990001507570205171_FL202577387_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"לאו משום מיטרא\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "לאו משום מיטרא הוא דקא עילינן אלא משום דשמעתא",
+   "pred": "לאו משום מיטרא הוא וקא עילינן אמ' משום דשמא",
+   "cer": 0.1111111111111111,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051085760205171_FL202430713_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"נשבע אם היו\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "נשבע אם היו שם עדים שהוא משכון שאין",
+   "pred": "נשבע הסת ונפטר: ך אבל אם היו שם עדים",
+   "cer": 0.7428571428571429,
+   "exact": false,
+   "has_phrase": false
+  },
+  {
+   "stem": "ktiv_990052000340205171_FL202137577_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"והדרת פני זקן\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "והדרת פני זקן זה שקנה חכמה [...] מ",
+   "pred": "והדרת פני זקן זה שמה חכמים מ [...]",
+   "cer": 0.23529411764705882,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053573330205171_FL202295589_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"ולא יחזיר לעולם\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "ולא יחזיר לעולם שמא תתרפא ונמצא שלא גמר לגרשה",
+   "pred": "ולא יחזיר לעולם שמא תתרפא ונמצא שלא גמר לגג השח",
+   "cer": 0.08888888888888889,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051931580205171_FL202451061_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "תריץ הכי היא חולצת צרתה או חולצת או",
+   "pred": "תריץ הכי היא חולצת צדתה או חולצת או",
+   "cer": 0.02857142857142857,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990051929990205171_FL203740007_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "פשיטא מהו דתימא לא יחללזרעו בעמיו",
+   "pred": "פשיטא מהו דתימא לא יחלל זרעו בעמרו",
+   "cer": 0.06060606060606061,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990025083220205171_FL202082310_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the last line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "ב [...]",
+   "pred": "ל [...] ל [...] ות [...] ך כ [...] יי .",
+   "cer": 4.714285714285714,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053607510205171_FL202318803_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"רי באבי חד\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "רי באבי חד דמפיק וחד דמעייל אדעתא",
+   "pred": "חד באבי חד אדעתא דארעאי ההיא איתתא דא",
+   "cer": 0.6666666666666666,
+   "exact": false,
+   "has_phrase": false
+  },
+  {
+   "stem": "ktiv_990053606120205171_FL202318148_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the last line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "יש בכללן שמונה מצוות שלש",
+   "pred": "יש בכללן",
+   "cer": 0.6666666666666666,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053655360205171_FL201899952_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the last line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "לו תרום מן הצפון ותרם מן הדרום הואיל ובטל",
+   "pred": "לו תרום מן הצפון ותרם מן הדרום הואיל ובטל",
+   "cer": 0.0,
+   "exact": true
+  },
+  {
+   "stem": "ktiv_990025083220205171_FL202082309_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"וכו' מה המת\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "וכו' מה המת בכ.ת ף אלו בכ.ת:",
+   "pred": "וכו' מה המת כ [...] ה ן א' כנ [...]",
+   "cer": 0.6071428571428571,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051999090205171_FL202982154_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "2",
+   "pred": "2",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053962170205171_FL201920877_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the last line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "לא [...]",
+   "pred": "ואין לו מי שיכפהו ולא מי שגוזר עליו ולא מי שמושכו",
+   "cer": 5.75,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990051164250205171_FL201511270_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the last line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "אמ' רבה בר יצחק אמ' רב לא ניתנה פריעת מילה",
+   "pred": "אימא כל עול לאו יאכל בו בו אינו אוכל אבל",
+   "cer": 0.7142857142857143,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053122460205171_FL202994853_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053570430205171_FL202910468_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"רהם קנין אחד\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "הארץ קני ברהם קנין אחד מנין שנ ויברכהו",
+   "pred": "האינא קניי ברהם קנין אחד מנין שנ' ויברכהו",
+   "cer": 0.13157894736842105,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053372130205171_FL202598908_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "לדוכתא פלנית אמרי' ליה כמה מרחקי' ממיא א' לן הבו לי עפרא הבנא ליה עפרא",
+   "pred": "לדוכתא פלוגית אמרי ליה במה פרחקי מביא א' לו זביו לי נפרא הבנא ליה נפרא",
+   "cer": 0.17142857142857143,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990051931580205171_FL202451062_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053644430205171_FL201879493_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "ידי שליש או שאמר תנו לבני שקל בכל שבת ולאו",
+   "pred": "ידי שליש או שאמר תנו לפני שקל בכל שבת ולאו",
+   "cer": 0.023809523809523808,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990051945230205171_FL202079868_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051206550205171_FL201717425_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"עובר במים עד\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "עובר במים עד [...] נו חוששועושה מצוה שהלך לעשותה",
+   "pred": "שופר במים עד שיעורו ותנו חושש ועושה מצוה שהלך לעשות",
+   "cer": 0.25,
+   "exact": false,
+   "has_phrase": false
+  },
+  {
+   "stem": "ktiv_990052000360205171_FL202137790_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "2",
+   "pred": "2",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990052001920205171_FL202148783_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "2",
+   "pred": "2",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053644720205171_FL201880675_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051164650205171_FL201512641_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"על הגמלים ותלכנה\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "על הגמלים ותלכנה אחרי האיש ת",
+   "pred": "ת על הגמלים ותלכנה אחרי האיש ע",
+   "cer": 0.10714285714285714,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053575290205171_FL202295963_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"שימכור אחר הנישואין\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "שימכור אחר הנישואין מנכסיו א'ע'פ' ש'מ'",
+   "pred": "שימכור אחר הנישואין מנכסיו א'ע'פ' ש'מ'",
+   "cer": 0.0,
+   "exact": true,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053575360205171_FL202296117_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053604060205171_FL202316859_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"הפסח בבמת יחיד\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "הפסח בבמת יחיד אלא בבמת [...]",
+   "pred": "הפסח בבמת יחיד אין בבית",
+   "cer": 0.3103448275862069,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051087570205171_FL202435947_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"במה דברים אמורים\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "במה דברים אמורים בשילדה בפניו אבל",
+   "pred": "במה דברים אמורים בשילה בנכרי",
+   "cer": 0.24242424242424243,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053606120205171_FL202318149_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "בשם יי אל עולם",
+   "pred": "בשם יי אל עולם",
+   "cer": 0.0,
+   "exact": true
+  },
+  {
+   "stem": "ktiv_990053603580205171_FL202315736_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051731340205171_FL202475531_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the last line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "[...] מיכל אכיל מיניה רב אשי אמ' קמח קלי תנן",
+   "pred": "מיכל אכיל מיניה רב אשי אמ' קמח קלי תנן",
+   "cer": 0.13636363636363635,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990051086270205171_FL202434390_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "2",
+   "pred": "2",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051999050205171_FL202122904_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051999090205171_FL202982144_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"יהוד מטלט לין\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "יהוד [...] מטלטלין ביד שמעון בשבאו עדים",
+   "pred": "היה שמעון דיקא דאמ'",
+   "cer": 0.717948717948718,
+   "exact": false,
+   "has_phrase": false
+  },
+  {
+   "stem": "ktiv_990051732530205171_FL203739923_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053954010205171_FL201488048_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053590600205171_FL202302718_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "ואין מדמין מריאה שלבהמה דקה לריאה של",
+   "pred": "ואין מדמין מריאה שלבהמה דקה לריאה של",
+   "cer": 0.0,
+   "exact": true
+  },
+  {
+   "stem": "ktiv_990051998690205171_FL202114636_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "לאכול ממנו שנא' ולא יחללו את קדשי בני [...] שר [...]",
+   "pred": "לא יטל ממנו שיצא ולא יחללו מצרה שיבנה שת",
+   "cer": 0.5,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990051999090205171_FL202982166_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "אדם נ ן ..העיד בגדלו על מה שראה בקטנותו נאמן אדם",
+   "pred": "אלא בפלי שלמה הוראה שלא יגוזו אלא מארבע",
+   "cer": 0.7083333333333334,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053607510205171_FL202318802_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "קנה [...] קנות א [...] הפנימי לא קנה",
+   "pred": "ופנימי לא קנה פ",
+   "cer": 0.6944444444444444,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990051167830205171_FL203721225_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "הונא חבל המיצרי מה הוא שיעכיב בסוטה משום דשלא ישמטו [...]",
+   "pred": "היא חבל המצרף והוא שמעכב משיטה משטה ופה ופה",
+   "cer": 0.49122807017543857,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990051167370205171_FL203111369_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"שום דאיתתא שכיחא\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "שום דאיתתא שכיחא בביתא ומקרבא הנייתה [...] חנין הנחבא בר ברתיה דח [...]",
+   "pred": "שום דאיתתא שכיחא בפיהא כבשא מאי שמע ליה",
+   "cer": 0.6056338028169014,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053643990205171_FL201872713_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"לכתחלה לא יתפלל\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "לכתחלה לא יתפלל עד שיבדוק עצמו יפה יפה",
+   "pred": "לבתחלה לא יתפלל עד שיבדוק עצמו יפה יפה",
+   "cer": 0.02631578947368421,
+   "exact": false,
+   "has_phrase": false
+  },
+  {
+   "stem": "ktiv_990053608580205171_FL202318897_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051085760205171_FL202430712_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"כיצד היה השער\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "ב כיצד היה השער קבוע וידוע לשניהן",
+   "pred": "ב כיצד היה השער קבוע וידוע לשניהן",
+   "cer": 0.0,
+   "exact": true,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053598500205171_FL202309345_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051732530205171_FL203739924_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053513160205171_FL202427613_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"זב שאין צרעתו\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "זב שאין צרעתו תלויה בגופו מוסגר למצורע מוחלט",
+   "pred": "זב שאין צרעתו תלויה בגופו דאינו טעון שילוה",
+   "cer": 0.3409090909090909,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051167830205171_FL203721226_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"אלהים את המכתש\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "אלהים את המכתש אשר בלחי וי מים וישת אמ' יצחק דבי רבי בר",
+   "pred": "אלהים את המכתש ותתלך בלאויה",
+   "cer": 0.6363636363636364,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051929990205171_FL203740006_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "֒",
+   "pred": "אף רבין בן בה ואלא למעוטי מאי אמ' רב פפא",
+   "cer": 40.0,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053581990205171_FL202399997_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990051999050205171_FL202122905_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990052000590205171_FL202139344_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the last line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "של צלף הן הפרי שה",
+   "pred": "של אלף הן הפרישו",
+   "cer": 0.17647058823529413,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990001507570205171_FL202577385_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"שנ' ונתתם בכלי\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "שנ' ונתתם בכלי חרש וג' א' רב פפי משמא דרבא",
+   "pred": "שנ' ונתתם בכלי חרש וג' א' רב פפי משמא דרבא",
+   "cer": 0.0,
+   "exact": true,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053655360205171_FL201899953_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053305500205171_FL202318193_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "וכת' ובחדש החמישי בשבעה לחדש וג'",
+   "pred": "וכת' זבח ראש החמישי בשבעה לחדש ה'",
+   "cer": 0.1875,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053573330205171_FL202295590_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053575490205171_FL202296402_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"ורגלה הרי זה\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "ורגלה הרי זה טמא שהרי ודאי ניש [...]",
+   "pred": "הרגלה או תחת שתי רגליה או תחת יד",
+   "cer": 0.6944444444444444,
+   "exact": false,
+   "has_phrase": false
+  },
+  {
+   "stem": "ktiv_990053603220205171_FL202315245_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "הפלפלין והזנגביל בזמן שהן [...] מבר",
+   "pred": "הפל אלין והזנגביל בזמן שהן מכרך",
+   "cer": 0.2857142857142857,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990051932350205171_FL202065181_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"שאמרה תורה לא\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "שאמרה תורה לא תשנא את אחיך בלבבך ליקרא",
+   "pred": "שאמרה תורה לא תשנא את אחיך בלבבך",
+   "cer": 0.15789473684210525,
+   "exact": false,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990053962170205171_FL201920876_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  },
+  {
+   "stem": "ktiv_990053513160205171_FL202427612_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"הני מילי תאני\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "הני מילי תאני רב שמואל בר יצחק קמיה דרב",
+   "pred": "הני מילי תאני רב שמואל בר יצחק קמיה דרב",
+   "cer": 0.0,
+   "exact": true,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990051086180205171_FL202433657_qa",
+   "qtype": "find_line",
+   "question": "Which line of this manuscript page contains the phrase \"שנפסק העור החופה\"? Return that full line's transcription alone, exactly as written.",
+   "gt": "שנפסק העור החופה את המוח טריפה",
+   "pred": "שנפסק העור החופה את המוח טריפה",
+   "cer": 0.0,
+   "exact": true,
+   "has_phrase": true
+  },
+  {
+   "stem": "ktiv_990001507570205171_FL202577386_qa",
+   "qtype": "edge_line",
+   "question": "Transcribe ONLY the first line of this manuscript page, exactly as written. Return the text alone.",
+   "gt": "הוא דלא י ורה בתורה שפיר דמי מתניתין",
+   "pred": "הוא ולא אמ' ר' עזרה בתורה שפיר דמי מתניתין",
+   "cer": 0.25,
+   "exact": false
+  },
+  {
+   "stem": "ktiv_990053593090205171_FL202303715_qa",
+   "qtype": "columns",
+   "question": "How many columns of text does this manuscript page have? Answer with the number only.",
+   "gt": "1",
+   "pred": "1",
+   "correct": true
+  }
+ ]
+}
