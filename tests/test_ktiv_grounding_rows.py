@@ -137,3 +137,142 @@ def test_exclude_benchmark_manuscripts(tmp_path):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+# --- v2.1 direct-grounding families -------------------------------------------
+
+def _multicol_items():
+    """Two-column page: right column (high x) and left column (low x), 4 lines each."""
+    items = []
+    rw = [["אבגדה", "וזחטי", "כלמנ"], ["סעפצק", "רשתא", "בגדה"],
+          ["וזחטיכ", "למנסע", "פצקר"], ["שתאבג", "דהוזח", "טיכלמ"]]
+    lw = [["נסעפצ", "קרשת", "אבגד"], ["הוזחט", "יכלמנ", "סעפצ"],
+          ["קרשתא", "בגדהו", "זחטיכ"], ["למנסע", "פצקרש", "תאבגד"]]
+    for col_words, x_base in ((rw, 1600.0), (lw, 700.0)):
+        for li, ws in enumerate(col_words):
+            x1 = x_base
+            for w in reversed(ws):
+                items.append(_item(w, x1 - 180, li * 100, x1, li * 100 + 60))
+                x1 -= 200
+    return items
+
+
+def test_word_candidates_unique_and_longest_first():
+    items = _page_items()
+    page = reconstruct_page(items)
+    words = bkd.word_candidates(items, page["text"])
+    assert words, "expected unique words on a page of distinct words"
+    page_letters = "".join(bkd._HEB_RE.findall(page["text"]))
+    prev = 1e9
+    for word, box in words:
+        letters = "".join(bkd._HEB_RE.findall(word))
+        assert len(letters) >= bkd.LOCATE_WORD_MIN_LETTERS
+        assert page_letters.count(letters) == 1
+        assert len(letters) <= prev  # longest first
+        prev = len(letters)
+        assert box[0] < box[2] and box[1] < box[3]
+
+
+def test_locate_word_and_read_box_word_rows():
+    items = _page_items()
+    page = reconstruct_page(items)
+    rows = bkd.grounding_rows(page, items, Path("x.jpg"), "ktiv_9_FL1",
+                              2000, 500, 1000, 250, random.Random(3))
+    lw = [r for r in rows if r["task"] == "locate_word"]
+    rbw = [r for r in rows if r["task"] == "read_box_word"]
+    assert 1 <= len(lw) <= bkd.LOCATE_WORD_ROWS_PER_PAGE
+    for r in lw:
+        box = json.loads(r["answer"])["bbox_2d"]
+        assert len(box) == 4 and all(0 <= v <= 1000 for v in box)
+        assert '"' in r["question"] and "0-1000" in r["question"]
+    for r in rbw:
+        assert "bbox_2d = [" in r["question"]
+        assert len(bkd._HEB_RE.findall(r["answer"])) >= bkd.LOCATE_WORD_MIN_LETTERS
+
+
+def test_line_index_rows_reference_columns_and_carry_box_and_text():
+    items = _multicol_items()
+    page = reconstruct_page(items)
+    assert len(page["columns"]) == 2, "fixture must reconstruct two columns"
+    rows = bkd.line_index_rows(page, 2000, 500, Path("x.jpg"), "ktiv_9_FL1",
+                               1000, 250, random.Random(1))
+    assert rows, "expected index-addressed line rows on a two-column page"
+    all_lines = page["lines"]
+    for r in rows:
+        assert r["task"] == "line_index"
+        assert ("right column" in r["question"]) or ("left column" in r["question"])
+        assert "counting from the" in r["question"]
+        obj = json.loads(r["answer"])
+        assert len(obj["bbox_2d"]) == 4 and all(0 <= v <= 1000 for v in obj["bbox_2d"])
+        assert any(obj["text"] == ln["text"] for ln in all_lines)
+
+
+def test_line_of_phrase_row_returns_box_and_host_text():
+    items = _page_items()
+    page = reconstruct_page(items)
+    cands = bkd.locate_candidates(items, page["text"])
+    row = bkd.line_of_phrase_row(page, cands, 2000, 500, Path("x.jpg"),
+                                 "ktiv_9_FL1", 1000, 250, random.Random(0))
+    if row is not None:  # depends on a phrase mapping cleanly to a host line
+        obj = json.loads(row["answer"])
+        assert len(obj["bbox_2d"]) == 4 and all(0 <= v <= 1000 for v in obj["bbox_2d"])
+        phrase = row["question"].split('"')[1]
+        letters = "".join(bkd._HEB_RE.findall(phrase))
+        assert letters in "".join(bkd._HEB_RE.findall(obj["text"]))
+
+
+def test_grounded_detect_is_bbox_first():
+    items = _page_items()
+    page = reconstruct_page(items)
+    rows = bkd.grounding_rows(page, items, Path("x.jpg"), "ktiv_9_FL1",
+                              2000, 500, 1000, 250, random.Random(5))
+    gd = [r for r in rows if r["task"] == "grounded_detect"]
+    assert len(gd) == 1
+    payload = json.loads(gd[0]["answer"])
+    assert payload and list(payload[0].keys()) == ["bbox_2d", "text"], "bbox must precede text"
+    for el in payload:
+        assert all(0 <= v <= 1000 for v in el["bbox_2d"])
+    assert "FIRST" in gd[0]["question"]
+
+
+def test_grounded_crop_renormalizes_boxes_to_the_band():
+    from PIL import Image as _Im
+    items = _multicol_items()
+    page = reconstruct_page(items)
+    im = _Im.new("RGB", (2000, 500), "white")
+    rng = random.Random(2)
+    # crop min line count must be satisfiable by the fixture (4 lines/col)
+    old = bkd.GROUNDED_CROP_LINES
+    bkd.GROUNDED_CROP_LINES = (2, 3)
+    try:
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            rows = bkd.grounded_crop_rows(page, im, Path(td), "FL1", "ktiv_9_FL1", rng)
+            for r in rows:
+                assert r["task"] == "grounded_crop"
+                payload = json.loads(r["answer"])
+                assert payload and list(payload[0].keys()) == ["bbox_2d", "text"]
+                # a re-normalized band should use more of the vertical range than
+                # the same lines would on the full page (band is tighter)
+                assert max(el["bbox_2d"][3] for el in payload) > 500
+                assert all(0 <= v <= 1000 for el in payload for v in el["bbox_2d"])
+                assert Path(r["image"]).exists()
+    finally:
+        bkd.GROUNDED_CROP_LINES = old
+
+
+def test_served_page_emits_no_v21_rows():
+    """Served-breakline (geometry-free) pages must emit no grounding rows at all."""
+    # a degenerate single-y page with breaklines -> served mode
+    items = []
+    for i, w in enumerate(["אבגד", "הוזח", "טיכל", "מנסע"]):
+        items.append(_item(w, 100 + i * 200, 50, 260 + i * 200, 90))
+    items.append({"id": "bl", "type": "Annotation",
+                  "body": {"type": "TextualBody", "value": ""},
+                  "target": {"selector": {"type": "SvgSelector", "value": "<svg/>"},
+                             "renderedVia": {"id": "BreakLine"}}})
+    page = reconstruct_page(items)
+    if page["mode"] != "geometry":
+        rows = bkd.grounding_rows(page, items, Path("x.jpg"), "ktiv_9_FL1",
+                                  2000, 200, 1000, 100, random.Random(0))
+        assert rows == []

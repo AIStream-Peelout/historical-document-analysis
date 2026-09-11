@@ -101,6 +101,20 @@ GROUNDED_PAGE_MAX_LINES = 20
 LOCATE_PHRASE_WORDS = (2, 3)
 LOCATE_MIN_PHRASE_LETTERS = 8
 READBOX_MIN_LETTERS = 15
+# v2.1 direct-grounding row families (design: docs/v21_grounding_boxes_design.md).
+# Emitted only for geometry-mode pages, same original-scan 0-1000 frame.
+LOCATE_WORD_ROWS_PER_PAGE = 3        # unique word -> box (the un-guessable target)
+READBOX_WORD_ROWS_PER_PAGE = 1       # word box -> word text
+LINE_INDEX_ROWS_PER_PAGE = 2         # "line N of the {right|left} column" -> box + text
+LINE_OF_PHRASE_ROWS_PER_PAGE = 1     # phrase -> host line box + text
+LOCATE_WORD_MIN_LETTERS = 4          # shorter words are too ambiguous to box
+LINE_INDEX_MIN_LETTERS = 8           # target line needs clean text for its answer
+GROUNDED_DETECT_MAX_LINES = 30       # detect-then-read emitted up to this many lines
+# Random per-column band crop: a mid-column run of lines becomes its own image
+# with boxes re-normalized to the crop, so a given line's y-position and the
+# page margin vary between examples -> the box can no longer be a page template.
+GROUNDED_CROP_ROWS_PER_PAGE = 1
+GROUNDED_CROP_LINES = (4, 10)        # inclusive range of lines per crop band
 
 FEATURES = Features({
     "image": Image(),
@@ -145,6 +159,38 @@ _QA_FIRST_LINE_PROMPT = ('Transcribe ONLY the {which} line of this manuscript '
 _QA_FIND_LINE_PROMPT = ('Which line of this manuscript page contains the phrase '
                         '"{phrase}"? Return that full line\'s transcription '
                         'alone, exactly as written.')
+
+# v2.1 direct-grounding prompts (design: docs/v21_grounding_boxes_design.md).
+# These target the "template box" failure: v2.0 emitted one x-range repeated
+# down the page. Word-level locate, index-addressed lines and detect-then-read
+# make the box depend on the ink, not on the line's ordinal position.
+_LOCATE_WORD_PROMPT = ('Locate the exact Hebrew word "{word}" on this manuscript '
+                       'page. Respond with ONLY a JSON object '
+                       '{{"bbox_2d": [x1, y1, x2, y2]}} giving that word\'s '
+                       'bounding box, coordinates normalized to 0-1000. No other text.')
+_READBOX_WORD_PROMPT = ('What single Hebrew word is written inside the region '
+                        'bbox_2d = [{x0}, {y0}, {x1}, {y1}] (coordinates '
+                        'normalized 0-1000) on this manuscript page? Return the '
+                        'word alone, no commentary.')
+_LINE_INDEX_PROMPT = ('Find line number {n}{col} of this manuscript page '
+                      '(counting from the {frm}). Respond with ONLY a JSON object '
+                      '{{"bbox_2d": [x1, y1, x2, y2], "text": "..."}} giving that '
+                      'line\'s bounding box (coordinates normalized 0-1000) and '
+                      'its transcription. No other text.')
+_LINE_OF_PHRASE_BOX_PROMPT = ('Which line of this manuscript page contains the '
+                              'phrase "{phrase}"? Respond with ONLY a JSON object '
+                              '{{"bbox_2d": [x1, y1, x2, y2], "text": "..."}} giving '
+                              'that line\'s bounding box (coordinates normalized '
+                              '0-1000) and its full transcription. No other text.')
+# Detect-then-read: bbox emitted BEFORE text, so localization precedes
+# transcription. Distinct wording from _GROUNDED_PROMPT (which stays text-first
+# for eval comparability across versions) so the two formats do not bleed.
+_GROUNDED_DETECT_PROMPT = ('Find and transcribe every text line on this '
+                           'manuscript page. Respond with ONLY a JSON array; each '
+                           'element {"bbox_2d": [x1, y1, x2, y2], "text": "..."} '
+                           'gives one line\'s bounding box (coordinates normalized '
+                           '0-1000) FIRST, then its transcription. Preserve reading '
+                           'order.')
 
 _HEB_RE = re.compile(r"[א-ת]")
 
@@ -434,8 +480,16 @@ def norm_box(box: Tuple[float, float, float, float], width: int,
     :rtype: List[int]
     """
     x0, y0, x1, y1 = box
-    return [round(1000 * x0 / width), round(1000 * y0 / height),
-            round(1000 * x1 / width), round(1000 * y1 / height)]
+    # Clamp: KTIV boxes may poke past the frame within the page gate's 2%
+    # slack; the model's coordinate space (and the site's loader) is 0-1000.
+    def c(v: float, span: int) -> int:
+        return max(0, min(1000, round(1000 * v / span)))
+    return [c(x0, width), c(y0, height), c(x1, width), c(y1, height)]
+
+
+def _positive(box: List[int]) -> bool:
+    """True for a box with positive width and height after normalization."""
+    return box[2] > box[0] and box[3] > box[1]
 
 
 def locate_candidates(items: List[dict], page_text: str) -> List[Tuple[str, Tuple]]:
@@ -483,16 +537,245 @@ def locate_candidates(items: List[dict], page_text: str) -> List[Tuple[str, Tupl
     return out
 
 
+def word_candidates(items: List[dict], page_text: str) -> List[Tuple[str, Tuple]]:
+    """Single words that are letter-unique on the page (word-level locate targets).
+
+    Uniqueness is judged on Hebrew letters only, so annotation word-splitting
+    cannot break the match; longer words are preferred (more likely to be a
+    whole word rather than a fragment).
+
+    :param items: AnnotationPage items of the page.
+    :type items: List[dict]
+    :param page_text: The page's reconstructed GT text.
+    :type page_text: str
+    :return: ``(word, pixel_box)`` pairs, longest first.
+    :rtype: List[Tuple[str, Tuple]]
+    """
+    page_letters = "".join(_HEB_RE.findall(page_text))
+    page_tokens = {"".join(_HEB_RE.findall(tok)) for tok in page_text.split()}
+    out, seen = [], set()
+    for w in extract_words(items):
+        if w["gap"] or "[" in w["text"] or "]" in w["text"]:
+            continue
+        letters = "".join(_HEB_RE.findall(w["text"]))
+        if len(letters) < LOCATE_WORD_MIN_LETTERS or letters in seen:
+            continue
+        # unique on the page AND a whole token of the reconstructed text (a
+        # fragment that merge_line_words glued into a longer word is skipped)
+        if page_letters.count(letters) != 1 or letters not in page_tokens:
+            continue
+        seen.add(letters)
+        out.append((w["text"], tuple(w["box"])))
+    out.sort(key=lambda t: -len("".join(_HEB_RE.findall(t[0]))))
+    return out
+
+
+def _eligible_columns(page: Dict) -> List[Tuple[str, List[Dict]]]:
+    """Columns eligible for index-addressed line rows, with a reading-order label.
+
+    ``page["columns"]`` is rightmost-first. Ordinal line references are only
+    unambiguous on one- or two-column pages, so three+ columns are skipped.
+
+    :param page: Reconstructed page.
+    :type page: Dict
+    :return: ``(column_clause, lines)`` per eligible column.
+    :rtype: List[Tuple[str, List[Dict]]]
+    """
+    cols = [c for c in page["columns"] if c["lines"]]
+    if len(cols) == 1:
+        return [("", cols[0]["lines"])]
+    if len(cols) == 2:
+        return [(" of the right column", cols[0]["lines"]),
+                (" of the left column", cols[1]["lines"])]
+    return []
+
+
+def line_index_rows(page: Dict, orig_w: int, orig_h: int, page_path: Path,
+                    stem: str, page_w: int, page_h: int,
+                    rng: random.Random) -> List[Dict]:
+    """Index-addressed line rows: "line N of the {right|left} column" -> box + text.
+
+    Forces the model to count lines from the page rather than emit a template
+    box at the average pitch. The ordinal counts every reconstructed line of
+    the column (from the top or the bottom, chosen at random); the answer's
+    text target is required clean so both halves of the answer are reliable.
+
+    :param page: Reconstructed page.
+    :param orig_w: Original scan width (box frame).
+    :param orig_h: Original scan height.
+    :param page_path: Saved page JPEG path.
+    :param stem: Row stem prefix.
+    :param page_w: Saved image width.
+    :param page_h: Saved image height.
+    :param rng: Seeded RNG.
+    :return: Up to :data:`LINE_INDEX_ROWS_PER_PAGE` rows.
+    :rtype: List[Dict]
+    """
+    pool = []
+    for clause, lines in _eligible_columns(page):
+        for k, ln in enumerate(lines):
+            if hebrew_letters(ln["text"]) < LINE_INDEX_MIN_LETTERS \
+                    or GAP_TOKEN in ln["text"]:
+                continue
+            frm = rng.choice(("top", "bottom"))
+            n = k + 1 if frm == "top" else len(lines) - k
+            pool.append((clause, frm, n, ln))
+    rng.shuffle(pool)
+    rows = []
+    pool = [x for x in pool if _positive(norm_box(x[3]["box"], orig_w, orig_h))]
+    for j, (clause, frm, n, ln) in enumerate(pool[:LINE_INDEX_ROWS_PER_PAGE]):
+        b = norm_box(ln["box"], orig_w, orig_h)
+        answer = json.dumps({"bbox_2d": b, "text": ln["text"]}, ensure_ascii=False)
+        rows.append(_row(page_path,
+                         _LINE_INDEX_PROMPT.format(n=n, col=clause, frm=frm),
+                         answer, "line_index", "line", f"{stem}_li{j}",
+                         page_w, page_h))
+    return rows
+
+
+def line_of_phrase_row(page: Dict, cands: List[Tuple[str, Tuple]], orig_w: int,
+                       orig_h: int, page_path: Path, stem: str, page_w: int,
+                       page_h: int, rng: random.Random) -> Optional[Dict]:
+    """Phrase -> host-line box + text (grounded upgrade of the find-line QA).
+
+    :param page: Reconstructed page.
+    :param cands: Unique phrases from :func:`locate_candidates`.
+    :param orig_w: Original scan width.
+    :param orig_h: Original scan height.
+    :param page_path: Saved page JPEG path.
+    :param stem: Row stem prefix.
+    :param page_w: Saved image width.
+    :param page_h: Saved image height.
+    :param rng: Seeded RNG.
+    :return: One row, or None when no phrase maps cleanly to a host line.
+    :rtype: Optional[Dict]
+    """
+    if not cands:
+        return None
+    phrase, box = rng.choice(cands)
+    cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+    host = min(page["lines"],
+               key=lambda ln: abs((ln["box"][1] + ln["box"][3]) / 2 - cy)
+               if ln["box"][0] <= cx <= ln["box"][2] else 1e12)
+    letters = "".join(_HEB_RE.findall(phrase))
+    if letters not in "".join(_HEB_RE.findall(host["text"])):
+        return None
+    b = norm_box(host["box"], orig_w, orig_h)
+    if not _positive(b) or not host["text"].strip():
+        return None
+    answer = json.dumps({"bbox_2d": b, "text": host["text"]}, ensure_ascii=False)
+    return _row(page_path, _LINE_OF_PHRASE_BOX_PROMPT.format(phrase=phrase),
+                answer, "line_of_phrase", "line", f"{stem}_lop", page_w, page_h)
+
+
+def _line_band_box(im: PILImage.Image, col_lines: List[Dict], start: int, k: int,
+                   line_h: float, pad_x: float = 0.3) -> Tuple[int, int, int, int]:
+    """Pixel bounds of a clean crop around lines ``start .. start+k-1`` of a column.
+
+    Same inter-line-midpoint boundaries as :func:`crop_lines`, returned as
+    coordinates so the caller can re-normalize the kept lines' boxes.
+
+    :param im: Native page image.
+    :param col_lines: All lines of the column, top to bottom.
+    :param start: First target line index.
+    :param k: Number of target lines.
+    :param line_h: Median word-box height.
+    :param pad_x: Horizontal padding in line heights.
+    :return: ``(left, top, right, bottom)`` clamped to the image.
+    :rtype: Tuple[int, int, int, int]
+    """
+    seg = col_lines[start:start + k]
+    centres = [_centre(l) for l in col_lines]
+    pitches = sorted(b - a for a, b in zip(centres, centres[1:]) if b > a)
+    half_pitch = (pitches[len(pitches) // 2] / 2) if pitches else 0.45 * line_h
+    top_c, bot_c = centres[start], centres[start + k - 1]
+    margin = 0.15 * 2 * half_pitch
+    y0 = ((centres[start - 1] + top_c) / 2 if start > 0 else top_c - half_pitch) - margin
+    y1 = ((bot_c + centres[start + k]) / 2 if start + k < len(col_lines)
+          else bot_c + half_pitch) + margin
+    x0 = min(l["box"][0] for l in seg) - pad_x * line_h
+    x1 = max(l["box"][2] for l in seg) + pad_x * line_h
+    return (int(max(x0, 0)), int(max(y0, 0)),
+            int(min(x1, im.width)), int(min(y1, im.height)))
+
+
+def _norm_box_crop(box: Tuple[float, float, float, float], left: int, top: int,
+                   width: int, height: int) -> List[int]:
+    """Normalize a scan-frame box to 0-1000 within a crop window (clamped)."""
+    def c(v: float, span: int) -> int:
+        return max(0, min(1000, round(1000 * v / span))) if span > 0 else 0
+    x0, y0, x1, y1 = box
+    return [c(x0 - left, width), c(y0 - top, height),
+            c(x1 - left, width), c(y1 - top, height)]
+
+
+def grounded_crop_rows(page: Dict, im: PILImage.Image, ms_dir: Path, fl: str,
+                       stem: str, rng: random.Random) -> List[Dict]:
+    """Detect-then-read rows on a random per-column line band (anti-template aug).
+
+    A mid-column run of lines becomes its own image with boxes re-normalized to
+    the crop, so a given line's y-position and the page margin vary between
+    examples and the box can no longer be predicted from the line's ordinal.
+
+    :param page: Reconstructed page.
+    :param im: Native page image.
+    :param ms_dir: Manuscript image directory (crop is saved here).
+    :param fl: Page image id (filename component).
+    :param stem: Row stem prefix.
+    :param rng: Seeded RNG.
+    :return: Up to :data:`GROUNDED_CROP_ROWS_PER_PAGE` rows.
+    :rtype: List[Dict]
+    """
+    if page.get("mode") != "geometry":
+        return []
+    line_h = page["line_h"] or 1.0
+    cols = [c["lines"] for c in page["columns"]
+            if len(c["lines"]) >= GROUNDED_CROP_LINES[0]]
+    rng.shuffle(cols)
+    rows, made = [], 0
+    for ci, lines in enumerate(cols):
+        if made >= GROUNDED_CROP_ROWS_PER_PAGE:
+            break
+        k = min(len(lines), rng.randint(*GROUNDED_CROP_LINES))
+        start = rng.randint(0, len(lines) - k)
+        seg = lines[start:start + k]
+        left, top, right, bottom = _line_band_box(im, lines, start, k, line_h)
+        if right - left < MIN_IMAGE_SIDE_PX or bottom - top < MIN_IMAGE_SIDE_PX:
+            continue
+        crop, _ = scaled_copy(im.crop((left, top, right, bottom)), MAX_PAGE_PIXELS)
+        cw, ch = right - left, bottom - top
+        payload = [{"bbox_2d": _norm_box_crop(ln["box"], left, top, cw, ch),
+                    "text": ln["text"]} for ln in seg]
+        payload = [e for e in payload if _positive(e["bbox_2d"]) and e["text"].strip()]
+        if not payload:
+            continue
+        cpath = ms_dir / f"{fl}_gcrop{ci}_{start}_{k}.jpg"
+        crop.save(cpath, "JPEG", quality=90)
+        rows.append(_row(cpath, _GROUNDED_DETECT_PROMPT,
+                         json.dumps(payload, ensure_ascii=False),
+                         "grounded_crop", "band", f"{stem}_gcrop{ci}",
+                         crop.width, crop.height))
+        made += 1
+    return rows
+
+
 def grounding_rows(page: Dict, items: List[dict], page_path: Path, stem: str,
                    orig_w: int, orig_h: int, page_w: int, page_h: int,
                    rng: random.Random) -> List[Dict]:
     """Grounding + layout-QA rows for one geometry-mode page.
 
-    Emits up to :data:`LOCATE_ROWS_PER_PAGE` ``locate`` rows,
-    :data:`READBOX_ROWS_PER_PAGE` ``read_box`` rows, one ``layout_qa`` row,
-    and (for a :data:`GROUNDED_PAGE_FRACTION` sample of short-enough pages)
-    one ``grounded_page`` row.  Pages reconstructed without trustworthy
-    geometry (served-breakline fallback) emit nothing.
+    v2.0 families: up to :data:`LOCATE_ROWS_PER_PAGE` ``locate``,
+    :data:`READBOX_ROWS_PER_PAGE` ``read_box``, one ``layout_qa``, and (for a
+    :data:`GROUNDED_PAGE_FRACTION` sample) one text-first ``grounded_page`` row
+    (kept for eval comparability with v1.9/v2.0).
+
+    v2.1 direct-grounding families (target the template-box failure):
+    ``locate_word`` (unique word -> box), ``read_box_word`` (word box -> word),
+    ``line_index`` (ordinal line -> box + text), ``line_of_phrase`` (phrase ->
+    host-line box + text), and ``grounded_detect`` (whole page, bbox emitted
+    before text). ``grounded_crop`` bands are added separately in
+    :func:`build_rows` (they need the native image). Pages reconstructed
+    without trustworthy geometry (served-breakline fallback) emit nothing.
 
     :param page: Output of :func:`reconstruct_page`.
     :type page: Dict
@@ -542,9 +825,38 @@ def grounding_rows(page: Dict, items: List[dict], page_path: Path, stem: str,
         payload = [{"text": ln["text"],
                     "bbox_2d": norm_box(ln["box"], orig_w, orig_h)}
                    for ln in page["lines"]]
+        payload = [e for e in payload if _positive(e["bbox_2d"]) and e["text"].strip()]
         rows.append(_row(page_path, _GROUNDED_PROMPT,
                          json.dumps(payload, ensure_ascii=False),
                          "grounded_page", "page", f"{stem}_grounded",
+                         page_w, page_h))
+    # --- v2.1 direct-grounding families ---
+    words = word_candidates(items, page["text"])
+    rng.shuffle(words)
+    for j, (word, box) in enumerate(words[:LOCATE_WORD_ROWS_PER_PAGE]):
+        answer = json.dumps({"bbox_2d": norm_box(box, orig_w, orig_h)})
+        rows.append(_row(page_path, _LOCATE_WORD_PROMPT.format(word=word), answer,
+                         "locate_word", "word", f"{stem}_lw{j}", page_w, page_h))
+    for j, (word, box) in enumerate(words[LOCATE_WORD_ROWS_PER_PAGE:
+                                          LOCATE_WORD_ROWS_PER_PAGE + READBOX_WORD_ROWS_PER_PAGE]):
+        b = norm_box(box, orig_w, orig_h)
+        rows.append(_row(page_path,
+                         _READBOX_WORD_PROMPT.format(x0=b[0], y0=b[1], x1=b[2], y1=b[3]),
+                         word, "read_box_word", "word", f"{stem}_rbw{j}",
+                         page_w, page_h))
+    rows.extend(line_index_rows(page, orig_w, orig_h, page_path, stem,
+                                page_w, page_h, rng))
+    lop = line_of_phrase_row(page, cands, orig_w, orig_h, page_path, stem,
+                             page_w, page_h, rng)
+    if lop is not None:
+        rows.append(lop)
+    if 4 <= len(page["lines"]) <= GROUNDED_DETECT_MAX_LINES:
+        payload = [{"bbox_2d": norm_box(ln["box"], orig_w, orig_h), "text": ln["text"]}
+                   for ln in page["lines"]]
+        payload = [e for e in payload if _positive(e["bbox_2d"]) and e["text"].strip()]
+        rows.append(_row(page_path, _GROUNDED_DETECT_PROMPT,
+                         json.dumps(payload, ensure_ascii=False),
+                         "grounded_detect", "page", f"{stem}_gdet",
                          page_w, page_h))
     return rows
 
@@ -724,6 +1036,10 @@ def build_rows(bundles: List[dict], ktiv_dir: Path, images_dir: Path,
                                         page_im.width, page_im.height, rng):
                 rows.append(g_row)
                 stats[f"rows_{g_row['task']}"] += 1
+
+            for c_row in grounded_crop_rows(page, im, ms_dir, fl, stem, rng):
+                rows.append(c_row)
+                stats[f"rows_{c_row['task']}"] += 1
 
             # Column tasks are the most valuable region rows and only exist on
             # multi-column pages, so they are always emitted; the remaining
