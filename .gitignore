@@ -40,3 +40,7 @@ src/datasets/evaluations/grounding_eval/viewer/grounding_viewer.html
 
 # the Space needs its pip manifest despite the blanket *.txt rule above
 !spaces/genizah_reader/requirements.txt
+
+# article export scratch (headless Firefox profile, superseded exports)
+article/build/ffprofile/
+article/build/assets_prev_*/
