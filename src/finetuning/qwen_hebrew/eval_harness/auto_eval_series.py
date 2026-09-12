@@ -264,14 +264,15 @@ def main() -> int:
         backfill = [int(s) for s, v in state["done"].items() if not v.get("cer") and int(s) in shas
                     and state["failed"].get(f"cer{s}", 0) < 2]
         stale_h = (time.time() - last_new_at) / 3600
+        fallback: List[int] = []
         if not pending and stale_h > a.stale_hours and not any(v.get("full") for v in state["done"].values()):
             done_steps = [int(s) for s, v in state["done"].items() if int(s) >= a.fallback_min_step and s in map(str, shas)]
             if done_steps:
                 s = max(done_steps)
-                log(f"run stale {stale_h:.1f}h with no full eval — running FULL on the newest evaluated step {s}")
-                pending = [s]
+                log(f"run stale {stale_h:.1f}h with no full eval — running FULL (CER only, box evals exist) on step {s}")
+                fallback = [s]
                 a.full_steps = sorted(set(a.full_steps) | {s})
-        for step, only_cer in [(s, False) for s in pending] + [(s, True) for s in sorted(backfill)]:
+        for step, only_cer in [(s, False) for s in pending] + [(s, True) for s in fallback] + [(s, True) for s in sorted(backfill)]:
             ok, why = gates_ok(a.min_disk_gb, a.min_ram_pct)
             if not ok:
                 log(f"gate blocked ({why}) — retry in {a.poll}s")
