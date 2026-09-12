@@ -89,3 +89,27 @@ holds v18b-700, v19a-1300, v20a-1800 at 9.2 GB each). `hard_eval_ckpt.sh` refuse
 step-600 lite CER was skipped by design; the orchestrator is being patched to run the CER scripts directly when the
 disk is 12–18 GB after staging (the 18 GB margin only protects the merge/convert, already done by then) and to
 back-fill the step-600 lite before step 900. No prod component was touched; RAM 49 % free with the candidate loaded.
+
+## 2026-09-12 08:55 local — pass 4: step-600 lite CER back-filled; step 900 under evaluation
+
+**Run**: eval 0.6651 @600 → 0.6655 @700 → **0.6569 @800 (new best)** → 0.6628 @900; train loss 0.46; no alarms;
+run at ~step 950. Consensus pipeline 3076/8277. Disk 14 GB with the step-900 candidate staged (27 GB between
+candidates — a plateau, not a slide), RAM 47 %; nothing stopped.
+
+**Step 600 — lite CER (flip slice, ~66 items; `hard_eval_ckpt.sh 600 … lite v21b`, 05:27 → 06:54)**
+
+| | v21b-600 | reference |
+|---|---|---|
+| religious-140 slice: median aligned F1 / CER | **0.812 / 0.258** | v19a-1300 F1 0.816, v19b 0.810 |
+| PGP-131 slice: median aligned F1 / CER | **0.875 / 0.180** | v19a-1300 F1 0.862, v19b 0.868 |
+| v19b-vs-v19a flip pages | kept rescues 6, lost 1, dropped breaks 4, still broken 3 | |
+
+Read: at 30 % of the schedule transcription is at the v1.9 flagship's level on the slice (religious F1 within noise of
+v19a, PGP above both references) — the 20 % grounding mixture has cost nothing measurable on text so far, while the
+boxes moved (pass 3). The decisive text numbers are the full PGP-131/religious-140 at 1800.
+
+**Ops note**: the first back-fill attempt at 05:06 failed on a race — LM Studio had not yet re-listed the re-staged
+model — and the orchestrator's retry 15 min later succeeded. The restart watchdog swapped in the patched orchestrator
+at 05:06 as planned; step 900 was merged/converted/staged 08:10–08:34 and its box evals are running (grounding
+trio in progress at 08:53). W&B: lite metrics land in the shared `v19c_hard_evals` run (lite_eval's hard-coded id),
+step-indexed.
