@@ -163,7 +163,29 @@ def box_evals(name: str) -> bool:
     return ok
 
 
-def process(step: int, sha: str, ver: str, full: bool, a: argparse.Namespace) -> bool:
+def cer_evals_direct(name: str, step: int, ver: str, full: bool) -> bool:
+    """Run the CER evals without hard_eval_ckpt.sh (its 18 GB gate only protects merge/convert).
+
+    lite: the flip-slice via lite_eval.py (W&B inside). full: religious-140 + PGP-131 transcriptions,
+    offline scoring and the series comparison, exactly the commands hard_eval_ckpt.sh runs.
+
+    :param name: Staged model name (served by LM Studio).
+    :param step: Global step.
+    :param ver: Series tag.
+    :param full: Full hard evals instead of the lite slice.
+    :returns: True when every command exited 0.
+    """
+    if not full:
+        return sh([PY, str(H / "lite_eval.py"), "--step", str(step), "--model-name", name], 3 * 3600) == 0
+    ev = REPO / "src/datasets/evaluations"
+    ok = sh([PY, "helper_eval_scripts/run_religious_benchmark.py", "--vlm-model", name], 5 * 3600, cwd=ev) == 0
+    ok &= sh([PY, str(H / "run_pgp131_v19b.py"), name], 5 * 3600) == 0
+    ok &= sh([PY, "helper_eval_scripts/score_genizah_offline.py", "--benchmark", "verified", "--no-wandb"], 3600, cwd=ev) == 0
+    ok &= sh([PY, str(H / "compare_series.py"), "--ver", ver, "--step", str(step), "--wandb"], 1800) == 0
+    return ok
+
+
+def process(step: int, sha: str, ver: str, full: bool, a: argparse.Namespace, box: bool = True) -> Dict[str, bool]:
     """Stage, evaluate and clean up one checkpoint.
 
     :param step: Global step.
@@ -171,24 +193,32 @@ def process(step: int, sha: str, ver: str, full: bool, a: argparse.Namespace) ->
     :param ver: Series tag (e.g. ``v21b``).
     :param full: Run the full hard evals instead of the lite slice.
     :param a: Parsed CLI args (gates).
-    :returns: True on success.
+    :param box: Run the box evals (False when only the CER evals are being back-filled).
+    :returns: ``{"box": ok, "cer": ok}`` (a skipped part reports False).
     """
     name = f"qwen3-vl-8b-heb-{ver}-step{step}"
-    log(f"===== {name} ({'FULL' if full else 'box+lite'}) sha {sha[:10]} =====")
+    log(f"===== {name} ({'FULL' if full else 'box+lite'}{'' if box else ', CER only'}) sha {sha[:10]} =====")
+    res = {"box": False, "cer": False}
     try:
         rc = sh(["/bin/zsh", str(H / "hard_eval_ckpt.sh"), str(step), sha, "stage", ver], 4 * 3600)
         if rc != 0:
             log(f"stage FAILED rc={rc}")
-            return False
-        box_ok = box_evals(name)
-        log(f"box evals {'OK' if box_ok else 'had failures'} for {name}")
-        if free_disk_gb() < a.min_disk_gb - 1:
-            log(f"disk {free_disk_gb()}Gi — skipping the CER eval for {name} (box results kept)")
-            return box_ok
+            return res
+        if box:
+            res["box"] = box_evals(name)
+            log(f"box evals {'OK' if res['box'] else 'had failures'} for {name}")
         mode = "full" if full else "lite"
-        rc = sh(["/bin/zsh", str(H / "hard_eval_ckpt.sh"), str(step), sha, mode, ver], (9 if full else 3) * 3600)
-        log(f"{mode} eval rc={rc} for {name}")
-        return box_ok and rc == 0
+        free = free_disk_gb()
+        if free >= 18:      # hard_eval_ckpt.sh's own gate: merge/convert already done, script path is fine
+            rc = sh(["/bin/zsh", str(H / "hard_eval_ckpt.sh"), str(step), sha, mode, ver], (9 if full else 3) * 3600)
+            res["cer"] = rc == 0
+        elif free >= 12:    # too tight for the script's gate, plenty for text outputs: run the evals directly
+            log(f"disk {free}Gi — running the {mode} CER evals directly (staged model, no merge/convert needed)")
+            res["cer"] = cer_evals_direct(name, step, ver, full)
+        else:
+            log(f"disk {free}Gi — skipping the {mode} CER eval for {name} (box results kept)")
+        log(f"{mode} eval {'OK' if res['cer'] else 'not done'} for {name}")
+        return res
     finally:
         cleanup(name)
         log(f"cleanup done for {name}: disk {free_disk_gb()}Gi free")
@@ -231,6 +261,8 @@ def main() -> int:
             last_seen_step, last_new_at = latest, time.time()
             log(f"newest pushed step {latest}")
         pending = [s for s in targets if s in shas and str(s) not in state["done"] and state["failed"].get(str(s), 0) < 2]
+        backfill = [int(s) for s, v in state["done"].items() if not v.get("cer") and int(s) in shas
+                    and state["failed"].get(f"cer{s}", 0) < 2]
         stale_h = (time.time() - last_new_at) / 3600
         if not pending and stale_h > a.stale_hours and not any(v.get("full") for v in state["done"].values()):
             done_steps = [int(s) for s, v in state["done"].items() if int(s) >= a.fallback_min_step and s in map(str, shas)]
@@ -239,22 +271,27 @@ def main() -> int:
                 log(f"run stale {stale_h:.1f}h with no full eval — running FULL on the newest evaluated step {s}")
                 pending = [s]
                 a.full_steps = sorted(set(a.full_steps) | {s})
-        for step in pending:
+        for step, only_cer in [(s, False) for s in pending] + [(s, True) for s in sorted(backfill)]:
             ok, why = gates_ok(a.min_disk_gb, a.min_ram_pct)
             if not ok:
                 log(f"gate blocked ({why}) — retry in {a.poll}s")
                 break
             log(f"gates OK ({why})")
             full = step in a.full_steps
-            success = process(step, shas[step], a.ver, full, a)
+            res = process(step, shas[step], a.ver, full, a, box=not only_cer)
             key = str(step)
-            if success:
-                state["done"][key] = {"full": full, "at": datetime.now().isoformat(timespec="minutes")}
+            if only_cer:
+                if res["cer"]:
+                    state["done"][key]["cer"] = True; state["done"][key]["full"] = full
+                else:
+                    state["failed"][f"cer{key}"] = state["failed"].get(f"cer{key}", 0) + 1
+            elif res["box"]:
+                state["done"][key] = {"full": full, "cer": res["cer"], "at": datetime.now().isoformat(timespec="minutes")}
             else:
                 state["failed"][key] = state["failed"].get(key, 0) + 1
             state_path.write_text(json.dumps(state, indent=1))
             break   # one checkpoint per poll cycle; re-list SHAs before the next
-        if last_seen_step >= a.max_step and all(str(s) in state["done"] for s in targets if s in shas):
+        if last_seen_step >= a.max_step and all(str(s) in state["done"] and state["done"][str(s)].get("cer") for s in targets if s in shas):
             log("all target steps evaluated — done")
             return 0
         time.sleep(a.poll)
