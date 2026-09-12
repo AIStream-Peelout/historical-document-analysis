@@ -55,3 +55,37 @@ Paired on the same pages:
   −0.37 median CER on the third of two-column pages the page prompt truncates — the coverage lever the CER
   breakdown predicted. It also argues for the v2.2 data design: column-crop rows (grounded_crop is already in
   v2.1) rather than "transcribe only column X" prompts.
+
+## 2026-09-12 04:55 local — pass 3: step-600 box evals done; eval loss now BELOW the warm start
+
+**Run**: eval 0.6870 @400 → 0.6788 @500 → **0.6651 @600 (new best, below v2.0a-1800's 0.6733)** → 0.6655 @700;
+train loss 0.48–0.50; no alarms; step 700 pushed 04:25, run at ~step 730. Consensus pipeline 2702/8277.
+
+**Step 600 — the v2.1 objective is landing** (orchestrator staged `qwen3-vl-8b-heb-v21b-step600` at 02:30 and ran the
+grounding trio, box geometry, layout-QA; the 10 site pages were 5/10 at 04:53, then cleanup):
+
+| metric (grounding eval, 24 pages / 72 locate / 37 read_box) | v20a-1800 | **v21b-600** |
+|---|---|---|
+| grounded: pages parsed | 21/24 | 23/24 |
+| grounded: lines matched | 350/390 | 343/432 |
+| grounded: median line IoU | 0.371 | **0.690** |
+| grounded: median line CER | 0.310 | **0.270** |
+| box geometry: template rate (pages ≥50 % template) | 0.535 (12) | **0.352 (6)** |
+| box geometry: box on the right line | 0.579 | **0.848** |
+| box geometry: vertical IoU / abs drift | 0.585 / 10‰ | **0.761 / 5‰** |
+| locate: centre hit / median IoU / IoU≥.5 | 53/72 / 0.467 / 35 | 50/72 / 0.473 / 31 |
+| read_box: median CER | 0.129 | 0.167 |
+| layout-QA: find_line median CER / has-phrase | 0.242 / 0.786 | **0.156 / 0.857** |
+| layout-QA: edge_line median CER / exact | 0.286 / 0.121 | 0.257 / 0.212 |
+| layout-QA: columns accuracy | 1.000 | 1.000 |
+
+Read: at 30 % of the schedule the line boxes are what v2.1 was built for — on the right line 85 % of the time (was 58 %),
+vertical IoU 0.76 (was 0.59), the template prior halved, and the grounded/line-index text is better too. The word-level
+tasks are flat-to-slightly-behind (locate hits 50 vs 53, read_box CER 0.167 vs 0.129) — small samples, and the word
+families are the newest data; worth watching at 900/1200 rather than acting on now.
+
+**Ops**: local disk dropped to 14 GB while the candidate was staged (each candidate = 9.2 GB in `models/`, which also
+holds v18b-700, v19a-1300, v20a-1800 at 9.2 GB each). `hard_eval_ckpt.sh` refuses lite/full CER evals below 18 GB, so the
+step-600 lite CER was skipped by design; the orchestrator is being patched to run the CER scripts directly when the
+disk is 12–18 GB after staging (the 18 GB margin only protects the merge/convert, already done by then) and to
+back-fill the step-600 lite before step 900. No prod component was touched; RAM 49 % free with the candidate loaded.
