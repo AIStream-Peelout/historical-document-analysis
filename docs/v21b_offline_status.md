@@ -141,3 +141,35 @@ IoU 0.69–0.76 vs 0.59, template prior 0.35–0.43 vs 0.54) while holding trans
 the text slice slipped ~0.01–0.02 — checkpoint-to-checkpoint variance at a still-high LR (24 pages / ~400 lines), not a
 trend to act on. The ranking among v21b checkpoints is for 1200/1500/1800; the full PGP-131/religious-140 at 1800
 decides the flagship question.
+
+## 2026-09-12 16:55 local — pass 6: Colab died at ~step 1240; step 1200 (the last checkpoint) evaluated
+
+**Run stopped.** W&B marks `genizah_v21b` *crashed*: last train point step 1240 (loss 0.399), last heartbeat
+14:14 local, no checkpoint push after step 1200 (13:40). Colab disconnected with nobody to resume it, so training
+ends at **step 1200 of 2000** (60 % of the cosine schedule, LR still ~2.5e-5). Eval loss at 1200 = **0.6546, the
+best point of the run** (0.6733 at the warm start, 0.6593 @1100). To continue on return: open
+`genizah_v21b_dispatchfix.ipynb`, run cells 1–5 and the training cell — it auto-resumes from
+`v21b-ckpt/last-checkpoint` (step 1200) with the optimizer/scheduler state. Alarm watcher exited with the run
+(no alarms fired); the checkpoint watcher will report the stale run at 16:55.
+
+**Step 1200** (box evals 13:55 → 16:03; lite CER running since 16:03, result in the next pass):
+
+| metric | v20a-1800 | v21b-600 | v21b-900 | **v21b-1200** |
+|---|---|---|---|---|
+| locate: hit / median IoU / IoU≥.5 (72) | 53 / 0.467 / 35 | 50 / 0.473 / 31 | 57 / 0.511 / 36 | 56 / 0.488 / 34 |
+| read_box: median CER (37) | 0.129 | 0.167 | 0.158 | 0.158 |
+| grounded: parsed / matched / line IoU / line CER | 21 / 350 / 0.371 / 0.310 | 23 / 343 / 0.690 / 0.270 | 24 / 357 / 0.640 / 0.283 | 23 / 335 / 0.623 / **0.240** |
+| box geometry: template (pages ≥50 %) / right line / vIoU / drift | 0.535 (12) / 0.579 / 0.585 / 10‰ | 0.352 (6) / 0.848 / 0.761 / 5‰ | 0.431 (8) / 0.742 / 0.690 / 6.5‰ | 0.408 (7) / 0.800 / 0.746 / 5.5‰ |
+| 10 site pages: template (≥50 %) / agreed lines | 0.65 (9) / — | 0.49 (7) / 134 | 0.54 (7) / 140 | 0.50 (5) / 126 |
+| layout-QA: find_line CER / has-phrase | 0.242 / 0.786 | 0.156 / 0.857 | 0.222 / 0.810 | 0.162 / 0.833 |
+| eval loss | 0.6733 | 0.6651 | 0.6628 | **0.6546** |
+
+Read: 1200 is the most balanced v21b checkpoint — best eval loss and best grounded line CER, boxes on the right line
+80 % with vertical IoU 0.75 (v2.0a: 58 % / 0.59), word-locate at v2.0a level or better. The three v21b checkpoints
+differ from each other by less than they differ from v2.0a on every box measure.
+
+**What happens next, automatically**: the orchestrator's stale-run fallback has been switched to CER-only (the box
+evals exist) and to a 30-min timer via a restart that fires as soon as the lite-1200 eval finishes, so the **full
+PGP-131 + religious-140 hard evals + series comparison run on step 1200 tonight** (~5 h; results ≈ 23:00 local, in
+this log and W&B `v21b-hard-evals`). That gives the flagship comparison against v2.0a-1800 on return, regardless
+of whether the run is resumed to 2000.
