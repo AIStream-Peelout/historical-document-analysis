@@ -113,3 +113,31 @@ model — and the orchestrator's retry 15 min later succeeded. The restart watch
 at 05:06 as planned; step 900 was merged/converted/staged 08:10–08:34 and its box evals are running (grounding
 trio in progress at 08:53). W&B: lite metrics land in the shared `v19c_hard_evals` run (lite_eval's hard-coded id),
 step-indexed.
+
+## 2026-09-12 12:55 local — pass 5: step 900 fully evaluated (box + lite)
+
+**Run**: eval 0.6569 @800 → 0.6628 @900 → 0.6600 @1000 → **0.6593 @1100**; train loss 0.50; run at ~step 1160; no
+alarms. Step 1200 pushes ~13:25 and is the next target. Consensus pipeline 3464/8277. Disk 28 GB (nothing staged),
+RAM 60 %, all jobs alive. The direct-CER path worked at 14 GB (lite ran 10:29 → 11:25, cleanup 11:25).
+
+**Step 900 vs 600 vs v2.0a-1800**
+
+| metric | v20a-1800 | v21b-600 | v21b-900 |
+|---|---|---|---|
+| locate: centre hit / median IoU / IoU≥.5 (72) | 53 / 0.467 / 35 | 50 / 0.473 / 31 | **57 / 0.511 / 36** |
+| read_box: median CER (37) | **0.129** | 0.167 | 0.158 |
+| grounded: parsed / lines matched | 21/24 / 350 | 23/24 / 343 | **24/24 / 357** |
+| grounded: median line IoU / line CER | 0.371 / 0.310 | **0.690 / 0.270** | 0.640 / 0.283 |
+| box geometry: template rate (pages ≥50 %) | 0.535 (12) | **0.352 (6)** | 0.431 (8) |
+| box geometry: box on right line / vertical IoU / abs drift | 0.579 / 0.585 / 10‰ | **0.848 / 0.761 / 5‰** | 0.742 / 0.690 / 6.5‰ |
+| 10 site pages: raw template rate (pages ≥50 %) / agreed lines | 0.65 (9) / — | **0.49 (7)** / 134 of 399 | 0.54 (7) / **140 of 391** |
+| layout-QA: find_line median CER / has-phrase | 0.242 / 0.786 | **0.156 / 0.857** | 0.222 / 0.810 |
+| lite CER: religious F1 / CER | (v19a 0.816) | **0.812 / 0.258** | 0.804 / 0.278 |
+| lite CER: PGP F1 / CER | (v19a 0.862) | **0.875 / 0.180** | 0.871 / 0.187 |
+
+Read: both v21b checkpoints beat v2.0a on every box measure by a wide margin (right-line 0.74–0.85 vs 0.58, vertical
+IoU 0.69–0.76 vs 0.59, template prior 0.35–0.43 vs 0.54) while holding transcription at the v1.9 reference level. Between
+600 and 900 the word-level locate improved (57 hits, best of any arm) but line geometry gave back part of its gain and
+the text slice slipped ~0.01–0.02 — checkpoint-to-checkpoint variance at a still-high LR (24 pages / ~400 lines), not a
+trend to act on. The ranking among v21b checkpoints is for 1200/1500/1800; the full PGP-131/religious-140 at 1800
+decides the flagship question.
