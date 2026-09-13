@@ -173,3 +173,38 @@ evals exist) and to a 30-min timer via a restart that fires as soon as the lite-
 PGP-131 + religious-140 hard evals + series comparison run on step 1200 tonight** (~5 h; results ≈ 23:00 local, in
 this log and W&B `v21b-hard-evals`). That gives the flagship comparison against v2.0a-1800 on return, regardless
 of whether the run is resumed to 2000.
+
+## 2026-09-12 20:55 local — pass 7: FULL evals on step 1200 done — v21b-1200 beats v2.0a-1800 on every benchmark
+
+The fallback fired at the 16:59 restart; full PGP-131 + religious-140 + comparison ran 17:00 → 20:16 (W&B
+`v21b_hard_evals` @1200). Like-for-like medians from the benchmark CSVs (same GT rev 1.1 / frozen PGP-131):
+
+| benchmark (median) | v19a-1300 (v1.9 flagship) | v20a-1800 (v2.0a, current prod) | **v21b-1200** |
+|---|---|---|---|
+| religious-140: aligned F1 / CER | 0.816 / 0.239 | 0.849 / 0.196 | **0.869 / 0.167** |
+| religious-140 two-column pages (33): CER | 0.327 | 0.243 | **0.164** |
+| religious-140 single-column pages (107): CER | 0.226 | 0.193 | **0.167** |
+| PGP-131 documentary: aligned F1 / CER | 0.862 / 0.198 | 0.875 / 0.185 | **0.880 / 0.180** |
+| compare_series flips (v19b-vs-v19a pages) | — | — | religious: kept rescues 6, new breaks 1; PGP: dropped v19b-breaks 5, new breaks 2 (decode-noise class) |
+| lite slice (for continuity with 600/900) | — | — | religious F1 0.819 / CER 0.262; PGP F1 0.865 / CER 0.201 |
+
+Read: **v21b-1200 is the best model on every axis measured** — religious CER −15 % vs v2.0a (0.196 → 0.167) with the
+two-column pages going 0.243 → **0.164**, i.e. the two-column penalty the CER breakdown identified (and the column
+probe attacked with crops) is gone at the page level: multi-column now scores the same as single-column. PGP-131
+improves modestly (0.185 → 0.180, F1 0.875 → 0.880). Together with pass 6's boxes (right line 80 % vs 58 %,
+vertical IoU 0.75 vs 0.59, grounded line CER 0.240 vs 0.310), v2.1's data lever did what it was designed to do, and
+it did it at 60 % of the schedule.
+
+**On return, in order**
+1. Decide whether to resume to 2000 (open `genizah_v21b_dispatchfix.ipynb`, cells 1–5, training cell → auto-resumes
+   from `v21b-ckpt/last-checkpoint` = step 1200; ~14 h of Colab for the cosine tail; v2.0a gained ~0.01 eval loss over
+   its last 500 steps). 1200 is already shippable, so this is optional.
+2. Promote v21b-1200: its bf16 and MLX-8bit masters are on the NAS (`studio_offload/v19b_merge/qwen3-vl-8b-heb-v21b-step1200-{bf16,mlx}`);
+   staging into LM Studio + adding it to `hard_eval_ckpt.sh`'s KEEP_LOCAL is a five-minute step — left to you because it
+   changes what the consensus pipeline and prod serve. Same for the hub merged upload / Space swap (card with NLI-KTIV +
+   PGP credit only).
+3. The word-level tasks (locate/read_box) are the one place v21b is only at parity with v2.0a — the next data lever is
+   there (and the column-crop rows for v2.2, per the probe).
+
+Housekeeping: orchestrator idle (all targets that exist are done incl. full), ckpt watcher still polling (will report
+if the run resumes), consensus pipeline 3877/8277, disk 27 GB, RAM 61 %, nothing staged, prod untouched throughout.
