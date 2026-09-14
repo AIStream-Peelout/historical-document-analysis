@@ -74,6 +74,10 @@ Sources: this week's v21/v21b work, the offline log (`docs/v21b_offline_status.m
 | Capture–recapture estimate with ~8 new probe words in list-only mode | idea | bounds what is still unfound |
 | KTIV transcriptions outside the Genizah collection | idea | same extension; Kraken/adaptation data |
 | Arabic KTIV scrape priority queue (785 rows) | queued | columns fixed to the scraper's format |
+| Builder: rescue the 52 transcribed pages whose boxes fall outside the image frame (scale check between annotation frame and downloaded derivative) | idea | median 940 letters each — real pages |
+| Re-download images for the 3 transcribed manuscripts with no zip (34 pages, one 16-page booklet) | queued | needs KTIV image serving back |
+| Short-fragment policy: 316 transcribed pages under the 150-letter gate (median 95 letters) — include as a `short_fragment` family? | decision | documentary-like fragments; excluding them biases toward full pages |
+| KTIV page audit result: 4,136 transcribed pages; 3,310 in v3; the rest = 316 short, 312 PGP-shingle hold-out, ~125 religious-140 hold-out, 52 out-of-frame, 34 no image, 2 gaps — nothing dropped by accident | done | 2026-09-14 |
 | Full 80k image scrape | long-term | months; KTIV image serving currently erroring |
 
 ## 7. Infra / ops
