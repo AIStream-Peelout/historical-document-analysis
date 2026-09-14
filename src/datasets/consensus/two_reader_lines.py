@@ -67,8 +67,8 @@ RAW_DIR = OUT_DIR / "raw"      # per-job reader outputs; a rule change is a re-m
 CONSENSUS_RESULTS = _REPO / "src/datasets/raw_data/cairo_genizah/consensus_pilot/pilot_results.jsonl"
 KRAKEN_MODEL = str(_REPO / "src/datasets/raw_data/cairo_genizah/custom_model_weights/MiDRASH_Gen_01.mlmodel")
 HTR_MODEL_NAME = "MiDRASH_Gen_01"
-VLM_MODEL = "qwen3-vl-8b-heb-v20a-step1800"
-VLM_REVISION = "af9df6a0"          # hub commit of the canonical step-1800 checkpoint
+VLM_MODEL = "qwen3-vl-8b-heb-v21b-step1200"
+VLM_REVISION = "6724c32c"          # hub commit of the v21b step-1200 checkpoint (flagship 2026-09-13; v2.0a-1800 was af9df6a0)
 SITE_ENV = Path.home() / "Documents/GitHub/genizah_search/src/backend/.env"
 # Byte-identical to grounding_eval.P_GROUNDED — the prompt the probe numbers were measured with.
 P_GROUNDED = ('Transcribe this manuscript page line by line. Respond with ONLY '

@@ -43,7 +43,7 @@ LOGS = REPO / "logs"
 NAS = Path("/Volumes/home/studio_offload")
 PY = str(REPO / ".venv/bin/python")
 REFERENCE = "qwen3-vl-8b-heb-v20a-step1800"
-KEEP_LOCAL = {"qwen3-vl-8b-heb-v19a-step1300", REFERENCE}   # flagship rule: never delete these copies
+KEEP_LOCAL = {"qwen3-vl-8b-heb-v19a-step1300", REFERENCE, "qwen3-vl-8b-heb-v21b-step1200"}   # flagship rule: never delete these copies
 
 
 def log(msg: str) -> None:

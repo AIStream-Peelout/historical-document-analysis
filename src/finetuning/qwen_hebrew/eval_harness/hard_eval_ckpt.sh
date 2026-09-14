@@ -89,7 +89,7 @@ echo "=== cleanup $(date) ==="
 ~/.lmstudio/bin/lms unload $NAME 2>/dev/null || true
 # Flagship / current-best checkpoints stay on local disk + in LM Studio
 # (user rule 2026-09-05: manual testing). Edit KEEP_LOCAL when the flagship changes.
-KEEP_LOCAL=(qwen3-vl-8b-heb-v19a-step1300 qwen3-vl-8b-heb-v20a-step1800)
+KEEP_LOCAL=(qwen3-vl-8b-heb-v19a-step1300 qwen3-vl-8b-heb-v20a-step1800 qwen3-vl-8b-heb-v21b-step1200)
 if (( ${KEEP_LOCAL[(Ie)$NAME]} )); then
   echo "keeping $NAME on disk (flagship/current-best list)"
 else
