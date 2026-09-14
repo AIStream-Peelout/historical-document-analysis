@@ -232,3 +232,15 @@ def test_dispatch_batches_disabled_and_gated(code_cells: List[str]) -> None:
     assert '_b["pixel_values"].shape[0] == _need' in body and 'image_grid_thw"].prod(dim=-1).sum()' in body
     assert "collator([_row])" in body and "abs(_lp - _ld)" in body, "prepared vs direct-collate loss check missing"
     assert "get_eval_dataloader()" in body, "eval batch must be checked too"
+
+
+def test_resume_skips_the_stream_instead_of_replaying_the_collator(code_cells: List[str]) -> None:
+    """A resumed streamed run must not replay 9,600 collations (Colab kills the silent hours)."""
+    src = next(c for c in code_cells if "trainer.train(resume_from_checkpoint=resume_dir)" in c)
+    assert "trainer.args.ignore_data_skip = True" in src
+    assert "trainer.train_dataset = mixture.skip(_seen)" in src
+    assert '_json.load(open(f"{resume_dir}/trainer_state.json"))' in src
+    # The skip is derived from the checkpoint, never hard-coded.
+    assert '_seen = int(_state["global_step"]) * trainer.args.gradient_accumulation_steps' in src
+    assert src.index("trainer.train_dataset = mixture.skip(_seen)") < src.index(
+        "trainer.train(resume_from_checkpoint=resume_dir)")
