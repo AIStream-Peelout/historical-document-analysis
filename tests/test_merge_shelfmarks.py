@@ -24,6 +24,7 @@ from src.datasets.merging.merge_shelfmarks import (
     build_merged_record,
     diff_against_snapshot,
     index_ktiv_zips,
+    load_bodleian,
     load_ktiv_transcriptions,
     looks_multi,
     record_has_image,
@@ -494,3 +495,129 @@ def test_diff_detects_new_ktiv_and_coverage_and_imaging():
     assert diff["newly_pgp_covered"] == ["A"]
     assert diff["newly_imaged"] == ["A"]
     assert diff["counts"]["new_records"] == 1
+
+
+# ── Bodleian direct scrape (fourth source) ────────────────────────────────────
+
+def _bodleian_record(cid="Oxford_Bodleian_Bodl_MS_heb_b_11_36", images=True, tei=True,
+                     scraped_at="2026-09-14T03:29:00+00:00"):
+    """One scraper record, shaped like ``bodleian/records/<cid>.json``."""
+    return {
+        "source": "bodleian_tei",
+        "scraped_at": scraped_at,
+        "canonical_id": cid,
+        "shelf_mark": "Bodl. MS heb. b 11/36",
+        "match": "folio",
+        "tei": {
+            "part_xml_id": "MS_Heb_b_11-part35",
+            "catalogue_url": "https://hebrew.bodleian.ox.ac.uk/catalog/volume_9#MS_Heb_b_11-part35",
+            "idno": "MS. Heb. b. 11/35",
+            "titles": ["Contract"],
+            "items": [{"title": "Contract", "notes": ["dated 1154 A.D., at Fostat"]}],
+            "languages": ["he"],
+            "orig_date": {"text": "1154", "not_before": None, "not_after": None},
+        } if tei else None,
+        "images": [
+            {"stem": "MS_HEB_b_11_36a", "folio": "36", "side": "a",
+             "url": "https://puliiif.princeton.edu/iiif/2/MS_HEB_b_11_36a/full/full/0/default.jpg",
+             "local_path": f"images/{cid}/MS_HEB_b_11_36a.jpg"},
+            {"stem": "MS_HEB_b_11_36b", "folio": "36", "side": "b",
+             "url": "https://puliiif.princeton.edu/iiif/2/MS_HEB_b_11_36b/full/full/0/default.jpg",
+             "local_path": f"images/{cid}/MS_HEB_b_11_36b.jpg"},
+        ] if images else [],
+        "image_count": 2 if images else 0,
+        "license": "CC BY-NC 4.0 — Images © Bodleian Libraries, University of Oxford",
+    }
+
+
+_BOD_PATHS = {"Oxford_Bodleian_Bodl_MS_heb_b_11_36": [
+    "BODLEIAN/Oxford_Bodleian_Bodl_MS_heb_b_11_36/MS_HEB_b_11_36a.jpg",
+    "BODLEIAN/Oxford_Bodleian_Bodl_MS_heb_b_11_36/MS_HEB_b_11_36b.jpg",
+]}
+
+
+def test_load_bodleian_keys_by_canonical_id_and_keeps_richest_duplicate(tmp_path):
+    records = tmp_path / "records"
+    records.mkdir()
+    (records / "a.json").write_text(json.dumps(_bodleian_record(images=False)), encoding="utf-8")
+    (records / "b.json").write_text(json.dumps(_bodleian_record()), encoding="utf-8")
+    (records / "c.json").write_text(
+        json.dumps(_bodleian_record(cid="Oxford_Bodleian_MS_heb_c_28_47", images=False, tei=False)),
+        encoding="utf-8")
+    by_cid, stats = load_bodleian(str(records / "*.json"))
+    assert set(by_cid) == {"Oxford_Bodleian_Bodl_MS_heb_b_11_36", "Oxford_Bodleian_MS_heb_c_28_47"}
+    assert by_cid["Oxford_Bodleian_Bodl_MS_heb_b_11_36"]["image_count"] == 2  # richer copy wins
+    assert stats["files"] == 3 and stats["distinct"] == 2
+    assert stats["with_images"] == 1 and stats["with_tei"] == 1
+    assert stats["by_match"] == {"folio": 2}
+
+
+def test_load_bodleian_missing_dir_is_empty(tmp_path):
+    by_cid, stats = load_bodleian(str(tmp_path / "nope" / "*.json"))
+    assert by_cid == {}
+    assert stats["files"] == 0 and stats["distinct"] == 0
+
+
+def test_bodleian_only_record_routes_to_bodleian_and_fills_description():
+    cid = "Oxford_Bodleian_Bodl_MS_heb_b_11_36"
+    rec = build_merged_record(cid, None, [], None, bodleian=_bodleian_record(),
+                              bodleian_images=_BOD_PATHS)
+    assert rec["sources_present"] == ["bodleian"]
+    assert rec["sources"]["bodleian"]["match"] == "folio"
+    assert rec["institution"] == "Bodleian Library, Oxford"
+    assert rec["description"] == "Contract"          # TEI titles
+    assert rec["date"] == "1154"                      # TEI origDate
+    blk = rec["images"]["bodleian"]
+    assert blk["tei_part_id"] == "MS_Heb_b_11-part35"
+    assert blk["catalogue_url"].startswith("https://hebrew.bodleian.ox.ac.uk/catalog/")
+    assert blk["match"] == "folio"
+    assert blk["images"] == _BOD_PATHS[cid]
+    assert blk["image_urls"] == [
+        f"https://storage.googleapis.com/cairo-genizah-es-json/{p}" for p in _BOD_PATHS[cid]]
+    assert blk["image_count"] == 2 and blk["populated"] is True
+    assert rec["images"]["preferred_source"] == "bodleian"
+    assert record_has_image(rec)
+
+
+def test_pgp_plus_bodleian_keeps_pgp_scalars_but_takes_bodleian_images():
+    cid = "Oxford_Bodleian_Bodl_MS_heb_b_11_36"
+    pgp = {"fragment": {"shelfmark": "Bodl. MS heb. b 11/36", "library": "Bodleian Library"},
+           "documents": [{"pgpid": "1", "description": "Legal deed (PGP)",
+                          "doc_date_standard": "1154-11"}]}
+    fjp = [("Oxford: MS heb. b.11/36", {"images": ["fjp_small.jpg"]})]
+    rec = build_merged_record(cid, pgp, fjp, None, bodleian=_bodleian_record(),
+                              bodleian_images=_BOD_PATHS)
+    assert rec["sources_present"] == ["pgp", "fjp", "bodleian"]
+    assert rec["description"] == "Legal deed (PGP)"   # PGP still authoritative
+    assert rec["date"] == "1154-11"
+    # Full-resolution masters beat FJP's down-sampled copies.
+    assert rec["images"]["preferred_source"] == "bodleian"
+    assert rec["images"]["fjp"] == ["fjp_small.jpg"]
+
+
+def test_pgp_without_description_gets_tei_note_when_no_titles():
+    bod = _bodleian_record()
+    bod["tei"]["titles"] = []
+    pgp = {"fragment": {"shelfmark": "Bodl. MS heb. b 11/36"}, "documents": [{"pgpid": "2"}]}
+    rec = build_merged_record("X", pgp, [], None, bodleian=bod, bodleian_images={})
+    assert rec["description"] == "dated 1154 A.D., at Fostat"
+    assert rec["images"]["bodleian"]["populated"] is False
+    assert rec["images"]["preferred_source"] is None
+    assert not record_has_image(rec)                    # stays in the gap worklist
+
+
+def test_ktiv_images_still_beat_bodleian_when_both_populated():
+    ktiv = {"pnx_id": "PNX_1", "sys_num": "990051236050205171", "shelf_mark": "x"}
+    ktiv_imgs = {"990051236050205171": ["KTIV/990051236050205171/0001.jpg"]}
+    rec = build_merged_record("Oxford_Bodleian_Bodl_MS_heb_b_11_36", None, [], ktiv, {},
+                              ktiv_imgs, None, bodleian=_bodleian_record(),
+                              bodleian_images=_BOD_PATHS)
+    assert rec["images"]["preferred_source"] == "ktiv"
+    assert rec["sources_present"] == ["ktiv", "bodleian"]
+
+
+def test_record_has_image_counts_populated_bodleian_only():
+    assert record_has_image({"images": {"fjp": [], "ktiv": None,
+                                        "bodleian": {"populated": True}}})
+    assert not record_has_image({"images": {"fjp": [], "ktiv": None,
+                                            "bodleian": {"populated": False}}})

@@ -1,15 +1,20 @@
 #!/usr/bin/env python3
-"""Merge PGP, FJP and KTIV shelfmark data into one consolidated JSONL.
+"""Merge PGP, FJP, KTIV and Bodleian shelfmark data into one consolidated JSONL.
 
 Each output line is one physical fragment, keyed by the canonical shelfmark id
-produced by :class:`ShelfmarkNormalizer`. The three sources are unioned: a
+produced by :class:`ShelfmarkNormalizer`. The four sources are unioned: a
 fragment present in any source gets a record. PGP is authoritative on field
-conflicts (precedence ``PGP > KTIV > FJP``); every source's raw payload is
-retained under ``sources.*`` so nothing is lost.
+conflicts (precedence ``PGP > KTIV > Bodleian TEI > FJP``); every source's raw
+payload is retained under ``sources.*`` so nothing is lost.
+
+The Bodleian source is the direct scrape of the Bodleian's own TEI catalogue
+(``bodleian/genizah-mss``) plus the full-resolution IIIF masters, keyed by the
+merge's canonical id already (see :mod:`src.datasets.merging.bodleian_images`).
+Its catalogue entry fills ``description`` / ``date`` when PGP and KTIV have none.
 
 This pass is **metadata only** — image references are recorded as pointers
-(FJP GCP filenames, KTIV PNX/zip ids) with a ``preferred_source`` flag, but no
-archives are unzipped and no files are moved.
+(FJP GCP filenames, KTIV PNX/zip ids, Bodleian GCS object paths) with a
+``preferred_source`` flag, but no archives are unzipped and no files are moved.
 
 Run::
 
@@ -46,6 +51,12 @@ from src.datasets.merging.institution_tokens import (  # noqa: E402
     institution_token,
     resolve_token,
 )
+from src.datasets.merging.bodleian_images import (  # noqa: E402
+    bodleian_image_manifest,
+    load_bodleian_records,
+    tei_date,
+    tei_description,
+)
 from src.datasets.merging.ktiv_images import (  # noqa: E402
     gcs_url,
     image_folders,
@@ -53,6 +64,8 @@ from src.datasets.merging.ktiv_images import (  # noqa: E402
 )
 
 RAW_DIR = os.path.join(_REPO_ROOT, "src", "datasets", "raw_data", "cairo_genizah")
+BODLEIAN_DIR = os.path.join(RAW_DIR, "bodleian")
+BODLEIAN_GLOB = os.path.join(BODLEIAN_DIR, "records", "*.json")
 PGP_FRAGMENTS = os.path.join(RAW_DIR, "pgp_raw", "data", "fragments.csv")
 PGP_DOCUMENTS = os.path.join(RAW_DIR, "pgp_raw", "data", "documents.csv")
 FJP_FILE = os.path.join(
@@ -734,10 +747,36 @@ def _ktiv_richness(doc: dict) -> int:
     )
 
 
+def load_bodleian(records_glob: str = BODLEIAN_GLOB) -> Tuple[Dict[str, dict], dict]:
+    """Load the Bodleian direct-scrape records keyed by canonical id.
+
+    Thin wrapper over :func:`bodleian_images.load_bodleian_records` that also
+    rolls up the stats the merge report carries: how many files were read, how
+    many downloaded at least one image, and the ``match`` breakdown (``part`` =
+    the queue shelfmark is a whole TEI msPart, ``folio`` = it is one folio of a
+    larger part whose metadata describes the whole part, ``none`` /
+    ``no_tei_volume`` = no catalogue entry found).
+
+    :param records_glob: Glob matching the ``records/*.json`` files.
+    :returns: ``(by_cid, stats)``; both empty when the directory is absent.
+    """
+    by_cid = load_bodleian_records(records_glob)
+    by_match: collections.Counter = collections.Counter(
+        (rec.get("match") or "?") for rec in by_cid.values()
+    )
+    return by_cid, {
+        "files": len(glob.glob(records_glob)),
+        "distinct": len(by_cid),
+        "with_images": sum(1 for rec in by_cid.values() if rec.get("images")),
+        "with_tei": sum(1 for rec in by_cid.values() if rec.get("tei")),
+        "by_match": dict(by_match.most_common()),
+    }
+
+
 # ─────────────────────────────── merging ───────────────────────────────────
 
 def _first(*values: Optional[str]) -> Optional[str]:
-    """Return the first truthy value (PGP > KTIV > FJP precedence at call site).
+    """Return the first truthy value (PGP > KTIV > Bodleian > FJP precedence at call site).
 
     :param values: Candidate values in precedence order.
     :returns: First non-empty value, or ``None``.
@@ -756,11 +795,13 @@ def build_merged_record(
     ktiv_zips: Optional[Dict[str, List[str]]] = None,
     ktiv_images: Optional[Dict[str, List[str]]] = None,
     ktiv_transcriptions: Optional[Dict[str, dict]] = None,
+    bodleian: Optional[dict] = None,
+    bodleian_images: Optional[Dict[str, List[str]]] = None,
 ) -> dict:
     """Assemble one merged record from the per-source blocks for *cid*.
 
-    Top-level scalar fields follow ``PGP > KTIV > FJP`` precedence; every raw
-    source block is retained under ``sources``.
+    Top-level scalar fields follow ``PGP > KTIV > Bodleian TEI > FJP``
+    precedence; every raw source block is retained under ``sources``.
 
     :param cid: Canonical shelfmark id (the record key).
     :param pgp: PGP block from :func:`load_pgp`, or ``None``.
@@ -768,8 +809,13 @@ def build_merged_record(
     :param ktiv: Chosen KTIV record, or ``None``.
     :param ktiv_zips: ``sys_num -> [zip basenames]`` index from
         :func:`index_ktiv_zips`, used to point at the KTIV image archives.
+    :param ktiv_images: ``sys_num -> [GCS object paths]`` for KTIV scans on disk.
     :param ktiv_transcriptions: ``sys_num -> transcription summary`` from
         :func:`load_ktiv_transcriptions` (flattened per-page full text).
+    :param bodleian: Bodleian direct-scrape record from :func:`load_bodleian`,
+        or ``None``.
+    :param bodleian_images: ``canonical_id -> [GCS object paths]`` from
+        :func:`bodleian_images.bodleian_image_manifest` (files on disk only).
     :returns: The merged record dict.
     """
     pgp_frag = (pgp or {}).get("fragment") or {}
@@ -778,15 +824,19 @@ def build_merged_record(
     fjp_recs = [rec for _, rec in fjp]
     fjp0 = fjp_recs[0] if fjp_recs else {}
     ktiv = ktiv or {}
+    bodleian = bodleian or {}
+    tei = bodleian.get("tei") or {}
 
     sources_present = [
         name for name, present in
-        (("pgp", pgp), ("fjp", fjp), ("ktiv", ktiv)) if present
+        (("pgp", pgp), ("fjp", fjp), ("ktiv", ktiv), ("bodleian", bodleian))
+        if present
     ]
 
     display = _first(
         pgp_frag.get("shelfmark"),
         ktiv.get("shelf_mark"),
+        bodleian.get("shelf_mark"),
         fjp_marks[0] if fjp_marks else None,  # constituent mark, not the join string
     )
     # Feed the prefix-stripped core so institution lookup sees "T-S AS 62.645"
@@ -795,10 +845,24 @@ def build_merged_record(
         ShelfmarkNormalizer._strip_institution(display or "")
     )
 
+    # The Bodleian TEI catalogue (Neubauer–Cowley entries) is the point of the
+    # extra source: it fills description / date where PGP and KTIV are silent.
     description = _first(
         next((d.get("description") for d in pgp_docs if d.get("description")), None),
         (ktiv.get("basic_catalog") or {}).get("title"),
+        tei_description(tei),
         fjp0.get("description"),
+    )
+    date = _first(
+        next((d.get("doc_date_standard") or d.get("doc_date_original")
+              or d.get("inferred_date_display")
+              for d in pgp_docs
+              if d.get("doc_date_standard") or d.get("doc_date_original")
+              or d.get("inferred_date_display")), None),
+        _ktiv_date((ktiv.get("basic_catalog") or {}).get("date")),
+        tei_date(tei),
+        (fjp0.get("date") or {}).get("standard_date")
+        if isinstance(fjp0.get("date"), dict) else None,
     )
 
     # Image pointers. FJP images live in the shared GCS bucket (web app prepends
@@ -811,6 +875,9 @@ def build_merged_record(
     ktiv_zip_files = (ktiv_zips or {}).get(ktiv_sysnum or "", []) if ktiv else []
     ktiv_image_paths = (ktiv_images or {}).get(ktiv_sysnum or "", []) if ktiv else []
     ktiv_trans = (ktiv_transcriptions or {}).get(ktiv_sysnum or "") if ktiv else None
+    # Bodleian masters are uploaded under BODLEIAN/<canonical_id>/<stem>.jpg;
+    # only files present on disk get pointers (lockstep with the uploader).
+    bod_image_paths = (bodleian_images or {}).get(cid, []) if bodleian else []
     images = {
         "fjp": fjp_images,
         "ktiv": {
@@ -826,10 +893,27 @@ def build_merged_record(
             "image_count": len(ktiv_image_paths),
             "populated": bool(ktiv_image_paths),
         } if ktiv else None,
-        # Route to KTIV imagery (higher quality) once its images are populated;
-        # otherwise fall back to FJP's existing GCS images.
+        "bodleian": {
+            "tei_part_id": tei.get("part_xml_id"),
+            "catalogue_url": tei.get("catalogue_url"),
+            # "part" = the shelfmark is a whole msPart; "folio" = one folio of
+            # a multi-leaf part (images are that folio only, TEI is the part).
+            "match": bodleian.get("match"),
+            "license": bodleian.get("license"),
+            "source_urls": [img.get("url") for img in (bodleian.get("images") or [])
+                            if img.get("url")],
+            "images": bod_image_paths,
+            "image_urls": [gcs_url(p) for p in bod_image_paths],
+            "image_count": len(bod_image_paths),
+            "populated": bool(bod_image_paths),
+        } if bodleian else None,
+        # Route to KTIV imagery once populated, then the Bodleian full-resolution
+        # masters, then FJP's existing (down-sampled) GCS copies.
         "preferred_source": (
-            "ktiv" if ktiv_image_paths else ("fjp" if fjp_images else None)
+            "ktiv" if ktiv_image_paths
+            else "bodleian" if bod_image_paths
+            else "fjp" if fjp_images
+            else None
         ),
     }
 
@@ -843,6 +927,7 @@ def build_merged_record(
         inst_info.get("institution"),
         pgp_frag.get("library"),
         ktiv_inst_head,
+        "Bodleian Library, Oxford" if bodleian else None,
         fjp0.get("institution") if fjp0.get("institution") != "Unknown" else None,
     )
 
@@ -854,6 +939,7 @@ def build_merged_record(
         "subcollection": inst_info.get("subcollection"),
         "sources_present": sources_present,
         "description": description,
+        "date": date,
         "pgpids": [d.get("pgpid") for d in pgp_docs if d.get("pgpid")],
         "images": images,
         "sources": {
@@ -861,18 +947,38 @@ def build_merged_record(
             "fjp": fjp_recs,
             "ktiv": ktiv or None,
             "ktiv_transcription": ktiv_trans,
+            "bodleian": bodleian or None,
         },
     }
 
 
+_KTIV_UNKNOWN_DATES = {"unknown", "לא ידוע", "unknown/לא ידוע"}
+
+
+def _ktiv_date(value: Optional[str]) -> Optional[str]:
+    """Return a KTIV ``basic_catalog.date`` unless it is an "unknown" placeholder.
+
+    :param value: Raw KTIV date string (``"[בערך בין 1700-1900]"``).
+    :returns: The string, or ``None`` for empty / unknown markers.
+    """
+    if not value or value.strip().lower() in _KTIV_UNKNOWN_DATES:
+        return None
+    return value
+
+
 def record_has_image(record: dict) -> bool:
-    """Return True if a merged record points to any image (FJP files or KTIV scan).
+    """Return True if a merged record points to any image.
+
+    Counts FJP files, a KTIV scan (PNX / Friedberg image id) and populated
+    Bodleian masters. Bodleian rows scraped without images stay in the gap.
 
     :param record: A merged record from :func:`build_merged_record`.
     :returns: True when at least one image pointer exists.
     """
     images = record.get("images") or {}
     if images.get("fjp"):
+        return True
+    if (images.get("bodleian") or {}).get("populated"):
         return True
     ktiv = images.get("ktiv") or {}
     return bool(ktiv.get("pnx_id") or ktiv.get("friedberg_image_no"))
@@ -906,21 +1012,25 @@ def compute_coverage(
     pgp_records: Dict[str, dict],
     fjp_by_cid: Dict[str, List[Tuple[str, dict]]],
     ktiv_by_cid: Dict[str, dict],
+    bodleian_by_cid: Optional[Dict[str, dict]] = None,
 ) -> dict:
     """Compute cross-source coverage stats for the report.
 
     Tracks two things the project cares about as KTIV grows: how much of PGP is
     already mirrored in FJP/KTIV (the shrinking PGP-only gap), and how the
-    growing KTIV set breaks down against the frozen PGP/FJP sets.
+    growing KTIV set breaks down against the frozen PGP/FJP sets. The Bodleian
+    direct scrape is reported the same way (what it overlaps, what it adds).
 
     :param pgp_records: PGP canonical-id -> block.
     :param fjp_by_cid: FJP canonical-id -> records.
     :param ktiv_by_cid: KTIV canonical-id -> record.
+    :param bodleian_by_cid: Bodleian canonical-id -> record, or ``None``.
     :returns: A coverage dict embedded in ``merge_report.json``.
     """
     pgp_ids = set(pgp_records)
     fjp_ids = set(fjp_by_cid)
     ktiv_ids = set(ktiv_by_cid)
+    bod_ids = set(bodleian_by_cid or {})
 
     pgp_in_fjp = len(pgp_ids & fjp_ids)
     pgp_in_ktiv = len(pgp_ids & ktiv_ids)
@@ -946,6 +1056,13 @@ def compute_coverage(
             "matching_pgp_or_fjp": len(ktiv_ids & (pgp_ids | fjp_ids)),
             "ktiv_only_new": len(ktiv_ids - pgp_ids - fjp_ids),
             "by_institution": dict(ktiv_inst.most_common()),
+        },
+        "bodleian": {
+            "distinct": len(bod_ids),
+            "matching_pgp": len(bod_ids & pgp_ids),
+            "matching_fjp": len(bod_ids & fjp_ids),
+            "matching_ktiv": len(bod_ids & ktiv_ids),
+            "bodleian_only_new": len(bod_ids - pgp_ids - fjp_ids - ktiv_ids),
         },
     }
 
@@ -1034,8 +1151,14 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
     ktiv_stats["transcribed_pages"] = sum(
         t["page_count"] for t in ktiv_transcriptions.values()
     )
+    bodleian_by_cid, bodleian_stats = load_bodleian()
+    bodleian_images = bodleian_image_manifest(bodleian_by_cid, BODLEIAN_DIR)
+    bodleian_stats["image_manuscripts"] = len(bodleian_images)
+    bodleian_stats["image_objects"] = sum(len(v) for v in bodleian_images.values())
 
-    all_ids = set(pgp_records) | set(fjp_by_cid) | set(ktiv_by_cid)
+    all_ids = (
+        set(pgp_records) | set(fjp_by_cid) | set(ktiv_by_cid) | set(bodleian_by_cid)
+    )
     counts: collections.Counter = collections.Counter()
     no_image_ids: List[str] = []
     pgp_covered_ids: List[str] = []
@@ -1050,7 +1173,8 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
             fjp = fjp_by_cid.get(cid, [])
             ktiv = ktiv_by_cid.get(cid)
             record = build_merged_record(
-                cid, pgp, fjp, ktiv, ktiv_zips, ktiv_images, ktiv_transcriptions
+                cid, pgp, fjp, ktiv, ktiv_zips, ktiv_images, ktiv_transcriptions,
+                bodleian=bodleian_by_cid.get(cid), bodleian_images=bodleian_images,
             )
             out.write(json.dumps(record, ensure_ascii=False) + "\n")
             counts[",".join(record["sources_present"])] += 1
@@ -1104,12 +1228,15 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
         "pgp_fragments": len(pgp_records),
         "fjp": fjp_stats,
         "ktiv": ktiv_stats,
+        "bodleian": bodleian_stats,
         "alias_index_size": len(alias),
         "fjp_matched_to_pgp": sum(1 for c in fjp_by_cid if c in pgp_records),
         "fjp_union_only": sum(1 for c in fjp_by_cid if c not in pgp_records),
         "ktiv_matched_to_pgp": sum(1 for c in ktiv_by_cid if c in pgp_records),
         "source_combinations": dict(counts),
-        "coverage": compute_coverage(pgp_records, fjp_by_cid, ktiv_by_cid),
+        "coverage": compute_coverage(
+            pgp_records, fjp_by_cid, ktiv_by_cid, bodleian_by_cid
+        ),
         "image_gap": image_gap,
         "ktiv_image_backlog": ktiv_image_backlog,
         "diff_summary": diff.get("counts", {"baseline": True}),
