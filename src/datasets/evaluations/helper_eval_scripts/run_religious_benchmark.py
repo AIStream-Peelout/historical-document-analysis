@@ -84,7 +84,8 @@ ORDER_SCRAMBLE_LINE_P = 0.5     # content verified at line level ...
 ORDER_SCRAMBLE_MAX_F1 = 0.5     # ... but the page sequence does not align
 
 
-async def transcribe_all(docs: list, vlm_model: str = VLM_MODEL) -> None:
+async def transcribe_all(docs: list, vlm_model: str = VLM_MODEL, kraken_model: str = _KRAKEN_MODEL,
+                         kraken_tag: str = "") -> None:
     """Run all engines over every page, saving raw outputs (resumable).
 
     LM Studio is only touched when a VLM output is actually missing, so
@@ -96,26 +97,34 @@ async def transcribe_all(docs: list, vlm_model: str = VLM_MODEL) -> None:
         saved under the id (``-`` replaced by ``_``), so different models
         accumulate side by side and are all picked up by :func:`score`.
     :type vlm_model: str
+    :param kraken_model: Kraken recognition model path (host path, mapped by
+        the :8002 service); defaults to the MiDRASH base model.
+    :type kraken_model: str
+    :param kraken_tag: Suffix for the Kraken output keys (``kraken_raw_<tag>``,
+        ``kraken_seg_<tag>``, ``kraken_lines_<tag>.json``) so a fine-tuned
+        model's rows sit next to the base model's instead of replacing them.
+    :type kraken_tag: str
     """
+    suffix = f"_{kraken_tag}" if kraken_tag else ""
     need_vlm = [d for d in docs
                 if not (_OUT / d["doc_id"] / f"{vlm_model.replace('-', '_')}.txt").exists()]
     if need_vlm:
         models = await check_lm_studio_health()
         if vlm_model not in models:
             raise RuntimeError(f"{vlm_model} not served by LM Studio: {models}")
-    preload_kraken_model(_KRAKEN_MODEL)
+    preload_kraken_model(kraken_model)
     for i, d in enumerate(docs, 1):
         outdir = _OUT / d["doc_id"]
         outdir.mkdir(parents=True, exist_ok=True)
         vlm_f = outdir / f"{vlm_model.replace('-', '_')}.txt"
-        krk_f = outdir / f"{KRAKEN_KEY}.txt"
-        lines_f = outdir / _LINES_NAME
-        seg_f = outdir / f"{KRAKEN_SEG_KEY}.txt"
+        krk_f = outdir / f"{KRAKEN_KEY}{suffix}.txt"
+        lines_f = outdir / _LINES_NAME.replace(".json", f"{suffix}.json")
+        seg_f = outdir / f"{KRAKEN_SEG_KEY}{suffix}.txt"
         if not krk_f.exists():
-            txt = await transcribe_with_kraken(_KRAKEN_MODEL, d["image"], timeout=180.0)
+            txt = await transcribe_with_kraken(kraken_model, d["image"], timeout=180.0)
             krk_f.write_text(txt or "", encoding="utf-8")
         if not lines_f.exists():
-            res = await transcribe_with_kraken_lines(_KRAKEN_MODEL, d["image"], timeout=300.0)
+            res = await transcribe_with_kraken_lines(kraken_model, d["image"], timeout=300.0)
             if res is not None:
                 lines_f.write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
         if not seg_f.exists() and lines_f.exists():
@@ -192,15 +201,15 @@ def discover_model_keys(docs: list) -> list:
     :rtype: list
     """
     keys = set()
+    kraken_keys = set()
     for d in docs:
         outdir = _OUT / d["doc_id"]
         if not outdir.is_dir():
             continue
         for f in outdir.glob("*.txt"):
-            if f.stem not in (KRAKEN_KEY, KRAKEN_SEG_KEY):
-                keys.add(f.stem)
+            (kraken_keys if f.stem.startswith("kraken_") else keys).add(f.stem)
     vlm = [(k, k.removeprefix("qwen3_vl_8b_heb_")) for k in sorted(keys)]
-    return vlm + [(KRAKEN_KEY, KRAKEN_KEY), (KRAKEN_SEG_KEY, KRAKEN_SEG_KEY)]
+    return vlm + [(k, k) for k in sorted(kraken_keys)]
 
 
 def score(docs: list) -> list:
@@ -315,6 +324,10 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--score-only", action="store_true")
+    parser.add_argument("--kraken-model", default=_KRAKEN_MODEL,
+                        help="Kraken recognition model path (default: MiDRASH base)")
+    parser.add_argument("--kraken-tag", default="",
+                        help="suffix for the Kraken output keys, e.g. ktivft (keeps base rows)")
     parser.add_argument("--vlm-model", default=VLM_MODEL,
                         help="LM Studio model id to transcribe with "
                              f"(default: {VLM_MODEL}); scoring always covers "
@@ -324,7 +337,7 @@ def main() -> None:
     if args.limit:
         docs = docs[:args.limit]
     if not args.score_only:
-        asyncio.run(transcribe_all(docs, args.vlm_model))
+        asyncio.run(transcribe_all(docs, args.vlm_model, args.kraken_model, args.kraken_tag))
     rows = score(docs)
     if not rows:
         print("no scored rows")
