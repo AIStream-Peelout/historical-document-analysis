@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """Index the merged Cairo Genizah corpus into Elasticsearch.
 
-Streams ``merged_shelfmarks.jsonl`` (PGP + FJP + KTIV unioned by canonical id),
+Streams ``merged_shelfmarks.jsonl`` (PGP + FJP + KTIV + Bodleian unioned by canonical id),
 turns each line into a :class:`GenizahDocument` via ``from_merged_format``, and
 indexes it with :class:`ElasticsearchGenizahProcessor`. Every merged record is
 indexed (all shelfmarks), keyed on the institution-qualified ``canonical_id``.
 
-Embeddings default to text-only (no image fetching); image URLs (FJP + KTIV GCS)
+Embeddings default to text-only (no image fetching); image URLs (FJP + KTIV + Bodleian GCS)
 are still stored for display and surfaced provenance fields
 (``canonical_id``, ``sources_present``, ``image_preferred_source``,
-``has_ktiv_images``) make the index navigable by source.
+``has_ktiv_images``, ``has_bodleian_images``) make the index navigable by source.
 
 Run (needs ES creds in env: ELASTIC_SEARCH_HOST / ELASTIC_USER / ELASTIC_PASSWORD)::
 

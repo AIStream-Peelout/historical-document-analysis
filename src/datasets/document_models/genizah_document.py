@@ -47,17 +47,26 @@ def _split_names(value: Optional[str]) -> List[str]:
 def _merged_image_urls(images: Dict[str, Any]) -> List[str]:
     """Resolve a merged record's image pointers to full URLs, preferred source first.
 
+    The merge's ``preferred_source`` (``ktiv`` > ``bodleian`` > ``fjp``) leads;
+    the remaining sources follow in that same precedence.
+
     :param images: The merged record's ``images`` block.
-    :returns: Ordered list of absolute image URLs (KTIV first when preferred).
+    :returns: Ordered list of absolute image URLs.
     """
-    fjp_urls = [
-        img if str(img).startswith("http") else f"{_FJP_IMAGE_BASE}/{img}"
-        for img in (images.get("fjp") or [])
-    ]
-    ktiv_urls = list(((images.get("ktiv") or {}).get("image_urls")) or [])
-    if images.get("preferred_source") == "ktiv":
-        return ktiv_urls + fjp_urls
-    return fjp_urls + ktiv_urls
+    by_source = {
+        "fjp": [
+            img if str(img).startswith("http") else f"{_FJP_IMAGE_BASE}/{img}"
+            for img in (images.get("fjp") or [])
+        ],
+        "ktiv": list(((images.get("ktiv") or {}).get("image_urls")) or []),
+        "bodleian": list(((images.get("bodleian") or {}).get("image_urls")) or []),
+    }
+    order = ["ktiv", "bodleian", "fjp"]
+    preferred = images.get("preferred_source")
+    if preferred in order:
+        order.remove(preferred)
+        order.insert(0, preferred)
+    return [url for source in order for url in by_source[source]]
 
 
 class ContentQuality(str, Enum):
@@ -1072,6 +1081,8 @@ class GenizahDocument(BaseModel):
             es_doc["image_preferred_source"] = meta.get("image_preferred_source")
             es_doc["has_ktiv_images"] = bool(meta.get("ktiv_images"))
             es_doc["ktiv_iiif_manifest_url"] = meta.get("ktiv_iiif_manifest_url")
+            es_doc["has_bodleian_images"] = bool(meta.get("bodleian_images"))
+            es_doc["bodleian_catalogue_url"] = meta.get("bodleian_catalogue_url")
             es_doc["has_ktiv_transcription"] = bool(meta.get("ktiv_transcription_pages"))
 
         # Add embedding if provided
@@ -1475,7 +1486,7 @@ class GenizahDocument(BaseModel):
     def from_merged_format(cls, merged: Dict[str, Any]) -> 'GenizahDocument':
         """Create a GenizahDocument from a merged shelfmark record.
 
-        Consumes one line of ``merged_shelfmarks.jsonl`` (PGP + FJP + KTIV unioned
+        Consumes one line of ``merged_shelfmarks.jsonl`` (PGP + FJP + KTIV + Bodleian unioned
         by canonical id). Identity comes from the merged top level; transcriptions,
         translations, people, places and bibliography are aggregated across the
         FJP block and enriched from PGP documents; image URLs are resolved from the
@@ -1545,10 +1556,14 @@ class GenizahDocument(BaseModel):
         images = merged.get("images") or {}
         image_urls = _merged_image_urls(images)
 
-        # Date / language: PGP document first, then FJP.
+        # Date / language: FJP's structured date block when it has content,
+        # else the merge's scalar date (PGP > KTIV > Bodleian TEI > FJP).
         fjp0 = fjp_recs[0] if fjp_recs else {}
         pgp0 = pgp_docs[0] if pgp_docs else {}
         date = fjp0.get("date")
+        if not (isinstance(date, dict) and any(date.values())):
+            date = {"standard_date": merged["date"]} if merged.get("date") else None
+        bodleian_images = images.get("bodleian") or {}
         language = (pgp0.get("languages_primary") or fjp0.get("language") or "Unknown")
         joins = fjp0.get("joins_data") or (
             {"part_of_join": ktiv.get("full_catalog", {}).get("part_of_join")}
@@ -1581,6 +1596,10 @@ class GenizahDocument(BaseModel):
                 "image_preferred_source": images.get("preferred_source"),
                 "ktiv_images": (images.get("ktiv") or {}).get("image_urls") or [],
                 "ktiv_iiif_manifest_url": (images.get("ktiv") or {}).get("iiif_manifest_url"),
+                "bodleian_images": bodleian_images.get("image_urls") or [],
+                "bodleian_catalogue_url": bodleian_images.get("catalogue_url"),
+                "bodleian_tei_part_id": bodleian_images.get("tei_part_id"),
+                "bodleian_match": bodleian_images.get("match"),
                 "ktiv_scholarly_entry_count": ktiv.get("scholarly_entry_count"),
                 "ktiv_transcription_pages": ktiv_transcription.get("page_count") or 0,
                 "ktiv_transcription_file": ktiv_transcription.get("file"),

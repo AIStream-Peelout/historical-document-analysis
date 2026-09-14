@@ -497,6 +497,9 @@ class ElasticsearchGenizahProcessor:
                     "has_ktiv_images": {"type": "boolean"},
                     "has_ktiv_transcription": {"type": "boolean"},
                     "ktiv_iiif_manifest_url": {"type": "keyword"},
+                    # Bodleian direct scrape (TEI catalogue + IIIF masters).
+                    "has_bodleian_images": {"type": "boolean"},
+                    "bodleian_catalogue_url": {"type": "keyword"},
                     # Cross-store join keys (shared with the Neo4j KG).
                     "book_uuid": {"type": "keyword"},
                     "page_uuid": {"type": "keyword"},

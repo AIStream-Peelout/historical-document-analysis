@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Report every shelfmark in Elasticsearch that has no images, grouped by collection.
 
-The merged Genizah index (``genizah_merged_v4``) unions PGP + FJP + KTIV
-shelfmarks, but only records with an FJP image filename or a downloaded KTIV
-scan carry ``image_urls``. Everything else is a fragment we hold *metadata* for
+The merged Genizah index (``genizah_merged_v4``) unions PGP + FJP + KTIV +
+Bodleian shelfmarks, but only records with an FJP image filename, a downloaded
+KTIV scan or a Bodleian master carry ``image_urls``. Everything else is a fragment we hold *metadata* for
 and no picture of — the KTIV scrape worklist.
 
 Unlike :mod:`src.datasets.merging.merge_shelfmarks` (which derives its worklist
@@ -67,6 +67,8 @@ _SOURCE_FIELDS: List[str] = [
     "completeness_score",
     "ktiv_iiif_manifest_url",
     "has_ktiv_images",
+    "has_bodleian_images",
+    "bodleian_catalogue_url",
 ]
 
 
@@ -79,7 +81,7 @@ class GapRecord:
     :param institution_group: Descriptive institution token used for grouping.
     :param collection: Raw sub-collection string (``Taylor-Schechter`` …).
     :param institution_raw: Raw institution string as indexed.
-    :param sources_present: Which of pgp/fjp/ktiv contributed this record.
+    :param sources_present: Which of pgp/fjp/ktiv/bodleian contributed this record.
     :param ktiv_manifest_url: KTIV IIIF manifest, when the record already
         carries one (these are directly downloadable — no lookup needed).
     :param ktiv_known: True when KTIV metadata exists for the shelfmark.
@@ -87,6 +89,9 @@ class GapRecord:
     :param has_bib: Whether bibliography records are attached.
     :param has_transcriptions: Whether a transcription is attached.
     :param completeness_score: Indexed completeness heuristic.
+    :param bodleian_known: True when the Bodleian direct scrape has a catalogue
+        record for the shelfmark (its images, if any, would have removed the
+        record from this gap).
     """
 
     canonical_id: str
@@ -101,6 +106,7 @@ class GapRecord:
     has_bib: bool
     has_transcriptions: bool
     completeness_score: float
+    bodleian_known: bool = False
 
     @property
     def ktiv_ready(self) -> bool:
@@ -186,6 +192,7 @@ def _to_record(source: Dict[str, Any], es_id: str) -> GapRecord:
         has_bib=bool(source.get("has_bib")),
         has_transcriptions=bool(source.get("has_transcriptions")),
         completeness_score=float(source.get("completeness_score") or 0.0),
+        bodleian_known="bodleian" in sources_present,
     )
 
 
@@ -250,6 +257,7 @@ class GroupSummary:
     :param metadata_rich: How many carry description/transcription/bibliography.
     :param ktiv_ready: How many already have a KTIV IIIF manifest URL.
     :param ktiv_known: How many have any KTIV metadata.
+    :param bodleian_known: How many have a Bodleian direct-scrape record.
     :param collections: Imageless count per raw collection string.
     :param source_mix: Imageless count per source combination.
     """
@@ -259,6 +267,7 @@ class GroupSummary:
     metadata_rich: int = 0
     ktiv_ready: int = 0
     ktiv_known: int = 0
+    bodleian_known: int = 0
     collections: Dict[str, int] = field(default_factory=dict)
     source_mix: Dict[str, int] = field(default_factory=dict)
 
@@ -280,6 +289,7 @@ def summarize(records: Sequence[GapRecord]) -> List[GroupSummary]:
         summary.metadata_rich += int(record.metadata_rich)
         summary.ktiv_ready += int(record.ktiv_ready)
         summary.ktiv_known += int(record.ktiv_known)
+        summary.bodleian_known += int(record.bodleian_known)
         collections[record.institution_group][record.collection or "(unspecified)"] += 1
         sources[record.institution_group][record.sources_present or "(none)"] += 1
     for token, summary in groups.items():
@@ -303,6 +313,7 @@ def write_csv(records: Sequence[GapRecord], path: Path) -> None:
         "ktiv_ready",
         "ktiv_known",
         "ktiv_manifest_url",
+        "bodleian_known",
         "metadata_rich",
         "description_chars",
         "has_bib",
@@ -343,6 +354,7 @@ def write_summary(
         "metadata_rich_total": sum(s.metadata_rich for s in summaries),
         "ktiv_ready_total": sum(s.ktiv_ready for s in summaries),
         "ktiv_known_total": sum(s.ktiv_known for s in summaries),
+        "bodleian_known_total": sum(s.bodleian_known for s in summaries),
         "institutions": [asdict(summary) for summary in summaries],
     }
     path.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
