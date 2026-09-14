@@ -17,14 +17,14 @@ Sources: this week's v21/v21b work, the offline log (`docs/v21b_offline_status.m
 | Arabic-script GT (PGP footnotes, 756 docs) into eval + train | idea | the Arabic gap is unmeasured today |
 | Synthetic confusable drills re-weighted by the confusion matrix (ד/ר, ב/כ, ו/י) | idea | synth3 exists |
 | Word-level grounding rows (locate/read_box at parity with v2.0a) | idea | v2.2 data lever |
-| v4 dataset: pages stored once + `page_id` task rows, map-style loading | decision | approved in principle; removes streaming and makes new families cheap |
+| v4 dataset: pages stored once + `page_id` task rows, map-style loading, `short_fragment` family | queued (gated on the scrape) | approved 09-14; **do not build until the KTIV scrape lands — target ≥ 400–500 new documents in v4** (intake ledger in track 6) |
 | Eval slices: two-column, JA, Arabic script reported per checkpoint | idea | anchors stay religious-140 + PGP-131 |
 
 ## 2. Kraken / second reader
 
 | item | status | notes |
 |---|---|---|
-| Fine-tune MiDRASH recognition on KTIV lines (`ketos` in the container, NFKD, held-out split) | queued | ~10k human-transcribed lines with geometry; CC BY-NC-SA derivative — publish back |
+| Fine-tune MiDRASH recognition on KTIV lines | running (compile relaunched 09-14 13:00 after an overnight `Too many open files` failure on the NAS mount; chunked local staging fixed it) | `src/finetuning/kraken/export_ktiv_lines.py` (49k clean lines / 1.43M letters from 3,556 pages; ink-centred crops, NFKD, codec-checked, split by manuscript) → `filter_manifests.py` (aspect ≤ 25, aspect/letter ≤ 1.0: kills merged-column and run-on boxes that OOM-ed batches) → `finetune_ktiv.sh` (sibling container of kraken-service:linewise, `--cpus 5 --memory 12g --shm-size 4g`, batch 16, lr 1e-4, early stop lag 5, ≤ 20 epochs; ~7 lines/s on 3 threads → ~1.5–2 h/epoch). Data + models on the NAS (`datasets/kraken_ktiv_lines/models/`). Eval: `run_religious_benchmark.py --kraken-model … --kraken-tag ktivft` (new). CC BY-NC-SA derivative — publish back |
 | Retrain the segmenter on line polygons (KTIV word-box lines + agreement-filtered VLM boxes) | idea | the 4-letter-fragment problem; biggest two-reader coverage lever, zero language-prior risk |
 | PGP-aligned line crops (VLM geometry, PGP text as the label) | idea | after v4; guards against forgetting the documentary hands |
 | Line-level eval + two-reader agreement rate as the operational metric | idea | `kraken_seg` CERsub 0.375 vs VLM 0.165 today |
@@ -76,7 +76,9 @@ Sources: this week's v21/v21b work, the offline log (`docs/v21b_offline_status.m
 | Arabic KTIV scrape priority queue (785 rows) | queued | columns fixed to the scraper's format |
 | Builder: rescue the 52 transcribed pages whose boxes fall outside the image frame (scale check between annotation frame and downloaded derivative) | idea | median 940 letters each — real pages |
 | Re-download images for the 3 transcribed manuscripts with no zip (34 pages, one 16-page booklet) | queued | needs KTIV image serving back |
-| Short-fragment policy: 316 transcribed pages under the 150-letter gate (median 95 letters) — include as a `short_fragment` family? | decision | documentary-like fragments; excluding them biases toward full pages |
+| `short_fragment` family: transcribed pages under the 150-letter gate | approved 09-14 | 251 pages / 151 mss after id-level benchmark exclusion (316 before); all have in-frame images; 229 have ≥ 4 lines. Gate: letters ≥ 40, damage share ≤ 0.30 (gap tokens + words with dots/brackets over all words), image in frame, not shingle-contaminated → 169 pages / 109 mss (73 mss new to the dataset), ~16k letters. Heavily damaged strips (damage > 0.30, e.g. 35 pages) stay out per Isaac. Own family + own eval slice; 4 pages carry an `@`+combining-mark sigla artifact — check normalisation in the builder |
+| **Scrape haul 09-13/14 night (measured 09-14 15:00):** 511 new bundle files / 507 mss touched, 1,264 new image zips (KTIV images serve again); 185 brand-new transcribed manuscripts (184 with images), 2 DOM→API upgrades, 3 mss gained pages (990001398720205171: 13 → 42 pages) → **+575 text pages, +490k Hebrew letters** before gating; 317 re-scrapes with unchanged coverage; the never-visited/reprobe queue CSVs carry shelf-mark ids while bundles carry PNX ids, so per-queue attribution needs the scraper's visited log | done | 
+| v4 intake ledger (toward ≥ 400–500 new docs): short pages 169 (109 mss, 73 new) · out-of-frame rescue 52 pages · no-image re-download 34 pages (3 mss) · partial-page re-probe up to 297 pages (204 existing mss — pages, not new docs) · never-visited open 457 mss (yield unknown; the swing item) · false-negative re-probe 100 (low yield expected). New-manuscript count depends mostly on the never-visited yield; page count clears 500 without it | running (scrape by Isaac) | started 09-14 |
 | KTIV page audit result: 4,136 transcribed pages; 3,310 in v3; the rest = 316 short, 312 PGP-shingle hold-out, ~125 religious-140 hold-out, 52 out-of-frame, 34 no image, 2 gaps — nothing dropped by accident | done | 2026-09-14 |
 | Full 80k image scrape | long-term | months; KTIV image serving currently erroring |
 
