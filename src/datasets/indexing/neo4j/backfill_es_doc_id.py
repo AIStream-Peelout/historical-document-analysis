@@ -255,6 +255,7 @@ def main() -> None:
     args = parser.parse_args()
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+    logging.getLogger("elastic_transport").setLevel(logging.WARNING)  # one line per ids query otherwise
 
     uri = os.environ["NEO4J_URI"]
     database = os.environ.get("NEO4J_DATABASE", "neo4j")
