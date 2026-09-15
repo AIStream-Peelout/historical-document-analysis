@@ -255,37 +255,11 @@ class InstitutionNormalizer(EntityNormalizer):
         """
         if not raw or not raw.strip():
             return raw
-        if cls.is_compound(raw):
-            # A joint-holdings name ("Cambridge University Library / Bodleian
-            # Library Oxford", the Lewis-Gibson collection) names two real
-            # institutions. Substring matching would silently fold it onto
-            # whichever member sorts first, which is exactly the merge the KG
-            # runbook forbids (it needs a real split, not a collapse). Keep
-            # the compound node intact.
-            return raw.strip()
         normalised = _normalise_input(raw)
         for key in _SORTED_KEYS:
             if key in normalised:
                 return _CANONICAL[key]
         return raw.strip()
-
-    @classmethod
-    def is_compound(cls, raw: str) -> bool:
-        """Whether *raw* names two or more distinct known institutions.
-
-        :param raw: Institution name, possibly ``"A / B"``.
-        :returns: ``True`` when the ``" / "``-separated parts resolve to at
-            least two different canonical institutions.
-        """
-        if not raw or " / " not in raw:
-            return False
-        canonicals = set()
-        for part in raw.split(" / "):
-            normalised = _normalise_input(part)
-            hit = next((_CANONICAL[k] for k in _SORTED_KEYS if k in normalised), None)
-            if hit:
-                canonicals.add(hit)
-        return len(canonicals) >= 2
 
     @classmethod
     def get_metadata(cls, raw: str) -> dict[str, Any]:
