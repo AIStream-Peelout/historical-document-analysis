@@ -389,11 +389,11 @@ in every output JSON.
 - Junk Place nodes (dates, comma-joined strings), junk concept-Institutions
   ("court", "synagogue", גאון סורא), and case-only Person duplicates remain
   un-filtered at source.
-- `Cambridge University Library / Bodleian Library Oxford` is a compound
-  holdings node (1,313 rels). Do **not** merge it into Cambridge — it means
-  fragments split between two libraries and needs a real split.
-  **Regression 2026-09-15:** the ingest normalisation added on 2026-07-18
-  (`InstitutionNormalizer` in steps 1/2/4) folded exactly this node onto
-  `Cambridge University Library` in the MBP v3 rebuild. The normaliser now
-  keeps compound names verbatim; a graph built between those dates needs the
-  1,313 Lewis-Gibson (`L_G_*`) `HELD_AT` edges re-pointed.
+- **Lewis-Gibson (`L-G`) holdings — decided 2026-09-15.** The June graph had a
+  compound node `Cambridge University Library / Bodleian Library Oxford`
+  (1,313 rels) because the shelfmark table encoded the 2013 joint purchase
+  as a slash string. The collection is housed, catalogued and digitised at
+  CUL and treated as a CUL sub-collection in the literature, so `L-G` now
+  maps to `Cambridge University Library` with `collection = Lewis-Gibson`
+  (the v3 MBP graph already has this shape). Do not resurrect the compound
+  node.

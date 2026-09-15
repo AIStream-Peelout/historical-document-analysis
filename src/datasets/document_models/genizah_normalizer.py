@@ -591,7 +591,7 @@ class ShelfmarkNormalizer(EntityNormalizer):
         "ULC Add": {"institution": "Cambridge University Library", "collection": "Additional Manuscripts", "subcollection": None},
         "CUL Or": {"institution": "Cambridge University Library", "collection": "Oriental Manuscripts", "subcollection": None},
         "Mosseri": {"institution": "Cambridge University Library", "collection": "Mosseri", "subcollection": None},
-        "L-G": {"institution": "Cambridge University Library / Bodleian Library Oxford", "collection": "Lewis-Gibson", "subcollection": None},
+        "L-G": {"institution": "Cambridge University Library", "collection": "Lewis-Gibson", "subcollection": None},  # jointly purchased with the Bodleian (2013) but housed, catalogued and digitised at CUL; treated as a CUL sub-collection in the literature
         # JTS / ENA
         "ENA": {"institution": "Jewish Theological Seminary", "collection": "Elkan Nathan Adler", "subcollection": "Main series"},
         "ENA NS": {"institution": "Jewish Theological Seminary", "collection": "Elkan Nathan Adler", "subcollection": "New Series"},
