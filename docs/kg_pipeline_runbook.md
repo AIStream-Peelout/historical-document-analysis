@@ -258,11 +258,37 @@ academic books — they load PGP / bibliography / FJP+KTIV data.
 | 2 | `biblio_import.py` | `biblio.json` citations | **No** |
 | 3 | `academic_kg_import.py` | **Pass-4 relations** | **Yes** |
 | 4 | `merged_shelfmarks_import.py` | merged FJP/KTIV shelfmarks | **No** |
+| 4b | `backfill_es_doc_id.py` | `Fragment.es_doc_id` (the Neo4j→ES join the site reads) | **No** |
 | 5 | `geocode_places.py` | Place + Institution coordinates | Yes (cheap, incremental) |
-| 6 | `enrich_fragment_people.py` | Fragment↔Person links | ⚠️ **NOT YET PORTED — see §4** |
+| 6 | `enrich_fragment_people.py --run-tag v3_lms_qwen3_6-35b-a3b` | Fragment↔Person links from the Pass-3 resolved files (**the run tag is required** — the untagged glob finds nothing) | Yes |
+| 7 | `pgp_person_relations_import.py` | PGP-website person→fragment role edges | **No** |
+| 8 | `enrich_kg_identifiers.py --apply` | Crossref/OpenLibrary links on BookArticle; slow, network-bound; can run after cutover | **No** |
 
 All importers use `MERGE`, so they are **idempotent** — re-running does not
-duplicate nodes or edges.
+duplicate nodes or edges. Steps 3–7 take `--dry-run`; use it first.
+
+**Step 4b exists because nothing else writes `es_doc_id`.** The 44.9k values on
+the June graph came from an uncommitted one-off; a rebuild has none until
+`backfill_es_doc_id.py` runs (after step 4, so the merged Fragments exist).
+It joins `merged_shelfmarks.jsonl` records (whose `canonical_id` *is* the ES
+`_id`) onto Fragments by first join component → pgpid → full shelfmark,
+verifies every id against the served index (`genizah_merged_v5`), and fills
+NULLs only. Verified against the June graph on 2026-09-15: 43,847 identical,
+629 differ (JSONL id-shape drift, both shapes are in the index), 998 new.
+
+**Generation stamp.** Since 2026-09-15 `academic_kg_import.py` sets
+`pipeline_version` (from each `book_relations.json`) on every node and
+relationship it *creates* — `ON CREATE` only, so shared PGP/biblio elements
+are never claimed. Retiring a generation is therefore
+`MATCH ()-[r]->() WHERE r.pipeline_version = 'v3' DELETE r` plus the node
+equivalent, instead of a wipe.
+
+**Timing.** June figures are for a local Neo4j. Every importer issues one
+statement per row, so against a Neo4j on another machine the wall time scales
+with round-trip latency: the 2026-09-15 MBP build over Wi-Fi (≈11 ms per
+statement vs 1 ms local) took 43 min for step 1, 26 min for step 2, 17 min
+each for steps 3 and 4, ~3 min for 4b–7 together. Run from a checkout on the
+DB host (or over Ethernet) if that matters.
 
 `academic_kg_import.py` defaults to the **current version's** relations root
 (`relations_v3`). To import a previous generation for comparison:
@@ -348,13 +374,12 @@ in every output JSON.
 
 ## 5. Known open issues
 
-- **`enrich_fragment_people.py` is not in the rebuild sequence and needs a
-  port.** It still reads legacy `*_enhanced.json` (dated Apr 30 – May 20,
-  i.e. *before* the June junk fixes) and was last run 2026-06-08 — before the
-  June 21 rebuild wiped its output. This is why **74% of Person nodes have no
-  Fragment edge** and why `certainty` is null on all ~5,078 `MENTIONS_PERSON`
-  edges. It must be re-pointed at `book_entities_resolved_*.json` and added as
-  step 6 of the import order.
+- **`enrich_fragment_people.py`** was ported to the Pass-3 resolved files on
+  2026-08-05 and first ran on 2026-09-15 (v3 MBP build: 622 edges, 122
+  definite / 500 possible). Its first dry-run crashed on every book with
+  edges (`KeyError: 'shelfmark'` in the logging lines; fixed the same day).
+  On the June graph `certainty` is still null on all ~5,078 `MENTIONS_PERSON`
+  edges because that run never happened there.
 - `cairo_to_manchester_2` failed in the v2 run (`TypeError: object of type
   'bool' has no len()`, since fixed) and its only output is from an older
   model. A v3 run resolves this naturally.
@@ -367,3 +392,8 @@ in every output JSON.
 - `Cambridge University Library / Bodleian Library Oxford` is a compound
   holdings node (1,313 rels). Do **not** merge it into Cambridge — it means
   fragments split between two libraries and needs a real split.
+  **Regression 2026-09-15:** the ingest normalisation added on 2026-07-18
+  (`InstitutionNormalizer` in steps 1/2/4) folded exactly this node onto
+  `Cambridge University Library` in the MBP v3 rebuild. The normaliser now
+  keeps compound names verbatim; a graph built between those dates needs the
+  1,313 Lewis-Gibson (`L_G_*`) `HELD_AT` edges re-pointed.
