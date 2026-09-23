@@ -10,7 +10,12 @@ payload is retained under ``sources.*`` so nothing is lost.
 The Bodleian source is the direct scrape of the Bodleian's own TEI catalogue
 (``bodleian/genizah-mss``) plus the full-resolution IIIF masters, keyed by the
 merge's canonical id already (see :mod:`src.datasets.merging.bodleian_images`).
-Its catalogue entry fills ``description`` / ``date`` when PGP and KTIV have none.
+Its catalogue entry fills ``description`` / ``date`` when PGP and KTIV have none,
+provided the attached TEI part is verified to contain the leaf's folio.
+
+Oxford leaves get one PGP-style id (``Oxford_Bodleian_Bodl_MS_heb_b_3_5``)
+whatever the source spelling (see :meth:`ShelfmarkNormalizer.parse_oxford`);
+Bodleian scrape records are re-keyed onto it (:func:`bodleian_canonical_id`).
 
 This pass is **metadata only** — image references are recorded as pointers
 (FJP GCP filenames, KTIV PNX/zip ids, Bodleian GCS object paths) with a
@@ -35,7 +40,7 @@ import json
 import os
 import re
 import sys
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 # Anchor everything to the repo root (three levels up from this file) so the
 # script works regardless of the current working directory, and add it to
@@ -45,14 +50,21 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+from src.datasets.document_models.genizah_normalizer import (  # noqa: E402
+    OxfordShelfmark,
+    ShelfmarkNormalizer,
+)
 from src.datasets.merging.institution_tokens import (  # noqa: E402
+    OXFORD_TOKEN,
     combine,
     institution_token,
     resolve_token,
 )
 from src.datasets.merging.bodleian_images import (  # noqa: E402
+    bodleian_folio_verified,
     bodleian_image_manifest,
+    bodleian_images_verified,
+    bodleian_preference,
     load_bodleian_records,
     tei_date,
     tei_description,
@@ -174,16 +186,113 @@ def _split_body(body: str) -> List[str]:
 
 # ─────────────────────────────── PGP source ────────────────────────────────
 
-def load_pgp() -> Tuple[Dict[str, dict], Dict[str, str]]:
+# Reviewed ``(primary_cid, variant_cid)`` pairs where a PGP historic spelling
+# whose Oxford physical key differs from the primary's really names the same
+# leaf. Empty until someone reviews the skipped aliases the merge reports
+# (``pgp_alias_skipped`` in ``merge_report.json``).
+OXFORD_ALIAS_ALLOWLIST: FrozenSet[Tuple[str, str]] = frozenset()
+
+
+def pgp_canonical_id(row: dict) -> Tuple[str, str]:
+    """Return the institution token and primary canonical id of a PGP fragment row.
+
+    :param row: One ``fragments.csv`` row.
+    :returns: ``(token, primary_cid)``; ``primary_cid`` is ``""`` when the
+        shelfmark normalises to nothing.
+    """
+    # Institution token from PGP's clean library_abbrev (+ full name as a
+    # fallback signal). The same token is applied to every historic variant of
+    # this fragment so they all resolve to one canonical id.
+    token = institution_token(
+        f"{row.get('library_abbrev') or ''} {row.get('library') or ''}"
+    )
+    core = ShelfmarkNormalizer.to_canonical_id(row.get("shelfmark") or "")
+    return token, (combine(token, core) if core else "")
+
+
+def pgp_variant_aliases(
+    token: str,
+    primary: str,
+    primary_shelfmark: str,
+    variants: Iterable[str],
+) -> Tuple[List[str], List[dict]]:
+    """Decide which of a PGP row's historic spellings may alias its primary id.
+
+    Non-Oxford rows keep the historic behaviour (every variant is an alias).
+    For an Oxford row a variant is accepted only when its parsed physical key
+    (series, letter, volume, leaf) equals the primary's, or when the pair is in
+    :data:`OXFORD_ALIAS_ALLOWLIST`. PGP's historic column holds old
+    cross-numbered spellings (``f 57/1`` ← ``d 57/1``, ``d 44/28-29`` ←
+    ``d 44/3``) that name a *different* leaf; once every Oxford spelling
+    normalises to one id they would otherwise capture that other leaf's records.
+
+    :param token: The row's institution token.
+    :param primary: The row's primary canonical id.
+    :param primary_shelfmark: The row's own ``shelfmark``.
+    :param variants: Historic spellings (``shelfmarks_historic`` split on ``;``).
+    :returns: ``(alias_cids, skipped)``: the variant ids to register, and one
+        report dict per rejected variant (``reason`` = ``different_leaf``,
+        ``overlapping_range`` — same volume, leaf ranges share a folio, e.g.
+        ``f 56/4`` ← ``f 56/4–5`` — or ``unparseable``).
+    """
+    primary_key = (
+        ShelfmarkNormalizer.parse_oxford(primary_shelfmark)
+        if token == OXFORD_TOKEN else None
+    )
+    accepted: List[str] = []
+    skipped: List[dict] = []
+    for variant in variants:
+        vcore = ShelfmarkNormalizer.to_canonical_id(variant)
+        if not vcore:
+            continue
+        vcid = combine(token, vcore)
+        if primary_key is not None and (primary, vcid) not in OXFORD_ALIAS_ALLOWLIST:
+            vkey = ShelfmarkNormalizer.parse_oxford(variant)
+            if vkey is None or vkey.physical_key != primary_key.physical_key:
+                skipped.append({
+                    "primary": primary,
+                    "primary_shelfmark": primary_shelfmark,
+                    "variant": variant,
+                    "variant_cid": vcid,
+                    "reason": _alias_skip_reason(primary_key, vkey),
+                })
+                continue
+        accepted.append(vcid)
+    return accepted, skipped
+
+
+def _alias_skip_reason(primary: OxfordShelfmark, variant: Optional[OxfordShelfmark]) -> str:
+    """Classify why an Oxford historic spelling was refused as an alias.
+
+    :param primary: The PGP primary's parsed shelfmark.
+    :param variant: The historic spelling's parsed shelfmark, or ``None``.
+    :returns: ``"unparseable"``, ``"overlapping_range"`` (same volume, the leaf
+        specs share a folio) or ``"different_leaf"``.
+    """
+    if variant is None:
+        return "unparseable"
+    if primary.physical_key[:3] == variant.physical_key[:3] and primary.folios & variant.folios:
+        return "overlapping_range"
+    return "different_leaf"
+
+
+def load_pgp(
+    fragments_path: str = PGP_FRAGMENTS,
+    documents_path: str = PGP_DOCUMENTS,
+) -> Tuple[Dict[str, dict], Dict[str, str], List[dict]]:
     """Load PGP fragments + documents into canonical-keyed records and an alias map.
 
-    :returns: ``(records, alias)`` where ``records`` maps canonical id -> a PGP
-        block (fragment row + attached documents), and ``alias`` maps every
-        canonical-id variant (primary + historic) to its primary canonical id.
+    :param fragments_path: PGP ``fragments.csv``.
+    :param documents_path: PGP ``documents.csv``.
+    :returns: ``(records, alias, alias_skipped)`` where ``records`` maps
+        canonical id -> a PGP block (fragment row + attached documents),
+        ``alias`` maps every accepted canonical-id variant (primary + historic)
+        to its primary canonical id, and ``alias_skipped`` lists the Oxford
+        historic spellings refused by :func:`pgp_variant_aliases`.
     """
     # Index documents by pgpid.
     docs_by_pgpid: Dict[str, dict] = {}
-    with open(PGP_DOCUMENTS, encoding="utf-8-sig", newline="") as fh:
+    with open(documents_path, encoding="utf-8-sig", newline="") as fh:
         for row in csv.DictReader(fh):
             pgpid = (row.get("pgpid") or "").strip()
             if pgpid:
@@ -191,23 +300,20 @@ def load_pgp() -> Tuple[Dict[str, dict], Dict[str, str]]:
 
     records: Dict[str, dict] = {}
     alias: Dict[str, str] = {}
-    with open(PGP_FRAGMENTS, encoding="utf-8-sig", newline="") as fh:
+    alias_skipped: List[dict] = []
+    with open(fragments_path, encoding="utf-8-sig", newline="") as fh:
         for row in csv.DictReader(fh):
-            # Institution token from PGP's clean library_abbrev (+ full name as a
-            # fallback signal). The same token is applied to every historic
-            # variant of this fragment so they all resolve to one canonical id.
-            token = institution_token(
-                f"{row.get('library_abbrev') or ''} {row.get('library') or ''}"
-            )
-            core = ShelfmarkNormalizer.to_canonical_id(row["shelfmark"])
-            if not core:
+            token, primary = pgp_canonical_id(row)
+            if not primary:
                 continue
-            primary = combine(token, core)
             alias[primary] = primary
-            for variant in _split_semicolons(row.get("shelfmarks_historic")):
-                vcore = ShelfmarkNormalizer.to_canonical_id(variant)
-                if vcore:
-                    alias.setdefault(combine(token, vcore), primary)
+            accepted, skipped = pgp_variant_aliases(
+                token, primary, row["shelfmark"],
+                _split_semicolons(row.get("shelfmarks_historic")),
+            )
+            for vcid in accepted:
+                alias.setdefault(vcid, primary)
+            alias_skipped.extend(skipped)
 
             pgpids = [p.strip() for p in (row.get("pgpids") or "").split(",") if p.strip()]
             documents = [docs_by_pgpid[p] for p in pgpids if p in docs_by_pgpid]
@@ -217,7 +323,7 @@ def load_pgp() -> Tuple[Dict[str, dict], Dict[str, str]]:
                 records[primary].setdefault("_extra_fragments", []).append(row)
             else:
                 records[primary] = block
-    return records, alias
+    return records, alias, alias_skipped
 
 
 def _split_semicolons(value: Optional[str]) -> List[str]:
@@ -251,20 +357,32 @@ def load_fjp(alias: Dict[str, str]) -> Tuple[Dict[str, List[Tuple[str, dict]]], 
         if len(marks) > 1:
             stats["exploded"] += 1
         for mark in marks:
-            core = ShelfmarkNormalizer.to_canonical_id(mark)
-            if not core:
+            cid = fjp_canonical_id(mark, rec)
+            if not cid:
                 stats["empty_cid"] += 1
                 continue
-            # Token from the segment's own prefix first (a multi-shelfmark join
-            # can span institutions); fall back to the record's collection field.
-            token = resolve_token(mark) or institution_token(
-                f"{rec.get('collection') or ''} {rec.get('institution') or ''} {mark}"
-            )
-            cid = combine(token, core)
             stats["segments"] += 1
             key = alias.get(cid, cid)
             by_cid[key].append((mark, rec))
     return by_cid, stats
+
+
+def fjp_canonical_id(mark: str, rec: dict) -> str:
+    """Return the canonical id of one FJP shelfmark segment (before aliasing).
+
+    :param mark: One constituent shelfmark from :func:`split_shelfmarks`.
+    :param rec: The raw FJP record the segment came from.
+    :returns: The canonical id, or ``""`` when the segment normalises to nothing.
+    """
+    core = ShelfmarkNormalizer.to_canonical_id(mark)
+    if not core:
+        return ""
+    # Token from the segment's own prefix first (a multi-shelfmark join can span
+    # institutions); fall back to the record's collection field.
+    token = resolve_token(mark) or institution_token(
+        f"{rec.get('collection') or ''} {rec.get('institution') or ''} {mark}"
+    )
+    return combine(token, core)
 
 
 # ────────────────────────────── KTIV source ────────────────────────────────
@@ -352,6 +470,8 @@ def load_ktiv(alias: Dict[str, str]) -> Tuple[Dict[str, dict], dict]:
     junk is counted (and listed) separately, and join pages are recovered from
     their page title — the record is registered under EVERY constituent
     shelfmark, mirroring how multi-shelfmark FJP strings are exploded.
+    Bodleian records that carry only a volume number are keyed per item (see
+    :func:`ktiv_mark_cid`) and listed under ``oxford_volume_only``.
 
     :param alias: PGP alias map.
     :returns: ``(by_cid, stats)`` mapping canonical id -> the chosen KTIV record.
@@ -360,6 +480,7 @@ def load_ktiv(alias: Dict[str, str]) -> Tuple[Dict[str, dict], dict]:
     files = glob.glob(KTIV_GLOB)
     bad: List[str] = []
     blocked: List[str] = []
+    oxford_volume_only: Dict[str, dict] = {}
     empty_cid = 0
     recovered = 0
     join_constituents = 0
@@ -391,22 +512,18 @@ def load_ktiv(alias: Dict[str, str]) -> Tuple[Dict[str, dict], dict]:
             recovered += 1
             if len(marks) > 1:
                 join_constituents += len(marks)
-        # JTS dual-shelfmark bridge: KTIV records a new shelfmark (Lutzki / MS /
-        # Rabbinica) for items that also bear an old ENA number, carried in
-        # shelfmarks.additional as "Adler, Elkan Nathan Ms. <ENA-number>". ENA is
-        # the identifier PGP/FJP use, so re-key under it to make them join.
-        # (Only meaningful for single-shelfmark records; a join spans fragments.)
-        ena_cid = _ktiv_ena_alias(doc) if len(marks) == 1 else None
-        for mark in marks:
-            core = ShelfmarkNormalizer.to_canonical_id(mark)
-            if not core:
+        for mark, cid, volume_resolution in ktiv_record_ids(doc, marks):
+            if not cid:
                 empty_cid += 1
                 continue
-            # The KTIV shelf_mark head names the holding library; resolve from it.
-            cid = ena_cid or combine(
-                resolve_token(mark) or institution_token(mark), core
-            )
             key = alias.get(cid, cid)
+            if volume_resolution:
+                oxford_volume_only[key] = {
+                    "canonical_id": key,
+                    "shelf_mark": mark,
+                    "sys_num": doc.get("sys_num"),
+                    "resolved_by": volume_resolution,
+                }
             incumbent = best.get(key)
             if incumbent is None or _ktiv_richness(doc) > _ktiv_richness(incumbent):
                 best[key] = doc
@@ -416,10 +533,94 @@ def load_ktiv(alias: Dict[str, str]) -> Tuple[Dict[str, dict], dict]:
         "empty_shelfmark": empty_cid,
         "shelfmark_recovered": recovered,
         "join_constituents": join_constituents,
+        "oxford_volume_only": [oxford_volume_only[k] for k in sorted(oxford_volume_only)],
         "blocked_scrapes": len(blocked),
         "blocked_files": sorted(blocked),
         "unparseable_files": bad,
     }
+
+
+# MARC 500 note on KTIV item records: "Shelfmark Range: From leaf 18 to Leaf 19".
+_KTIV_LEAF_NOTE_RE = re.compile(r"Shelfmark Range:\s*From leaf\s+(\d+)", re.IGNORECASE)
+
+
+def ktiv_leaf_note(doc: dict) -> Optional[str]:
+    """Return the first leaf named by a KTIV record's MARC shelfmark-range note.
+
+    The note is carried in ``marc_xml`` (field 500) and, on newer scrapes, in
+    ``full_catalog.notes``.
+
+    :param doc: Parsed KTIV manuscript JSON.
+    :returns: The leaf number (``"18"``), or ``None`` when no such note exists.
+    """
+    full = doc.get("full_catalog")
+    notes = full.get("notes") if isinstance(full, dict) else None
+    if isinstance(notes, list):
+        notes = " ".join(str(n) for n in notes)
+    for text in (notes, doc.get("marc_xml")):
+        if isinstance(text, str):
+            m = _KTIV_LEAF_NOTE_RE.search(text)
+            if m:
+                return m.group(1)
+    return None
+
+
+def ktiv_mark_cid(doc: dict, mark: str) -> Tuple[str, Optional[str]]:
+    """Return the canonical id of one KTIV shelfmark constituent (ENA bridge aside).
+
+    A Bodleian mark with only a volume number (``Ms. heb. a. 3``) names a whole
+    volume, and several distinct KTIV items share it; keyed plainly they would
+    collapse into one id and all but the richest would be dropped. Such a mark
+    takes its leaf from the MARC ``Shelfmark Range: From leaf X`` note when
+    present, else it is keyed per item as ``<volume id>__sys<sys_num>``.
+
+    :param doc: Parsed KTIV manuscript JSON.
+    :param mark: One full KTIV shelfmark string (institution head included).
+    :returns: ``(cid, volume_resolution)``. ``cid`` is ``""`` when the mark
+        normalises to nothing; ``volume_resolution`` is ``None`` for an ordinary
+        mark, else ``"leaf_note"``, ``"sys_num"`` or ``"unresolved"`` (no note
+        and no ``sys_num``: the volume id is kept).
+    """
+    core = ShelfmarkNormalizer.to_canonical_id(mark)
+    if not core:
+        return "", None
+    # The KTIV shelf_mark head names the holding library; resolve from it.
+    token = resolve_token(mark) or institution_token(mark)
+    oxford = ShelfmarkNormalizer.parse_oxford(mark) if token == OXFORD_TOKEN else None
+    if oxford is None or oxford.leaf:
+        return combine(token, core), None
+    leaf = ktiv_leaf_note(doc)
+    if leaf:
+        return combine(token, oxford.with_leaf(leaf).core), "leaf_note"
+    sys_num = str(doc.get("sys_num") or "").strip()
+    if sys_num:
+        return f"{combine(token, core)}__sys{sys_num}", "sys_num"
+    return combine(token, core), "unresolved"
+
+
+def ktiv_record_ids(doc: dict, marks: List[str]) -> List[Tuple[str, str, Optional[str]]]:
+    """Return the canonical id of every shelfmark constituent of a KTIV record.
+
+    JTS dual-shelfmark bridge: KTIV records a new shelfmark (Lutzki / MS /
+    Rabbinica) for items that also bear an old ENA number, carried in
+    ``shelfmarks.additional`` as ``"Adler, Elkan Nathan Ms. <ENA-number>"``. ENA
+    is the identifier PGP/FJP use, so such a record is re-keyed under it to make
+    them join (only for single-shelfmark records; a join spans fragments).
+
+    :param doc: Parsed KTIV manuscript JSON.
+    :param marks: The record's shelfmark strings (``shelf_mark`` or the
+        join-page fallback from :func:`_ktiv_fallback_shelfmarks`).
+    :returns: ``(mark, cid, volume_resolution)`` per constituent, before PGP
+        aliasing; ``cid`` is ``""`` for a mark that normalises to nothing.
+    """
+    ena_cid = _ktiv_ena_alias(doc) if len(marks) == 1 else None
+    out: List[Tuple[str, str, Optional[str]]] = []
+    for mark in marks:
+        cid, volume_resolution = ktiv_mark_cid(doc, mark)
+        if cid and ena_cid:
+            cid, volume_resolution = ena_cid, None
+        out.append((mark, cid, volume_resolution))
+    return out
 
 
 _SVG_PATH_RE = re.compile(r'd="M([^"]+)"')
@@ -747,28 +948,71 @@ def _ktiv_richness(doc: dict) -> int:
     )
 
 
+def bodleian_canonical_id(record: dict) -> str:
+    """Return the merge canonical id of a Bodleian scrape record.
+
+    The scraper copied the priority-queue row's id verbatim, so the same leaf
+    queued from PGP, FJP and KTIV spellings carries three different ids. The id
+    is re-derived from the record's queue ``shelf_mark`` through the Oxford
+    normaliser so the record lands on the one PGP-style id of its leaf.
+
+    :param record: One Bodleian scrape record.
+    :returns: The canonical id (the stored one when the shelfmark does not parse).
+    """
+    shelf_mark = record.get("shelf_mark") or ""
+    if ShelfmarkNormalizer.parse_oxford(shelf_mark) is not None:
+        return combine(OXFORD_TOKEN, ShelfmarkNormalizer.to_canonical_id(shelf_mark))
+    return record.get("canonical_id") or ""
+
+
 def load_bodleian(records_glob: str = BODLEIAN_GLOB) -> Tuple[Dict[str, dict], dict]:
     """Load the Bodleian direct-scrape records keyed by canonical id.
 
-    Thin wrapper over :func:`bodleian_images.load_bodleian_records` that also
-    rolls up the stats the merge report carries: how many files were read, how
-    many downloaded at least one image, and the ``match`` breakdown (``part`` =
-    the queue shelfmark is a whole TEI msPart, ``folio`` = it is one folio of a
-    larger part whose metadata describes the whole part, ``none`` /
-    ``no_tei_volume`` = no catalogue entry found).
+    Wraps :func:`bodleian_images.load_bodleian_records`, re-keys every record by
+    :func:`bodleian_canonical_id` (a leaf scraped under two queue spellings
+    keeps the folio-verified, then richer, record) and rolls up the stats the
+    merge report carries: how many files were read, how many downloaded at
+    least one image, how many are folio-verified, and the ``match`` breakdown
+    (``part`` = the queue number was looked up as a TEI msPart, ``folio`` = it
+    is one folio of a larger part whose metadata describes the whole part,
+    ``none`` / ``no_tei_volume`` = no catalogue entry found).
 
     :param records_glob: Glob matching the ``records/*.json`` files.
     :returns: ``(by_cid, stats)``; both empty when the directory is absent.
     """
-    by_cid = load_bodleian_records(records_glob)
+    by_cid: Dict[str, dict] = {}
+    collapsed: List[dict] = []
+    rekeyed = 0
+    for stored_cid, rec in sorted(load_bodleian_records(records_glob).items()):
+        cid = bodleian_canonical_id(rec) or stored_cid
+        rekeyed += int(cid != stored_cid)
+        incumbent = by_cid.get(cid)
+        if incumbent is None:
+            by_cid[cid] = rec
+            continue
+        keep, drop = (
+            (rec, incumbent)
+            if bodleian_preference(rec) > bodleian_preference(incumbent)
+            else (incumbent, rec)
+        )
+        by_cid[cid] = keep
+        collapsed.append({
+            "canonical_id": cid,
+            "kept": keep.get("canonical_id"),
+            "dropped": drop.get("canonical_id"),
+        })
     by_match: collections.Counter = collections.Counter(
         (rec.get("match") or "?") for rec in by_cid.values()
     )
     return by_cid, {
         "files": len(glob.glob(records_glob)),
         "distinct": len(by_cid),
+        "rekeyed": rekeyed,
+        "collapsed": collapsed,
         "with_images": sum(1 for rec in by_cid.values() if rec.get("images")),
         "with_tei": sum(1 for rec in by_cid.values() if rec.get("tei")),
+        "folio_verified": sum(1 for rec in by_cid.values() if bodleian_folio_verified(rec)),
+        "images_verified": sum(1 for rec in by_cid.values() if bodleian_images_verified(rec)),
         "by_match": dict(by_match.most_common()),
     }
 
@@ -801,7 +1045,9 @@ def build_merged_record(
     """Assemble one merged record from the per-source blocks for *cid*.
 
     Top-level scalar fields follow ``PGP > KTIV > Bodleian TEI > FJP``
-    precedence; every raw source block is retained under ``sources``.
+    precedence (the Bodleian TEI only when folio-verified, see
+    :func:`bodleian_images.bodleian_folio_verified`); every raw source block is
+    retained under ``sources``.
 
     :param cid: Canonical shelfmark id (the record key).
     :param pgp: PGP block from :func:`load_pgp`, or ``None``.
@@ -846,11 +1092,17 @@ def build_merged_record(
     )
 
     # The Bodleian TEI catalogue (Neubauer–Cowley entries) is the point of the
-    # extra source: it fills description / date where PGP and KTIV are silent.
+    # extra source: it fills description / date where PGP and KTIV are silent —
+    # but only when the attached TEI part is verified to contain this leaf's
+    # folio. An unverified part may be another leaf's entry (the scraper looked
+    # folio numbers up as part numbers), so FJP's own text wins then.
+    folio_verified = bodleian_folio_verified(bodleian)
+    images_verified = bodleian_images_verified(bodleian)
+    text_tei = tei if folio_verified else None
     description = _first(
         next((d.get("description") for d in pgp_docs if d.get("description")), None),
         (ktiv.get("basic_catalog") or {}).get("title"),
-        tei_description(tei),
+        tei_description(text_tei),
         fjp0.get("description"),
     )
     date = _first(
@@ -860,7 +1112,7 @@ def build_merged_record(
               if d.get("doc_date_standard") or d.get("doc_date_original")
               or d.get("inferred_date_display")), None),
         _ktiv_date((ktiv.get("basic_catalog") or {}).get("date")),
-        tei_date(tei),
+        tei_date(text_tei),
         (fjp0.get("date") or {}).get("standard_date")
         if isinstance(fjp0.get("date"), dict) else None,
     )
@@ -877,7 +1129,15 @@ def build_merged_record(
     ktiv_trans = (ktiv_transcriptions or {}).get(ktiv_sysnum or "") if ktiv else None
     # Bodleian masters are uploaded under BODLEIAN/<canonical_id>/<stem>.jpg;
     # only files present on disk get pointers (lockstep with the uploader).
-    bod_image_paths = (bodleian_images or {}).get(cid, []) if bodleian else []
+    # Pointers not verified to show this leaf (another TEI part's folios) are
+    # withheld from the served ``images`` / ``image_urls`` — the indexer serves
+    # every source's ``image_urls``, preferred source first — and kept under
+    # ``unverified_images`` until a re-scrape fixes them.
+    bod_all_paths = (bodleian_images or {}).get(cid, []) if bodleian else []
+    bod_image_paths = bod_all_paths if images_verified else []
+    # Likewise a TEI part looked up by part number that does not contain the
+    # leaf's folio is another leaf's catalogue entry: do not link it.
+    link_tei = tei if folio_verified or bodleian.get("match") != "part" else {}
     images = {
         "fjp": fjp_images,
         "ktiv": {
@@ -894,21 +1154,27 @@ def build_merged_record(
             "populated": bool(ktiv_image_paths),
         } if ktiv else None,
         "bodleian": {
-            "tei_part_id": tei.get("part_xml_id"),
-            "catalogue_url": tei.get("catalogue_url"),
-            # "part" = the shelfmark is a whole msPart; "folio" = one folio of
-            # a multi-leaf part (images are that folio only, TEI is the part).
+            "tei_part_id": link_tei.get("part_xml_id"),
+            "catalogue_url": link_tei.get("catalogue_url"),
+            # "part" = the queue number was looked up as a msPart; "folio" = one
+            # folio of a multi-leaf part (images are that folio only, TEI is
+            # the part). The *_verified flags say whether that part / those
+            # images are known to be this leaf's.
             "match": bodleian.get("match"),
+            "folio_verified": folio_verified,
+            "images_verified": images_verified,
             "license": bodleian.get("license"),
             "source_urls": [img.get("url") for img in (bodleian.get("images") or [])
-                            if img.get("url")],
+                            if img.get("url")] if images_verified else [],
             "images": bod_image_paths,
             "image_urls": [gcs_url(p) for p in bod_image_paths],
             "image_count": len(bod_image_paths),
             "populated": bool(bod_image_paths),
+            "unverified_images": [] if images_verified else bod_all_paths,
         } if bodleian else None,
         # Route to KTIV imagery once populated, then the Bodleian full-resolution
-        # masters, then FJP's existing (down-sampled) GCS copies.
+        # masters (only published when verified to show this leaf), then FJP's
+        # existing (down-sampled) GCS copies.
         "preferred_source": (
             "ktiv" if ktiv_image_paths
             else "bodleian" if bod_image_paths
@@ -970,7 +1236,8 @@ def record_has_image(record: dict) -> bool:
     """Return True if a merged record points to any image.
 
     Counts FJP files, a KTIV scan (PNX / Friedberg image id) and populated
-    Bodleian masters. Bodleian rows scraped without images stay in the gap.
+    Bodleian masters verified to show the leaf. Bodleian rows scraped without
+    images, or with another leaf's images, stay in the gap.
 
     :param record: A merged record from :func:`build_merged_record`.
     :returns: True when at least one image pointer exists.
@@ -978,7 +1245,8 @@ def record_has_image(record: dict) -> bool:
     images = record.get("images") or {}
     if images.get("fjp"):
         return True
-    if (images.get("bodleian") or {}).get("populated"):
+    bodleian = images.get("bodleian") or {}
+    if bodleian.get("populated") and bodleian.get("images_verified", True):
         return True
     ktiv = images.get("ktiv") or {}
     return bool(ktiv.get("pnx_id") or ktiv.get("friedberg_image_no"))
@@ -1126,7 +1394,7 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
     :returns: The report dict.
     """
     os.makedirs(out_dir, exist_ok=True)
-    pgp_records, alias = load_pgp()
+    pgp_records, alias, alias_skipped = load_pgp()
     fjp_by_cid, fjp_stats = load_fjp(alias)
     ktiv_by_cid, ktiv_stats = load_ktiv(alias)
     ktiv_zips = index_ktiv_zips()
@@ -1230,6 +1498,9 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
         "ktiv": ktiv_stats,
         "bodleian": bodleian_stats,
         "alias_index_size": len(alias),
+        # Oxford historic spellings refused as aliases (different leaf /
+        # unparseable); review before adding any to OXFORD_ALIAS_ALLOWLIST.
+        "pgp_alias_skipped": alias_skipped,
         "fjp_matched_to_pgp": sum(1 for c in fjp_by_cid if c in pgp_records),
         "fjp_union_only": sum(1 for c in fjp_by_cid if c not in pgp_records),
         "ktiv_matched_to_pgp": sum(1 for c in ktiv_by_cid if c in pgp_records),

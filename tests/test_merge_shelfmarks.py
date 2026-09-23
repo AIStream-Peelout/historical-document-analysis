@@ -57,7 +57,7 @@ def test_multi_institution_explodes_with_each_context():
     raw = ("Cambridge CUL: T-S A38.2 T-S NS 247.4 "
            "Oxford: MS heb. e.43/3 Paris AIU: IX.A.13")
     cids = [SN.to_canonical_id(m) for m in split_shelfmarks(raw)]
-    assert cids == ["T_S_A38_2", "T_S_NS_247_4", "MS_heb_e_43_3", "IX_A_13"]
+    assert cids == ["T_S_A38_2", "T_S_NS_247_4", "Bodl_MS_heb_e_43_3", "IX_A_13"]
 
 
 def test_parenthetical_alt_not_treated_as_second_shelfmark():
@@ -500,13 +500,14 @@ def test_diff_detects_new_ktiv_and_coverage_and_imaging():
 # ── Bodleian direct scrape (fourth source) ────────────────────────────────────
 
 def _bodleian_record(cid="Oxford_Bodleian_Bodl_MS_heb_b_11_36", images=True, tei=True,
-                     scraped_at="2026-09-14T03:29:00+00:00"):
+                     scraped_at="2026-09-14T03:29:00+00:00",
+                     shelf_mark="Bodl. MS heb. b 11/36"):
     """One scraper record, shaped like ``bodleian/records/<cid>.json``."""
     return {
         "source": "bodleian_tei",
         "scraped_at": scraped_at,
         "canonical_id": cid,
-        "shelf_mark": "Bodl. MS heb. b 11/36",
+        "shelf_mark": shelf_mark,
         "match": "folio",
         "tei": {
             "part_xml_id": "MS_Heb_b_11-part35",
@@ -542,12 +543,14 @@ def test_load_bodleian_keys_by_canonical_id_and_keeps_richest_duplicate(tmp_path
     (records / "a.json").write_text(json.dumps(_bodleian_record(images=False)), encoding="utf-8")
     (records / "b.json").write_text(json.dumps(_bodleian_record()), encoding="utf-8")
     (records / "c.json").write_text(
-        json.dumps(_bodleian_record(cid="Oxford_Bodleian_MS_heb_c_28_47", images=False, tei=False)),
+        json.dumps(_bodleian_record(cid="Oxford_Bodleian_MS_heb_c_28_47", images=False, tei=False,
+                                    shelf_mark="Oxford: MS heb. c.28/47")),
         encoding="utf-8")
     by_cid, stats = load_bodleian(str(records / "*.json"))
-    assert set(by_cid) == {"Oxford_Bodleian_Bodl_MS_heb_b_11_36", "Oxford_Bodleian_MS_heb_c_28_47"}
+    # The FJP-queued record is re-keyed onto the leaf's PGP-style id.
+    assert set(by_cid) == {"Oxford_Bodleian_Bodl_MS_heb_b_11_36", "Oxford_Bodleian_Bodl_MS_heb_c_28_47"}
     assert by_cid["Oxford_Bodleian_Bodl_MS_heb_b_11_36"]["image_count"] == 2  # richer copy wins
-    assert stats["files"] == 3 and stats["distinct"] == 2
+    assert stats["files"] == 3 and stats["distinct"] == 2 and stats["rekeyed"] == 1
     assert stats["with_images"] == 1 and stats["with_tei"] == 1
     assert stats["by_match"] == {"folio": 2}
 

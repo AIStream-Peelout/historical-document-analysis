@@ -17,9 +17,126 @@ Example:
 
 import re
 import unicodedata
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from src.datasets.document_models.entity_normalizer import EntityNormalizer
+
+
+# ── Bodleian (Oxford) shelfmarks ──────────────────────────────────────────────
+#
+# One Oxford leaf is spelled differently by every source: PGP "Bodl. MS heb. b
+# 3/5", FJP "Oxford: MS heb. b 3/5" / "Oxford: MS heb. e.34/6", KTIV "The
+# Bodleian Libraries, University of Oxford, Oxford, England Ms. heb. b. 3.5",
+# the Bodleian TEI "MS. Heb. b. 3/5". All of them reduce to (series, size letter,
+# volume, leaf) and are emitted in the PGP style (``Bodl_MS_heb_b_3_5``) so the
+# merge joins them. PGP, FJP and KTIV number the leaf by FOLIO; only a TEI idno
+# numbers it by msPart, so a TEI idno spelling is normalised syntactically but
+# must not be used as a join key for a folio-numbered record.
+
+# Series display casing, taken from the PGP primaries ("Bodl. MS heb." /
+# "Bodl. MS Arab."). Any other series is title-cased the way the Bodleian writes
+# it ("MS. Syr.").
+OXFORD_SERIES_CASING: Dict[str, str] = {"heb": "heb", "arab": "Arab"}
+
+# Institution context naming the Bodleian (KTIV head / FJP "Oxford:" prefix).
+_OXFORD_MARKER_RE = re.compile(r"\b(?:bodleian|bodl|bod|oxford)\b", re.IGNORECASE)
+
+# KTIV "<Institution>, <City>, <Country> Ms. <core>" (same split as
+# :meth:`ShelfmarkNormalizer._strip_institution`).
+_KTIV_HEAD_RE = re.compile(r"^(?P<head>.*,.*?)\sMs\.\s+(?P<core>.*)$", re.IGNORECASE)
+
+# The shelfmark body: optional Oxford prefixes, optional "MS", then the series,
+# the size letter (a–g), the volume and whatever follows (the leaf spec).
+_OXFORD_BODY_RE = re.compile(
+    r"^(?:(?:Bodleian(?:\s+Librar(?:y|ies))?|Bodl|Bod|Oxford)\b\.?[\s,:]*)*"
+    r"(?:MS\b\.?\s*)?"
+    r"(?P<series>heb|arab|syr|georg)(?![a-z])\.?\s*"
+    r"(?P<letter>[a-g])(?![a-z])\.?\s*"
+    r"(?P<volume>\d+)"
+    r"(?P<tail>.*)$",
+    re.IGNORECASE,
+)
+
+# The leaf spec after the volume: a separator, an optional folio designator,
+# then leaf tokens ("5", "28-29", "13a", "4–8bis", TEI "B.3"). Anything else
+# (a second shelfmark, prose) makes the string non-Oxford-parseable.
+_OXFORD_TAIL_RE = re.compile(
+    r"^[\s,./:]*(?:(?:fols?|ff|f)\.?\s*)?"
+    r"(?P<leaf>(?:\d+[a-z]*|[a-z])(?:\s*[-,./]\s*(?:\d+[a-z]*|[a-z]))*)?"
+    r"[\s,./]*$",
+    re.IGNORECASE,
+)
+
+
+class OxfordShelfmark(NamedTuple):
+    """A Bodleian shelfmark reduced to its physical parts.
+
+    :ivar series: Lower-case series (``"heb"``, ``"arab"``).
+    :ivar letter: Lower-case size letter (``"a"`` … ``"g"``).
+    :ivar volume: Volume number without leading zeros (``"57"``).
+    :ivar leaf: Leaf-spec tokens, lower-case, digit runs without leading zeros
+        (``("5",)``, ``("28", "29")``, ``("13a",)``); empty for a volume-only mark.
+    """
+
+    series: str
+    letter: str
+    volume: str
+    leaf: Tuple[str, ...]
+
+    @property
+    def physical_key(self) -> Tuple[str, str, str, Tuple[str, ...]]:
+        """Return the hashable key identifying the physical leaf (or volume).
+
+        :returns: ``(series, letter, volume, leaf)``.
+        """
+        return (self.series, self.letter, self.volume, self.leaf)
+
+    @property
+    def folios(self) -> Set[int]:
+        """Return the folio numbers the leaf spec names.
+
+        ``("5",)`` -> {5}; a two-number spec is an inclusive range
+        (``("28", "29")`` -> {28, 29}, ``("6", "8")`` -> {6, 7, 8}); a suffix
+        is ignored (``("13a",)`` -> {13}).
+
+        :returns: The folio numbers (empty for a volume-only mark).
+        """
+        numbers = [int(m.group(1)) for m in (re.match(r"^(\d+)", t) for t in self.leaf) if m]
+        if len(numbers) == 2 and numbers[0] <= numbers[1]:
+            return set(range(numbers[0], numbers[1] + 1))
+        return set(numbers)
+
+    @property
+    def core(self) -> str:
+        """Return the PGP-style canonical core (``Bodl_MS_heb_b_3_5``).
+
+        :returns: The underscore-joined core, without the institution token.
+        """
+        series = OXFORD_SERIES_CASING.get(self.series, self.series.capitalize())
+        return "_".join(["Bodl", "MS", series, self.letter, self.volume, *self.leaf])
+
+    def with_leaf(self, leaf: str) -> "OxfordShelfmark":
+        """Return a copy of this (volume-only) shelfmark with *leaf* filled in.
+
+        :param leaf: A leaf spec such as ``"5"`` or ``"28-29"``.
+        :returns: The same volume with the parsed leaf tokens.
+        """
+        return self._replace(leaf=_oxford_leaf_tokens(leaf))
+
+
+def _oxford_leaf_tokens(leaf: str) -> Tuple[str, ...]:
+    """Split a leaf spec into canonical tokens.
+
+    :param leaf: Leaf spec text (``"28-29"``, ``"013a"``, ``"B.3"``).
+    :returns: Lower-case tokens with leading zeros stripped from digit runs.
+    """
+    tokens: List[str] = []
+    for tok in re.split(r"[\s,./\-]+", leaf or ""):
+        if not tok:
+            continue
+        m = re.match(r"^(\d+)(.*)$", tok)
+        tokens.append((str(int(m.group(1))) + m.group(2)).lower() if m else tok.lower())
+    return tuple(tokens)
 
 
 class ShelfmarkNormalizer(EntityNormalizer):
@@ -312,11 +429,71 @@ class ShelfmarkNormalizer(EntityNormalizer):
         return out
 
     @staticmethod
+    def _clean(shelfmark: str) -> str:
+        """Unicode-normalise *shelfmark*, unify dashes and drop parentheticals.
+
+        :param shelfmark: Raw shelfmark string.
+        :returns: The cleaned string (``"(Cat. 2806)"`` / ``"(Alt: 1)"`` removed).
+        """
+        cleaned = unicodedata.normalize("NFKC", shelfmark).strip()
+        cleaned = re.sub(r"[‐-―−]", "-", cleaned)
+        return re.sub(r"\([^)]*\)", " ", cleaned)
+
+    @staticmethod
+    def parse_oxford(shelfmark: Optional[str]) -> Optional[OxfordShelfmark]:
+        """Parse any Bodleian spelling into ``(series, letter, volume, leaf)``.
+
+        Recognised: PGP ``"Bodl. MS heb. b 3/5"`` (and the ``"Bod. MS Heb."``
+        typo), FJP ``"Oxford: MS heb. e.34/6"``, KTIV ``"The Bodleian Libraries,
+        University of Oxford, Oxford, England Ms. heb. f. 101.42"``, TEI
+        ``"MS. Heb. b. 3/5"``, ``"Bodleian Library MS Heb. f. 56, fol. 1"``, PGP
+        historic ``"Bodl. MS Heb. b 3 (Cat. 2806), f. 5"``, ``Arab. c 56`` forms,
+        leaf ranges (``28-29``) and suffixes (``13a``). A string whose
+        institution context names another library (KTIV head or FJP prefix
+        without an Oxford marker, e.g. the NLI ``"… Israel Ms. Heb. 38°11343"``)
+        is never parsed, and neither is one without a size letter.
+
+        :param shelfmark: Raw shelfmark string.
+        :returns: The parsed shelfmark, or ``None`` when *shelfmark* is not a
+            recognisable Bodleian shelfmark.
+        """
+        if not shelfmark:
+            return None
+        s = ShelfmarkNormalizer._clean(shelfmark).strip()
+
+        ktiv = _KTIV_HEAD_RE.match(s)
+        if ktiv:
+            if not _OXFORD_MARKER_RE.search(ktiv.group("head")):
+                return None
+            s = ktiv.group("core")
+        if ":" in s:
+            head, s = s.rsplit(":", 1)
+            if not _OXFORD_MARKER_RE.search(head):
+                return None
+
+        body = _OXFORD_BODY_RE.match(s.strip())
+        if not body:
+            return None
+        tail = _OXFORD_TAIL_RE.match(body.group("tail"))
+        if not tail:
+            return None
+        return OxfordShelfmark(
+            series=body.group("series").lower(),
+            letter=body.group("letter").lower(),
+            volume=str(int(body.group("volume"))),
+            leaf=_oxford_leaf_tokens(tail.group("leaf") or ""),
+        )
+
+    @staticmethod
     def to_canonical_id(shelfmark: str) -> str:
         """
         Convert any shelfmark format to canonical ID (UUID format).
 
-        Canonical ID uses underscores only, no spaces or punctuation.
+        Canonical ID uses underscores only, no spaces or punctuation. Bodleian
+        shelfmarks take an Oxford pre-pass (:meth:`parse_oxford`) so every
+        source spelling of one leaf yields the PGP-style core
+        (``Bodl_MS_heb_b_3_5``) and the size letter is never mistaken for a
+        folio designator by :attr:`FOLIO_RE`.
 
         Args:
             shelfmark: Input shelfmark in any format
@@ -331,16 +508,19 @@ class ShelfmarkNormalizer(EntityNormalizer):
             'T_S_AS_18_170'
              ShelfmarkNormalizer.to_canonical_id('MS-TS-AS-00018-00170')
             'T_S_AS_18_170'
+            ShelfmarkNormalizer.to_canonical_id('Oxford: MS heb. e.34/6')
+            'Bodl_MS_heb_e_34_6'
         """
         if not shelfmark:
             return ""
 
-        # Unicode-normalise and unify the various dash characters to ASCII '-'.
-        canonical = unicodedata.normalize("NFKC", shelfmark).strip()
-        canonical = re.sub(r"[‐-―−]", "-", canonical)
+        oxford = ShelfmarkNormalizer.parse_oxford(shelfmark)
+        if oxford is not None:
+            return oxford.core
 
-        # Drop parentheticals ("(shelfmark unknown)", "(Alt: 1)") wholesale.
-        canonical = re.sub(r"\([^)]*\)", " ", canonical)
+        # Unicode-normalise, unify the various dash characters to ASCII '-' and
+        # drop parentheticals ("(shelfmark unknown)", "(Alt: 1)") wholesale.
+        canonical = ShelfmarkNormalizer._clean(shelfmark)
 
         # John Rylands Library, Manchester. PGP uses "JRL <series>" while FJP and
         # KTIV write "Manchester[:] <series>"; both name the same fragments
