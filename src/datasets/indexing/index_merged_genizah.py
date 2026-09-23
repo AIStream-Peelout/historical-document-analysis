@@ -70,7 +70,7 @@ def iter_merged_documents(
 
 def index_merged(
     merged_path: str = DEFAULT_MERGED,
-    index_name: str = "genizah_merged_v5",
+    index_name: str = "genizah_merged_v6",
     text_only: bool = True,
     batch_size: int = 100,
     limit: Optional[int] = None,
@@ -129,7 +129,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--merged", default=DEFAULT_MERGED)
-    parser.add_argument("--index", default="genizah_merged_v5")
+    parser.add_argument("--index", default="genizah_merged_v7")
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--skip", type=int, default=0,

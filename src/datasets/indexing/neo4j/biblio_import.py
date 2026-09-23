@@ -249,18 +249,22 @@ class GenizahBiblioImporter:
             pages       = citation.get('citedonpages', '').strip()
             mention     = _parse_mention_type(citation.get('mention_type', {}))
             article_id  = _make_article_id(title, author, year)
+            # provenance tag: 'biblio' (FJP biblio.json) unless the citation names its source (e.g. 'ktiv')
+            src         = (citation.get('source') or 'biblio').strip()
+            raw_cit     = citation.get('raw') or None
 
             # 1. Ensure Fragment node exists
             tx.run("""
                 MERGE (f:Fragment {canonical_shelfmark: $canonical_shelfmark})
                 ON CREATE SET f.shelfmark = $display_shelfmark
                 SET f.data_sources = CASE
-                    WHEN 'biblio' IN coalesce(f.data_sources, []) THEN coalesce(f.data_sources, [])
-                    ELSE coalesce(f.data_sources, []) + ['biblio']
+                    WHEN $src IN coalesce(f.data_sources, []) THEN coalesce(f.data_sources, [])
+                    ELSE coalesce(f.data_sources, []) + [$src]
                 END
             """, {
                 'canonical_shelfmark': row['canonical_shelfmark'],
                 'display_shelfmark':   row['display_shelfmark'],
+                'src':                 src,
             })
 
             # 2. Link Fragment to Institution
@@ -270,20 +274,21 @@ class GenizahBiblioImporter:
                     MERGE (i:Institution {name: $institution})
                     ON CREATE SET i.collection = $collection
                     SET i.data_sources = CASE
-                        WHEN 'biblio' IN coalesce(i.data_sources, []) THEN coalesce(i.data_sources, [])
-                        ELSE coalesce(i.data_sources, []) + ['biblio']
+                        WHEN $src IN coalesce(i.data_sources, []) THEN coalesce(i.data_sources, [])
+                        ELSE coalesce(i.data_sources, []) + [$src]
                     END
                     MERGE (f)-[r:HELD_AT]->(i)
                     SET r.sub_collection = $subcollection,
                         r.data_sources   = CASE
-                            WHEN 'biblio' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
-                            ELSE coalesce(r.data_sources, []) + ['biblio']
+                            WHEN $src IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + [$src]
                         END
                 """, {
                     'canonical_shelfmark': row['canonical_shelfmark'],
                     'institution':         row['institution'],
                     'collection':          row['collection'],
                     'subcollection':       row['subcollection'],
+                    'src':                 src,
                 })
 
             # 3. Ensure BookArticle node exists
@@ -297,14 +302,15 @@ class GenizahBiblioImporter:
                         b.year     = $year,
                         b.language = $language,
                         b.data_sources = CASE
-                            WHEN 'biblio' IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
-                            ELSE coalesce(b.data_sources, []) + ['biblio']
+                            WHEN $src IN coalesce(b.data_sources, []) THEN coalesce(b.data_sources, [])
+                            ELSE coalesce(b.data_sources, []) + [$src]
                         END
                 """, {
                     'article_id': article_id,
                     'title':      title,
                     'year':       year or None,
                     'language':   language or None,
+                    'src':        src,
                 })
 
             # 4. Ensure Scholar nodes (one per author) and WROTE relationships
@@ -323,18 +329,19 @@ class GenizahBiblioImporter:
                     tx.run("""
                         MERGE (s:Scholar {name: $author})
                         SET s.data_sources = CASE
-                            WHEN 'biblio' IN coalesce(s.data_sources, []) THEN coalesce(s.data_sources, [])
-                            ELSE coalesce(s.data_sources, []) + ['biblio']
+                            WHEN $src IN coalesce(s.data_sources, []) THEN coalesce(s.data_sources, [])
+                            ELSE coalesce(s.data_sources, []) + [$src]
                         END
                         MERGE (b:BookArticle {article_id: $article_id})
                         MERGE (s)-[r:WROTE]->(b)
                         SET r.data_sources = CASE
-                            WHEN 'biblio' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
-                            ELSE coalesce(r.data_sources, []) + ['biblio']
+                            WHEN $src IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + [$src]
                         END
                     """, {
                         'author':     _canonical_author(individual_author),
                         'article_id': article_id,
+                        'src':        src,
                     })
 
             # 5. BookArticle -[:REFERENCES]-> Fragment
@@ -344,19 +351,22 @@ class GenizahBiblioImporter:
                     MATCH (f:Fragment    {canonical_shelfmark: $canonical_shelfmark})
                     MERGE (b)-[r:REFERENCES]->(f)
                     SET r.pages                = $pages,
+                        r.raw_citation         = coalesce($raw, r.raw_citation),
                         r.has_discussion       = $has_discussion,
                         r.has_transcription    = $has_transcription,
                         r.has_translation      = $has_translation,
                         r.transcription_extent = $transcription_extent,
                         r.translation_extent   = $translation_extent,
                         r.data_sources         = CASE
-                            WHEN 'biblio' IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
-                            ELSE coalesce(r.data_sources, []) + ['biblio']
+                            WHEN $src IN coalesce(r.data_sources, []) THEN coalesce(r.data_sources, [])
+                            ELSE coalesce(r.data_sources, []) + [$src]
                         END
                 """, {
                     'article_id':            article_id,
                     'canonical_shelfmark':   row['canonical_shelfmark'],
                     'pages':                 pages or None,
+                    'src':                   src,
+                    'raw':                   raw_cit,
                     **mention,
                 })
 

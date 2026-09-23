@@ -14,6 +14,18 @@ logger = logging.getLogger(__name__)
 logging.getLogger('elasticsearch').setLevel(logging.DEBUG)
 
 
+# Alternate / varying titles (KTIV "Varying form of title"). Kept as its own
+# field, separate from ``description``, so the web app can weight it
+# independently. ``keyword`` sub-field for exact-title aggregation / filtering.
+ALT_TITLES_MAPPING: Dict[str, Any] = {
+    "alt_titles": {
+        "type": "text",
+        "analyzer": "multilingual",
+        "fields": {"keyword": {"type": "keyword", "ignore_above": 512}},
+    },
+}
+
+
 def es_config_from_env() -> Dict[str, Any]:
     """Build the Elasticsearch client config from environment variables.
 
@@ -281,6 +293,7 @@ class ElasticsearchGenizahProcessor:
                     "query": query_text,
                     "fields": [
                         "description^2",
+                        "alt_titles^2",
                         "full_text_content",
                         "transcriptions.text",
                         "translations.text"
@@ -511,6 +524,7 @@ class ElasticsearchGenizahProcessor:
                     "worldcat_url": {"type": "keyword"},
                     "shelf_mark": {"type": "keyword"},
                     "description": {"type": "text", "analyzer": "multilingual"},
+                    **ALT_TITLES_MAPPING,
                     "full_text_content": {"type": "text", "analyzer": "multilingual"},
 
                     # All dates as strings - handles any historical date
@@ -599,7 +613,11 @@ class ElasticsearchGenizahProcessor:
                             "citation": {"type": "text"},
                             "location": {"type": "text"},
                             "relations": {"type": "keyword"},
-                            "url": {"type": "keyword"}
+                            "url": {"type": "keyword"},
+                            "source": {"type": "keyword"},
+                            "title": {"type": "text", "fields": {"keyword": {"type": "keyword", "ignore_above": 512}}},
+                            "authors": {"type": "keyword"},
+                            "year": {"type": "keyword"}
                         }
                     },
 

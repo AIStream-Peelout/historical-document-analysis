@@ -10,6 +10,7 @@ import numpy as np
 from pydantic import BaseModel, Field, validator
 from enum import Enum
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
+from src.datasets.indexing.neo4j.ktiv_biblio import parse_ktiv_citation
 
 logger = logging.getLogger(__name__)
 def convert_cambridge_lang_format(the_language):
@@ -67,6 +68,32 @@ def _merged_image_urls(images: Dict[str, Any]) -> List[str]:
         order.remove(preferred)
         order.insert(0, preferred)
     return [url for source in order for url in by_source[source]]
+
+
+_KTIV_TITLE_LABEL_RE = re.compile(r"^\s*Title in English\s*:\s*", re.IGNORECASE)
+
+
+def _ktiv_alt_titles(ktiv: Optional[Dict[str, Any]]) -> List[str]:
+    """Return the KTIV "Varying form of title" strings for a merged record.
+
+    NLI catalogues the searchable, human-readable title (e.g.
+    ``"Talmud Bavli: Megillah 2 a – b"`` plus its Hebrew form) under
+    ``basic_catalog.varying_form_of_title``, while ``basic_catalog.title`` is
+    the Hebrew subject heading. The cataloguing label ``"Title in English:"``
+    is stripped; everything else is kept verbatim.
+
+    :param ktiv: The ``sources.ktiv`` block of a merged record, or ``None``.
+    :returns: De-duplicated, order-preserving list of alternate titles.
+    """
+    raw = ((ktiv or {}).get("basic_catalog") or {}).get("varying_form_of_title") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    out: List[str] = []
+    for value in raw:
+        title = _KTIV_TITLE_LABEL_RE.sub("", str(value)).strip()
+        if title and title not in out:
+            out.append(title)
+    return out
 
 
 class ContentQuality(str, Enum):
@@ -143,6 +170,10 @@ class BibliographyEntry(BaseModel):
     location: Optional[str] = None
     relations: List[str] = Field(default_factory=list)
     url: Optional[str] = None
+    source: Optional[str] = Field(default=None, description="Where the citation came from: fjp, ktiv or pgp")
+    title: Optional[str] = Field(default=None, description="Parsed publication title (KTIV citations)")
+    authors: List[str] = Field(default_factory=list, description="Parsed authors, 'Surname, Given' (KTIV citations)")
+    year: Optional[str] = Field(default=None, description="Parsed year, Gregorian or Hebrew (KTIV citations)")
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary format."""
@@ -210,6 +241,10 @@ class GenizahDocument(BaseModel):
     # Core fields
     image_urls: List[str] = Field(default_factory=list, description="URLs of document images")
     description: str = Field(description="Description of the document")
+    alt_titles: List[str] = Field(
+        default_factory=list,
+        description="Alternate / varying titles (e.g. KTIV 'Varying form of title')",
+    )
     transcriptions: List[TranscriptionSection] = Field(default_factory=list, description="Document transcriptions")
     translations: List[str] = Field(default_factory=list, description="Document translations")
     
@@ -433,6 +468,7 @@ class GenizahDocument(BaseModel):
         # Content
         if self.description:
             content_parts.append(str(self.description))
+        content_parts.extend(self.alt_titles)
 
         # Transcriptions
         for trans in self.transcriptions:
@@ -930,6 +966,10 @@ class GenizahDocument(BaseModel):
         if self.description and self.description != "No description available":
             text_parts.append(self.description)
 
+        # Alternate titles (KTIV "Varying form of title": the English tractate /
+        # folio string and its Hebrew form) so lexical search reaches them.
+        text_parts.extend(self.alt_titles)
+
         # Add title from metadata if available
         if self.full_metadata:
             for key, value in self.full_metadata.items():
@@ -1008,6 +1048,7 @@ class GenizahDocument(BaseModel):
 
             # Content fields
             "description": self.description,
+            "alt_titles": self.alt_titles,
             "full_text_content": self.create_full_text_content(),
 
             # Temporal information
@@ -1367,6 +1408,11 @@ class GenizahDocument(BaseModel):
         if self.description:
             text_parts.append(f"Description: {self.description}")
 
+        # Alternate titles (KTIV varying form of title) — often the only
+        # English statement of what the fragment is.
+        if self.alt_titles:
+            text_parts.append(f"Alternate titles: {'; '.join(self.alt_titles)}")
+
         # Add title from metadata if available
         if self.full_metadata:
             for key, value in self.full_metadata.items():
@@ -1525,7 +1571,9 @@ class GenizahDocument(BaseModel):
             translations.extend(tl.values() if isinstance(tl, dict) else tl)
             related_people.extend(rec.get("related_people") or [])
             related_places.extend(rec.get("related_places") or [])
-            bibliography.extend(rec.get("bibliography") or [])
+            for entry in rec.get("bibliography") or []:
+                if isinstance(entry, dict):
+                    bibliography.append({**entry, "source": entry.get("source") or "fjp"})
 
         # KTIV "Academic transcription" (viewer word annotations, flattened to
         # per-page line text by the merge). Same unified list as FJP entries so
@@ -1551,8 +1599,28 @@ class GenizahDocument(BaseModel):
                     related_places.append({"name": nm, "role": col})
             cite = (d.get("scholarship_records") or "").strip()
             if cite:
-                bibliography.append({"citation": cite})
+                bibliography.append({"citation": cite, "source": "pgp"})
 
+        # KTIV catalogue bibliography: free-text citations parsed into title/authors/year/pages
+        # (see indexing.neo4j.ktiv_biblio); the raw string stays as ``citation``.
+        seen_citations = {b.get("citation") for b in bibliography}
+        for raw in ktiv.get("bibliography") or []:
+            if not isinstance(raw, str) or not raw.strip() or raw in seen_citations:
+                continue
+            parsed = parse_ktiv_citation(raw)
+            relations = []
+            if parsed["mention_type"].get("discussion"):
+                relations.append("Discussion")
+            if parsed["mention_type"].get("mentioned"):
+                relations.append("Mention")
+            if parsed["has_image"]:
+                relations.append("Image")
+            bibliography.append({
+                "citation": raw, "location": parsed["citedonpages"] or None, "relations": relations,
+                "source": "ktiv", "title": parsed["title"] or None, "authors": parsed["authors"],
+                "year": parsed["year"] or None,
+            })
+            seen_citations.add(raw)
         images = merged.get("images") or {}
         image_urls = _merged_image_urls(images)
 
@@ -1574,6 +1642,7 @@ class GenizahDocument(BaseModel):
             doc_id=merged.get("canonical_id"),
             shelf_mark=merged.get("shelfmark_display") or merged.get("canonical_id"),
             description=merged.get("description") or "",
+            alt_titles=_ktiv_alt_titles(ktiv),
             transcriptions=transcriptions,
             translations=[t for t in translations if t and str(t).strip()],
             related_people=related_people,
