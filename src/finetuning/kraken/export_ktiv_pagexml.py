@@ -69,7 +69,10 @@ from src.finetuning.qwen_hebrew.ktiv_layout import (
 log = logging.getLogger(__name__)
 
 MAX_H = 1800                 # blla input height ([1,1800,0,3]); taller pages are downscaled
-MAX_W = 2600                 # widest training page at MAX_H: training peak ~6.7 GiB at 2,500 px, OOM > 10 GiB at 4,000
+GATE_MAX_W = 2600            # seg_gate.py skips wider pages (its own memory cap): they have no predictions
+MAX_W = 1600                 # widest training image: the segtrain working set plateaus at ~8.5 GiB for 1,400-1,600 px
+                             # pages (2D-LSTM activations at 1800 px height) and exceeds 10 GiB at 2,000-2,500 px;
+                             # wider multi-column pages are split into single-column crops (column_crops)
 MIN_LINES = 3
 MAX_COLUMNS = 3
 ROTATED_SHARE = 0.5          # >= this share of 3+-letter words taller than wide = rotated scan
@@ -842,6 +845,50 @@ def paint(im: PILImage.Image, rec: Dict, pred: Dict, targets: Dict, extra_polys:
     return PILImage.fromarray(a), n
 
 
+def column_crops(rec: Dict, segments: Sequence[Dict], pitches: Sequence[float], max_w: int) -> List[Tuple]:
+    """Split a wide multi-column page into single-column crops no wider than ``max_w``.
+
+    Crops are cut at the gutter midpoints between neighbouring columns (page
+    edges for the outer ones), full page height.  A column is skipped when its
+    crop would still be wider than ``max_w`` or when a baseline of another
+    column reaches more than half a pitch into it (the crop would show
+    unlabelled writing).
+
+    :param rec: Candidate page (``columns`` rightmost-first, ``image_size``).
+    :type rec: Dict
+    :param segments: The page's kept baseline segments.
+    :type segments: Sequence[Dict]
+    :param pitches: Column pitches.
+    :type pitches: Sequence[float]
+    :param max_w: Widest crop, px.
+    :type max_w: int
+    :return: ``(x0, x1, crop_rec, crop_segments)`` per usable column; ``crop_rec`` has ``image_size``,
+        ``columns`` (that column, shifted) and ``pitches``; segments are shifted and re-indexed to column 0.
+    :rtype: List[Tuple]
+    """
+    w, h = rec["image_size"]
+    cols = rec["columns"]
+    if len(cols) < 2:
+        return []
+    ext = sorted(((min(ln["box"][0] for ln in col), max(ln["box"][2] for ln in col), ci) for ci, col in enumerate(cols)))
+    out = []
+    for i, (cx0, cx1, ci) in enumerate(ext):
+        x0 = 0 if i == 0 else int((ext[i - 1][1] + cx0) / 2)
+        x1 = w if i == len(ext) - 1 else int((cx1 + ext[i + 1][0]) / 2)
+        if x1 - x0 > max_w or x1 <= x0:
+            continue
+        p = pitches[ci]
+        if any(s["ci"] != ci and min(s["pts"][-1][0], x1) - max(s["pts"][0][0], x0) > 0.5 * p for s in segments):
+            continue
+        sh = lambda b: [b[0] - x0, b[1], b[2] - x0, b[3]]  # noqa: E731
+        col = [{**ln, "box": sh(ln["box"]), "words": [{**wd, "box": sh(wd["box"])} for wd in ln["words"]]}
+               for ln in cols[ci]]
+        segs = [{**s, "ci": 0, "pts": [(max(0, x - x0), y) for x, y in s["pts"]]} for s in segments if s["ci"] == ci]
+        if segs:
+            out.append((x0, x1, {"image_size": [x1 - x0, h], "columns": [col], "pitches": [p]}, segs))
+    return out
+
+
 # ---------------------------------------------------------------- write
 
 def region_box(col: Sequence[Dict], pitch: float, size: Sequence[int]) -> Tuple[int, int, int, int]:
@@ -961,7 +1008,8 @@ def write(out: Path, method: str, n_overlays: int, max_w: int) -> Dict:
     :type method: str
     :param n_overlays: QA overlays per category.
     :type n_overlays: int
-    :param max_w: Pages wider than this are rejected (training memory).
+    :param max_w: Pages wider than this are split into single-column crops (:func:`column_crops`), or
+        rejected when they have one column (training memory).
     :type max_w: int
     :return: Summary dict (also ``stats.json``).
     :rtype: Dict
@@ -970,8 +1018,8 @@ def write(out: Path, method: str, n_overlays: int, max_w: int) -> Dict:
     stats: Counter = Counter()
     pages = []
     for rec in recs:
-        if rec["image_size"][0] > max_w:
-            stats["page_rejected_too_wide"] += 1
+        if rec["image_size"][0] > GATE_MAX_W:
+            stats["page_rejected_too_wide_ungated"] += 1
             continue
         pf = out / "preds" / f"{rec['page_id']}.json"
         if not pf.exists():
@@ -994,7 +1042,7 @@ def write(out: Path, method: str, n_overlays: int, max_w: int) -> Dict:
                     "p90_abs_resid": sorted(abs(x - med) for x in v)[int(0.9 * (len(v) - 1))] if v else None}
     chosen = min(calib, key=lambda m: calib[m]["spread"] if calib[m]["spread"] is not None else 1e9)
     shift = calib[chosen]["median"]
-    for sub in ("pagexml", "qa", "images_masked"):      # outputs of an earlier write pass are rebuilt from scratch
+    for sub in ("pagexml", "qa", "images_masked", "images_crops"):   # earlier write-pass outputs are rebuilt
         (out / sub).mkdir(exist_ok=True)
         for f in (out / sub).iterdir():                # files only: removing the dir itself fails on the SMB NAS
             if not f.name.startswith("."):             # .smbdelete* = SMB pending-delete placeholders
@@ -1025,8 +1073,25 @@ def write(out: Path, method: str, n_overlays: int, max_w: int) -> Dict:
             stats["lines_painted"] += len(t["failed"])
             stats["uncovered_writing_painted"] += len(unc)
             stats["vertical_words_painted"] += len(rec.get("vertical", []))
-        (out / "pagexml" / f"{page_id}.xml").write_text(page_xml(rec, image, t["segments"], pitches), encoding="utf-8")
-        manifests[rec["split"]].append(f"pagexml/{page_id}.xml")
+        if rec["image_size"][0] > max_w:
+            crops = column_crops(rec, t["segments"], pitches, max_w)
+            if not crops:
+                stats["page_rejected_too_wide"] += 1
+                continue
+            for k, (x0, x1, crec, csegs) in enumerate(crops):
+                cid = f"{page_id}_c{k}"
+                cimage = f"images_crops/{cid}.jpg"
+                painted_im.crop((x0, 0, x1, crec["image_size"][1])).convert("RGB").save(out / cimage, "JPEG",
+                                                                                        quality=JPEG_QUALITY)
+                (out / "pagexml" / f"{cid}.xml").write_text(page_xml(crec, cimage, csegs, crec["pitches"]),
+                                                           encoding="utf-8")
+                manifests[rec["split"]].append(f"pagexml/{cid}.xml")
+            stats["pages_cropped"] += 1
+            stats[f"crops_written_{rec['split']}"] += len(crops)
+        else:
+            (out / "pagexml" / f"{page_id}.xml").write_text(page_xml(rec, image, t["segments"], pitches),
+                                                           encoding="utf-8")
+            manifests[rec["split"]].append(f"pagexml/{page_id}.xml")
         stats[f"pages_written_{rec['split']}"] += 1
         stats["gt_lines_kept"] += n_lines - len(t["failed"])
         stats["segments_blla"] += t["n_blla"]

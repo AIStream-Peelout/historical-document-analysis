@@ -8,8 +8,9 @@
 #   train     ketos segtrain from blla2026 (container kraken-segtrain-ktiv-v1, detached, --restart no)
 #   resume    continue from a Lightning checkpoint: segtrain_ktiv.sh resume /out/<ckpt>.ckpt
 #
-# Shared prod host (docs/shared_studio_runtime.md): 6 CPUs, 8 GiB (measured peak 6.7 GiB at the 2,600 px
-# width cap, 1 loader worker), low cpu-shares so :8002 wins,
+# Shared prod host (docs/shared_studio_runtime.md): 6 CPUs, 9.5 GiB (working set plateaus ~8.5 GiB at the 1,600 px
+# width cap; data loading in the main process: a forked loader worker deadlocks with OpenMP), oom-score-adj 1000 so
+# a VM-wide memory squeeze kills training (resumable) and never :8002, low cpu-shares so :8002 wins,
 # threads pinned (torch otherwise sees all 16 host cores), outputs + logs on the NAS, nice 10.
 set -euo pipefail
 R=/Users/isaac/Documents/GitHub/historical-document-analysis
@@ -21,10 +22,10 @@ SEGMODELS=/Volumes/home/studio_offload/models/kraken_segmenters
 IMG=kraken-service:k7-base
 NAME=kraken-segtrain-ktiv-v1
 THREADS=6
-COMMON=(--cpus $THREADS --memory 8g --cpu-shares 256 --shm-size 2g --log-opt max-size=50m --log-opt max-file=3
+COMMON=(--cpus $THREADS --memory 9500m --oom-score-adj 1000 --cpu-shares 256 --shm-size 2g --log-opt max-size=50m --log-opt max-file=3
         -e OMP_NUM_THREADS=$THREADS -e PYTHONPATH=/code -w /data
         -v "$STAGE:/data:ro" -v "$OUT:/out" -v "$SEGMODELS:/segmodels:ro" -v "$R/src/finetuning/kraken:/code:ro")
-KETOS=(nice -n 10 ketos --device cpu --threads $THREADS --workers 1 --seed 20260923)
+KETOS=(nice -n 10 ketos --device cpu --threads $THREADS --workers 0 --seed 20260923)   # workers>0 deadlocks (fork + OpenMP)
 TRAIN_ARGS=(segtrain -f page -t train.lst -e val.lst -i /segmodels/blla_2026/blla.mlmodel --resize fail
             --augment -q early --lag 8 --min-epochs 5 -N 60 -F 1 -r 1e-4 --schedule cosine --cos-max 60
             --cos-min-lr 1e-5 --line-width 8 -o /out/ktiv_seg)
@@ -32,7 +33,7 @@ TRAIN_ARGS=(segtrain -f page -t train.lst -e val.lst -i /segmodels/blla_2026/bll
 case "${1:-}" in
   stage)
     mkdir -p "$STAGE"
-    rsync -a --delete --exclude '.*' --include 'images/***' --include 'images_masked/***' --include 'pagexml/***' --include '*.lst' --include 'stats.json' \
+    rsync -a --delete --exclude '.*' --include 'images/***' --include 'images_masked/***' --include 'images_crops/***' --include 'pagexml/***' --include '*.lst' --include 'stats.json' \
       --include 'candidates_stats.json' --exclude '*' "$SRC/" "$STAGE/"
     echo "staged: $(ls "$STAGE/pagexml" | wc -l) xml, $(ls "$STAGE/images" | wc -l) images, $(du -sh "$STAGE" | cut -f1)"
     ;;

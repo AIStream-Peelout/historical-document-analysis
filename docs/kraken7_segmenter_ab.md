@@ -1,7 +1,7 @@
 # Kraken 7 segmenter A/B — results and cut-over note (2026-09-23)
 
-Follow-up to `docs/handoff_kraken5_segmenter.md`. Steps 1–2 of that plan are done; step 3 (segmenter
-fine-tune) and step 4 (cut-over) are **proposed, not started** — both need a go from Isaac.
+Follow-up to `docs/handoff_kraken5_segmenter.md`. Steps 1–2 done; **step 4 (cut-over) done 2026-09-23
+12:26 EDT**; step 3 (Genizah segmenter fine-tune) in progress — see the two sections at the end.
 
 ## TL;DR
 
@@ -130,7 +130,7 @@ Per-page rows: `docs/kraken7_segmenter_ab/agreement_k7_<tag>.jsonl`.
   Scorer: `kraken_segmenter_ab_score.py` → `docs/kraken7_segmenter_ab/ab_scores.json`, `ab_tables.md`.
 * MiDRASH per-page CERs (from the 2026-09-23 session): `docs/kraken7_segmenter_ab/zenodo_vs_kraken_religious.json`.
 
-## Go / no-go for the cut-over
+## Go / no-go for the cut-over (done — see "Cut-over record" below)
 
 **Go for kraken 7.0.3 + blla2026**, as a coordinated swap:
 
@@ -167,9 +167,62 @@ border/label false positives). Plan:
   a multi-day run, or wait for the ROCm box (ETA Oct 23–26). Colab is an alternative if the data is staged
   there.
 
-## State left behind
+## Cut-over record (2026-09-23)
 
-* Test container `kraken-k7` stopped/removed; images `kraken-service:k7`, `kraken-service:k7-base` kept.
-* `kraken-linewise` (:8002) and the consensus pipeline were not touched.
+* Plan reviewed by a 3-lens workflow (pipeline runtime / Docker infra / data provenance) before execution;
+  its fixes were applied: socket-state pause gate instead of log silence, measured memory cap (peak 7.0 GiB
+  on a 95 MP pipeline page → `--memory 10g`, not the planned 6g), read-only weight mount, STOP budget with
+  automatic rollback, boundary recorded by job, verification only on k7-served jobs.
+* `logs/kraken_cutover_0923.sh` (dry-run first): paused the running pipeline with SIGSTOP only when `lsof`
+  showed its LM Studio socket open and no :8002 socket (6 unsafe windows declined, 7th taken), swapped
+  containers, preloaded Gen_01, resumed — **4 s STOP**, no Kraken failures (failures.jsonl 78 → 78).
+* `:8002` = `kraken-linewise` on `kraken-service:k7-blla2026` (`--restart unless-stopped --cpus 6 --memory 10g`,
+  weights `:ro`); rollback copy `kraken-linewise-k4` (old image, stopped, restart=no). Runtime doc updated.
+* Record `logs/kraken_cutover_0923.json`: jobs 926–927 were in flight and carry kraken-4 fragments; job
+  928 (`Cambridge_CUL_T_S_AS_146_210#0`) onwards is k7-blla2026.
+* **Pending provenance stamp.** The running pipeline stores k7 fragments under the legacy key
+  `MiDRASH_Gen_01` (no stamp option in its code). After it exits:
+  `.venv/bin/python -m src.datasets.consensus.stamp_htr_cache_key` (dry-run first) sets raw-cache
+  `htr_model` and record `ai_read.htr_cache_key` = `MiDRASH_Gen_01@k7.0.3-blla2026` for the k7 set derived
+  from the pipeline logs (fragment counts cross-checked). Until then, agreement-probe "k4 baselines" and
+  default-key `--rekraken` runs over post-cut-over pages are unreliable.
+
+## Genizah segmenter fine-tune (in progress)
+
+Training data: `/Volumes/home/studio_offload/datasets/kraken_segmenter/ktiv_pagexml_v1/` (2,000 decontaminated
+KTIV API-shape candidate pages, ≤ 3 per manuscript, 112 val manuscripts held out; benchmark manuscripts
+excluded by `exclude_benchmark_manuscripts` + shingle decontamination).
+
+* `src/finetuning/kraken/export_ktiv_pagexml.py` — candidates / relines / write (see its docstring);
+  `seg_gate.py` — blla2026 predictions per page in the container; `seg_geometry.py` — shared cover/match
+  geometry; `seg_loader_gate.py` — the export through kraken's own training data path;
+  `segtrain_ktiv.sh` — stage / gate / baseline / train / resume.
+* Targets: lines blla2026 already segments 1:1 take its baseline (the convention Gen_01 reads); other
+  lines get an ink-estimated baseline (body bottom, calibrated against blla2026: shift 0.076 pitch,
+  residual spread 0.033 pitch) with the page's consensus slope, refitted per line when an end is off;
+  unplaceable lines, vertical marginal words and untranscribed writing blla2026 reads confidently are
+  painted out with parchment colour so no writing is taught as background.
+* Two independent visual audits (6 auditors each, 50–60 pages): v1 exporter 36 % bad pages, 7.2 wrong +
+  4.1 missing targets / 100 lines → **v2 15 % bad, 3.8 wrong + 0.8 missing / 100 lines: GO**; the two main
+  remaining patterns (drift on warped lines, blla lines stopping a word short) were fixed after the audit
+  (per-line refit on end mismatch, ink-extent clipping, blla extension to the GT words).
+* Memory: training peak 5.8 GiB at 1,350 px width, 6.7 GiB at 2,500, > 10 GiB at 4,000 (OOM) → pages wider
+  than 2,600 px excluded (6.5 %); bf16 barely saves memory and is 55× slower on this CPU.
+* Loader gate on the interim export: all XML parse, per-class counts equal the XML, no failed samples,
+  every baseline left→right, input height 1800.
+* ketos 7.0.3 `segtest` crashes printing its pixel table; the warm-start reference is instead segtrain's
+  own validation of the unchanged blla2026 (1 train page, 1 step at lr 1e-12) — `segtrain_ktiv.sh baseline`.
+* Run: `logs/kraken_segtrain_launch_0923.sh` chains write → stage → loader gate → baseline → train
+  (`kraken-segtrain-ktiv-v1`, 6 CPUs, 8 GiB, cpu-shares 256, lr 1e-4 cosine, augment, early stop lag 8,
+  ≤ 60 epochs; checkpoints + `train.log` in `…/kraken_segmenter/runs/ktiv_seg_v1/`).
+* Evaluation of checkpoints: `run_k7.sh /runs/ktiv_seg_v1/<model>.safetensors rgb` on :8003, then
+  `kraken_segmenter_ab.py` (both benchmarks) + `kraken_segmenter_ab_score.py` + the agreement probe; also
+  blla2026 with `KRAKEN_SEG_INPUT=rgb` (the fine-tune trains on RGB pages; the service segments nlbin output
+  by default).
+
+## State
+
+* `:8002` runs k7-blla2026 (see cut-over record); test image `kraken-service:k7` (+ `KRAKEN_SEG_INPUT`),
+  `kraken-service:k7-base` kept; test container `kraken-k7` only on :8003 when evaluating.
 * New cache files only: `kraken_{raw,seg}_k7_*.txt`, `kraken_lines_k7_*.json` in both benchmarks'
   raw-output dirs. `religious_scores_*.csv` and the paper tables were not rewritten.
