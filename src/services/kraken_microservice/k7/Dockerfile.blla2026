@@ -1,0 +1,8 @@
+# Production kraken 7 image: kraken-service:k7 + the 2026 general blla segmenter baked in
+# (Zenodo 10.5281/zenodo.22879549, Apache-2.0, md5 f3d933d00dba8b47bbc2f11804cd32f0).
+# Build context = the directory holding blla.mlmodel:
+#   docker build -f src/services/kraken_microservice/k7/Dockerfile.blla2026 \
+#     -t kraken-service:k7-blla2026 /Volumes/home/studio_offload/models/kraken_segmenters/blla_2026
+FROM kraken-service:k7
+COPY blla.mlmodel /app/segmodels/blla_2026.mlmodel
+ENV KRAKEN_SEGMENTER=/app/segmodels/blla_2026.mlmodel KRAKEN_THREADS=6

@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "grounding-viewer",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": ["-m", "http.server", "8765", "--directory", "src/datasets/evaluations/grounding_eval/viewer"],
+      "port": 8765
+    }
+  ]
+}
