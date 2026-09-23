@@ -1,0 +1,377 @@
+<title>Read A Little, Or Read It All?</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Frank+Ruhl+Libre:wght@400;500&display=swap">
+<style>
+  :root {
+    --paper: #EEF1F5;
+    --paper-2: #E3E8EE;
+    --ink: #1B2431;
+    --ink-2: #4A5665;
+    --ink-3: #7B8794;
+    --rule: #C9D1DA;
+    --hit: #1F7A8C;
+    --hit-bg: #D6ECEF;
+    --miss: #B23A48;
+    --miss-bg: #F3DCDF;
+    --gold: #8A6D2F;
+    --chip-bg: #FFFFFF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #151A21;
+      --paper-2: #1D242D;
+      --ink: #E6EAEF;
+      --ink-2: #AEB7C2;
+      --ink-3: #7D8894;
+      --rule: #333C47;
+      --hit: #5FC1D0;
+      --hit-bg: #17353B;
+      --miss: #E4778A;
+      --miss-bg: #3D1F26;
+      --gold: #D2B26A;
+      --chip-bg: #232B35;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #151A21;
+    --paper-2: #1D242D;
+    --ink: #E6EAEF;
+    --ink-2: #AEB7C2;
+    --ink-3: #7D8894;
+    --rule: #333C47;
+    --hit: #5FC1D0;
+    --hit-bg: #17353B;
+    --miss: #E4778A;
+    --miss-bg: #3D1F26;
+    --gold: #D2B26A;
+    --chip-bg: #232B35;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    padding-block: 40px 64px;
+    padding-inline: 20px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  .heb { font-family: "Frank Ruhl Libre", "Noto Serif Hebrew", "Times New Roman", serif; direction: rtl; unicode-bidi: isolate; }
+  .mono { font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  h1, h2, h3 { font-family: "Newsreader", Georgia, "Times New Roman", serif; font-weight: 500; text-wrap: balance; margin: 0; }
+  h1 { font-size: 44px; line-height: 1.05; letter-spacing: -0.01em; }
+  h2 { font-size: 26px; line-height: 1.15; }
+  h3 { font-size: 19px; line-height: 1.2; }
+  p { margin: 0; max-width: 62ch; }
+  .eyebrow { font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .lede { font-size: 17px; color: var(--ink-2); max-width: 60ch; }
+  em { font-family: "Newsreader", Georgia, serif; font-style: italic; font-size: 1.06em; }
+
+  header { display: grid; gap: 14px; padding-bottom: 28px; border-bottom: 1px solid var(--rule); }
+  .question { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; }
+  .question .heb { font-size: 30px; color: var(--ink-2); }
+
+  /* pipeline */
+  .pipeline { display: grid; gap: 0; margin-top: 8px; }
+  .step {
+    display: grid; grid-template-columns: 64px 1fr; gap: 0 22px;
+    padding-block: 26px; border-bottom: 1px solid var(--rule);
+  }
+  .step:last-child { border-bottom: 0; }
+  .num { font-family: "Newsreader", Georgia, serif; font-size: 40px; line-height: 1; color: var(--ink-3); font-weight: 400; padding-top: 2px; }
+  .step-body { display: grid; gap: 12px; min-width: 0; }
+  .step-body p { color: var(--ink-2); }
+  .code-ref { font-size: 12px; color: var(--ink-3); }
+
+  .sample {
+    display: grid; gap: 6px; padding: 14px 16px; background: var(--paper-2);
+    border-left: 3px solid var(--rule);
+  }
+  .sample .label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .sample .heb { font-size: 22px; line-height: 1.5; }
+  .sample.ref { border-left-color: var(--gold); }
+  .strike { color: var(--miss); text-decoration: line-through; text-decoration-thickness: 1.5px; }
+  .dim { color: var(--ink-3); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .two { grid-template-columns: 1fr; } .step { grid-template-columns: 44px 1fr; gap: 0 14px; } .num { font-size: 30px; } h1 { font-size: 34px; } }
+
+  .letters { font-size: 22px; letter-spacing: 0.04em; word-break: break-all; }
+  .count { font-size: 12px; color: var(--ink-3); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; direction: rtl; }
+  .chip {
+    font-family: "Frank Ruhl Libre", "Noto Serif Hebrew", serif; font-size: 18px; line-height: 1;
+    padding: 7px 9px 6px; border: 1px solid var(--rule); background: var(--chip-bg); border-radius: 3px;
+    unicode-bidi: isolate;
+  }
+  .chip.hit { border-color: var(--hit); background: var(--hit-bg); color: var(--hit); }
+  .chip.miss { border-color: var(--miss); background: var(--miss-bg); color: var(--miss); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px; vertical-align: -1px; }
+  .legend .l-hit::before { background: var(--hit); }
+  .legend .l-miss::before { background: var(--miss); }
+
+  .score { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 18px; }
+  .score .big { font-family: "Newsreader", Georgia, serif; font-size: 54px; line-height: 1; }
+  .score .frac { font-size: 15px; color: var(--ink-2); }
+  .bar { height: 10px; background: var(--miss-bg); border-radius: 2px; overflow: hidden; max-width: 420px; }
+  .bar i { display: block; height: 100%; width: 53.3%; background: var(--hit); }
+
+  .gates { display: grid; gap: 0; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+  .gate { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--rule); align-items: baseline; }
+  .gate:last-child { border-bottom: 0; }
+  .gate .name { font-weight: 600; font-size: 14px; }
+  .gate .rule { color: var(--ink-2); font-size: 14px; }
+  .gate.on { background: var(--hit-bg); }
+  .gate.on .name { color: var(--hit); }
+  @media (max-width: 640px) { .gate { grid-template-columns: 1fr; gap: 2px; } }
+
+  /* why */
+  section.why { margin-top: 44px; display: grid; gap: 22px; }
+  .why-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  @media (max-width: 720px) { .why-grid { grid-template-columns: 1fr; } }
+  .why-card { display: grid; gap: 10px; padding-top: 14px; border-top: 2px solid var(--ink); align-content: start; }
+  .why-card p { font-size: 14px; color: var(--ink-2); }
+  .stat { font-family: "Newsreader", Georgia, serif; font-size: 34px; line-height: 1; }
+  .stat small { font-family: "IBM Plex Sans", sans-serif; font-size: 12px; color: var(--ink-3); display: block; margin-top: 6px; letter-spacing: 0.02em; }
+
+  /* null distribution strip */
+  .null { display: grid; gap: 10px; padding: 18px 20px; background: var(--paper-2); }
+  .null .row { display: grid; grid-template-columns: 170px 1fr; gap: 12px; align-items: center; font-size: 13.5px; }
+  @media (max-width: 640px) { .null .row { grid-template-columns: 1fr; gap: 4px; } }
+  .track { position: relative; height: 22px; background: var(--chip-bg); border: 1px solid var(--rule); border-radius: 2px; }
+  .track b { position: absolute; top: 3px; height: 14px; border-radius: 2px; }
+  .track .own { background: var(--hit); opacity: .85; }
+  .track .wrong { background: var(--miss); opacity: .85; }
+  .track .tick { position: absolute; top: -6px; bottom: -6px; width: 1px; background: var(--ink); }
+  .track .tick::after { content: attr(data-l); position: absolute; top: -16px; left: 4px; font-size: 10.5px; color: var(--ink-3); white-space: nowrap; font-family: "IBM Plex Mono", monospace; }
+  .axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--ink-3); padding-inline: 170px 0; }
+  @media (max-width: 640px) { .axis { padding-inline: 0; } }
+
+  /* limits */
+  section.limits { margin-top: 44px; display: grid; gap: 14px; }
+  .limit-list { display: grid; gap: 10px; }
+  .limit { display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start; font-size: 14px; color: var(--ink-2); }
+  .limit .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--miss); }
+  .limit .dot.ok { background: var(--hit); }
+  .limit strong { color: var(--ink); font-weight: 600; }
+  footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--ink-3); display: grid; gap: 4px; }
+
+  /* --- page 3 additions, same token vocabulary --- */
+  /* inline runs inside a Hebrew string: matched blocks vs unmatched */
+  .run-hit { background: var(--hit-bg); color: var(--hit); border-radius: 2px; padding-block: 1px; }
+  .run-miss { background: var(--miss-bg); color: var(--miss); border-radius: 2px; padding-block: 1px; }
+  /* opcode + medians tables */
+  .tbl { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  .tbl th {
+    text-align: left; font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--ink-3); font-weight: 600; padding: 0 14px 7px 0; border-bottom: 1px solid var(--rule); white-space: nowrap;
+  }
+  .tbl td { padding: 8px 14px 8px 0; border-bottom: 1px solid var(--rule); color: var(--ink-2); vertical-align: baseline; }
+  .tbl tr:last-child td { border-bottom: 0; }
+  .tbl td:first-child, .tbl th:first-child { color: var(--ink); }
+  .tbl .n { text-align: right; padding-right: 0; }
+  .tbl th.n { text-align: right; padding-right: 0; }
+  .tbl .op { font-family: "IBM Plex Mono", monospace; font-size: 12px; letter-spacing: 0.04em; }
+  .tbl .op.eq { color: var(--hit); }
+  .tbl .op.ne { color: var(--miss); }
+  .tbl .heb { font-size: 18px; }
+  .tbl-wrap { overflow-x: auto; }
+  .caption { font-size: 12px; color: var(--ink-3); margin-top: 8px; }
+  /* small labelled measure: label, bar, value */
+  .measure { display: grid; gap: 7px; padding-block: 2px; }
+  .measure .head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 14px; }
+  .measure .val { font-family: "Newsreader", Georgia, serif; font-size: 34px; line-height: 1; }
+  .measure .frac { font-size: 13px; color: var(--ink-2); }
+  /* figure list used in the side-by-side contrast */
+  .figs { display: grid; gap: 0; margin-top: 4px; }
+  .fig { display: grid; grid-template-columns: 1fr auto; gap: 14px; font-size: 13.5px; padding-block: 6px; border-bottom: 1px solid var(--rule); color: var(--ink-2); }
+  .fig:last-child { border-bottom: 0; }
+  .fig b { font-weight: 500; color: var(--ink); }
+  .fig.lead b { color: var(--hit); }
+  .fig.lag b { color: var(--miss); }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Aligned precision, recall and F1 · completeness versus accuracy</div>
+    <h1>Read a little, or read it all?</h1>
+    <p class="lede">Character error rate divides by the length of the reference, so a system is rewarded for attempting less: say almost nothing and most of the page simply never enters the sum. Precision and recall over an alignment split that single number in two — <em>how much of what was written is real</em>, and <em>how much of the page was recovered</em>.</p>
+  </header>
+
+  <div class="pipeline">
+
+    <div class="step">
+      <div class="num">1</div>
+      <div class="step-body">
+        <h3>Align the output to the page</h3>
+        <p>Both texts are already reduced to visible ink. A sequence alignment then walks the two strings and finds the longest runs of characters that match <strong>in the same order</strong> — no re-ordering, no jumping back. Everything outside those runs is either invented by the model or missed on the page.</p>
+        <div class="two">
+          <div class="sample ref"><span class="label">Reference, visible ink</span><span class="heb">בנחשא טבא מעליא ויבנו ויצליחו</span><span class="count mono">29 characters, spaces included</span></div>
+          <div class="sample"><span class="label">Output, normalised</span><span class="heb">בנחשא טבא מעליא ויכנו ויצליחו שלום וברכה</span><span class="count mono">40 characters, spaces included</span></div>
+        </div>
+        <span class="code-ref mono">score_genizah_offline.py · aligned_prf · difflib.SequenceMatcher(autojunk=False)</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">2</div>
+      <div class="step-body">
+        <h3>The matching blocks</h3>
+        <p>Four segments come back. Two are matching blocks; one is the misread letter, which has a counterpart in the reference but the wrong shape; one is the closing blessing, which has no counterpart at all.</p>
+        <div class="legend"><span class="l-hit">inside a matching block</span><span class="l-miss">outside every block</span></div>
+        <div class="two">
+          <div class="sample ref"><span class="label">Reference</span><span class="heb"><span class="run-hit">בנחשא טבא מעליא וי</span><span class="run-miss">ב</span><span class="run-hit">נו ויצליחו</span></span><span class="count mono">28 of 29 matched</span></div>
+          <div class="sample"><span class="label">Output</span><span class="heb"><span class="run-hit">בנחשא טבא מעליא וי</span><span class="run-miss">כ</span><span class="run-hit">נו ויצליחו</span><span class="run-miss"> שלום וברכה</span></span><span class="count mono">28 of 40 matched</span></div>
+        </div>
+        <div class="tbl-wrap">
+          <table class="tbl">
+            <thead><tr><th>Opcode</th><th>Output</th><th>Reference</th><th class="n">Chars</th></tr></thead>
+            <tbody>
+              <tr><td class="op eq">equal</td><td class="heb">בנחשא טבא מעליא וי</td><td class="dim">same</td><td class="n mono">18</td></tr>
+              <tr><td class="op ne">replace</td><td class="heb">כ</td><td class="heb">ב</td><td class="n mono">1</td></tr>
+              <tr><td class="op eq">equal</td><td class="heb">נו ויצליחו</td><td class="dim">same</td><td class="n mono">10</td></tr>
+              <tr><td class="op ne">delete</td><td class="heb">שלום וברכה</td><td class="dim">no counterpart</td><td class="n mono">11</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="caption">The deleted run carries the space in front of it, which is why it counts 11 characters and not 10.</p>
+        <p><strong>Matched characters = 18 + 10 = 28.</strong> That single number is the numerator of both scores that follow; only the denominator changes.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">3</div>
+      <div class="step-body">
+        <h3>Precision: how much of what it wrote is real</h3>
+        <p>Divide the matched characters by the length of the <strong>output</strong>. The eleven characters of invented blessing are pure cost here — they are text the model asserted and the page does not carry.</p>
+        <div class="measure">
+          <div class="head"><span class="val mono">0.70</span><span class="frac mono">28 matched ÷ 40 output characters</span></div>
+          <div class="bar"><i style="width:70%"></i></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">4</div>
+      <div class="step-body">
+        <h3>Recall: how much of the page it recovered</h3>
+        <p>Same numerator, divided by the length of the <strong>reference</strong>. The invented blessing is invisible to this score; only the one misread letter is missing from the page's ink.</p>
+        <div class="measure">
+          <div class="head"><span class="val mono">0.97</span><span class="frac mono">28 matched ÷ 29 reference characters</span></div>
+          <div class="bar"><i style="width:96.6%"></i></div>
+        </div>
+        <p>The two disagree sharply on this output, and that disagreement is the finding: the model read the page almost completely, then kept writing.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">5</div>
+      <div class="step-body">
+        <h3>F1 balances them</h3>
+        <div class="score"><span class="big mono">0.81</span><span class="frac mono">2PR ÷ (P + R), with P = 0.70 and R = 0.97</span></div>
+        <p>The harmonic mean punishes a system that wins one side by abandoning the other. Compare our verbose reader with a cautious one that transcribes only the first two words and stops — every character it writes is correct.</p>
+        <div class="two">
+          <div class="sample">
+            <span class="label">Cautious: two words, all correct</span>
+            <span class="heb">בנחשא טבא</span>
+            <div class="figs">
+              <div class="fig lead"><span>Precision</span><b class="mono">1.00</b></div>
+              <div class="fig lag"><span>Recall</span><b class="mono">0.31</b></div>
+              <div class="fig"><span>Aligned F1</span><b class="mono">0.47</b></div>
+              <div class="fig"><span>CER</span><b class="mono">0.69</b></div>
+            </div>
+          </div>
+          <div class="sample">
+            <span class="label">Verbose: the full example</span>
+            <span class="heb">בנחשא טבא מעליא ויכנו ויצליחו שלום וברכה</span>
+            <div class="figs">
+              <div class="fig lag"><span>Precision</span><b class="mono">0.70</b></div>
+              <div class="fig lead"><span>Recall</span><b class="mono">0.97</b></div>
+              <div class="fig"><span>Aligned F1</span><b class="mono">0.81</b></div>
+              <div class="fig"><span>CER</span><b class="mono">0.41</b></div>
+            </div>
+          </div>
+        </div>
+        <p>CER alone calls the cautious reader the worse system, and says nothing about why. Precision and recall say exactly <em>how</em> each one is worse: one invents, the other omits. Those are different problems with different fixes.</p>
+        <span class="code-ref mono">score_genizah_offline.py · aligned_prf → precision, recall, f1</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">6</div>
+      <div class="step-body">
+        <h3>Order matters here</h3>
+        <p>Take the same output and swap its two halves — the same characters, the same words, read in a different sequence.</p>
+        <div class="sample"><span class="label">Output, halves swapped</span><span class="heb">מעליא ויכנו ויצליחו שלום וברכה בנחשא טבא</span></div>
+        <p>To the order-blind five-letter window score of page 1 nothing has happened: every window survives the move, and the score stays at <span class="mono">0.53</span>. The alignment cannot follow. It is allowed to match only runs that appear in the same order on both sides, so it must settle for the longer half and abandon the rest — recall and F1 both fall, while the ink read is identical.</p>
+        <p>This is why the paper reports both numbers. <strong>Five-gram precision is invariant to reading order; aligned F1 is not.</strong> The gap between them on a given system is a measurement of the reading-order and layout burden — how much of its score it loses not to misreading letters, but to serialising a page in an order the editor did not use.</p>
+      </div>
+    </div>
+  </div>
+
+  <section class="why">
+    <div>
+      <div class="eyebrow">Why report precision and recall separately</div>
+      <h2>Three things one number hides</h2>
+    </div>
+    <div class="why-grid">
+      <div class="why-card">
+        <span class="stat">41<small>outputs with precision ≥ 0.85 but recall ≤ 0.30</small></span>
+        <p>Accurate fragments of a page: what they wrote is real, but they stopped. Their CER sits around 0.99, indistinguishable from a blank answer. GPT-5.6 Sol on T-S 10J12/4 scores precision 0.94, recall 0.01, CER 0.99 — three numbers, only two of which are informative.</p>
+      </div>
+      <div class="why-card">
+        <span class="stat">0.730 vs 0.678<small>median aligned F1, raw Kraken lines versus Kraken after LLM reconstruction</small></span>
+        <p>The reconstruction step costs order on linear pages. Five-gram precision barely moves across the same pair (0.476 versus 0.474), so almost none of the loss is misread ink: it is reading order alone. The fine-tuned VLMs that followed the paper close the gap from the other side: HebVL-2.1 reaches a median F1 of 0.880 with 5-gram precision 0.661, above Kraken on both.</p>
+      </div>
+      <div class="why-card">
+        <span class="stat">33<small>outputs with 5-gram precision ≥ 0.25 but aligned precision ≤ 0.5</small></span>
+        <p>Fifteen of them are Kraken. The ink was read correctly, in an order the reference does not use. Alignment punishes these outputs; the order-blind score forgives them. Neither verdict is wrong, which is the argument for keeping both.</p>
+      </div>
+    </div>
+
+    <div class="tbl-wrap">
+      <table class="tbl">
+        <thead><tr><th>System</th><th class="n">n</th><th class="n">Aligned F1</th><th class="n">5-gram precision</th></tr></thead>
+        <tbody>
+          <tr><td>HebVL-2.1 (ours) †</td><td class="n mono">131</td><td class="n mono">0.880</td><td class="n mono">0.661</td></tr>
+          <tr><td>HebVL-2.0 (ours) †</td><td class="n mono">131</td><td class="n mono">0.876</td><td class="n mono">0.649</td></tr>
+          <tr><td>HebVL-1.9 (ours) †</td><td class="n mono">131</td><td class="n mono">0.862</td><td class="n mono">0.600</td></tr>
+          <tr><td>HebVL-1.8 (ours) †</td><td class="n mono">131</td><td class="n mono">0.807</td><td class="n mono">0.475</td></tr>
+          <tr><td>Kraken raw</td><td class="n mono">131</td><td class="n mono">0.730</td><td class="n mono">0.476</td></tr>
+          <tr><td>Kraken/MiDRASH raw, KTIV fine-tune †</td><td class="n mono">131</td><td class="n mono">0.724</td><td class="n mono">0.481</td></tr>
+          <tr><td>Kraken → LLM</td><td class="n mono">122</td><td class="n mono">0.678</td><td class="n mono">0.474</td></tr>
+          <tr><td>HebVL-1.7</td><td class="n mono">131</td><td class="n mono">0.553</td><td class="n mono">0.167</td></tr>
+          <tr><td>Gemini 3.1 Pro</td><td class="n mono">68</td><td class="n mono">0.421</td><td class="n mono">0.174</td></tr>
+          <tr><td>Claude Opus 4.8</td><td class="n mono">131</td><td class="n mono">0.366</td><td class="n mono">0.065</td></tr>
+          <tr><td>Claude Sonnet 5</td><td class="n mono">131</td><td class="n mono">0.366</td><td class="n mono">0.029</td></tr>
+          <tr><td>Gemini 3.5 Flash</td><td class="n mono">122</td><td class="n mono">0.196</td><td class="n mono">0.064</td></tr>
+          <tr><td>Google Vision OCR → LLM</td><td class="n mono">123</td><td class="n mono">0.108</td><td class="n mono">0.024</td></tr>
+          <tr><td>HebVL-1.6</td><td class="n mono">131</td><td class="n mono">0.083</td><td class="n mono">0.010</td></tr>
+          <tr><td>GPT-5.6 Sol</td><td class="n mono">131</td><td class="n mono">0.034</td><td class="n mono">0.000</td></tr>
+          <tr><td>Qwen3-VL-8B base</td><td class="n mono">131</td><td class="n mono">0.010</td><td class="n mono">0.000</td></tr>
+        </tbody>
+      </table>
+      <div class="caption">† Added after the paper submission (August–September 2026 checkpoints); same 131 fragments, same scorer.</div>
+      <div class="caption">Medians over all outputs, verified benchmark: the paper's systems plus the post-submission checkpoints marked †.</div>
+    </div>
+  </section>
+
+  <section class="limits">
+    <div>
+      <div class="eyebrow">What it does not see</div>
+      <h2>An order-aware score, with an order-aware score's blind spots</h2>
+    </div>
+    <div class="limit-list">
+      <div class="limit"><span class="dot"></span><span><strong>It counts characters, not confusions.</strong> A near-miss letter breaks a matching block but costs only the one character, so alignment is far kinder to systematic letter confusions than the five-gram score, where a single wrong letter takes out five windows. The two metrics disagree on <span class="mono">139</span> outputs where every window broke but half the characters still aligned.</span></div>
+      <div class="limit"><span class="dot"></span><span><strong>On multi-layer pages the reference order is an editor's choice.</strong> Where marginalia, over-writing or an under-text have to be linearised, Tier B F1 measures agreement with that choice, not reading ability. A different but defensible ordering scores as a failure.</span></div>
+      <div class="limit"><span class="dot"></span><span><strong>The medians are over all outputs, abstentions included.</strong> A refusal scores 0 and is averaged in with genuine attempts, so the table above mixes behaviour with accuracy. That is why the paper always pairs it with the behaviour table rather than reading the medians alone.</span></div>
+      <div class="limit"><span class="dot ok"></span><span><strong>Precision alone is never the arbiter.</strong> Of the <span class="mono">139</span> disagreements above, <span class="mono">51</span> are stubs under 15 % of the reference length: high precision, recall near <span class="mono">0.03</span>. High precision on a fragment of a fragment is not a good transcription, and only the recall term says so.</span></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Worked example: Oxford, Bodleian MS heb. a 2/4, Judaeo-Aramaic ketubba formula; the model output is constructed to show both failure types.</span>
+    <span>Alignment as implemented in score_genizah_offline.py (difflib matching blocks); figures from the verified benchmark and the 2026-09 metric audit.</span>
+  </footer>
+</div>
