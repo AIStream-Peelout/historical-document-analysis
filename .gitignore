@@ -48,3 +48,5 @@ article/build/assets_prev_*/
 # column-transcription probe raw cache (crops + per-column decodes)
 src/datasets/evaluations/transcription_raw_outputs_probe_columns/
 .env.bak*
+.claude/worktrees/
+.claude/settings.local.json
