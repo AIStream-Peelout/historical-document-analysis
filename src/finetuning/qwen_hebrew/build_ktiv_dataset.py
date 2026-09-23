@@ -19,15 +19,24 @@ meant to be the bulk):
 * ``section_transcribe`` — crop of k consecutive lines (native resolution)
   -> those lines; trains the sections inference mode.
 * ``line_transcribe`` — one full-line crop -> its text (small share).
+* ``page_short`` (v4 ``short_fragment`` family) — the page-transcription row
+  (same prompt, target and label source as ``fragment_transcribe``) for
+  transcribed pages under the MIN_LETTERS gate: SHORT_MIN_LETTERS..149
+  letters and a damage share <= SHORT_MAX_DAMAGE_SHARE (see
+  :func:`page_damage_share`).  No other family is emitted for these pages;
+  the task name keeps them in their own ``train_page_short`` hub split.
 
 Gates per page: >= MIN_LETTERS Hebrew letters, gap words <= MAX_GAP_SHARE,
 >= MIN_LINES lines, image present and boxes inside it.  Decontamination:
 manuscripts sharing >= 2 25-letter shingles with any verified-benchmark GT
-are dropped entirely.  Split by manuscript.
+(short-fragment pages included) are dropped entirely.  Split by manuscript;
+``--val-manuscripts <previous build>/val_manuscripts.json`` pins the val set
+across rebuilds (only manuscripts new since then are drawn into val).
 
 Usage (from repo root):
     PYTHONPATH=. python -m src.finetuning.qwen_hebrew.build_ktiv_dataset \\
-        [--limit 0] [--push-to-hub isaacmg/genizah_ktiv_v1]
+        [--limit 0] [--no-short-fragments] [--val-manuscripts PATH] \\
+        [--push-to-hub isaacmg/genizah_ktiv_v1]
 """
 
 import argparse
@@ -42,7 +51,7 @@ import unicodedata
 import zipfile
 from collections import Counter
 from pathlib import Path
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, Iterable, Iterator, List, Optional, Tuple
 
 from datasets import Dataset, DatasetDict, Features, Image, Value
 from PIL import Image as PILImage
@@ -115,6 +124,13 @@ GROUNDED_DETECT_MAX_LINES = 30       # detect-then-read emitted up to this many 
 # page margin vary between examples -> the box can no longer be a page template.
 GROUNDED_CROP_ROWS_PER_PAGE = 1
 GROUNDED_CROP_LINES = (4, 10)        # inclusive range of lines per crop band
+# v4 short_fragment family (decided 2026-09-14): lightly damaged pages under the
+# MIN_LETTERS gate get page-transcription rows only (task ``page_short``).
+# Heavily damaged short pages stay out: their targets are mostly guesswork.
+SHORT_MIN_LETTERS = 40
+SHORT_MAX_DAMAGE_SHARE = 0.30
+SHORT_MIN_LINES = 1
+DAMAGE_MARK_CHARS = ".·…[](){}<>⟨⟩"  # illegible-letter dots and editorial brackets
 
 FEATURES = Features({
     "image": Image(),
@@ -338,6 +354,91 @@ def page_gate(page: Dict) -> Optional[str]:
     total = page["n_words"] + page["n_gaps"]
     if total and page["n_gaps"] / total > MAX_GAP_SHARE:
         return "too_many_gaps"
+    return None
+
+
+def page_damage_share(text: str) -> float:
+    """Share of a page's tokens that are damaged or editorially restored.
+
+    A token counts as damaged when it is the gap token or contains any of
+    :data:`DAMAGE_MARK_CHARS` (dots for illegible letters, brackets for
+    restorations); each token counts once however many marks it carries.
+
+    :param text: Reconstructed page text (whitespace-separated tokens).
+    :type text: str
+    :return: Damaged tokens / all tokens; 1.0 for a page without tokens.
+    :rtype: float
+    """
+    tokens = text.split()
+    if not tokens:
+        return 1.0
+    damaged = sum(1 for tok in tokens
+                  if tok == GAP_TOKEN or any(ch in tok for ch in DAMAGE_MARK_CHARS))
+    return damaged / len(tokens)
+
+
+def short_fragment_reason(page_letters: int, damage_share: float,
+                          n_lines: int) -> Optional[str]:
+    """Return why a page is not a short fragment, or None when it is one.
+
+    The family covers pages under the MIN_LETTERS gate only; pages at or
+    above it belong to ``fragment_transcribe`` (``"not_short"``).
+
+    :param page_letters: Hebrew letters on the page.
+    :type page_letters: int
+    :param damage_share: Output of :func:`page_damage_share`.
+    :type damage_share: float
+    :param n_lines: Reconstructed lines on the page.
+    :type n_lines: int
+    :return: ``"not_short"``, ``"too_few_letters"``, ``"too_few_lines"``,
+        ``"too_damaged"`` or None.
+    :rtype: Optional[str]
+    """
+    if page_letters >= MIN_LETTERS:
+        return "not_short"
+    if page_letters < SHORT_MIN_LETTERS:
+        return "too_few_letters"
+    if n_lines < SHORT_MIN_LINES:
+        return "too_few_lines"
+    if damage_share > SHORT_MAX_DAMAGE_SHARE:
+        return "too_damaged"
+    return None
+
+
+def short_fragment_gate(page_letters: int, damage_share: float, n_lines: int) -> bool:
+    """Whether a page under the MIN_LETTERS gate earns a ``page_short`` row.
+
+    :param page_letters: Hebrew letters on the page.
+    :type page_letters: int
+    :param damage_share: Output of :func:`page_damage_share`.
+    :type damage_share: float
+    :param n_lines: Reconstructed lines on the page.
+    :type n_lines: int
+    :return: True for SHORT_MIN_LETTERS <= letters < MIN_LETTERS, at least
+        SHORT_MIN_LINES lines and damage share <= SHORT_MAX_DAMAGE_SHARE.
+    :rtype: bool
+    """
+    return short_fragment_reason(page_letters, damage_share, n_lines) is None
+
+
+def image_frame_reason(width: int, height: int, lines: List[Dict]) -> Optional[str]:
+    """Reject a page image that is too small or does not contain the page's boxes.
+
+    :param width: Native page image width in pixels.
+    :type width: int
+    :param height: Native page image height in pixels.
+    :type height: int
+    :param lines: Reconstructed lines (``box`` in the native frame).
+    :type lines: List[Dict]
+    :return: ``"image_too_small"``, ``"boxes_out_of_frame"`` (2% slack) or None.
+    :rtype: Optional[str]
+    """
+    if min(width, height) < MIN_IMAGE_SIDE_PX:
+        return "image_too_small"
+    max_x = max(l["box"][2] for l in lines)
+    max_y = max(l["box"][3] for l in lines)
+    if max_x > width * 1.02 or max_y > height * 1.02:
+        return "boxes_out_of_frame"
     return None
 
 
@@ -959,9 +1060,44 @@ def exclude_benchmark_manuscripts(bundles: List[dict],
     return kept, dict(excl)
 
 
+def short_fragment_row(page: Dict, im: PILImage.Image, ms_dir: Path, fl: str,
+                       stem: str) -> Dict:
+    """Save a short fragment's page image and build its ``page_short`` row.
+
+    Same prompt, target, label source and page-image handling as the
+    ``fragment_transcribe`` row; only the task (``page_short``) and section
+    (``page``) differ, so the notebook can weight the family on its own.
+
+    :param page: Reconstructed page that passed :func:`short_fragment_gate`.
+    :type page: Dict
+    :param im: Native page image (already frame-checked).
+    :type im: PILImage.Image
+    :param ms_dir: Manuscript image directory (page JPEG is saved here).
+    :type ms_dir: Path
+    :param fl: Page image id (filename component).
+    :type fl: str
+    :param stem: Row stem (``ktiv_<sys_num>_<fl>``).
+    :type stem: str
+    :return: One dataset row.
+    :rtype: Dict
+    """
+    page_im, _ = scaled_copy(im, MAX_PAGE_PIXELS)
+    page_path = ms_dir / f"{fl}.jpg"
+    if not page_path.exists():
+        page_im.save(page_path, "JPEG", quality=90)
+    return _row(page_path, FRAGMENT_TRANSCRIBE_PROMPT, page["text"], "page_short",
+                "page", stem, page_im.width, page_im.height)
+
+
 def build_rows(bundles: List[dict], ktiv_dir: Path, images_dir: Path,
-               shingles: set, rng: random.Random, limit: int = 0) -> Tuple[List[Dict], Dict]:
+               shingles: set, rng: random.Random, limit: int = 0,
+               short_fragments: bool = True) -> Tuple[List[Dict], Dict]:
     """Process bundles into dataset rows plus a stats dict.
+
+    Short-fragment pages (see :func:`short_fragment_gate`) take part in the
+    manuscript-level decontamination like any other page but draw nothing
+    from ``rng``, so every other family's sampling is identical with and
+    without them.
 
     :param bundles: API-shape bundles.
     :type bundles: List[dict]
@@ -975,48 +1111,65 @@ def build_rows(bundles: List[dict], ktiv_dir: Path, images_dir: Path,
     :type rng: random.Random
     :param limit: Max manuscripts (0 = all).
     :type limit: int
+    :param short_fragments: Emit the ``page_short`` family.
+    :type short_fragments: bool
     :return: (rows, stats).
     :rtype: Tuple[List[Dict], Dict]
     """
     stats = Counter()
     rows: List[Dict] = []
     contaminated: List[str] = []
+    short_ms = set()
     for i, doc in enumerate(bundles):
         if limit and i >= limit:
             break
         sys_num = doc["sys_num"]
         pages = []
+        shorts = []
         for p in doc.get("pages") or []:
             items = ((p.get("annotation_page") or {}).get("items")) or []
             page = reconstruct_page(items)
             reason = page_gate(page) if page["lines"] else "empty"
             stats[f"page_{reason or 'pass'}"] += 1
+            if reason == "too_few_letters" and short_fragments:
+                short_reason = short_fragment_reason(
+                    hebrew_letters(page["text"]), page_damage_share(page["text"]),
+                    len(page["lines"]))
+                stats[f"page_short_{short_reason or 'pass'}"] += 1
+                if short_reason is None:
+                    shorts.append((p.get("fl") or "", page))
             if reason:
                 continue
             pages.append((p.get("fl") or "", page, items))
-        if not pages:
+        if not pages and not shorts:
             continue
-        # Decontamination at manuscript level.
-        if shingles and any(shingle_hits(pg["text"], shingles) >= DECONTAM_MIN_HITS
-                            for _, pg, _i in pages):
+        # Decontamination at manuscript level; short pages count like any other.
+        normal_hit = bool(shingles) and any(
+            shingle_hits(pg["text"], shingles) >= DECONTAM_MIN_HITS for _, pg, _i in pages)
+        short_hit = bool(shingles) and any(
+            shingle_hits(pg["text"], shingles) >= DECONTAM_MIN_HITS for _, pg in shorts)
+        if normal_hit or short_hit:
             contaminated.append(sys_num)
-            stats["ms_contaminated"] += 1
+            if pages:
+                stats["ms_contaminated"] += 1
+                if not normal_hit:
+                    stats["ms_contaminated_by_short"] += 1
+            else:
+                stats["ms_short_only_contaminated"] += 1
+            if shorts:
+                stats["page_short_contaminated"] += len(shorts)
             continue
-        stats["ms_kept"] += 1
+        stats["ms_kept" if pages else "ms_short_only"] += 1
         for fl, page, items in pages:
             found = find_zip_member(ktiv_dir, sys_num, fl)
             if not found:
                 stats["page_no_image"] += 1
                 continue
             im = load_page_image(*found)
-            if min(im.width, im.height) < MIN_IMAGE_SIDE_PX:
-                stats["page_image_too_small"] += 1
-                continue
-            # Sanity: boxes must lie inside the image frame (2% slack).
-            max_x = max(l["box"][2] for l in page["lines"])
-            max_y = max(l["box"][3] for l in page["lines"])
-            if max_x > im.width * 1.02 or max_y > im.height * 1.02:
-                stats["page_boxes_out_of_frame"] += 1
+            # Sanity: image big enough, boxes inside its frame (2% slack).
+            frame = image_frame_reason(im.width, im.height, page["lines"])
+            if frame:
+                stats[f"page_{frame}"] += 1
                 continue
             stem = f"ktiv_{sys_num}_{fl}"
             ms_dir = images_dir / sys_num
@@ -1092,15 +1245,110 @@ def build_rows(bundles: List[dict], ktiv_dir: Path, images_dir: Path,
                                  "line_transcribe", "line", f"{stem}_line{j}",
                                  crop.width, crop.height))
                 stats["rows_line"] += 1
+        for fl, page in shorts:
+            found = find_zip_member(ktiv_dir, sys_num, fl)
+            if not found:
+                stats["page_short_no_image"] += 1
+                continue
+            im = load_page_image(*found)
+            frame = image_frame_reason(im.width, im.height, page["lines"])
+            if frame:
+                stats[f"page_short_{frame}"] += 1
+                continue
+            ms_dir = images_dir / sys_num
+            ms_dir.mkdir(parents=True, exist_ok=True)
+            rows.append(short_fragment_row(page, im, ms_dir, fl, f"ktiv_{sys_num}_{fl}"))
+            stats["rows_page_short"] += 1
+            short_ms.add(sys_num)
         if (i + 1) % 50 == 0:
             logger.info("processed %d manuscripts, %d rows", i + 1, len(rows))
     stats = {k: v for k, v in stats.items() if not k.startswith("_")}
+    if short_fragments:
+        stats["ms_page_short"] = len(short_ms)
     stats["contaminated_sys_nums"] = contaminated
     return rows, stats
 
 
-def split_by_manuscript(rows: List[Dict], val_fraction: float, seed: int) -> Tuple[List[Dict], List[Dict]]:
+def stem_manuscript(stem: str) -> str:
+    """Manuscript sys_num of a row stem (``ktiv_<sys_num>_<fl>...``).
+
+    :param stem: Row stem.
+    :type stem: str
+    :return: The sys_num.
+    :rtype: str
+    """
+    return stem.split("_")[1]
+
+
+def load_val_pin(path: Path) -> Tuple[set, Optional[set]]:
+    """Read a val-manuscript pin file.
+
+    Accepts a JSON list of sys_nums (exactly those go to val, everything else
+    to train) or the object a build writes to ``val_manuscripts.json``:
+    ``{"val_manuscripts": [...], "known_manuscripts": [...], ...}``, where
+    ``known_manuscripts`` lists every manuscript of the build the pin came
+    from, so manuscripts outside it are new and can be drawn into val.
+
+    :param path: Pin file.
+    :type path: Path
+    :return: (pinned val sys_nums, known sys_nums or None).
+    :rtype: Tuple[set, Optional[set]]
+    """
+    data = json.loads(Path(path).read_text())
+    if isinstance(data, list):
+        return {str(s) for s in data}, None
+    known = data.get("known_manuscripts")
+    return ({str(s) for s in data["val_manuscripts"]},
+            None if known is None else {str(s) for s in known})
+
+
+def choose_val_manuscripts(manuscripts: Iterable[str], val_fraction: float, seed: int,
+                           pinned: Optional[set] = None,
+                           known: Optional[set] = None) -> set:
+    """Pick the validation manuscripts.
+
+    Without a pin, a seeded shuffle of all manuscripts takes ``val_fraction``
+    (the historical rule; any change to the manuscript set reshuffles it).
+    With a pin, the pinned manuscripts that are present form val, every
+    ``known`` manuscript outside the pin stays in train, and a seeded
+    ``val_fraction`` of the manuscripts new relative to ``known`` joins val,
+    so a rebuild never moves a manuscript between splits.
+
+    :param manuscripts: sys_nums present in this build (duplicates allowed).
+    :type manuscripts: Iterable[str]
+    :param val_fraction: Fraction of (new) manuscripts for validation.
+    :type val_fraction: float
+    :param seed: RNG seed.
+    :type seed: int
+    :param pinned: sys_nums forced into val, or None for the unpinned rule.
+    :type pinned: Optional[set]
+    :param known: Manuscripts of the build the pin came from; None = no
+        manuscript counts as new (the pin is the whole val set).
+    :type known: Optional[set]
+    :return: Validation sys_nums.
+    :rtype: set
+    """
+    ms = sorted(set(manuscripts))
+    if pinned is None:
+        rng = random.Random(seed)
+        rng.shuffle(ms)
+        return set(ms[:max(1, int(len(ms) * val_fraction))])
+    val = {m for m in ms if m in pinned}
+    new = [m for m in ms if known is not None and m not in known and m not in pinned]
+    if new:
+        rng = random.Random(seed)
+        rng.shuffle(new)
+        val.update(new[:max(1, int(len(new) * val_fraction))])
+    return val
+
+
+def split_by_manuscript(rows: List[Dict], val_fraction: float, seed: int,
+                        pinned: Optional[set] = None,
+                        known: Optional[set] = None) -> Tuple[List[Dict], List[Dict]]:
     """Split rows into train/val by manuscript so no page leaks across.
+
+    All rows of a manuscript (every family, ``page_short`` included) land in
+    the same split; see :func:`choose_val_manuscripts` for the val rule.
 
     :param rows: Dataset rows (stem starts with ``ktiv_<sys_num>_``).
     :type rows: List[Dict]
@@ -1108,22 +1356,45 @@ def split_by_manuscript(rows: List[Dict], val_fraction: float, seed: int) -> Tup
     :type val_fraction: float
     :param seed: RNG seed.
     :type seed: int
+    :param pinned: sys_nums forced into val (``--val-manuscripts``), or None.
+    :type pinned: Optional[set]
+    :param known: Manuscripts of the pin's source build, or None.
+    :type known: Optional[set]
     :return: (train rows, val rows).
     :rtype: Tuple[List[Dict], List[Dict]]
     """
-    ms = sorted({r["stem"].split("_")[1] for r in rows})
-    rng = random.Random(seed)
-    rng.shuffle(ms)
-    n_val = max(1, int(len(ms) * val_fraction))
-    val_ms = set(ms[:n_val])
-    train = [r for r in rows if r["stem"].split("_")[1] not in val_ms]
-    val = [r for r in rows if r["stem"].split("_")[1] in val_ms]
+    val_ms = choose_val_manuscripts((stem_manuscript(r["stem"]) for r in rows),
+                                    val_fraction, seed, pinned, known)
+    train = [r for r in rows if stem_manuscript(r["stem"]) not in val_ms]
+    val = [r for r in rows if stem_manuscript(r["stem"]) in val_ms]
     return train, val
 
 
+def val_pin_record(train: List[Dict], val: List[Dict], provenance: Dict) -> Dict:
+    """The ``val_manuscripts.json`` a build writes, usable as its successor's pin.
+
+    :param train: Train rows.
+    :type train: List[Dict]
+    :param val: Val rows.
+    :type val: List[Dict]
+    :param provenance: How this val set was chosen.
+    :type provenance: Dict
+    :return: ``{"val_manuscripts", "known_manuscripts", "provenance"}``.
+    :rtype: Dict
+    """
+    val_ms = {stem_manuscript(r["stem"]) for r in val}
+    known = val_ms | {stem_manuscript(r["stem"]) for r in train}
+    return {"val_manuscripts": sorted(val_ms), "known_manuscripts": sorted(known),
+            "provenance": provenance}
+
+
 def build(ktiv_dir: Path, images_dir: Path, output_dir: Path, limit: int = 0,
-          push_to_hub: Optional[str] = None) -> DatasetDict:
+          push_to_hub: Optional[str] = None, short_fragments: bool = True,
+          val_manuscripts: Optional[Path] = None) -> DatasetDict:
     """Build, save and optionally push the dataset.
+
+    Always writes ``output_dir/val_manuscripts.json`` (val + all manuscripts),
+    which the next rebuild passes as ``val_manuscripts`` to keep the split.
 
     :param ktiv_dir: KTIV raw directory.
     :type ktiv_dir: Path
@@ -1135,26 +1406,53 @@ def build(ktiv_dir: Path, images_dir: Path, output_dir: Path, limit: int = 0,
     :type limit: int
     :param push_to_hub: Private hub repo id, or None.
     :type push_to_hub: Optional[str]
+    :param short_fragments: Emit the ``page_short`` family.
+    :type short_fragments: bool
+    :param val_manuscripts: Val pin file (see :func:`load_val_pin`), or None
+        for the historical seeded shuffle.
+    :type val_manuscripts: Optional[Path]
     :return: The DatasetDict.
     :rtype: DatasetDict
+    :raises ValueError: When the pin leaves the val split empty.
     """
+    pinned, known = load_val_pin(val_manuscripts) if val_manuscripts else (None, None)
     bundles = load_bundles(ktiv_dir)
     logger.info("API-shape bundles: %d", len(bundles))
     bundles, excl = exclude_benchmark_manuscripts(bundles, ktiv_dir)
     logger.info("benchmark exclusions: %s", excl)
+    logger.info("short_fragment family: %s", "on" if short_fragments else "off")
     shingles = benchmark_shingles(BENCH_PATH) | benchmark_shingles(RELIGIOUS_BENCH_PATH)
     rows, stats = build_rows(bundles, ktiv_dir, images_dir, shingles,
-                             random.Random(SPLIT_SEED), limit)
+                             random.Random(SPLIT_SEED), limit, short_fragments)
     stats["benchmark_exclusions"] = excl
-    train, val = split_by_manuscript(rows, VAL_FRACTION, SPLIT_SEED)
+    train, val = split_by_manuscript(rows, VAL_FRACTION, SPLIT_SEED, pinned, known)
+    if pinned is not None:
+        present = {stem_manuscript(r["stem"]) for r in rows}
+        new = present - (known or set()) - pinned if known is not None else set()
+        stats["val_pin"] = {
+            "file": str(val_manuscripts), "pinned": len(pinned),
+            "pinned_present": len(pinned & present), "new_manuscripts": len(new),
+            "new_drawn_to_val": len({stem_manuscript(r["stem"]) for r in val} & new)}
+        logger.info("val pin: %s", stats["val_pin"])
+        if not val:
+            raise ValueError(f"val pin {val_manuscripts} matches no manuscript of this build")
     stats.update(n_rows=len(rows), n_train=len(train), n_val=len(val),
                  letters_page_rows=sum(hebrew_letters(r["answer"]) for r in rows
                                        if r["task"] == "fragment_transcribe"))
+    if short_fragments:
+        stats["letters_page_short_rows"] = sum(hebrew_letters(r["answer"]) for r in rows
+                                               if r["task"] == "page_short")
     logger.info("stats: %s", json.dumps({k: v for k, v in stats.items()
                                         if k != "contaminated_sys_nums"}, indent=1))
     output_dir.mkdir(parents=True, exist_ok=True)
     with open(output_dir / "stats.json", "w") as fh:
         json.dump(stats, fh, indent=2)
+    rule = ("pinned: val = pinned manuscripts present + seeded val_fraction of new ones"
+            if pinned is not None else "seeded shuffle of all manuscripts")
+    with open(output_dir / "val_manuscripts.json", "w") as fh:
+        json.dump(val_pin_record(train, val, {
+            "rule": rule, "pin_file": str(val_manuscripts) if val_manuscripts else None,
+            "seed": SPLIT_SEED, "val_fraction": VAL_FRACTION}), fh, indent=1)
     dsd = DatasetDict({
         "train": Dataset.from_list(train, features=FEATURES),
         "val": Dataset.from_list(val, features=FEATURES),
@@ -1180,8 +1478,17 @@ def main() -> None:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--push-to-hub", default=None)
+    parser.add_argument("--short-fragments", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="emit the page_short family for lightly damaged pages "
+                             "under the MIN_LETTERS gate (default: on)")
+    parser.add_argument("--val-manuscripts", type=Path, default=None,
+                        help="pin the val split: a JSON list of sys_nums, or a previous "
+                             "build's val_manuscripts.json (its val stays val, its other "
+                             "manuscripts stay train, VAL_FRACTION of new ones join val)")
     args = parser.parse_args()
-    build(args.ktiv_dir, args.images_dir, args.output_dir, args.limit, args.push_to_hub)
+    build(args.ktiv_dir, args.images_dir, args.output_dir, args.limit, args.push_to_hub,
+          args.short_fragments, args.val_manuscripts)
 
 
 if __name__ == "__main__":
