@@ -30,7 +30,7 @@ mkdir -p "$DATA/models"
 run() {  # run <suffix> <cmd...> : one capped container, workdir = the export root
     local cname="kraken-train-${NAME}-$1"
     docker rm -f "$cname" >/dev/null 2>&1 || true
-    docker run --name "$cname" --cpus "$CPUS" --memory "$MEM" --shm-size "$SHM" \
+    docker run --name "$cname" --cpus "$CPUS" --memory "$MEM" --shm-size "$SHM" --log-opt max-size=50m --log-opt max-file=2 \
         -e OMP_NUM_THREADS="$WORKERS" -e PYTHONUNBUFFERED=1 \
         -v "$NAS_ROOT:/nas" -v "$MODELS:/app/models:ro" -w "/nas/$DATA_DIR" \
         "$IMAGE" "${@:2}" || true
@@ -61,7 +61,7 @@ if [[ $STAGE == compile || $STAGE == both ]]; then
             echo "$(date '+%F %T') compile $split part $idx ($(wc -l < "$part" | tr -d ' ') lines) -> arrow/${split}_part_${idx}.arrow"
             local_cname="kraken-train-${NAME}-compile-${split}-${idx}"
             docker rm -f "$local_cname" >/dev/null 2>&1 || true
-            docker run --name "$local_cname" --cpus "$CPUS" --memory "$MEM" -e PYTHONUNBUFFERED=1 \
+            docker run --name "$local_cname" --cpus "$CPUS" --memory "$MEM" --log-opt max-size=50m --log-opt max-file=2 -e PYTHONUNBUFFERED=1 \
                 -v "$STAGE_DIR/data:/data" -v "$NAS_ROOT:/nas" -w /data "$IMAGE" \
                 ketos compile -f path --force-type baseline --workers "$WORKERS" -F list.txt \
                 -o "/nas/$DATA_DIR/arrow/${split}_part_${idx}.arrow" 2>&1 | tee -a "$DATA/models/compile_$split.log" | grep -E "Output file|Error|Too many" || true
