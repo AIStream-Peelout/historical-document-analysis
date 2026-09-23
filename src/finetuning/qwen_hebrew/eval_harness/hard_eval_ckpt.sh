@@ -68,6 +68,14 @@ assert cfg['min_pixels'] == 6_500_000 and cfg['max_pixels'] == 7_000_000, cfg
 print('preprocessor OK')"
 rm -rf "$LMS_DIR"; mkdir -p ~/.lmstudio/models/isaacmg
 cp -c -R "$MLX_LOCAL" "$LMS_DIR"
+# LM Studio re-indexes ~/.lmstudio/models on its own schedule; under load the new
+# folder can take minutes to appear and lite_eval.py asserts it is served
+# (step 1500 on 2026-09-16 failed this way). Wait for the index, up to 5 min.
+for i in {1..60}; do
+  curl -s -m 5 http://localhost:1234/v1/models | grep -q "\"$NAME\"" && { echo "LM Studio indexed $NAME after $((i*5))s"; break; }
+  sleep 5
+done
+curl -s -m 5 http://localhost:1234/v1/models | grep -q "\"$NAME\"" || echo "WARN: $NAME still not listed by LM Studio after 5 min"
 
 if [ "$MODE" = "stage" ]; then
   echo "=== staged only (no eval, no cleanup) $(date) ==="; exit 0
