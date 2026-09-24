@@ -68,6 +68,17 @@ _OXFORD_TAIL_RE = re.compile(
 )
 
 
+# KTIV spells British Library marks with the location head but no "Ms."
+# delimiter ("The British Library, London, England Or. 10110.23"), so
+# :meth:`ShelfmarkNormalizer._strip_institution` leaves the head in place. The
+# head is replaced by PGP's "BL" prefix so the core matches PGP "BL OR 10110.23".
+_KTIV_BL_HEAD_RE = re.compile(
+    r"^\s*(?:The\s+)?British\s+(?:Library|Museum)\s*,[^,]*,\s*England\s+"
+    r"(?:Ms\.?\s+)?(?P<core>\S.*)$",
+    re.IGNORECASE,
+)
+
+
 class OxfordShelfmark(NamedTuple):
     """A Bodleian shelfmark reduced to its physical parts.
 
@@ -510,6 +521,9 @@ class ShelfmarkNormalizer(EntityNormalizer):
             'T_S_AS_18_170'
             ShelfmarkNormalizer.to_canonical_id('Oxford: MS heb. e.34/6')
             'Bodl_MS_heb_e_34_6'
+            ShelfmarkNormalizer.to_canonical_id(
+                'The British Library, London, England Or. 10110.23')
+            'BL_Or_10110_23'
         """
         if not shelfmark:
             return ""
@@ -521,6 +535,13 @@ class ShelfmarkNormalizer(EntityNormalizer):
         # Unicode-normalise, unify the various dash characters to ASCII '-' and
         # drop parentheticals ("(shelfmark unknown)", "(Alt: 1)") wholesale.
         canonical = ShelfmarkNormalizer._clean(shelfmark)
+
+        # British Library, KTIV spelling: swap the "The British Library, London,
+        # England" head for PGP's "BL" prefix ("… England Or. 10110.23" ->
+        # "BL Or. 10110.23" -> BL_Or_10110_23, as PGP "BL OR 10110.23").
+        bl_head = _KTIV_BL_HEAD_RE.match(canonical)
+        if bl_head:
+            canonical = "BL " + bl_head.group("core")
 
         # John Rylands Library, Manchester. PGP uses "JRL <series>" while FJP and
         # KTIV write "Manchester[:] <series>"; both name the same fragments
