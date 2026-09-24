@@ -23,7 +23,12 @@ Each line's ``bbox`` is the evidence box (VLM box ∪ its Kraken fragments);
 is a ``--rematch`` (seconds per page) rather than a re-read, and a better Kraken
 model is a ``--rekraken`` (one Kraken read per image, no LM Studio): its
 fragments are cached under ``frags_by_htr[<key>]`` beside the original reader's
-``frags`` and the records are rebuilt from the cached VLM lines.
+``frags`` and the records are rebuilt from the cached VLM lines.  A Kraken
+service swap that keeps the recognition model (new kraken version or
+segmenter) is a ``--htr-cache-key KEY`` run: the raw cache files that run's
+``frags`` under ``htr_model = KEY`` and every record carries
+``ai_read.htr_cache_key = KEY`` (``htr_model`` stays the model's name), the
+layout ``stamp_htr_cache_key.py`` gives reads made before the option existed.
 ``parsed`` is True when the VLM reply was a JSON array with at least one
 valid line object (a truncated array still counts; prose or nothing does
 not).  Sequential on purpose (LM Studio must see one request at a time),
@@ -36,6 +41,7 @@ recorded, so a re-run retries them.
 Usage (repo root; long runs under nohup):
     .venv/bin/python -m src.datasets.consensus.two_reader_lines --from-consensus high
     .venv/bin/python -m src.datasets.consensus.two_reader_lines --ids jobs.jsonl --limit 50
+    .venv/bin/python -m src.datasets.consensus.two_reader_lines --ids jobs.jsonl --htr-cache-key MiDRASH_Gen_01@k7.0.3-blla2026
     .venv/bin/python -m src.datasets.consensus.two_reader_lines --rekraken --kraken-model NEW.mlmodel
 """
 import argparse
@@ -454,14 +460,24 @@ async def stage1(job: Dict[str, Any], work_dir: Path) -> Dict[str, Any]:
 
 
 async def stage2(job: Dict[str, Any], info: Dict[str, Any], source_index: str, vlm_model: str,
-                 vlm_revision: str) -> Optional[Dict[str, Any]]:
+                 vlm_revision: str, htr_cache_key: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """VLM-read the prepared image, match, and build the loader record (GPU side).
 
+    With ``htr_cache_key`` the fragments are filed under that key exactly as
+    ``stamp_htr_cache_key.py`` files an earlier read after the fact: the raw-cache
+    entry keeps them as its top-level ``frags`` and its ``htr_model`` names the key
+    (so :func:`cached_frags` answers them for the key and no longer for
+    :data:`HTR_MODEL_NAME`), and the record's ``ai_read`` gets ``htr_cache_key``
+    after ``lines`` while ``ai_read.htr_model`` stays the recognition model's name,
+    as :func:`rebuild_record` stamps a ``--rekraken --kraken-cache-suffix`` record
+    (so ``--rematch`` and a same-key ``--rekraken`` find the fragments again).
     :param job: The job.
     :param info: Output of :func:`stage1` (no ``failure``).
     :param source_index: Reference merged index stamped into the record.
     :param vlm_model: LM Studio key.
     :param vlm_revision: Checkpoint revision string.
+    :param htr_cache_key: HTR cache key of ``info['frags']`` (``--htr-cache-key``); None writes exactly what this
+        function wrote before the option existed, as does :data:`HTR_MODEL_NAME` (the default key).
     :returns: The record, or None (``info['failure']`` set) when LM Studio failed.
     """
     t0 = time.time()
@@ -475,9 +491,11 @@ async def stage2(job: Dict[str, Any], info: Dict[str, Any], source_index: str, v
     raw_cache_path(job, vlm_model, for_write=True).write_text(json.dumps(dict(
         doc_id=job["doc_id"], image_index=job["image_index"], image_url=job["image_url"],
         width=info["width"], height=info["height"], sha256=info["sha256"], vlm_model=vlm_model,
-        vlm_raw=raw, vlm_lines=vlm_lines, parsed=parsed, frags=info["frags"], htr_model=HTR_MODEL_NAME),
-        ensure_ascii=False))
+        vlm_raw=raw, vlm_lines=vlm_lines, parsed=parsed, frags=info["frags"],
+        htr_model=htr_cache_key or HTR_MODEL_NAME), ensure_ascii=False))
     ai_read = sidecar(vlm_lines, info["frags"], parsed, vlm_model, vlm_revision)
+    if htr_cache_key and htr_cache_key != ai_read["htr_model"]:
+        ai_read["htr_cache_key"] = htr_cache_key      # how --rematch finds these fragments again
     info.update(n_frag=len(info["frags"]), n_lines=ai_read["n_lines"], n_agreed=ai_read["n_agreed"], parsed=parsed)
     return {
         "doc_id": job["doc_id"], "source_index": source_index, "image_index": job["image_index"],
@@ -913,9 +931,40 @@ def done_keys(out: Path) -> set:
     return keys
 
 
+def htr_cache_key_error(args: argparse.Namespace) -> Optional[str]:
+    """Why ``--htr-cache-key`` cannot go with the mode given, or None when it can (or is not given).
+
+    The key stamps the normal read path only; the rewrite modes keep their own key handling.
+    :param args: Parsed CLI arguments.
+    :returns: The error message for ``ap.error``, or None.
+    """
+    if not getattr(args, "htr_cache_key", None):
+        return None
+    reasons = {"--rekraken": "names its fragments with --kraken-cache-suffix",
+               "--rematch": "matches each record against the fragments of its own key",
+               "--restamp": "reads no fragments"}
+    given = [f for f, on in (("--rekraken", args.rekraken), ("--rematch", args.rematch),
+                             ("--restamp", args.restamp)) if on]
+    if not given:
+        return None
+    return "--htr-cache-key is for normal runs: " + "; ".join(f"{f} {reasons[f]}" for f in given)
+
+
 async def main_async(args: argparse.Namespace) -> None:
     """Resolve jobs, run them sequentially, append records (or run one of the rewrite modes).
 
+    ``args.htr_cache_key`` (``--htr-cache-key``) files the run's fragments under
+    that key (see :func:`stage2`); without it nothing differs from before the
+    option existed.  Cache semantics under a key, consistent with ``--rekraken``
+    (where fragments cached under another key never count as the key's: those
+    pages are re-read): this path reads no fragments back from the raw cache,
+    so every job not yet in ``--out`` is Kraken-read afresh and its entry is
+    rewritten under the key, even when the entry held legacy
+    (``MiDRASH_Gen_01``) fragments; a job already in ``--out`` is skipped
+    whatever its key (the resume is by ``(doc_id, image_index)`` only, since
+    records are only ever appended), and its record keeps the stamp of the
+    reader that made it (a legacy one is neither re-read nor relabelled; to
+    re-read it under the key run ``--rekraken --kraken-cache-suffix KEY``).
     :param args: Parsed CLI arguments.
     """
     if args.rekraken:                 # raw cache + Kraken only: no Elasticsearch, no LM Studio
@@ -946,8 +995,10 @@ async def main_async(args: argparse.Namespace) -> None:
     todo = [j for j in jobs if (j["doc_id"], j["image_index"]) not in done]
     if args.limit:
         todo = todo[:args.limit]
+    htr_cache_key = getattr(args, "htr_cache_key", None)
+    key_note = f" htr_cache_key={htr_cache_key}" if htr_cache_key else ""
     print(f"{len(jobs)} jobs resolved against {source_index}; {len(done)} done; {len(todo)} to run; "
-          f"vlm={args.vlm_model} rule={RULE_VERSION}", flush=True)
+          f"vlm={args.vlm_model} rule={RULE_VERSION}{key_note}", flush=True)
     def log_failure(info: Dict[str, Any]) -> None:
         with failures.open("a") as fh:
             fh.write(json.dumps({k: v for k, v in info.items() if k not in ("path", "frags")}, ensure_ascii=False) + "\n")
@@ -964,7 +1015,8 @@ async def main_async(args: argparse.Namespace) -> None:
         pending = asyncio.create_task(stage1(todo[n], work_dir)) if n < len(todo) else None
         record = None
         if "failure" not in info:
-            record = await stage2(job, info, source_index, args.vlm_model, args.vlm_revision)
+            record = await stage2(job, info, source_index, args.vlm_model, args.vlm_revision,
+                                  htr_cache_key=htr_cache_key)
         if not args.keep_images and info.get("path"):
             Path(info["path"]).unlink(missing_ok=True)
         if record is None:
@@ -1018,6 +1070,12 @@ if __name__ == "__main__":
     ap.add_argument("--site-env", default=str(SITE_ENV), help="website .env for ES credentials")
     ap.add_argument("--vlm-model", default=VLM_MODEL)
     ap.add_argument("--vlm-revision", default=VLM_REVISION)
+    ap.add_argument("--htr-cache-key", default=None, metavar="KEY",
+                    help=f"normal runs: file this run's Kraken fragments under KEY (raw-cache htr_model = KEY, "
+                         f"records' ai_read.htr_cache_key = KEY, ai_read.htr_model stays {HTR_MODEL_NAME}), the "
+                         f"layout stamp_htr_cache_key.py gives earlier reads; for a Kraken service swap (kraken "
+                         f"version, segmenter) that keeps the recognition model, e.g. "
+                         f"{HTR_MODEL_NAME}@k7.0.3-blla2026. Jobs already in --out are skipped whatever their key")
     ap.add_argument("--min-free-gb", type=float, default=5.0)
     ap.add_argument("--no-resolve", action="store_true",
                     help="trust image_index/image_url (and optional local_path) in --ids as given; skip the index lookup")
@@ -1030,6 +1088,9 @@ if __name__ == "__main__":
                                     ("--force", a.force), ("--raw-dir", a.raw_dir)) if v]
     if rekraken_only and not a.rekraken:
         ap.error(f"{', '.join(rekraken_only)}: --rekraken options only")
+    key_error = htr_cache_key_error(a)
+    if key_error:
+        ap.error(key_error)
     if a.rekraken and (a.from_consensus or a.ids or a.restamp or a.rematch):
         ap.error("--rekraken re-reads the records in --out (or the raw cache): no jobs, no other mode")
     if a.rekraken and not (a.all_cache or Path(a.out).exists()):
