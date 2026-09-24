@@ -4,8 +4,26 @@
     {
       "name": "grounding-viewer",
       "runtimeExecutable": "python3",
-      "runtimeArgs": ["-m", "http.server", "8765", "--directory", "src/datasets/evaluations/grounding_eval/viewer"],
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8765",
+        "--directory",
+        "src/datasets/evaluations/grounding_eval/viewer"
+      ],
       "port": 8765
+    },
+    {
+      "name": "qa-review",
+      "runtimeExecutable": "python3",
+      "runtimeArgs": [
+        "-m",
+        "http.server",
+        "8766",
+        "--directory",
+        "/Volumes/home/studio_offload/datasets/pgp_qa_v1"
+      ],
+      "port": 8766
     }
   ]
 }
