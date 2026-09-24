@@ -18,7 +18,8 @@ from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer 
     ("T-S 10J5.6", "T_S_10J5_6"),
     ("Cambridge CUL: T-S 10J5.6", "T_S_10J5_6"),
     ("New York JTS: ENA 4020.50", "ENA_4020_50"),
-    ("Oxford: MS heb. b.18/2", "MS_heb_b_18_2"),
+    # Oxford spellings take the PGP-style core (see test_oxford_canonical_ids).
+    ("Oxford: MS heb. b.18/2", "Bodl_MS_heb_b_18_2"),
     ("Cambridge University Library, Cambridge, England Ms. T-S 20.113", "T_S_20_113"),
 ])
 def test_institution_prefixes_stripped(raw, expected):

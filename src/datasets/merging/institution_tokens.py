@@ -25,11 +25,20 @@ from typing import List, Optional, Tuple
 
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
 
+OXFORD_TOKEN = "Oxford_Bodleian"
+
 # (descriptive token, [recognition substrings — lowercased]). Order matters:
 # more specific entries first, because some institution strings are substrings
 # of others (e.g. "Cambridge Lewis-Gibson" and "Cambridge Mosseri" both contain
 # "cambridge", so they must be tested before the generic "Cambridge_CUL").
+# Libraries whose own Hebrew shelfmarks read "Ms. Heb. …" (NLI, BnF "hebr.",
+# Harvard) are tested before Oxford; the bare "ms heb" needle is not here at
+# all but in :data:`_FALLBACK_REGISTRY`, so it only decides when nothing else
+# is named. ("jerusalem" / "bibliothèque nationale" are deliberately NOT
+# needles: they would capture the Schocken / Ben Zvi / private Jerusalem
+# collections and Strasbourg's "Bibliothèque Nationale et Universitaire".)
 _REGISTRY: List[Tuple[str, List[str]]] = [
+    ("Harvard",                ["harvard", "houghton"]),
     ("Cambridge_Lewis_Gibson", ["lewis-gibson", "lewis gibson", "l-g", "cul & bodl"]),
     ("Cambridge_Mosseri",      ["mosseri", "moss."]),
     ("Cambridge_CUL",          ["cambridge cul", "cambridge university library",
@@ -38,9 +47,12 @@ _REGISTRY: List[Tuple[str, List[str]]] = [
     ("New_York_JTS",           ["jewish theological", "new york jts", "elkan", "ena", "jts"]),
     ("New_York_Columbia",      ["columbia"]),
     ("New_York_JewishMuseum",  ["jewish museum"]),
-    ("Oxford_Bodleian",        ["bodleian", "bodl", "oxford", "ms heb", "ms. heb"]),
+    ("Jerusalem_NLI",          ["national library of israel", "jerusalem nli", "nli"]),
+    ("Paris_BNF",              ["bibliothèque nationale de france",
+                                "bibliotheque nationale de france",
+                                "national library of france", "paris bnf", "bnf"]),
+    (OXFORD_TOKEN,             ["bodleian", "bodl", "oxford"]),
     ("Paris_AIU",              ["alliance", "paris aiu", "aiu"]),
-    ("Paris_BNF",              ["bibliothèque nationale de france", "paris bnf", "bnf"]),
     ("London_BL",              ["british library", "british museum", "london bl"]),
     ("StPetersburg_NLR",       ["national library of russia", "russian national",
                                 "st. petersburg", "st petersburg", "yevr", "rnl", "nlr"]),
@@ -49,7 +61,6 @@ _REGISTRY: List[Tuple[str, List[str]]] = [
     ("Cincinnati_HUC",         ["hebrew union", "cincinnati", "huc"]),
     ("Philadelphia_CAJS",      ["katz center", "penn cajs", "cajs", "halper",
                                 "university of pennsylvania", "upenn", "dropsie", "penn"]),
-    ("Jerusalem_NLI",          ["national library of israel", "jerusalem nli", "nli"]),
     ("Berlin_JCB",             ["jewish community of berlin"]),
     ("Berlin_SBB",             ["state library of berlin", "staatsbibliothek", "smb",
                                 "staatliche museen"]),
@@ -70,6 +81,12 @@ _REGISTRY: List[Tuple[str, List[str]]] = [
     ("Reinach",                ["reinach"]),
 ]
 
+# Consulted only when no :data:`_REGISTRY` entry matches: a bare "MS heb." with
+# no institution named is the Bodleian's shelfmark style.
+_FALLBACK_REGISTRY: List[Tuple[str, List[str]]] = [
+    (OXFORD_TOKEN,             ["ms heb", "ms. heb"]),
+]
+
 
 def resolve_token(text: Optional[str]) -> Optional[str]:
     """Map an institution / collection string to its descriptive token.
@@ -82,9 +99,10 @@ def resolve_token(text: Optional[str]) -> Optional[str]:
     if not text:
         return None
     low = text.lower()
-    for token, needles in _REGISTRY:
-        if any(n in low for n in needles):
-            return token
+    for registry in (_REGISTRY, _FALLBACK_REGISTRY):
+        for token, needles in registry:
+            if any(n in low for n in needles):
+                return token
     return None
 
 
