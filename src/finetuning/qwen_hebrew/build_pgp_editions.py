@@ -1730,6 +1730,32 @@ def evaluate_page(ed: ParsedEdition, reader: Reader, nulls: Sequence[Reader],
     return tests, dec, (None if reason else ans), reason or ""
 
 
+def drop_duplicate_side_photos(results: Sequence[PageResult]) -> int:
+    """Keep one page per photographed side of a document.
+
+    Some served image lists hold two photographs of the same side (a library image and a
+    PGP/FJP copy), which pass the side rule with identical answers. A later page (by image index)
+    is dropped with reason ``duplicate_side_photo`` when its image bytes hash equals, or its kept
+    lines are identical to, those of an earlier included page of the SAME document.
+
+    :param results: Evaluated pages; included ones (empty ``reason``) are updated in place.
+    :returns: Number of pages dropped.
+    """
+    seen_sha: Dict[str, Set[str]] = collections.defaultdict(set)
+    seen_lines: Dict[str, Set[Tuple[str, ...]]] = collections.defaultdict(set)
+    dropped = 0
+    for r in sorted((r for r in results if not r.reason), key=lambda r: (r.pgpid, r.image_index)):
+        lines = tuple(r.answer.lines)
+        if (r.sha256 and r.sha256 in seen_sha[r.pgpid]) or lines in seen_lines[r.pgpid]:
+            r.reason = "duplicate_side_photo"
+            dropped += 1
+            continue
+        if r.sha256:
+            seen_sha[r.pgpid].add(r.sha256)
+        seen_lines[r.pgpid].add(lines)
+    return dropped
+
+
 def rows_for_page(res: PageResult, img: Dict[str, Any], image_path: Path) -> List[Tuple[str, Dict[str, Any]]]:
     """All rows of one included page.
 
@@ -1918,7 +1944,11 @@ def build(out_dir: Path, images_dir: Path, inputs_dir: Path, served_path: Path, 
             if r.reason:
                 reasons["included"] -= 1
                 reasons[r.reason] += 1
-        included = [r for r in results if not r.reason]
+    n_duplicate = drop_duplicate_side_photos(results)
+    if n_duplicate:
+        reasons["included"] -= n_duplicate
+        reasons["duplicate_side_photo"] += n_duplicate
+    included = [r for r in results if not r.reason]
 
     split_rows: Dict[str, List[Dict[str, Any]]] = {f"train_{f}": [] for f in FAMILIES}
     split_rows["val"] = []
@@ -1967,6 +1997,7 @@ def build(out_dir: Path, images_dir: Path, inputs_dir: Path, served_path: Path, 
         "documents_trained_before": sum(d.trained for d in eligible.values()),
         "val_documents": sum(1 for p in eligible if splits[p] == "val"),
         "pages_evaluated": len(results), "page_outcomes": dict(reasons),
+        "pages_dropped_duplicate_side_photo": n_duplicate,
         "pages_included_by_split": dict(collections.Counter(r.split for r in included)),
         "pages_included_labelled": sum(parsed[r.pgpid].labelled for r in included),
         "rows_by_family": dict(fam_counts), "rows_by_split": {k: len(v) for k, v in split_rows.items()},

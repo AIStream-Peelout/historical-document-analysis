@@ -491,3 +491,42 @@ def test_benchmark_overlap_containment():
     assert cont == 1.0 and bid == "b"
     total, cont, _ = B.benchmark_overlap(" ".join(UNRELATED) + " " + RECTO[0], bench)
     assert 0 < total and cont < B.SHINGLE_CONTAINMENT
+
+
+# --------------------------------------------------------------------------- duplicate side photos
+
+
+def _page(pgpid: str, idx: int, sha: str, lines: List[str]) -> B.PageResult:
+    """An included page result.
+
+    :param pgpid: Document.
+    :param idx: Image index.
+    :param sha: Image bytes hash.
+    :param lines: Kept answer lines.
+    :returns: Page result.
+    """
+    ans = B.Answer(list(lines), ["main"] * len(lines), [True] * len(lines), [frozenset()] * len(lines), [0])
+    return B.PageResult(pgpid, f"C{pgpid}", idx, f"u{idx}", sha, "train", B.PageDecision(True), [], ans)
+
+
+def test_duplicate_photo_same_hash_is_dropped():
+    """Two pages of one document with the same image bytes: the later one is dropped."""
+    pages = [_page("1", 0, "aa", RECTO), _page("1", 2, "aa", RECTO[:4])]
+    assert B.drop_duplicate_side_photos(pages) == 1
+    assert [p.reason for p in pages] == ["", "duplicate_side_photo"]
+
+
+def test_duplicate_photo_same_lines_different_hash_is_dropped():
+    """Different photographs, identical kept lines: only the first page is kept."""
+    pages = [_page("1", 2, "bb", RECTO), _page("1", 0, "aa", RECTO)]
+    assert B.drop_duplicate_side_photos(pages) == 1
+    assert pages[1].reason == "" and pages[0].reason == "duplicate_side_photo"
+
+
+def test_distinct_pages_and_other_documents_are_kept():
+    """Different sides of a document, or the same bytes in two documents, are not duplicates."""
+    pages = [_page("1", 0, "aa", RECTO), _page("1", 1, "bb", VERSO), _page("2", 0, "aa", RECTO)]
+    dropped = _page("3", 0, "cc", RECTO)
+    dropped.reason = "side_incomplete"
+    assert B.drop_duplicate_side_photos(pages + [dropped]) == 0
+    assert [p.reason for p in pages] == ["", "", ""] and dropped.reason == "side_incomplete"
