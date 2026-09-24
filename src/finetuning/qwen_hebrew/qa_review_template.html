@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Genizah QA Review</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Frank+Ruhl+Libre:wght@400;500;700&display=swap">
+<style>
+:root{--ground:#F1F2EF;--surface:#FFFFFF;--ink:#1E2422;--muted:#647069;--rule:#D9DDD9;--accent:#0F7A84;--accent-ink:#FFFFFF;--hl:#FFE58A;--hl-ink:#3A2E00;--wrong:#B3261E;--ok:#2E7D32;--unsure:#8A6D00;--box:rgba(15,122,132,.85);--box-fill:rgba(15,122,132,.12);--chip:#E6EEED}
+@media (prefers-color-scheme: dark){:root:not([data-theme="light"]){color-scheme:dark;--ground:#141719;--surface:#1D2124;--ink:#E9ECEA;--muted:#98A39E;--rule:#30373A;--accent:#4CC2CC;--accent-ink:#0B1F22;--hl:#5C4B00;--hl-ink:#FFF1B8;--wrong:#F28B82;--ok:#81C995;--unsure:#E3B341;--box:rgba(76,194,204,.9);--box-fill:rgba(76,194,204,.14);--chip:#25333A}}
+:root[data-theme="dark"]{color-scheme:dark;--ground:#141719;--surface:#1D2124;--ink:#E9ECEA;--muted:#98A39E;--rule:#30373A;--accent:#4CC2CC;--accent-ink:#0B1F22;--hl:#5C4B00;--hl-ink:#FFF1B8;--wrong:#F28B82;--ok:#81C995;--unsure:#E3B341;--box:rgba(76,194,204,.9);--box-fill:rgba(76,194,204,.14);--chip:#25333A}
+body{background:var(--ground);color:var(--ink);font-family:"IBM Plex Sans",-apple-system,"Segoe UI",Roboto,sans-serif;font-size:15px;line-height:1.45;margin:0}
+.wrap{padding-inline:16px;padding-block:0 32px;max-width:1500px;margin:0 auto}
+.bar{position:sticky;top:env(safe-area-inset-top,0px);z-index:5;background:var(--ground);border-bottom:1px solid var(--rule);padding-block:10px;display:flex;flex-wrap:wrap;gap:8px 14px;align-items:center}
+.bar h1{font-size:16px;font-weight:600;margin:0 8px 0 0;letter-spacing:.01em}
+.bar select,.bar button,.bar label{font:inherit;font-size:14px}
+.bar select{padding:5px 8px;border:1px solid var(--rule);border-radius:6px;background:var(--surface);color:var(--ink)}
+button{font:inherit;font-size:14px;padding:6px 12px;border-radius:6px;border:1px solid var(--rule);background:var(--surface);color:var(--ink);cursor:pointer}
+button:focus-visible,select:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+button.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent)}
+button.v-wrong{border-color:var(--wrong);color:var(--wrong)} button.v-ok{border-color:var(--ok);color:var(--ok)} button.v-unsure{border-color:var(--unsure);color:var(--unsure)}
+button.active.v-wrong{background:var(--wrong);color:#fff} button.active.v-ok{background:var(--ok);color:#fff} button.active.v-unsure{background:var(--unsure);color:#fff}
+.count{font-variant-numeric:tabular-nums;color:var(--muted)}
+.grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:20px;margin-top:16px}
+@media (max-width:900px){.grid{grid-template-columns:1fr}}
+.pane{background:var(--surface);border:1px solid var(--rule);border-radius:8px;padding:14px;min-width:0}
+.imgwrap{position:relative;max-width:100%;line-height:0}
+.imgwrap img{width:100%;height:auto;display:block;border-radius:4px}
+.box{position:absolute;border:2px solid var(--box);background:var(--box-fill);border-radius:2px;box-shadow:0 0 0 2px rgba(255,255,255,.35)}
+.strip{position:relative;overflow:hidden;border:1px solid var(--rule);border-radius:4px;margin-top:10px;background:#000}
+.strip img{position:absolute;left:0;width:100%;display:block}
+.eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 6px}
+.q{margin:0 0 10px;font-size:15px}
+.ans{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace;font-size:13px;background:var(--chip);padding:8px 10px;border-radius:6px;white-space:pre-wrap;word-break:break-word;direction:ltr}
+.ans .he{font-family:"Frank Ruhl Libre","Arial Hebrew","Times New Roman",serif;font-size:16px;direction:rtl;unicode-bidi:isolate}
+.lines{position:relative;direction:rtl;font-family:"Frank Ruhl Libre","Arial Hebrew","Times New Roman",serif;font-size:17px;line-height:1.6;margin:0;padding:0;list-style:none;max-height:52vh;overflow:auto;border:1px solid var(--rule);border-radius:6px}
+.lines li{display:flex;gap:10px;padding:2px 8px;border-bottom:1px solid var(--rule)}
+.lines li:last-child{border-bottom:0}
+.lines .n{font-family:"IBM Plex Mono",monospace;font-size:11px;color:var(--muted);min-width:2.2em;text-align:left;direction:ltr;padding-top:5px;font-variant-numeric:tabular-nums}
+.lines li.hit{background:var(--hl);color:var(--hl-ink)}
+.lines li.near{background:color-mix(in srgb,var(--hl) 35%,transparent)}
+.meta{font-size:13px;color:var(--muted);display:flex;flex-wrap:wrap;gap:6px 14px;margin:0 0 10px}
+.meta b{color:var(--ink);font-weight:500}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 0}
+.chip{background:var(--chip);border-radius:999px;padding:2px 10px;font-size:12px}
+.ev{font-family:"IBM Plex Mono",monospace;font-size:12px;color:var(--muted);white-space:pre-wrap;word-break:break-word;margin:8px 0 0}
+.verdicts{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px;align-items:center}
+.kbd{font-family:"IBM Plex Mono",monospace;font-size:11px;background:var(--chip);border-radius:4px;padding:1px 5px}
+.toast{position:fixed;bottom:calc(16px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);background:var(--ink);color:var(--ground);padding:8px 14px;border-radius:6px;font-size:13px;opacity:0;transition:opacity .2s}
+.toast.show{opacity:1}
+@media (prefers-reduced-motion: reduce){.toast{transition:none}}
+.summary{font-size:13px;color:var(--muted);margin:10px 0 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="bar">
+    <h1>Genizah QA Review</h1>
+    <label for="fam">Family <select id="fam"><option value="">all</option></select></label>
+    <label for="flt">Show <select id="flt"><option value="all">all rows</option><option value="unreviewed">unreviewed</option><option value="wrong">marked wrong</option><option value="unsure">marked unsure</option></select></label>
+    <span class="count" id="count"></span>
+    <button id="prev" title="previous (k or ←)">◀ Prev</button>
+    <button id="next" class="primary" title="next (j or →)">Next ▶</button>
+    <button id="export" title="copies all verdicts as JSON">Copy verdicts</button>
+    <span class="count" id="tally"></span>
+  </div>
+  <div class="grid">
+    <div class="pane">
+      <p class="meta" id="meta"></p>
+      <div class="imgwrap" id="imgwrap"><img id="img" alt="manuscript page"></div>
+      <p class="eyebrow" style="margin-top:10px">Answer line on the image <span id="boxsrc"></span></p>
+      <div class="strip" id="strip"><img id="stripimg" alt=""></div>
+    </div>
+    <div class="pane">
+      <p class="eyebrow">Question</p>
+      <p class="q" id="q"></p>
+      <p class="eyebrow">Target answer</p>
+      <div class="ans" id="a"></div>
+      <div class="verdicts">
+        <button class="v-ok" data-v="ok" title="g">Good</button>
+        <button class="v-wrong" data-v="wrong" title="w">Wrong</button>
+        <button class="v-unsure" data-v="unsure" title="u">Unsure</button>
+        <span class="count">keys: <span class="kbd">g</span> <span class="kbd">w</span> <span class="kbd">u</span> · <span class="kbd">j</span>/<span class="kbd">k</span> next/prev</span>
+      </div>
+      <p class="eyebrow" style="margin-top:14px">Page transcription (answer line highlighted)</p>
+      <ul class="lines" id="lines"></ul>
+      <p class="eyebrow" style="margin-top:12px">Validation evidence from PGP</p>
+      <pre class="ev" id="ev"></pre>
+      <div class="chips" id="chips"></div>
+      <p class="summary" id="summary"></p>
+    </div>
+  </div>
+</div>
+<div class="toast" id="toast"></div>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+(function(){
+  const rows = JSON.parse(document.getElementById('data').textContent);
+  const $ = id => document.getElementById(id);
+  const KEY='genizah-qa-verdicts-v1';
+  let verdicts = {}; try { verdicts = JSON.parse(localStorage.getItem(KEY)||'{}')||{}; } catch(e){ verdicts = {}; }
+  function save(){ try { localStorage.setItem(KEY, JSON.stringify(verdicts)); } catch(e){} }
+  const fams = [...new Set(rows.map(r=>r.family))].sort();
+  for (const f of fams){ const o=document.createElement('option'); o.value=f; o.textContent=f+' ('+rows.filter(r=>r.family===f).length+')'; $('fam').appendChild(o); }
+  let view = rows.slice(), i = 0;
+  function applyFilter(){
+    const f=$('fam').value, m=$('flt').value;
+    view = rows.filter(r => (!f || r.family===f) && (m==='all' || (m==='unreviewed' ? !verdicts[r.id] : verdicts[r.id]===m)));
+    i = Math.min(i, Math.max(0, view.length-1)); render();
+  }
+  function esc(s){ return String(s).replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  function fmtAnswer(a){
+    if (Array.isArray(a)) return a.map(x=>'{"line": '+x.line+', "text": "<span class=he>'+esc(x.text||'')+'</span>"}').join(',\n');
+    if (a && typeof a==='object' && 'line' in a) return '{"line": '+a.line+', "text": "<span class=he>'+esc(a.text||'')+'</span>"}';
+    return esc(JSON.stringify(a));
+  }
+  function targetLines(r){
+    const a=r.answer; if (Array.isArray(a)) return a.map(x=>x.line); if (a && typeof a==='object' && 'line' in a) return [a.line]; return [];
+  }
+  function render(){
+    const r = view[i];
+    $('count').textContent = view.length ? (i+1)+' / '+view.length : '0 / 0';
+    const t = Object.values(verdicts); $('tally').textContent = 'reviewed '+t.length+' · wrong '+t.filter(v=>v==='wrong').length+' · unsure '+t.filter(v=>v==='unsure').length;
+    if (!r){ $('q').textContent='No rows match this filter.'; $('a').textContent=''; $('lines').innerHTML=''; $('img').removeAttribute('src'); return; }
+    $('meta').innerHTML = '<span><b>'+esc(r.family)+'</b></span><span>'+esc(r.doc)+' · image '+r.image_index_label+'</span><span>PGP '+esc(r.pgpid)+'</span><span>'+esc(r.split)+'</span><span>'+(r.side?('side: '+esc(r.side)):'')+'</span>';
+    $('img').src = r.img;
+    const wrap=$('imgwrap'); wrap.querySelectorAll('.box').forEach(b=>b.remove());
+    for (const b of r.boxes){ const d=document.createElement('div'); d.className='box'; d.style.left=(b.box[0]/10)+'%'; d.style.top=(b.box[1]/10)+'%'; d.style.width=((b.box[2]-b.box[0])/10)+'%'; d.style.height=((b.box[3]-b.box[1])/10)+'%'; wrap.appendChild(d); }
+    $('boxsrc').textContent = r.boxes.length ? '· from '+r.boxes.map(b=>b.src+' ('+b.sim+')').join(', ') : '· no reader box for this line';
+    const strip=$('strip'), simg=$('stripimg');
+    if (r.boxes.length){ strip.hidden=false; simg.src=r.img; const b=r.boxes[0].box; const pad=Math.max(12, (b[3]-b[1])*1.2);
+      const y1=Math.max(0,b[1]-pad)/1000, y2=Math.min(1000,b[3]+pad)/1000;
+      const place=()=>{ const W=strip.clientWidth; const H=W*r.h/r.w; strip.style.height=Math.max(60,(y2-y1)*H)+'px'; simg.style.top=(-y1*H)+'px'; };
+      simg.onload=place; place();
+    } else { strip.hidden=true; }
+    $('q').textContent = r.question;
+    $('a').innerHTML = fmtAnswer(r.answer);
+    const tl = new Set(targetLines(r)); const ul=$('lines'); ul.innerHTML='';
+    r.lines.forEach((ln,k)=>{ const li=document.createElement('li'); const n=k+1; if (tl.has(n)) li.className='hit'; else if ([...tl].some(x=>Math.abs(x-n)===1)) li.className='near'; li.innerHTML='<span class=n>'+n+'</span><span>'+esc(ln)+'</span>'; ul.appendChild(li); });
+    const hit=ul.querySelector('.hit'); if (hit) ul.scrollTop=Math.max(0, hit.offsetTop-ul.clientHeight/2+hit.offsetHeight/2);
+    $('ev').textContent = r.evidence ? JSON.stringify(r.evidence, null, 1) : '(none)';
+    $('chips').innerHTML = (r.source?'<span class=chip>edition: '+esc(r.source).slice(0,90)+'</span>':'') + '<span class=chip>'+r.lines.length+' lines</span>';
+    document.querySelectorAll('.verdicts button[data-v]').forEach(b=>b.classList.toggle('active', verdicts[r.id]===b.dataset.v));
+    $('summary').textContent = 'row id '+r.id;
+  }
+  function setVerdict(v){ const r=view[i]; if(!r) return; if (verdicts[r.id]===v) delete verdicts[r.id]; else verdicts[r.id]=v; save(); render(); }
+  $('next').onclick=()=>{ if(i<view.length-1){i++;render();} };
+  $('prev').onclick=()=>{ if(i>0){i--;render();} };
+  $('fam').onchange=()=>{i=0;applyFilter();}; $('flt').onchange=()=>{i=0;applyFilter();};
+  document.querySelectorAll('.verdicts button[data-v]').forEach(b=>b.onclick=()=>setVerdict(b.dataset.v));
+  function toast(m){ const t=$('toast'); t.textContent=m; t.classList.add('show'); setTimeout(()=>t.classList.remove('show'),1800); }
+  $('export').onclick=()=>{ const out={reviewed:Object.keys(verdicts).length, verdicts:verdicts, wrong:Object.keys(verdicts).filter(k=>verdicts[k]==='wrong'), unsure:Object.keys(verdicts).filter(k=>verdicts[k]==='unsure')}; const s=JSON.stringify(out,null,1);
+    const fb=()=>{ const ta=document.createElement('textarea'); ta.value=s; document.body.appendChild(ta); ta.select(); toast('Select-all and copy the text box'); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(s).then(()=>toast('Verdicts copied ('+out.reviewed+' rows)')).catch(fb); else fb(); };
+  document.addEventListener('keydown', e=>{ if (e.target.tagName==='SELECT'||e.target.tagName==='TEXTAREA'||e.target.tagName==='INPUT') return;
+    if (e.key==='j'||e.key==='ArrowRight'){ $('next').click(); } else if (e.key==='k'||e.key==='ArrowLeft'){ $('prev').click(); }
+    else if (e.key==='g') setVerdict('ok'); else if (e.key==='w') setVerdict('wrong'); else if (e.key==='u') setVerdict('unsure'); });
+  window.addEventListener('resize', ()=>{ const r=view[i]; if (r && r.boxes.length) { const ev=new Event('load'); $('stripimg').dispatchEvent(ev);} });
+  rows.forEach(r=>{ r.image_index_label = String(r.img.split('/').pop()); });
+  applyFilter();
+})();
+</script>
+</body>
+</html>
