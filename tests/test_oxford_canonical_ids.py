@@ -192,8 +192,10 @@ def test_non_oxford_pgp_ids_unchanged(institution, shelfmark, current_id):
 def test_pgp_source_ids_match_current_merge():
     """Every PGP id (Oxford in PGP's own style, and every non-Oxford id) is a current id.
 
-    Only Oxford rows written off PGP's house style ("Bodl. MS Heb.", "Bodl. Ms",
-    "Bod.", a letter glued to its volume) change, to the case-folded PGP style.
+    Holds for a merge_state built before or after the Oxford canonical-id change:
+    before it, only Oxford rows written off PGP's house style ("Bodl. MS Heb.",
+    "Bodl. Ms", "Bod.", a letter glued to its volume) are missing, because they are
+    renamed to the case-folded PGP style; after it, there are no exceptions at all.
     """
     with open(_MERGE_STATE, encoding="utf-8") as fh:
         current = set(json.load(fh)["all_ids"])
@@ -209,7 +211,6 @@ def test_pgp_source_ids_match_current_merge():
             elif cid not in current:
                 exceptions.append(row["shelfmark"])
     assert non_oxford > 30000
-    assert exceptions, "the PGP off-style rows are expected to be renamed"
     for shelfmark in exceptions:
         assert not shelfmark.startswith(("Bodl. MS heb. ", "Bodl. MS Arab. ")), shelfmark
         assert _pgp(shelfmark).startswith(("Oxford_Bodleian_Bodl_MS_heb_",

@@ -55,6 +55,7 @@ from src.datasets.document_models.genizah_normalizer import (  # noqa: E402
     ShelfmarkNormalizer,
 )
 from src.datasets.merging.institution_tokens import (  # noqa: E402
+    BL_TOKEN,
     OXFORD_TOKEN,
     combine,
     institution_token,
@@ -565,6 +566,81 @@ def ktiv_leaf_note(doc: dict) -> Optional[str]:
     return None
 
 
+# KTIV files an item whose present location is unknown under the placeholder
+# shelf mark "Unknown Library" (no core at all), so every such item would share
+# the id ``Unknown_Library`` and all but the richest would be dropped. The
+# former owner's shelfmark is kept in ``shelfmarks.additional``, e.g.
+# "Sassoon, David Solomon, London, England Ms. 524".
+KTIV_UNKNOWN_LIBRARY = "unknown library"
+_KTIV_MS_DELIM_RE = re.compile(r"\sMs\.\s+")
+
+
+def ktiv_former_owner_mark(doc: dict) -> Optional[str]:
+    """Return the single former-owner shelfmark of a KTIV "Unknown Library" item.
+
+    :param doc: Parsed KTIV manuscript JSON.
+    :returns: ``shelfmarks.additional`` when it holds exactly one KTIV-style
+        ``"<Owner>, <City>, <Country> Ms. <core>"`` shelfmark, else ``None``
+        (absent, or several owners such as ``"Shapira, … Ms. 1* Benayahu, …
+        Ms. TEU 91"``, where which one to key on is a curatorial choice).
+    """
+    additional = (doc.get("shelfmarks") or {}).get("additional")
+    if not isinstance(additional, str):
+        return None
+    additional = additional.strip()
+    parts = _KTIV_MS_DELIM_RE.split(additional)
+    if len(parts) != 2 or "," not in parts[0]:
+        return None
+    return additional
+
+
+def ktiv_unknown_library_cid(doc: dict, mark: str) -> str:
+    """Return the canonical id of a KTIV item filed under "Unknown Library".
+
+    The item is keyed by its former-owner shelfmark (:func:`ktiv_former_owner_mark`)
+    when there is exactly one, else per item as ``Unknown_Library__sys<sys_num>``
+    (the placeholder names no physical item, so items must not share an id).
+
+    :param doc: Parsed KTIV manuscript JSON.
+    :param mark: The placeholder shelf mark (``"Unknown Library"``).
+    :returns: The canonical id.
+    """
+    former = ktiv_former_owner_mark(doc)
+    if former:
+        return ktiv_mark_cid(doc, former)[0]
+    placeholder = institution_token(mark)
+    sys_num = str(doc.get("sys_num") or "").strip()
+    return f"{placeholder}__sys{sys_num}" if sys_num else placeholder
+
+
+# A British Library core naming only a volume or folder, no leaf: "BL_Or_10129",
+# "BL_Or_5557C", "BL_Add_27002" (a leaf reads "BL_Or_10110_23"). The "BL_"
+# prefix is absent when a join page's head gave no "England" location.
+_BL_VOLUME_ONLY_RE = re.compile(r"^(?:BL_)?[A-Za-z]+_\d+[A-Za-z]?$")
+
+
+def ktiv_bl_volume_cid(doc: dict, core: str) -> Optional[str]:
+    """Return the per-item id of a KTIV British Library mark that names no leaf.
+
+    KTIV catalogues single BL fragments under the bare volume or folder
+    (``Or. 10124``, ``Or. 5557C``), so distinct items share the mark (Or. 10124,
+    10843 and 12292 each hold two) and all but the richest would be dropped.
+    Keyed plainly, the mark can also equal a PGP historic alias that points at
+    specific leaves (PGP ``BL OR 10129`` → ``BL OR 10129.1–25``, a Zohar, while
+    KTIV's ``Or. 10129`` is a deed fragment), joining two different items. So,
+    like a volume-only Bodleian mark, it is keyed per item.
+
+    :param doc: Parsed KTIV manuscript JSON.
+    :param core: The mark's normalised core (:meth:`ShelfmarkNormalizer.to_canonical_id`).
+    :returns: ``London_BL_<volume>__sys<sys_num>`` for a volume-only core with a
+        ``sys_num``, else ``None`` (the ordinary id applies).
+    """
+    sys_num = str(doc.get("sys_num") or "").strip()
+    if not sys_num or not _BL_VOLUME_ONLY_RE.match(core):
+        return None
+    return f"{combine(BL_TOKEN, core)}__sys{sys_num}"
+
+
 def ktiv_mark_cid(doc: dict, mark: str) -> Tuple[str, Optional[str]]:
     """Return the canonical id of one KTIV shelfmark constituent (ENA bridge aside).
 
@@ -572,7 +648,10 @@ def ktiv_mark_cid(doc: dict, mark: str) -> Tuple[str, Optional[str]]:
     volume, and several distinct KTIV items share it; keyed plainly they would
     collapse into one id and all but the richest would be dropped. Such a mark
     takes its leaf from the MARC ``Shelfmark Range: From leaf X`` note when
-    present, else it is keyed per item as ``<volume id>__sys<sys_num>``.
+    present, else it is keyed per item as ``<volume id>__sys<sys_num>``. A
+    British Library mark naming no leaf is keyed per item the same way
+    (:func:`ktiv_bl_volume_cid`; not listed as ``volume_resolution``). The
+    ``"Unknown Library"`` placeholder is keyed by :func:`ktiv_unknown_library_cid`.
 
     :param doc: Parsed KTIV manuscript JSON.
     :param mark: One full KTIV shelfmark string (institution head included).
@@ -581,11 +660,16 @@ def ktiv_mark_cid(doc: dict, mark: str) -> Tuple[str, Optional[str]]:
         mark, else ``"leaf_note"``, ``"sys_num"`` or ``"unresolved"`` (no note
         and no ``sys_num``: the volume id is kept).
     """
+    if mark.strip().lower() == KTIV_UNKNOWN_LIBRARY:
+        return ktiv_unknown_library_cid(doc, mark), None
     core = ShelfmarkNormalizer.to_canonical_id(mark)
     if not core:
         return "", None
     # The KTIV shelf_mark head names the holding library; resolve from it.
     token = resolve_token(mark) or institution_token(mark)
+    bl_volume = ktiv_bl_volume_cid(doc, core) if token == BL_TOKEN else None
+    if bl_volume:
+        return bl_volume, None
     oxford = ShelfmarkNormalizer.parse_oxford(mark) if token == OXFORD_TOKEN else None
     if oxford is None or oxford.leaf:
         return combine(token, core), None
