@@ -3,10 +3,10 @@
 # Author: Isaac Godfried. Coded originally by Claude Opus 5.5.
 """Unit tests for the extractive PGP QA builder (``build_pgp_qa``).
 
-Every answer must be a verbatim span of one page line (``quote`` asserts it); metadata only
-validates. Covers the month table and date-line detection, the strict person-location rule,
-ketubba name parsing, the party line, abstention eligibility, the per-page and abstention caps
-and the review sample.
+Every answer must be whole token(s) of one page line exactly as written, prefix letters kept
+(``quote`` and the build's emission check raise otherwise); metadata only validates. Covers the
+month table and date-line detection, the strict person-location rule, ketubba name parsing, the
+party line, abstention eligibility, the per-page and abstention caps and the review sample.
 """
 import collections
 import json
@@ -71,11 +71,65 @@ def test_quote_accepts_a_span_of_the_line():
     assert json.loads(Q.quote(LETTER, 2, "יוסף בן יעקב")) == {"line": 2, "text": "יוסף בן יעקב"}
 
 
-@pytest.mark.parametrize("n,text", [(2, "יוסף בר יעקב"), (1, "יוסף בן יעקב"), (9, "יוסף"), (2, "")])
-def test_quote_rejects_non_spans(n, text):
-    """Text not on that line (or an empty/out-of-range answer) violates the extractive contract."""
-    with pytest.raises(AssertionError):
+@pytest.mark.parametrize("n,text,err", [
+    (2, "יוסף בר יעקב", Q.AnswerSpanError),      # not on the line
+    (1, "יוסף בן יעקב", Q.AnswerSpanError),      # on another line
+    (2, "וסף בן יעקב", Q.AnswerSpanError),        # starts inside a word
+    (2, "יוסף בן יעק", Q.AnswerSpanError),        # ends inside a word
+    (3, "אסכנדריה", Q.AnswerSpanError),           # the word without its article
+    (2, "", Q.AnswerSpanError),                   # empty
+    (9, "יוסף", AssertionError),                  # no such line
+])
+def test_quote_rejects_non_spans(n, text, err):
+    """Text not on that line, part of a word, empty or off the page violates the extractive contract."""
+    with pytest.raises(err):
         Q.quote(LETTER, n, text)
+
+
+@pytest.mark.parametrize("text,ok", [
+    ("בדמשק", True), ("דמשק", False),                          # the prefix letter belongs to the token
+    ("כתבתה בדמשק", True), ("אלמחרוסה,", True),                # line start / line end, glued comma kept
+    ("אלמחרוסה", False), ("בדמשק אלמחר", False), ("", False),
+])
+def test_check_whole_tokens(text, ok):
+    """The invariant: the answer sits between whitespace or line ends (``(?:^|\\s)text(?:\\s|$)``)."""
+    line = "כתבתה בדמשק אלמחרוסה, ושלום"
+    if ok:
+        Q.check_whole_tokens(text, line)
+    else:
+        with pytest.raises(Q.AnswerSpanError):
+            Q.check_whole_tokens(text, line)
+
+
+def test_check_answer_raises_on_a_part_of_word_span():
+    """The emission check raises (never skips) on a span that is part of a word, in span and list answers."""
+    lines = ["כתבתה בדמשק אלמחרוסה"]
+    Q.check_answer("qa_place", json.dumps({"line": 1, "text": "בדמשק"}, ensure_ascii=False), lines)
+    Q.check_answer("qa_abstain", json.dumps({"answer": "not stated"}), lines)
+    with pytest.raises(Q.AnswerSpanError):
+        Q.check_answer("qa_place", json.dumps({"line": 1, "text": "דמשק"}, ensure_ascii=False), lines)
+    with pytest.raises(Q.AnswerSpanError):
+        Q.check_answer("qa_parties_list", json.dumps([{"line": 1, "text": "בדמשק"}, {"line": 1, "text": "מחרוסה"}],
+                                                     ensure_ascii=False), lines)
+    with pytest.raises(AssertionError):
+        Q.check_answer("qa_place", json.dumps([]), lines)
+
+
+def test_build_raises_on_a_part_of_word_answer(tmp_path, monkeypatch):
+    """A row whose answer is part of a word stops the build before anything is written."""
+    (tmp_path / "manifest.jsonl").write_text(json.dumps(page(["כתבתה בדמשק אלמחרוסה"]), ensure_ascii=False) + "\n",
+                                             encoding="utf-8")
+    monkeypatch.setattr(Q.inv, "load_people", lambda: ({}, {}))
+    monkeypatch.setattr(Q.inv, "build_name_lexicon", lambda people: set())
+    monkeypatch.setattr(Q, "load_csv_by", lambda path, key: {})
+    monkeypatch.setattr(Q, "load_relations", lambda path, pgpids: {})
+    monkeypatch.setattr(Q, "edition_lines_of", lambda pgpids: {})
+    bad = Q.QARow("qa_place", "written", Q.PLACE_WRITTEN_PROMPT,
+                  json.dumps({"line": 1, "text": "דמשק"}, ensure_ascii=False), 1, priority=Q.PRIORITY["qa_place"])
+    monkeypatch.setattr(Q, "page_candidates", lambda p, c, stats, funnel=None: ([bad], False))
+    with pytest.raises(Q.AnswerSpanError):
+        Q.build(tmp_path, tmp_path / "out")
+    assert not (tmp_path / "out").exists()
 
 
 # --------------------------------------------------------------------------- months / dates
@@ -235,6 +289,28 @@ def test_person_rows_skip_uncertain_and_gapped_lines():
     assert rows == []
 
 
+def test_person_answer_keeps_an_attached_prefix():
+    """A recipient written "ליוסף בן יעקב" is quoted whole, never as "יוסף בן יעקב"."""
+    lines = ["כתאבי אליך יא מולאי", "אלי ליוסף בן יעקב אלצירפי", "ואקרא עליך אפצל אלסלאם"]
+    c = ctx(relations={"1": [rel("Yosef b. Yaʿaqov", "Recipient")]})
+    rows, _ = Q.person_rows(page(lines), c, Q.page_index(lines), collections.Counter())
+    assert json.loads(rows[0].answer) == {"line": 2, "text": "ליוסף בן יעקב"}
+    assert "including any attached prefix letter" in rows[0].question
+
+
+@pytest.mark.parametrize("line,span,expected", [
+    ("אלי ליוסף בן יעקב אלצירפי", "יוסף בן יעקב", "ליוסף בן יעקב"),
+    ("אלי ויוסף בן יעקב, שלום", "יוסף בן יעקב", "ויוסף בן יעקב,"),
+    ("אלי [ו]יוסף בן יעקב", "יוסף בן יעקב", "[ו]יוסף בן יעקב"),
+    ("מע-יוסף בן יעקב", "יוסף בן יעקב", None),                           # a word joined by a hyphen
+    ("אלי יוסף בן יעקבי", "יוסף בן יעקב", None),                          # a longer word
+    ("יוסף בן יעקבי ויוסף בן יעקב", "יוסף בן יעקב", "ויוסף בן יעקב"),     # the clean occurrence
+])
+def test_name_as_written(line, span, expected):
+    """A located span widens to whole tokens over a prefix particle only, never over other letters."""
+    assert Q.name_as_written(line, span) == expected
+
+
 @pytest.mark.parametrize("relation", ["Scribe", "Mentioned", "Mentioned (deceased)"])
 def test_scribe_and_mentioned_are_never_asked(relation):
     """Scribes and mentioned people are not question roles, even when located exactly and unique."""
@@ -330,7 +406,7 @@ def test_review_sample_is_stratified():
 
 
 def test_page_candidates_answers_are_spans():
-    """Every candidate on a synthetic legal page quotes a span of its own line."""
+    """Every candidate on a synthetic legal page quotes whole token(s) of its own line."""
     lines = ["בפנינו אנו החתומים בעשרים יום לירח אדר שנת אתתצט לשטרות",
              "אנא סעדיה בר ישועה מודה אני בפניכם", "וקנינא מנה קנין גמור ושריר וקים"]
     c = ctx(relations={"1": [rel("Saʿadya b. Yeshuʿa", "Party")]},
@@ -339,8 +415,7 @@ def test_page_candidates_answers_are_spans():
     assert {r.family for r in rows} == {"qa_person", "qa_date", "qa_party", "qa_date_month", "qa_date_year"}
     assert not eligible
     for r in rows:
-        for it in Q.answer_items(r.answer):
-            assert it["text"] in lines[it["line"] - 1]
+        Q.check_answer(r.family, r.answer, lines)
 
 
 # --------------------------------------------------------------------------- set-valued roles
@@ -426,6 +501,16 @@ def test_party_list_and_completeness():
     assert rows[0].section == "party_any"
 
 
+def test_list_items_keep_an_attached_prefix():
+    """List items are whole tokens: "ויוסף בר יעקב" keeps its ו."""
+    lines = ["אנא סעדיה בר ישועה ויוסף בר יעקב מודים", "וקנינא מנהון קנין שלם", "ושריר וקים"]
+    c = ctx(relations={"1": [rel("Saʿadya b. Yeshuʿa", "Party"), rel("Yosef b. Yaʿaqov", "Party")]})
+    rows, flags = _set_rows(lines, c, "Party")
+    assert flags["complete"] and [r.family for r in rows] == ["qa_parties_list"]
+    assert [it["text"] for it in json.loads(rows[0].answer)] == ["סעדיה בר ישועה", "ויוסף בר יעקב"]
+    assert "including any attached prefix letter" in rows[0].question
+
+
 def test_witness_completeness_is_per_name():
     """A line holding a listed witness AND an unlisted signature fails (a line-level check would pass)."""
     witnesses = _witness_ctx(["Yosef b. Yaʿaqov", "Shelomo b. Nissim"])
@@ -446,9 +531,11 @@ def test_list_row_counts_as_one_under_the_cap():
 
 
 def test_quote_list_rejects_non_spans():
-    """Every list item must be a span of its own line."""
-    with pytest.raises(AssertionError):
+    """Every list item must be whole token(s) of its own line."""
+    with pytest.raises(Q.AnswerSpanError):
         Q.quote_list(["אב גד", "הו זח"], [(1, "אב"), (2, "אב")])
+    with pytest.raises(Q.AnswerSpanError):
+        Q.quote_list(["אב גד", "והו זח"], [(1, "אב"), (2, "הו")])
 
 
 # --------------------------------------------------------------------------- month / year spans
@@ -501,12 +588,25 @@ def test_year_row_requires_a_pgp_date():
     assert Q.year_row(page(lines), {"doc_date_original": "1499"}, collections.Counter())
 
 
-def test_month_row_quotes_the_standalone_token():
-    """Prefixed month tokens are skipped; an Adar qualifier is part of the month."""
+@pytest.mark.parametrize("line,meta,text", [
+    ("בעשרים יום באדר שנת אתתצט", "Adar 1499", "באדר"),                   # prefix kept
+    ("בעשרה ימים בניסן שנת אתתצט", "10 Nisan 1499", "בניסן"),
+    ("בעשרים יום לחדש אדר שני שנת אתתצט", "Adar II 1499", "אדר שני"),      # Adar qualifier
+    ("בעשרים יום באדר שני שנת אתתצט", "Adar II 1499", "באדר שני"),
+    ("בעשרה ימים לחדש ניסן, שנת אתתצט", "10 Nisan 1499", "ניסן,"),         # glued comma is part of the token
+])
+def test_month_row_quotes_the_whole_token(line, meta, text):
+    """The month is quoted as the whole token as written, with its prefix letter."""
     stats = collections.Counter()
-    assert Q.month_row(page(["בעשרים יום באדר שנת אתתצט"]), {"doc_date_original": "Adar 1499"}, stats) is None
-    r = Q.month_row(page(["בעשרים יום לחדש אדר שני שנת אתתצט"]), {"doc_date_original": "Adar II 1499"}, stats)
-    assert json.loads(r.answer) == {"line": 1, "text": "אדר שני"}
+    r = Q.month_row(page([line]), {"doc_date_original": meta}, stats)
+    assert json.loads(r.answer) == {"line": 1, "text": text} and not stats
+
+
+def test_month_row_skips_a_bracketed_month_token():
+    """A month token with a restoration inside it is not quoted (counted)."""
+    stats = collections.Counter()
+    assert Q.month_row(page(["בעשרים יום [ב]אדר שנת אתתצט"]), {"doc_date_original": "Adar 1499"}, stats) is None
+    assert stats["month_skip_no_standalone_month_token"] == 1
 
 
 @pytest.mark.parametrize("tok,ok", [("התקע׳׳ח", True), ("ד׳תתי״א", True), ("אלפא", True), ("ושלש", True),
@@ -529,6 +629,17 @@ def test_ketubah_names_on_any_line():
     assert got == {"qa_ketubah_groom": {"line": 3, "text": "יפת בר נסים"},
                    "qa_ketubah_bride": {"line": 4, "text": "סת אלדאר בת יצחק"}}
     assert "Who is the groom?" in rows[0].question
+
+
+def test_ketubah_name_keeps_an_attached_prefix():
+    """A bride written "לסת אלדאר בת יצחק" is quoted with its ל."""
+    lines = ["בשני בשבת בעשרים יום לירח אדר", "הוי לי לאנתו כדת משה וישראל", "והודה יפת בר נסים חתנא דנן",
+             "ואקנית לסת אלדאר בת יצחק כלתא"]
+    meta = {"description": "Ketubba of Yefet b. Nissim and Sitt al-Dār bt. Yiṣḥaq."}
+    rows = Q.ketubah_name_rows(page(lines), meta, Q.page_index(lines), collections.Counter())
+    got = {r.family: json.loads(r.answer) for r in rows}
+    assert got["qa_ketubah_bride"] == {"line": 4, "text": "לסת אלדאר בת יצחק"}
+    assert all("including any attached prefix letter" in r.question for r in rows)
 
 
 def test_alhatan_line_is_a_formula_line():
@@ -599,12 +710,23 @@ def _places(lines: List[str], meta: Dict[str, str]) -> List[Q.QARow]:
 
 
 def test_place_written_and_sent():
-    """Location -> "written", destination -> "sent to"; the answer is the name without its prefix."""
+    """Location -> "written", destination -> "sent to"; the answer is the whole token, prefix included."""
     lines = ["וכאן דלך בפסטאט מצרים דעל נילוס נהרא", "ואנפדתה אלי אלאסכנדריה מע אלרסול", "ושריר וקים"]
     rows = _places(lines, {"location": "Fustat", "destination": "Alexandria"})
     got = {r.section: (json.loads(r.answer), r.question.split("?")[0]) for r in rows}
-    assert got["written"] == ({"line": 1, "text": "פסטאט"}, "Where was this document written")
+    assert got["written"] == ({"line": 1, "text": "בפסטאט"}, "Where was this document written")
     assert got["sent"] == ({"line": 2, "text": "אלאסכנדריה"}, "To where was this document sent")
+    assert all("including any attached prefix letter" in r.question for r in rows)
+
+
+@pytest.mark.parametrize("line,text", [
+    ("כתבתה בדמשק אלמחרוסה", "בדמשק"), ("ואצל אלכתאב לדמשק.", "לדמשק."), ("וכתב מדמשק [ו]שלום", "מדמשק"),
+])
+def test_place_answer_is_the_whole_token(line, text):
+    """"בדמשק" is quoted, never "דמשק"; glued punctuation stays with its token."""
+    rows = Q.place_rows(page([line]), {"location": "Damascus"}, {"Damascus": {"name_variants": "דמשק"}},
+                        collections.Counter())
+    assert json.loads(rows[0].answer) == {"line": 1, "text": text}
 
 
 @pytest.mark.parametrize("lines,meta", [

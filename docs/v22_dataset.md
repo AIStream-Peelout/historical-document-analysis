@@ -141,12 +141,15 @@ Next step (not in this build): edition lines aligned to Kraken line segments, wh
 full-page grounded rows on documentary pages.
 
 ### 3.4 `pgp_qa_v1` (`build_pgp_qa.py`, NAS `datasets/pgp_qa_v1`) — IN the mixture (user decision 2026-09-24)
-Every answer is a verbatim span of one line of the page's own transcription (asserted in code and
-tests), returned as `{"line": N, "text": "..."}`. Metadata only validates.
+Every answer is **whole token(s) of one line of the page's own transcription, exactly as written —
+never part of a word**: a place written "בדמשק" is quoted "בדמשק", not "דמשק" (prefix letters and
+glued punctuation stay with their token). It is returned as `{"line": N, "text": "..."}`; the build
+checks every emitted answer against `(?:^|\s)text(?:\s|$)` on its line and raises on a violation
+(tests cover it). Metadata only validates.
 
 | Family | Answer | Validation | Pool measured |
 |---|---|---|---|
-| `qa_person` (sender, recipient, witness, party, validating judge; never scribe, and **not "mentioned"** — dropped after review: many valid answers per page, and the sample's hit was a signatory) | the name as written | PGP relation row located by the romanization inverter, exact token match, tier 1 or kunya+given only; roles with several PGP entries skipped | 1,727 exact of 3,560 rows, 981 docs; ~95% precision on spot checks |
+| `qa_person` (sender, recipient, witness, party, validating judge; never scribe, and **not "mentioned"** — dropped after review: many valid answers per page, and the sample's hit was a signatory) | the name as written, whole tokens (an attached ו/ל/ב … kept) | PGP relation row located by the romanization inverter, exact token match, tier 1 or kunya+given only; roles with several PGP entries skipped | 1,727 exact of 3,560 rows, 981 docs; ~95% precision on spot checks |
 | `qa_date` | the date line | Hebrew month in the line matches PGP `doc_date_original` **and the line carries the year** (a token after שנת/בשנת/משנתינו or the Judaeo-Arabic סנה/סנת, or ליצירה/לשטרות/לבריאת/למניין) | 738 of 1,493 date-line docs |
 | `qa_ketubah_parties` | the formula line naming groom and bride | ≥1 party name located exactly on that line | ~22 docs today (8 with both) |
 | `qa_party` | the acknowledgment line | a Party/Witness relation located on that line | ≤402 docs |
@@ -154,7 +157,7 @@ tests), returned as `{"line": N, "text": "..."}`. Metadata only validates.
 | `qa_abstain` | `{"answer": "not stated"}` | no date line AND no PGP date | ≤10% of QA rows |
 
 Caps: ≤3 QA rows per page image; answer lines with `[...]` skipped; the QA page set is the
-`pgp_editions_v1` page set (side-verified). A 200-row stratified review sample
+`pgp_editions_v1` page set (side-verified). A 250-row stratified review sample
 (`qa_review_sample.md`) is produced for the user as a check; **QA rows are part of the v22 mixture from the start (user decision 2026-09-24; the earlier hold-out was the assistant's conservatism, not a requirement).**
 
 After the QA-relevant block (2026-09-24, 1,022 side-verified pages): **293 rows — 194 `qa_date`, 63
@@ -206,6 +209,20 @@ Review: `qa_review_sample.md` (250 rows, 15 families) and the visual page `qa_re
 (all 929 rows: the page image with the answer line boxed from the Kraken row union at similarity ≥0.5,
 else the VLM line box ≥0.6 — 578 Kraken / 253 VLM / 66 without a box; the transcription with the answer
 line highlighted; good / wrong / unsure marks kept in the browser and exportable as JSON).
+
+**Whole-token answers (rebuild 2026-09-24 19:36, user rule above).** Place, name and month prompts
+now ask for the text "including any attached prefix letter". Places are quoted as the whole token(s)
+matched (prefix included); a located name widens to whole tokens only over a prefix particle (a
+hyphen-joined or longer word would skip the row: 0 such skips); month tokens with a prefix (בניסן,
+לאדר, דאייר) are quoted instead of skipped (a month token with brackets inside is still skipped); the
+year keeps its last token's punctuation. **935 rows** (date 186, month 276, year 121, place 171,
+person 60, witnesses list 18 + line 19, parties list 1 + line 11, party 6, party formula 4, ketubah 4,
+abstain 58; train 895 / val 40; 484 pages carry a QA row). 119 answer texts changed in 118 rows: 115
+place (113 gained ב, 1 ו, 1 ל), 1 person (ועמאר בר פראח), 1 parties list (לסעיד בן יוסף, למפצל בן
+סלאמה), 1 ketubah bride (לרייסה בת עמרם). The 7 prefixed month tokens that were skipped became
+candidates and gave 6 new month rows (one lost to the 3-row cap). Invariant on the full build: 0
+violations in 903 answer spans. 261 tests. `qa_review_sample.md` and `qa_review.html` regenerated (935
+rows: 583 Kraken / 254 VLM / 66 without a box).
 
 First cut 2026-09-22 (same 124 pages): 20 rows — 14 `qa_date`, 3 `qa_person`, 1 `qa_party`, 2
 `qa_abstain`, 0 `qa_ketubah_parties`; train 17 / val 3; 169 tests. Small by design: exact name

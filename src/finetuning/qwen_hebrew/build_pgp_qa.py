@@ -9,16 +9,20 @@ Status: included in the v22 mixture; review sample available at ``qa_review_samp
 
 Every answer is a verbatim span of ONE line of the page transcription that
 ``build_pgp_editions`` produced for the same image (its ``manifest.jsonl``), returned with that
-line's one-based index as ``{"line": N, "text": "..."}``; :func:`quote` asserts the span is in
-the line. PGP metadata only VALIDATES a line, it never becomes an answer:
+line's one-based index as ``{"line": N, "text": "..."}``. The span is always WHOLE token(s) exactly
+as written, never part of a word: a name or place written with an attached prefix letter is quoted
+with it ("בדמשק", not "דמשק"); :func:`quote` raises :class:`AnswerSpanError` otherwise, and the
+build re-checks every emitted answer. PGP metadata only VALIDATES a line, it never becomes an
+answer:
 
 * ``qa_person`` — sender, recipient, witness, party, validating judge (never scribe, never
   "mentioned": a page mentions many people): the PGP relation's romanized name is inverted to
   Hebrew script
   (:mod:`src.datasets.qa.invert_names`) and must be located EXACTLY (token-in-order match) with
   a tier-1 (given name or kunya + connector + father) or kunya+given query; the answer is the
-  matched span as written. Uncertain relations, roles PGP lists for more than one person, and
-  spans found on more than one line are skipped.
+  matched name as whole token(s), with an attached prefix particle (ו/ל/ב ...) when there is one.
+  Uncertain relations, roles PGP lists for more than one person, and spans found on more than one
+  line are skipped.
 * ``qa_date`` — the page has a date-formula line (a Hebrew month name with a date word such as
   שנת/לשטרות/ליצירה/בחדש) and PGP ``doc_date_original`` names exactly one month, whose Hebrew
   spelling is on that line and on no other date line; the line must also carry the year (a
@@ -46,7 +50,8 @@ Set-valued and span rows (added 2026-09-24):
   fallback when at least one holder is located but the list is not emitted: the first located
   holder's whole line (for witnesses, a line in the signature region).
 * ``qa_date_month`` / ``qa_date_year`` — spans of the date: the month token as written on the
-  PGP-month date line (``[...]`` elsewhere on the line is allowed), and the year expression after
+  PGP-month date line, prefix included (בניסן; ``[...]`` elsewhere on the line is allowed), and the
+  year expression after
   the year word (שנת/בשנת/משנתינו/דשנת/סנה/סנת ...), through the era word when there is one on the
   line, else 1-3 numeral tokens (marked letter numerals or number words) that do not run on;
   the year may sit on the line after the month line. The year value is not checked against PGP
@@ -58,12 +63,12 @@ Set-valued and span rows (added 2026-09-24):
   witness formula), on pages without a ``qa_party`` row.
 * ``qa_place`` (sections ``written`` / ``sent``) — PGP origin/location or destination, spelled in
   Hebrew script (a table of common places plus places.csv variants), matched as exact tokens on
-  exactly one line; the answer is the name as written.
+  exactly one line; the answer is the whole token(s) as written, prefix included (בדמשק).
 
 At most 3 QA rows per page image (a list row counts as one); answer lines containing ``[...]`` are
 skipped. The split is
 the page's document split from ``build_pgp_editions``. Outputs (NAS): the DatasetDict (one
-split per family + ``val``), ``stats.json``, ``manifest.jsonl`` and a 200-row stratified
+split per family + ``val``), ``stats.json``, ``manifest.jsonl`` and a 250-row stratified
 human-review sample (``qa_review_sample.jsonl`` / ``.md``).
 
 Usage (repo root, after ``build_pgp_editions``)::
@@ -118,8 +123,8 @@ PERSON_ROLES = {"Sender": "sender", "Recipient": "recipient", "Witness": "witnes
                 "Validating judge": "validating judge"}
 ROLE_PRIORITY = ("Sender", "Recipient", "Party", "Validating judge", "Witness")
 
-PERSON_PROMPT = ('Who is the {role}? Quote the name exactly as written on the page, as JSON '
-                 '{{"line": N, "text": "<name as written>"}}.')
+PERSON_PROMPT = ('Who is the {role}? Quote the name exactly as written on the page, including any attached '
+                 'prefix letter, as JSON {{"line": N, "text": "<name as written>"}}.')
 DATE_PROMPT = ('Quote the line that gives the date of this document, as JSON {"line": N, "text": "<line>"}, '
                'or answer {"answer": "not stated"} if the page carries no date.')
 KETUBAH_PROMPT = ('Who are the groom and the bride? Quote the line naming them, as JSON '
@@ -127,33 +132,74 @@ KETUBAH_PROMPT = ('Who are the groom and the bride? Quote the line naming them, 
 PARTY_PROMPT = ('Quote the line in which a party to the document identifies themself, as JSON '
                 '{"line": N, "text": "<line>"}.')
 ABSTAIN_ANSWER = json.dumps({"answer": "not stated"})
-WITNESS_LIST_PROMPT = ('Quote the names of the witnesses who signed this document, as a JSON list of '
-                       '{"line": N, "text": "<name as written>"}.')
+WITNESS_LIST_PROMPT = ('Quote the names of the witnesses who signed this document exactly as written, including '
+                       'any attached prefix letter, as a JSON list of {"line": N, "text": "<name as written>"}.')
 WITNESS_LINE_PROMPT = 'Quote one line in which a witness signs, as JSON {"line": N, "text": "<line>"}.'
-PARTY_LIST_PROMPT = ('Quote the names of the parties to this document, as a JSON list of '
-                     '{"line": N, "text": "<name as written>"}.')
+PARTY_LIST_PROMPT = ('Quote the names of the parties to this document exactly as written, including any attached '
+                     'prefix letter, as a JSON list of {"line": N, "text": "<name as written>"}.')
 PARTY_LINE_PROMPT = 'Quote one line naming a party to this document, as JSON {"line": N, "text": "<line>"}.'
-MONTH_PROMPT = ('In which month was this document written? Quote the month exactly as written, as JSON '
-                '{"line": N, "text": "<month token>"}.')
+MONTH_PROMPT = ('In which month was this document written? Quote the month exactly as written, including any '
+                'attached prefix letter, as JSON {"line": N, "text": "<month token>"}.')
 YEAR_PROMPT = ('In which year was this document written? Quote the year exactly as written, as JSON '
                '{"line": N, "text": "<year expression>"}.')
-KETUBAH_NAME_PROMPT = ('Who is the {role}? Quote the name exactly as written, as JSON '
-                       '{{"line": N, "text": "<name>"}}.')
+KETUBAH_NAME_PROMPT = ('Who is the {role}? Quote the name exactly as written, including any attached prefix '
+                       'letter, as JSON {{"line": N, "text": "<name>"}}.')
 
 # ----------------------------------------------------------------------------- answers
 
 
+class AnswerSpanError(ValueError):
+    """An answer text that is not whole whitespace token(s) of its line."""
+
+
+def check_whole_tokens(text: str, line: str) -> None:
+    """Invariant: the answer is whole token(s) of the line exactly as written, never part of a word.
+
+    :param text: Answer text.
+    :param line: The line it quotes.
+    :raises AnswerSpanError: When ``text`` is empty or does not sit between whitespace/line ends.
+    """
+    if not text or not re.search(r"(?:^|\s)" + re.escape(text) + r"(?:\s|$)", line):
+        raise AnswerSpanError(f"answer {text!r} is not whole token(s) of the line {line!r}")
+
+
+def name_as_written(line: str, span: str) -> Optional[str]:
+    """A located name as whole token(s) of the line: the span widened to the surrounding whitespace,
+    which takes in an attached prefix particle ("יוסף בן יעקב" in "ליוסף בן יעקב" -> "ליוסף בן יעקב")
+    and glued punctuation or brackets, never other letters.
+
+    The located span leaves the prefix out (``invert_names`` indexes tokens without it). An
+    occurrence whose widening would take in letters other than one of
+    :data:`invert_names.ALLOWED_PREFIXES` (a word joined by a hyphen, a longer word) is not used.
+
+    :param line: Page line.
+    :param span: Located name span.
+    :returns: The first clean occurrence as written, or None.
+    """
+    i = line.find(span)
+    while i >= 0:
+        start = line.rfind(" ", 0, i) + 1
+        end = line.find(" ", i + len(span))
+        end = len(line) if end < 0 else end
+        left = "".join(tokens(line[start:i]))
+        if (not left or left in inv.ALLOWED_PREFIXES) and not tokens(line[i + len(span):end]):
+            return line[start:end]
+        i = line.find(span, i + 1)
+    return None
+
+
 def quote(lines: Sequence[str], n: int, text: str) -> str:
-    """The JSON answer ``{"line": n, "text": text}``, asserting the extractive contract.
+    """The JSON answer ``{"line": n, "text": text}``, enforcing the extractive contract.
 
     :param lines: Page transcription lines.
     :param n: One-based line index.
-    :param text: Quoted span.
+    :param text: Quoted span (whole token(s) of line ``n``).
     :returns: JSON answer.
-    :raises AssertionError: When ``text`` is empty or not a substring of line ``n``.
+    :raises AssertionError: When ``n`` is out of range.
+    :raises AnswerSpanError: When ``text`` is not whole token(s) of line ``n``.
     """
     assert 1 <= n <= len(lines), f"line {n} out of range"
-    assert text and text in lines[n - 1], f"answer {text!r} is not a span of line {n}: {lines[n - 1]!r}"
+    check_whole_tokens(text, lines[n - 1])
     return json.dumps({"line": n, "text": text}, ensure_ascii=False)
 
 
@@ -163,7 +209,8 @@ def quote_list(lines: Sequence[str], items: Sequence[Tuple[int, str]]) -> str:
     :param lines: Page transcription lines.
     :param items: ``(one-based line, span)`` in answer order.
     :returns: JSON answer.
-    :raises AssertionError: When the list is empty or an item is not a span of its line.
+    :raises AssertionError: When the list is empty.
+    :raises AnswerSpanError: When an item is not whole token(s) of its line.
     """
     assert items, "empty list answer"
     for n, text in items:
@@ -181,6 +228,22 @@ def answer_items(answer: str) -> List[Dict[str, Any]]:
     if isinstance(obj, list):
         return obj
     return [obj] if "line" in obj else []
+
+
+def check_answer(family: str, answer: str, lines: Sequence[str]) -> None:
+    """The emission invariant: every span answer is whole token(s) of its line exactly as written.
+
+    :param family: Row family (only ``qa_abstain`` may carry no span).
+    :param answer: JSON answer.
+    :param lines: Page transcription lines.
+    :raises AssertionError: When a non-abstention answer has no span or names a line off the page.
+    :raises AnswerSpanError: When a span is not whole token(s) of its line.
+    """
+    items = answer_items(answer)
+    assert items or family == "qa_abstain", f"{family} answer without a span"
+    for it in items:
+        assert 1 <= it["line"] <= len(lines), f"line {it['line']} out of range"
+        check_whole_tokens(it["text"], lines[it["line"] - 1])
 
 
 # ----------------------------------------------------------------------------- months / dates
@@ -438,7 +501,7 @@ def year_after(lines: Sequence[str], j: int, start: int) -> Optional[Tuple[int, 
             elif j + 1 >= len(lines) or "".join(tokens(lines[j + 1].split(" ")[0])) not in (
                     YEAR_TERMINATORS | YEAR_ERA_WORDS):
                 return None
-        span_toks = [t.rstrip(".,:;") if k == len(run) - 1 else t for k, t in enumerate(run)]
+        span_toks = run
     span = " ".join(span_toks)
     return None if GAP_TOKEN in span else (j, span)
 
@@ -486,8 +549,9 @@ def pgp_month_line(lines: Sequence[str], meta: Dict[str, str]) -> Tuple[Optional
 def month_row(page: Dict[str, Any], meta: Dict[str, str], stats: collections.Counter) -> Optional["QARow"]:
     """``qa_date_month``: the month token as written on the PGP-month date line.
 
-    The token must stand alone (no ב/ל prefix, so the quote is unambiguous); an Adar qualifier
-    that follows it (אדר שני, אדר א׳) is part of the span. A gap elsewhere on the line is allowed.
+    The answer is the whole token as written, with an attached prefix letter when there is one
+    (לחדש אדר -> "אדר", ... בניסן -> "בניסן"); an Adar qualifier that follows it (אדר שני, אדר א׳) is
+    part of the span. A gap elsewhere on the line is allowed.
 
     :param page: Editions manifest record.
     :param meta: PGP document row.
@@ -499,13 +563,14 @@ def month_row(page: Dict[str, Any], meta: Dict[str, str], stats: collections.Cou
     if i is None:
         return None
     toks = lines[i].split(" ")
+    written = {p + s for p in _MONTH_PREFIXES for s in MONTHS[month]}
     for k, t in enumerate(toks):
-        core = t.strip(".,:;")
-        if core not in MONTHS[month]:
+        core = t.strip(".,:;")                 # letters only: a bracketed/abbreviated token is not quoted
+        if core not in written:
             continue
-        span = core
-        if month == "adar" and k + 1 < len(toks) and "".join(tokens(toks[k + 1])) in ADAR_QUALIFIERS:
-            span = f"{t} {toks[k + 1].rstrip('.,:;')}" if t == core else core
+        span = t
+        if month == "adar" and t == core and k + 1 < len(toks) and "".join(tokens(toks[k + 1])) in ADAR_QUALIFIERS:
+            span = f"{t} {toks[k + 1]}"
         return QARow("qa_date_month", "month", MONTH_PROMPT, quote(lines, i + 1, span), i + 1,
                      {"doc_date_original": meta.get("doc_date_original"), "pgp_month": month,
                       "date_line": lines[i]}, priority=PRIORITY["qa_date_month"])
@@ -804,8 +869,12 @@ def person_rows(page: Dict[str, Any], ctx: QAContext, index: PageIndex,
         if GAP_TOKEN in lines[hit.line - 1]:
             stats["person_skip_gap_in_line"] += 1
             continue
+        text = name_as_written(lines[hit.line - 1], hit.span)
+        if text is None:
+            stats["person_skip_not_whole_token"] += 1
+            continue
         rows.append(QARow("qa_person", base.lower().replace(" ", "_"), PERSON_PROMPT.format(role=PERSON_ROLES[base]),
-                          quote(lines, hit.line, hit.span), hit.line,
+                          quote(lines, hit.line, text), hit.line,
                           {"relation": r["relation"], "person_name": r["person_name"], "person_slug": r["person_slug"],
                            "query": hit.query, "tier": hit.tier, "kind": hit.kind, "source": hit.source},
                           priority=PRIORITY["qa_person"] + ROLE_PRIORITY.index(base)))
@@ -1030,14 +1099,16 @@ def set_valued_rows(page: Dict[str, Any], ctx: QAContext, located: Sequence[Tupl
         else:
             flags["complete"] = parties_complete(page, [h.span for _, h in located])
     distinct = len({(h.line, h.span) for h in usable}) == len(usable)
+    reason = "not_all_located" if not flags["all_located"] else "incomplete" if not flags["complete"] else "line_rule"
     if flags["complete"] and len(usable) == len(holders) and distinct:
-        items = [(h.line, h.span) for h in usable]
-        return [QARow(list_family, f"{section}_all", list_prompt, quote_list(lines, items), items[0][0],
-                      {"relation": role, "holders": [r["person_name"] for r in holders],
-                       "spans": [h.span for h in usable], "queries": [h.query for h in usable]},
-                      priority=PRIORITY[list_family])], flags
-    stats[f"{section}_list_not_emitted:" + ("not_all_located" if not flags["all_located"] else
-                                              "incomplete" if not flags["complete"] else "line_rule")] += 1
+        items = [(h.line, name_as_written(lines[h.line - 1], h.span)) for h in usable]
+        if all(text for _, text in items):
+            return [QARow(list_family, f"{section}_all", list_prompt, quote_list(lines, items), items[0][0],
+                          {"relation": role, "holders": [r["person_name"] for r in holders],
+                           "spans": [h.span for h in usable], "queries": [h.query for h in usable]},
+                          priority=PRIORITY[list_family])], flags
+        reason = "not_whole_token"
+    stats[f"{section}_list_not_emitted:{reason}"] += 1
     if not usable:
         return [], flags
     h = usable[0]
@@ -1079,8 +1150,12 @@ def ketubah_name_rows(page: Dict[str, Any], meta: Dict[str, str], index: PageInd
         if not single_line_of(h.span, lines) or GAP_TOKEN in lines[h.line - 1]:
             stats[f"ketubah_{role}_skip_span_or_gap"] += 1
             continue
+        text = name_as_written(lines[h.line - 1], h.span)
+        if text is None:
+            stats[f"ketubah_{role}_skip_not_whole_token"] += 1
+            continue
         fam = f"qa_ketubah_{role}"
-        rows.append(QARow(fam, role, KETUBAH_NAME_PROMPT.format(role=role), quote(lines, h.line, h.span), h.line,
+        rows.append(QARow(fam, role, KETUBAH_NAME_PROMPT.format(role=role), quote(lines, h.line, text), h.line,
                           {"description": (meta.get("description") or "")[:300], "parsed": couple.get(role),
                            "query": h.query, "tier": h.tier, "kind": h.kind}, priority=PRIORITY[fam]))
     return rows
@@ -1155,10 +1230,10 @@ def party_formula_row(page: Dict[str, Any], meta: Dict[str, str], stats: collect
 
 # ----------------------------------------------------------------------------- places
 
-PLACE_WRITTEN_PROMPT = ('Where was this document written? Quote the place name exactly as written, as JSON '
-                        '{"line": N, "text": "<place as written>"}.')
-PLACE_SENT_PROMPT = ('To where was this document sent? Quote the place name exactly as written, as JSON '
-                     '{"line": N, "text": "<place as written>"}.')
+PLACE_WRITTEN_PROMPT = ('Where was this document written? Quote the word(s) naming the place exactly as written on '
+                        'the page, including any attached prefix letter, as JSON {"line": N, "text": "<as written>"}.')
+PLACE_SENT_PROMPT = ('To where was this document sent? Quote the word(s) naming the place exactly as written on the '
+                     'page, including any attached prefix letter, as JSON {"line": N, "text": "<as written>"}.')
 # Hebrew-script names of common places (keys: folded PGP names); places.csv adds its own variants
 PLACE_TABLE: Dict[str, List[str]] = {
     "fustat": ["פסטאט", "פוסטאט", "פסטט", "מצרים"], "cairo": ["אלקאהרה", "קאהרה"],
@@ -1202,7 +1277,7 @@ def place_hits(lines: Sequence[str], spellings: Sequence[str]) -> List[Tuple[int
 
     :param lines: Page lines.
     :param spellings: Place spellings.
-    :returns: ``(0-based line, span as written without the prefix)`` in page order.
+    :returns: ``(0-based line, whole token(s) as written, prefix included)`` in page order.
     """
     out = []
     for i, ln in enumerate(lines):
@@ -1216,10 +1291,7 @@ def place_hits(lines: Sequence[str], spellings: Sequence[str]) -> List[Tuple[int
                 pre = next((p for p in _PLACE_PREFIXES if lets[k] == p + words[0]), None)
                 if pre is None or (k and lets[k - 1] in PLACE_CONTEXT_STOP.get(words[0], set())):
                     continue
-                head = toks[k][toks[k].find(words[0][0], len(pre)) if pre else 0:]
-                span = " ".join([head] + toks[k + 1:k + len(words)]).strip(".,:;")
-                if "".join(tokens(span)) == "".join(words) and span in ln:
-                    out.append((i, span))
+                out.append((i, " ".join(toks[k:k + len(words)])))    # whole tokens: letters == prefix + place
     return out
 
 
@@ -1461,10 +1533,8 @@ def build(editions_dir: Path, out_dir: Path) -> Dict[str, Any]:
     for p in pages:
         for j, q in enumerate(kept[p["key"]]):
             stem = f"pgpqa_{p['pgpid']}_{p['image_index']}_{q.family}_{j}"
+            check_answer(q.family, q.answer, p["lines"])     # raises: a violation is a bug, never a skip
             items = answer_items(q.answer)
-            assert items or q.family == "qa_abstain"
-            for it in items:
-                assert it["text"] in p["lines"][it["line"] - 1]
             r = {"image": p["image_path"], "question": q.question, "answer": q.answer, "task": q.family,
                  "section": q.section, "stem": stem, "label_source": LABEL_SOURCE, "target_chars": len(q.answer),
                  "target_tokens": 0, "image_width": p["image_width"], "image_height": p["image_height"]}
@@ -1501,6 +1571,8 @@ def build(editions_dir: Path, out_dir: Path) -> Dict[str, Any]:
                          "rows": fam_counts.get("qa_place", 0),
                          "rows_by_section": dict(collections.Counter(m["section"] for m in manifest
                                                                      if m["family"] == "qa_place"))},
+        "answer_invariant": "every answer text is whole token(s) of its line exactly as written "
+                            "(prefix letters kept); checked on every emitted row",
         "rules": {"max_rows_per_page": MAX_ROWS_PER_PAGE, "abstain_max_row_share": ABSTAIN_MAX_ROW_SHARE,
                   "abstain_max_page_share": ABSTAIN_MAX_PAGE_SHARE,
                   "person_rule": "status located AND exact token match AND tier 1 or kunya+given; "
