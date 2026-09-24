@@ -236,8 +236,19 @@ to every grounding row to break the two-column page prior.
 - Grounding: the existing KTIV grounding eval + a new documentary line-grounding eval from held-out
   agreed lines (on-line rate, IoU).
 - Documentary transcription: the new `pgp_editions_v1` val split (line-broken, held out by document).
-- QA: ~300 held-out documents stratified by family: exact match of the quoted text, line-index
-  accuracy, abstention accuracy on both branches.
+- QA: ~300 held-out documents stratified by family, scored with partial credit (decided 2026-09-24,
+  after the user asked how a full-line answer is penalised when single letters are illegible):
+  line-index hit rate; CER of the quoted span against the target (the headline number for full-line
+  families); exact match only for short spans (month, year, place, names; whitespace- and
+  final-letter-normalised); abstention accuracy on both branches. Exact match on full lines is
+  reported but is not a target. Why: the training loss is token-level cross-entropy with teacher
+  forcing, so an illegible letter costs its own token and nothing else, exactly as on the page
+  transcription rows; only the metric can over-penalise. Answer targets never contain letters the
+  editor restored: `clean_diplomatic` turns restorations into gaps and the QA builder skips gapped
+  lines (spans must be gap-free). v21b's cached page reads of the answer lines already sit close to
+  the targets on formulaic families and far on names: date lines median CER 0.077 (59% ≤0.10, 17%
+  exact, 7% >0.5 = whole-page read failures), party lines 0.05; month present 74%, place 73%, year
+  expressions 29%, person names 42%, witness lists 44%, witness signature lines median 0.27.
 - Train-path gates from the v21 lessons: prepared-dataloader batch check before step 1 (class, shapes
   vs grid, prepared == direct loss), loss-level alarm vs the v21b reference (>2× = stop), warm-start
   regression check on two evals, merger frozen, one name per run.
