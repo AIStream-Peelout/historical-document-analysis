@@ -10,7 +10,7 @@ and the review sample.
 """
 import collections
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytest
 
@@ -336,7 +336,300 @@ def test_page_candidates_answers_are_spans():
     c = ctx(relations={"1": [rel("Saʿadya b. Yeshuʿa", "Party")]},
             pgp_docs={"1": {"type": "Legal document", "doc_date_original": "20 Adar 1499", "description": "Deed."}})
     rows, eligible = Q.page_candidates(page(lines), c, collections.Counter())
-    assert {r.family for r in rows} == {"qa_person", "qa_date", "qa_party"} and not eligible
+    assert {r.family for r in rows} == {"qa_person", "qa_date", "qa_party", "qa_date_month", "qa_date_year"}
+    assert not eligible
     for r in rows:
-        obj = json.loads(r.answer)
-        assert obj["text"] in lines[obj["line"] - 1]
+        for it in Q.answer_items(r.answer):
+            assert it["text"] in lines[it["line"] - 1]
+
+
+# --------------------------------------------------------------------------- set-valued roles
+
+DEED = [
+    "בפנינו אנו החתומים מטה הודה סעדיה בר ישועה",      # a name in the body, above the signature window
+    "הודאה גמורה בלא אונס ובלא הכרח",
+    "ומחל ופטר כל תביעה ודין ודברים",
+    "מן יומא דנן ולעלם",
+    "וקנינא מנה קנין שלם במנא דכשר",
+    "למקניא ביה על כל מה דכתיב",
+    "ומפורש לעילא",
+    "ושריר וקים",
+    "יוסף בר יעקב עד",
+    "שלמה בר נסים עד",
+]
+
+
+def _witness_ctx(names: List[str]) -> Q.QAContext:
+    """A context whose document lists ``names`` as witnesses.
+
+    :param names: Romanized witness names.
+    :returns: Context.
+    """
+    return ctx(relations={"1": [rel(n, "Witness") for n in names]})
+
+
+def _set_rows(lines: List[str], c: Q.QAContext, role: str = "Witness") -> Tuple[List[Q.QARow], Dict[str, bool]]:
+    """Run the set-valued rule on a synthetic page.
+
+    :param lines: Page lines.
+    :param c: Context.
+    :param role: Relation role.
+    :returns: ``(rows, flags)``.
+    """
+    p = page(lines)
+    _, located = Q.person_rows(p, c, Q.page_index(lines), collections.Counter())
+    return Q.set_valued_rows(p, c, located, role, collections.Counter())
+
+
+def test_witness_list_when_every_signature_is_a_located_witness():
+    """Completeness check passes: both signature lines hold a located witness -> one list row."""
+    rows, flags = _set_rows(DEED, _witness_ctx(["Yosef b. Yaʿaqov", "Shelomo b. Nissim"]))
+    assert flags == {"has_role": True, "all_located": True, "complete": True}
+    assert [r.family for r in rows] == ["qa_witnesses_list"] and rows[0].section == "witness_all"
+    assert json.loads(rows[0].answer) == [{"line": 9, "text": "יוסף בר יעקב"}, {"line": 10, "text": "שלמה בר נסים"}]
+
+
+def test_witness_list_refused_when_a_signature_is_unaccounted():
+    """Completeness check fails: a third signature PGP does not list -> no list, fallback line only."""
+    short = DEED[:1] + DEED[-2:]      # the party's body line falls inside the window: also incomplete
+    assert not _set_rows(short, _witness_ctx(["Yosef b. Yaʿaqov", "Shelomo b. Nissim"]))[1]["complete"]
+    lines = DEED + ["אברהם בר יצחק עד"]
+    rows, flags = _set_rows(lines, _witness_ctx(["Yosef b. Yaʿaqov", "Shelomo b. Nissim"]))
+    assert flags["all_located"] and not flags["complete"]
+    assert [r.family for r in rows] == ["qa_witness_line"] and rows[0].section == "witness_any"
+    assert json.loads(rows[0].answer) == {"line": 9, "text": "יוסף בר יעקב עד"}
+
+
+def test_witness_list_refused_when_a_holder_is_not_located():
+    """A PGP witness who cannot be located exactly blocks the list; located ones give the fallback."""
+    rows, flags = _set_rows(DEED, _witness_ctx(["Yosef b. Yaʿaqov", "Shelomo b. Nissim", "Moshe b. Levi"]))
+    assert not flags["all_located"] and [r.family for r in rows] == ["qa_witness_line"]
+
+
+def test_single_holder_roles_stay_with_qa_person():
+    """A role PGP gives one person is not set-valued."""
+    rows, flags = _set_rows(DEED, _witness_ctx(["Yosef b. Yaʿaqov"]))
+    assert rows == [] and not flags["has_role"]
+
+
+def test_party_list_and_completeness():
+    """All parties located and every name on the page accounted for -> list; else fallback."""
+    lines = ["אנא סעדיה בר ישועה ואנא יוסף בר יעקב מודים", "וקנינא מנהון קנין שלם", "ושריר וקים"]
+    c = ctx(relations={"1": [rel("Saʿadya b. Yeshuʿa", "Party"), rel("Yosef b. Yaʿaqov", "Party")]})
+    rows, flags = _set_rows(lines, c, "Party")
+    assert flags["complete"] and [r.family for r in rows] == ["qa_parties_list"]
+    assert [it["text"] for it in json.loads(rows[0].answer)] == ["סעדיה בר ישועה", "יוסף בר יעקב"]
+    # a third person on the SAME line as a listed party (the declarant) makes the list incomplete
+    lines2 = ["יקול שלמה בר נסים אני ואקפת סעדיה בר ישועה ויוסף בר יעקב", *lines[1:]]
+    rows, flags = _set_rows(lines2, c, "Party")
+    assert not flags["complete"] and [r.family for r in rows] == ["qa_party_line"]
+    assert rows[0].section == "party_any"
+
+
+def test_witness_completeness_is_per_name():
+    """A line holding a listed witness AND an unlisted signature fails (a line-level check would pass)."""
+    witnesses = _witness_ctx(["Yosef b. Yaʿaqov", "Shelomo b. Nissim"])
+    lines = DEED[:-2] + ["יוסף בר יעקב עד אברהם בר יצחק עד", "שלמה בר נסים עד"]
+    rows, flags = _set_rows(lines, witnesses)
+    assert flags["all_located"] and not flags["complete"] and [r.family for r in rows] == ["qa_witness_line"]
+    ok_rows, ok_flags = _set_rows(DEED[:-2] + ["יוסף בר יעקב עד שלמה בר נסים עד"], witnesses)
+    assert ok_flags["complete"] and len(json.loads(ok_rows[0].answer)) == 2
+
+
+def test_list_row_counts_as_one_under_the_cap():
+    """A set-valued row takes one of the three page slots."""
+    lst = Q.QARow("qa_witnesses_list", "witness_all", "q", Q.quote_list(["אב גד", "הו זח"], [(1, "אב"), (2, "הו")]),
+                  1, priority=Q.PRIORITY["qa_witnesses_list"])
+    others = [_qa("qa_date", priority=2), _qa("qa_person", priority=5), _qa("qa_person", priority=6)]
+    kept = Q.apply_caps([page(LETTER, key="k")], {"k": sorted([lst] + others, key=lambda r: r.priority)}, {})
+    assert len(kept["k"]) == 3 and kept["k"][1].family == "qa_witnesses_list"
+
+
+def test_quote_list_rejects_non_spans():
+    """Every list item must be a span of its own line."""
+    with pytest.raises(AssertionError):
+        Q.quote_list(["אב גד", "הו זח"], [(1, "אב"), (2, "אב")])
+
+
+# --------------------------------------------------------------------------- month / year spans
+
+
+def test_month_and_year_with_a_gap_elsewhere_on_the_line():
+    """A gap elsewhere blocks the whole-line date row but not the month and year spans."""
+    lines = LETTER + ["[...] בעשרים יום לירח אדר שנת אתתצט לשטרות"]
+    meta = {"doc_date_original": "20 Adar 1499"}
+    stats = collections.Counter()
+    assert Q.date_row(page(lines), meta, stats) is None and stats["date_skip_gap_in_line"] == 1
+    m = Q.month_row(page(lines), meta, stats)
+    y = Q.year_row(page(lines), meta, stats)
+    assert json.loads(m.answer) == {"line": 5, "text": "אדר"}
+    assert json.loads(y.answer) == {"line": 5, "text": "אתתצט לשטרות"}
+
+
+def test_year_on_the_next_line():
+    """"... לחדש תשרי שנת" ends the line; the year and era word open the next one."""
+    lines = LETTER + ["עד תשלום שנה תמימה והיה זה בשליש ראשון לחדש תשרי שנת", "התקל׳׳ד ליצירה פה רשיד יע׳׳א"]
+    y = Q.year_row(page(lines), {"doc_date_original": "Tishrei 5534"}, collections.Counter())
+    assert json.loads(y.answer) == {"line": 6, "text": "התקל׳׳ד ליצירה"}
+
+
+@pytest.mark.parametrize("lines,expected", [
+    (["היום ה׳ לחודש שבט משנתינו התקס׳׳ה"], (0, "התקס׳׳ה")),                            # marked numeral, no era
+    (["כסליו סנה ארבעת אלפים ושמונה שנין"], (0, "ארבעת אלפים ושמונה")),                 # number words + terminator
+    (["כסליו סנה ארבעת אלפים ושמונה"], None),                                          # number words, nothing closes
+    (["סיון דשנת אלפא וארבע מאה ותרתי"], None),                                        # unknown number word: cut
+    (["בירח כסליו דשנת אלפא וארבע מאהוחמש"], None),                                    # glued typo: cut
+    (["ומן שהר כסלו שנת אלפא וחמש מאה", "לשטרות בפסטאט"], (0, "אלפא וחמש מאה")),        # era word on next line
+    (["לחדש כסלו שנת חמשת אלפים ושע מאות ושבע עשרה ליצירה"], (0, "חמשת אלפים ושע מאות ושבע עשרה ליצירה")),
+    (["תאלת מחדש כסליו שנת אתרצא"], None),                                             # unmarked, no era -> skip
+    (["לחדש כסלו הנז׳׳ל פה מצרים ולראית"], None),                                      # no year at all
+    (["כסליו סנה ארבעת אלפים ושמונה", "מאות וששים וארבעה שנים למנינא"], None),        # year runs on -> skip
+    (["לחדש אייר שנת חמשת אל [...] ושלש מאות"], None),                                 # gap cuts the year
+    (["חדש אדר שנת [...] לשטרות"], None),                                              # span with a gap
+    (["לחדש אייר שנת במעשה ידיך ארנן פה"], None),                                      # no numeral
+    (["לחדש אייר שנת הנז׳ ליצירה"], None),                                             # "the aforementioned"
+])
+def test_year_span_extraction(lines, expected):
+    """Era span, 1-3 numerals, and every skip case of the year rule."""
+    assert Q.year_span(lines, 0) == expected
+
+
+def test_year_row_requires_a_pgp_date():
+    """No PGP date at all: no year row (the value itself is never compared)."""
+    lines = ["בעשרים יום לירח אדר שנת אתתצט לשטרות"]
+    assert Q.year_row(page(lines), {"doc_date_original": ""}, collections.Counter()) is None
+    assert Q.year_row(page(lines), {"doc_date_original": "1499"}, collections.Counter())
+
+
+def test_month_row_quotes_the_standalone_token():
+    """Prefixed month tokens are skipped; an Adar qualifier is part of the month."""
+    stats = collections.Counter()
+    assert Q.month_row(page(["בעשרים יום באדר שנת אתתצט"]), {"doc_date_original": "Adar 1499"}, stats) is None
+    r = Q.month_row(page(["בעשרים יום לחדש אדר שני שנת אתתצט"]), {"doc_date_original": "Adar II 1499"}, stats)
+    assert json.loads(r.answer) == {"line": 1, "text": "אדר שני"}
+
+
+@pytest.mark.parametrize("tok,ok", [("התקע׳׳ח", True), ("ד׳תתי״א", True), ("אלפא", True), ("ושלש", True),
+                                    ("הנז׳", False), ("יצ׳׳ו", False), ("ה׳", False), ("אתתצט", False)])
+def test_is_numeral(tok, ok):
+    """Marked letter numerals and number words count; abbreviations and unmarked letters do not."""
+    assert Q.is_numeral(tok) is ok
+
+
+# --------------------------------------------------------------------------- ketubba names
+
+
+def test_ketubah_names_on_any_line():
+    """Groom and bride located exactly on non-formula lines give name rows."""
+    lines = ["בשני בשבת בעשרים יום לירח אדר", "הוי לי לאנתו כדת משה וישראל", "והודה יפת בר נסים חתנא דנן",
+             "ואקנית סת אלדאר בת יצחק כלתא"]
+    meta = {"description": "Ketubba of Yefet b. Nissim and Sitt al-Dār bt. Yiṣḥaq."}
+    rows = Q.ketubah_name_rows(page(lines), meta, Q.page_index(lines), collections.Counter())
+    got = {r.family: json.loads(r.answer) for r in rows}
+    assert got == {"qa_ketubah_groom": {"line": 3, "text": "יפת בר נסים"},
+                   "qa_ketubah_bride": {"line": 4, "text": "סת אלדאר בת יצחק"}}
+    assert "Who is the groom?" in rows[0].question
+
+
+def test_alhatan_line_is_a_formula_line():
+    """A line opening with אלחתן / אלכלה counts as a formula line for qa_ketubah_parties."""
+    lines = ["בשני בשבת בעשרים יום לירח אדר", "אלחתן יפת בר נסים אלמערוף באבן אלעטאר", "ואלכלה סת אלדאר"]
+    meta = {"description": "Ketubba of Yefet b. Nissim and Sitt al-Dār bt. Yiṣḥaq."}
+    r = Q.ketubah_row(page(lines), meta, Q.page_index(lines), collections.Counter())
+    assert r and json.loads(r.answer) == {"line": 2, "text": lines[1]}
+
+
+# --------------------------------------------------------------------------- party formula (wording only)
+
+
+@pytest.mark.parametrize("line,ok", [
+    ("מותבה אנא אברהם הכהן בר אהרן הכהן", True),                          # deed opening, title in apposition
+    ("אנא יפת בר יוסף צביתי ברעות נפשי כד", True),
+    ("כאן עלי אנא טוביה הלוי בר סהל כמסה דנאניר לכניסת", True),
+    ("ומודה אני שמואל בר יעקב שקבלתי ממנו", False),                        # "ומודה" is not the verb token
+    ("מודה אני שמואל בר יעקב שקבלתי ממנו כל", True),
+    ("חצר אלינא אנן חתומי מטה אבו אלעלא בן בו סהל אלגבילי", False),       # court/witness "we": third person
+    ("שהדותא דהות באנפנא אנן שהדי דחתמות ידנא לתחתא כן הוה חצר מ הבה בר מ משה", False),
+    ("חצרת אנא נתן ביר שמואל החבר זל וקד אסתופא", False),                  # the clerk attending
+    ("אנא ועמאר בר פראח אלאטראבלסי", False),                              # "I and ʿAmmār ..."
+    ("עיקר ואחריות חוב דנן עלאי אנא יוסף בר יצחק", False),               # pronoun after the 4th token
+    ("אנא יפת בר יוסף [...] ברעות נפשי", False),                          # gap
+    ("אנא דן בר גד", False),                                               # < 12 letters
+])
+def test_party_formula_line(line, ok):
+    """Singular אנא (or מודה/מודים) with the name in apposition; court and witness formulas excluded."""
+    assert Q.party_formula_line(line) is ok
+
+
+def test_party_formula_row_rules():
+    """Legal documents only, exactly one formula line per page, answered with the whole line."""
+    lines = ["בפסטאט מצרים דעל נילוס נהרא", "מותבה אנא אברהם הכהן בר אהרן הכהן", "צביתי ברעות נפשי ובלא אונס"]
+    r = Q.party_formula_row(page(lines), {"type": "Legal document"}, collections.Counter())
+    assert r and r.family == "qa_party_formula" and json.loads(r.answer) == {"line": 2, "text": lines[1]}
+    assert r.question == Q.PARTY_PROMPT
+    assert Q.party_formula_row(page(lines), {"type": "Letter"}, collections.Counter()) is None
+    two = lines + ["אנא יפת בר יוסף צביתי ברעות נפשי כד"]
+    assert Q.party_formula_row(page(two), {"type": "Legal document"}, collections.Counter()) is None
+
+
+def test_party_formula_skipped_when_qa_party_exists():
+    """A page with a located-party qa_party row gets no formula row (same question)."""
+    lines = ["בפנינו אנו החתומים", "אנא סעדיה בר ישועה מודה אני בפניכם", "וקנינא מנה קנין שלם ושריר וקים"]
+    c = ctx(relations={"1": [rel("Saʿadya b. Yeshuʿa", "Party")]}, pgp_docs={"1": {"type": "Legal document"}})
+    rows, _ = Q.page_candidates(page(lines), c, collections.Counter())
+    fams = [r.family for r in rows]
+    assert "qa_party" in fams and "qa_party_formula" not in fams
+
+
+# --------------------------------------------------------------------------- places
+
+PLACES = {"Fustat": {"name_variants": "Fusṭāṭ, פסטאט, فسطاط"}, "Alexandria": {"name_variants": "אלאסכנדריה, נא אמון"},
+          "Aden": {"name_variants": "ʿAdan, עדן, عدن"}, "Cairo": {"name_variants": "al-Qāhira"},
+          "Tyre": {"name_variants": "צור, صور"}}
+
+
+def _places(lines: List[str], meta: Dict[str, str]) -> List[Q.QARow]:
+    """Place rows of a synthetic page.
+
+    :param lines: Page lines.
+    :param meta: PGP document row (origin / destination / location).
+    :returns: Rows.
+    """
+    return Q.place_rows(page(lines), meta, PLACES, collections.Counter())
+
+
+def test_place_written_and_sent():
+    """Location -> "written", destination -> "sent to"; the answer is the name without its prefix."""
+    lines = ["וכאן דלך בפסטאט מצרים דעל נילוס נהרא", "ואנפדתה אלי אלאסכנדריה מע אלרסול", "ושריר וקים"]
+    rows = _places(lines, {"location": "Fustat", "destination": "Alexandria"})
+    got = {r.section: (json.loads(r.answer), r.question.split("?")[0]) for r in rows}
+    assert got["written"] == ({"line": 1, "text": "פסטאט"}, "Where was this document written")
+    assert got["sent"] == ({"line": 2, "text": "אלאסכנדריה"}, "To where was this document sent")
+
+
+@pytest.mark.parametrize("lines,meta", [
+    (["כתבת מן אלאסכנדריה אלי מצרים", "ושלום"], {"origin": "Alexandria", "destination": "Fustat"}),  # one line
+    (["פי פסטאט אולא", "ואנא פי פסטאט אלאן"], {"origin": "Fustat"}),                               # two lines
+    (["וכאן דלך בפסטאט [...] נילוס", "ושלום"], {"origin": "Fustat"}),                              # gap in line
+    (["ואבוה נוחו עדן ושלום"], {"origin": "Aden"}),                                                # "rest in Eden"
+    (["ישתבח צור ישראל ואלסלאם"], {"origin": "Tyre"}),                                             # ordinary word
+    (["כתבת מן אלאסכנדריה"], {"origin": "Alexandria, Fustat"}),                                    # two PGP places
+])
+def test_place_skips(lines, meta):
+    """Ambiguous or unsafe place matches give no row."""
+    assert _places(lines, meta) == []
+
+
+def test_place_article_written_apart():
+    """"אל קאהרה" (article separated) is quoted whole."""
+    rows = _places(["הכא בעיר אל קאהרה הסמוכה"], {"location": "Cairo"})
+    assert json.loads(rows[0].answer) == {"line": 1, "text": "אל קאהרה"}
+
+
+def test_status_text():
+    """QA is part of the v22 mixture; the review sample stays."""
+    assert "included in the v22 mixture" in Q.review_markdown([], {"status": "included in the v22 mixture; review "
+                                                                    "sample available at qa_review_sample.md",
+                                                                    "generated_at": "t", "editions_manifest": "m",
+                                                                    "rows_by_family": {}})
+

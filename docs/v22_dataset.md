@@ -115,7 +115,14 @@ kept (51%): dropped for side rule 92 (no block kept 45, side incomplete 34, comp
 unlabelled incomplete 4, both sides 4), editorial notation 22, cross-checks 6, too short 1. Rows: 124
 `page`, 154 `line_by_number`, 85 `line_of_phrase_text`; train 337 / val 26 (val only from documents
 never in `clean_v1`/`v2`). Documents removed by the document gates: 209 joins, 33 with >3 images, 15
-flattened editions, 12 benchmark duplicates. At full coverage expect ~2,600 pages and 10–12 GB.
+flattened editions, 12 benchmark duplicates.
+
+**After the QA-relevant block (2026-09-24 01:17; evidence for 2,593 of 5,760 usable pages, 2,270
+eligible):** 1,022 pages included from 954 documents (45% of eligible pages with evidence), 825k
+letters, 20,964 lines; rows 970 `page` + 1,449 `line_by_number` + 757 `line_of_phrase_text` + 149
+val = 3,325. Page outcomes: side incomplete 447, no block kept 410, both sides kept 84, complex side
+labels 67, editorial notation 91, unlabelled incomplete 42, reader cross-checks 55, too short 24.
+Remaining 3,166 edition pages (documents without located persons or PGP dates) read next.
 
 ### 3.3 `documentary_grounding_v1` (`build_documentary_grounding.py`, NAS `datasets/documentary_grounding_v1`)
 From agreed lines only (agreement ≥0.8, ≥8 letters, no gap). The line box is the union of the Kraken
@@ -133,7 +140,7 @@ left off: `--volume-level-decontam`). Arrow 7.7 GB (page embedded ~5.5× per pag
 Next step (not in this build): edition lines aligned to Kraken line segments, which would give
 full-page grounded rows on documentary pages.
 
-### 3.4 `pgp_qa_v1` (`build_pgp_qa.py`, NAS `datasets/pgp_qa_v1`) — held out until reviewed
+### 3.4 `pgp_qa_v1` (`build_pgp_qa.py`, NAS `datasets/pgp_qa_v1`) — IN the mixture (user decision 2026-09-24)
 Every answer is a verbatim span of one line of the page's own transcription (asserted in code and
 tests), returned as `{"line": N, "text": "..."}`. Metadata only validates.
 
@@ -148,7 +155,57 @@ tests), returned as `{"line": N, "text": "..."}`. Metadata only validates.
 
 Caps: ≤3 QA rows per page image; answer lines with `[...]` skipped; the QA page set is the
 `pgp_editions_v1` page set (side-verified). A 200-row stratified review sample
-(`qa_review_sample.md`) is produced for the user; **QA rows enter the mixture only after that review.**
+(`qa_review_sample.md`) is produced for the user as a check; **QA rows are part of the v22 mixture from the start (user decision 2026-09-24; the earlier hold-out was the assistant's conservatism, not a requirement).**
+
+After the QA-relevant block (2026-09-24, 1,022 side-verified pages): **293 rows — 194 `qa_date`, 63
+`qa_person`, 6 `qa_party`, 29 `qa_abstain`, 1 `qa_ketubah_parties`; train 276 / val 17; 272 pages
+carry a QA row.** Funnel: person — 268 exact-located relation rows on included pages, 189 skipped
+because PGP lists several people for the role (witnesses, parties), 22 uncertain, 14 gap in line → 63;
+date — 402 date-line pages, 85 skipped for a gap elsewhere in the line, 59 for the year on the next
+line, 40 for an ambiguous PGP month → 194; party — 601 acknowledgment lines skipped because no
+PGP Party/Witness relation is located on that line → 6; ketubah — 56 marriage pages, names not
+parsed 26 / not located 23 → 1. **Projection at full coverage is well under the 1,000-row threshold;
+revisit per the decision above** (levers: complete-list answers for multi-holder roles, date lines
+with a gap elsewhere, formula-validated party lines, place names vs origin/destination).
+
+**Rebuild 2026-09-24 02:00 with the user's additions (same 1,022 pages): 812 rows.** New families:
+`qa_date_month` 312 and `qa_date_year` 128 (quote just the month token / the year expression, so a gap
+elsewhere on the line or a year on the next line no longer blocks the page; number-word years need a
+closing word or gershayim, months must be standalone tokens); `qa_witnesses_list` 19 (complete list
+only: every PGP witness located exactly AND every signature-shaped name in the signature region is a
+located witness) + `qa_witness_line` 19 (fallback: one signing line); `qa_parties_list` 1 +
+`qa_party_line` 15; `qa_ketubah_groom` 2, `qa_ketubah_bride` 1 (name located on any line of a marriage
+page). Unchanged: `qa_date` 194, `qa_person` 63, `qa_party` 6, `qa_ketubah_parties` 1; `qa_abstain` 51
+(10% cap). Funnel: witnesses — 57 documents with 2+ holders → 39 all located → 21 pass completeness
+→ 19 lists; parties — 39 → 14 → 1. 206 tests. Review sample regenerated (200 rows, 13 families).
+Duplicate-photo fix (02:30): 42 pages dropped as `duplicate_side_photo` (same image hash or identical
+kept lines within a document); with 67 new evidence pages the edition set is now 1,017 pages (rows
+1,017 page / 1,499 line_by_number / 785 line_of_phrase_text) and QA is **794 rows** (date 186, month 301,
+year 125, person 61, witnesses list 18 + line 19, parties list 1 + line 15, party 6, ketubah 4, abstain
+58); 209 tests.
+
+**Levers pulled 2026-09-24 (user: QA must be in the mixture; stop waiting on the remaining levers):**
+`qa_party_formula` (acknowledgment lines validated by the formula alone, included only if a 50-line
+spot check reads ≥90% correct) and `qa_place` (origin/destination place names located exactly via
+`places.csv` variants + a table of common Genizah toponyms).
+
+**Rebuilt 2026-09-24 11:05 with both levers: 929 rows** (date 186, month 270, year 121, place 171,
+person 60, witnesses list 18 + line 19, parties list 1 + line 11, party 6, party formula 4, ketubah 4,
+abstain 58; train 889 / val 40; 482 pages carry a QA row). `qa_party_formula`: only 22 lines on the
+1,017 pages matched the acknowledgment pattern, so all 22 were judged instead of 50; round 1 read 10/22
+correct (court and witness "we" formulas introduce the party in the third person); the tightened rule
+(singular אנא or מודה/מודים directly followed by the name, no court or witness wording on the line,
+legal documents only, pages with two matching lines skipped) read 8/8 and yields 4 rows
+(`qa_party_formula_spotcheck.md`, both rounds line by line). `qa_place`: 503 documents with an origin,
+destination or location → 305 with the place name located exactly → 171 rows (160 "written", 11
+"sent"); skipped 69 with the name on several lines, 70 with a gap in the line, 3 with several PGP
+places; guards: names that are also ordinary words (צור, רום, חלב, דן …) never match alone, נוחו עדן and
+יציאת מצרים are not Aden or Fustat, extra spellings פסטט and אל קאהרה. Month, year, person and party-line
+counts moved down slightly because place rows take some of the 3 slots per page. 232 tests.
+Review: `qa_review_sample.md` (250 rows, 15 families) and the visual page `qa_review.html` beside it
+(all 929 rows: the page image with the answer line boxed from the Kraken row union at similarity ≥0.5,
+else the VLM line box ≥0.6 — 578 Kraken / 253 VLM / 66 without a box; the transcription with the answer
+line highlighted; good / wrong / unsure marks kept in the browser and exportable as JSON).
 
 First cut 2026-09-22 (same 124 pages): 20 rows — 14 `qa_date`, 3 `qa_person`, 1 `qa_party`, 2
 `qa_abstain`, 0 `qa_ketubah_parties`; train 17 / val 3; 169 tests. Small by design: exact name
@@ -168,7 +225,7 @@ today's rates: 500–1,000 validated rows plus ~5,000 line-structure rows.
 |---|---|---|
 | Transcription | 0.55 | KTIV v4 page/region/section/line/page_short 0.28 · PGP editions page + line-structure 0.22 · synthetic 0.05 (· Talmud replay ≤0.05 if kept, taken from KTIV) |
 | Grounding | 0.25 | KTIV word/line families 0.15 · documentary locate/read_box 0.10 |
-| QA | 0.20 | extractive families above, after review; until then this share goes to transcription |
+| QA | 0.20 | extractive families above (validated rows weighted ≈0.05, line-structure rows the rest) |
 
 Placement augmentation (random margins, offsets, scale, page composites) is applied at training time
 to every grounding row to break the two-column page prior.
