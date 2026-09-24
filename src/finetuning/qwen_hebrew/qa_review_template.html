@@ -27,6 +27,7 @@ button.active.v-wrong{background:var(--wrong);color:#fff} button.active.v-ok{bac
 .imgwrap{position:relative;max-width:100%;line-height:0}
 .imgwrap img{width:100%;height:auto;display:block;border-radius:4px}
 .box{position:absolute;border:2px solid var(--box);background:var(--box-fill);border-radius:2px;box-shadow:0 0 0 2px rgba(255,255,255,.35)}
+.box.vlm{border-style:dashed;border-color:var(--unsure);background:transparent}
 .strip{position:relative;overflow:hidden;border:1px solid var(--rule);border-radius:4px;margin-top:10px;background:#000}
 .strip img{position:absolute;left:0;width:100%;display:block}
 .eyebrow{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--muted);margin:0 0 6px}
@@ -125,8 +126,8 @@ button.active.v-wrong{background:var(--wrong);color:#fff} button.active.v-ok{bac
     $('meta').innerHTML = '<span><b>'+esc(r.family)+'</b></span><span>'+esc(r.doc)+' · image '+r.image_index_label+'</span><span>PGP '+esc(r.pgpid)+'</span><span>'+esc(r.split)+'</span><span>'+(r.side?('side: '+esc(r.side)):'')+'</span>';
     $('img').src = r.img;
     const wrap=$('imgwrap'); wrap.querySelectorAll('.box').forEach(b=>b.remove());
-    for (const b of r.boxes){ const d=document.createElement('div'); d.className='box'; d.style.left=(b.box[0]/10)+'%'; d.style.top=(b.box[1]/10)+'%'; d.style.width=((b.box[2]-b.box[0])/10)+'%'; d.style.height=((b.box[3]-b.box[1])/10)+'%'; wrap.appendChild(d); }
-    $('boxsrc').textContent = r.boxes.length ? '· from '+r.boxes.map(b=>b.src+' ('+b.sim+')').join(', ') : '· no reader box for this line';
+    for (const b of r.boxes){ const d=document.createElement('div'); d.className='box '+b.src; d.style.left=(b.box[0]/10)+'%'; d.style.top=(b.box[1]/10)+'%'; d.style.width=((b.box[2]-b.box[0])/10)+'%'; d.style.height=((b.box[3]-b.box[1])/10)+'%'; wrap.appendChild(d); }
+    $('boxsrc').textContent = r.boxes.length ? '· '+r.boxes.map(b=>b.src==='kraken' ? 'solid: Kraken row, text match '+b.sim : 'dashed: VLM box, text match '+b.sim+' but v21b boxes drift by up to a line').join(', ') : '· no reader box for this line';
     const strip=$('strip'), simg=$('stripimg');
     if (r.boxes.length){ strip.hidden=false; simg.src=r.img; const b=r.boxes[0].box; const pad=Math.max(12, (b[3]-b[1])*1.2);
       const y1=Math.max(0,b[1]-pad)/1000, y2=Math.min(1000,b[3]+pad)/1000;
