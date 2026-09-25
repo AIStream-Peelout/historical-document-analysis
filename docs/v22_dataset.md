@@ -311,6 +311,14 @@ Shuffled once with seed 3407 so every window of the map-style dataset carries th
 those rows reference are copied. Synthetic and Talmud replay are OUT of the pilot (decision: the pilot
 measures the new levers; replay can return in the full run if Talmud eval regresses).
 
+**Built 2026-09-24 21:40:** 8,000 train rows exactly at the target shares (ktiv_transcription 2,400 of a 22,617 pool ·
+pgp_editions 2,000/3,140 · ktiv_grounding 1,200/41,649 · documentary_grounding 800/6,909 · pgp_qa 1,600/895 = 1.79
+passes), val 188 rows after dropping 12 rows on 4 page images that another source had put in train (cross-source
+split mismatch; builder rule added), 4,598 images / 4.61 GB; `layout_qa` counted as transcription (text answers).
+Local smoke check passed on both splits: every sampled row packs at 25.4k–27.2k patch rows (6.5–7 MP contract),
+sequences 6.4k–7.4k tokens, answer after the assistant header, 0.03 s per row on the Mac. Card credits NLI-KTIV
+and the Princeton Geniza Project only.
+
 **Notebook** `src/finetuning/qwen_hebrew/colab/genizah_v22a.ipynb` (tests `tests/test_colab_notebook_v22a.py`):
 v2.1b's install triplet, resolution contract (6.5–7 MP), LoRA r16 tower+language, merger FROZEN, adamw_8bit,
 cosine 5e-5, 1×8 batches, eval/save every 100 steps, `max_steps=2000` (8,000 rows = 1,000 steps/epoch; stop
