@@ -297,6 +297,20 @@ notebook before step 1, like the v21b dispatch fix did.
   validation) done; pipeline re-ordered to edition documents first; builders launched for KTIV v4,
   documentary grounding, PGP editions + QA.
 
+**FINAL REBUILD 2026-09-25 11:24–12:24 (pipeline finished every edition page at 11:24; 2,800 v22c pages, 62
+failures = missing bucket images + 1 Kraken OOM page; Kraken leak-fix swap 23:35 with zero Kraken failures since):**
+- `pgp_editions_v1`: 5,142 pages evaluated → **2,352 pages / 1.50M letters / 43.9k lines** (1,017 before);
+  rows page 2,352 · line_by_number 3,468 · line_of_phrase_text 1,812; val 384 rows / 199 docs; 64 duplicate
+  side photos dropped; 290 s.
+- `pgp_qa_v1`: **1,006 rows** (935 before; +29 place, +42 abstain — the QA-relevant documents were read first, so
+  the later pages carry few dates or named people); train 966 / val 40; review page regenerated (1,006 rows,
+  boxes Kraken 605 / VLM 261 / none 66).
+- `documentary_grounding_v1`: 4,932 pages with agreed lines → **3,619 pages / 3,402 docs, 20,023 rows** (locate
+  12,785 + read_box 7,238; 7,217 before), train 19,092 / val 931 (159 docs); 0 benchmark exclusions; images 3.57 GB,
+  arrow 20.3 GB; first save attempt died on an SMB close() error at the end of a shard (EBADF), retry clean.
+- The Hub pilot (`genizah_v22_pilot`, rev c8c15251) predates this rebuild; a full-run mixture should be rebuilt
+  from these sets with `build_v22_mixture.py` (larger train_rows, archives per the packaging rule).
+
 ## 9. v2.2a launch (2026-09-24 evening — user: "we are starting training tonight")
 
 The consensus pipeline is NOT a prerequisite: its remaining ~1,400 edition pages only add edition/QA rows
