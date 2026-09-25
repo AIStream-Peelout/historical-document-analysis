@@ -296,3 +296,40 @@ notebook before step 1, like the v21b dispatch fix did.
 - 2026-09-22: measurements (lineage, reader accuracy vs editions, romanization inverter, side-label
   validation) done; pipeline re-ordered to edition documents first; builders launched for KTIV v4,
   documentary grounding, PGP editions + QA.
+
+## 9. v2.2a launch (2026-09-24 evening — user: "we are starting training tonight")
+
+The consensus pipeline is NOT a prerequisite: its remaining ~1,400 edition pages only add edition/QA rows
+to a later rebuild. The pilot trains on what exists.
+
+**Pilot mixture** `isaacmg/genizah_v22_pilot` (private), built by `build_v22_mixture.py` into
+`/Volumes/home/studio_offload/datasets/genizah_v22_pilot` (images-once: `rows/train.parquet`,
+`rows/val.parquet`, `images/<sha1>.jpg`, `mixture.json`, `manifest.json`, `README.md`): 8,000 materialised
+train rows — KTIV v4 transcription 0.30, PGP editions 0.25, KTIV grounding 0.15, documentary grounding 0.10,
+PGP QA 0.20 (QA rows repeat ~1.8×; passes recorded in `mixture.json`) — and 200 val rows across all sources.
+Shuffled once with seed 3407 so every window of the map-style dataset carries the mixture. Only the images
+those rows reference are copied. Synthetic and Talmud replay are OUT of the pilot (decision: the pilot
+measures the new levers; replay can return in the full run if Talmud eval regresses).
+
+**Notebook** `src/finetuning/qwen_hebrew/colab/genizah_v22a.ipynb` (tests `tests/test_colab_notebook_v22a.py`):
+v2.1b's install triplet, resolution contract (6.5–7 MP), LoRA r16 tower+language, merger FROZEN, adamw_8bit,
+cosine 5e-5, 1×8 batches, eval/save every 100 steps, `max_steps=2000` (8,000 rows = 1,000 steps/epoch; stop
+at 800 for the pilot verdict if needed). Warm start = v2.1b step 1200
+(`isaacmg/qwen3-vl-8b-hebrew-v21b-ckpt@6724c32c`). Map-style loader (`ImagesOnceDataset` mirror), no
+streaming; the prepared-dataloader gate compares the first prepared batch with a direct collate of the same
+(recorded) row; resume sets `ignore_data_skip` instead of replaying batches. Checkpoints to the NEW repo
+`isaacmg/qwen3-vl-8b-hebrew-v22a-ckpt`, W&B run `genizah_v22a`.
+
+**Local smoke test before launch** `src/finetuning/qwen_hebrew/v22_smoke_check.py` runs sampled rows through
+the real Qwen3-VL processor on the Mac: decode, template, patch rows == grid product, ~25k patches per page,
+answer after the assistant header, sequence ≤ 12,288.
+
+**Launch checklist (user):**
+1. `.venv/bin/hf auth login` (once), then `bash logs/push_v22_pilot.sh` (upload-large-folder, resumable; prints
+   the revision to pin as `V22_REVISION`).
+2. Open the notebook in Colab (A100), secrets `HF_TOKEN`, `WANDB_API_KEY`; run cells 1→6. Cells 2, 4, 5 and the
+   gate in 6 are the go/no-go: shares, hygiene, collator masking on a page and a QA row, tower-LoRA gradients,
+   prepared == direct loss.
+3. Watch W&B `qwen-hebrew-finetune/genizah_v22a`: train loss LEVEL vs v21b at the same step (>2× = stop),
+   eval loss at 100/200 must not rise on the KTIV/editions rows (warm-start regression rule).
+4. Hard evals at 400/800 with the LM Studio harness (`hard_eval_ckpt.sh`), QA scored with partial credit (§5).
