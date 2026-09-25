@@ -23,7 +23,9 @@ Each line's ``bbox`` is the evidence box (VLM box ∪ its Kraken fragments);
 is a ``--rematch`` (seconds per page) rather than a re-read, and a better Kraken
 model is a ``--rekraken`` (one Kraken read per image, no LM Studio): its
 fragments are cached under ``frags_by_htr[<key>]`` beside the original reader's
-``frags`` and the records are rebuilt from the cached VLM lines.  A Kraken
+``frags`` and the records are rebuilt from the cached VLM lines (``<key>`` is
+``--kraken-cache-suffix``, naming the Kraken service; the bare model name only
+with ``--legacy-key``).  A Kraken
 service swap that keeps the recognition model (new kraken version or
 segmenter) is a ``--htr-cache-key KEY`` run: the raw cache files that run's
 ``frags`` under ``htr_model = KEY`` and every record carries
@@ -42,7 +44,7 @@ Usage (repo root; long runs under nohup):
     .venv/bin/python -m src.datasets.consensus.two_reader_lines --from-consensus high
     .venv/bin/python -m src.datasets.consensus.two_reader_lines --ids jobs.jsonl --limit 50
     .venv/bin/python -m src.datasets.consensus.two_reader_lines --ids jobs.jsonl --htr-cache-key MiDRASH_Gen_01@k7.0.3-blla2026
-    .venv/bin/python -m src.datasets.consensus.two_reader_lines --rekraken --kraken-model NEW.mlmodel
+    .venv/bin/python -m src.datasets.consensus.two_reader_lines --rekraken --kraken-model NEW.mlmodel --kraken-cache-suffix NEW@k7.0.3-blla2026
 """
 import argparse
 import asyncio
@@ -649,7 +651,8 @@ def rekraken_names(kraken_model: Optional[str], htr_model_name: Optional[str],
     :param htr_model_name: ``--htr-model-name`` (None = the model file's stem, which is
         :data:`HTR_MODEL_NAME` for the default model), so a new model file is never
         stamped with the old model's name.
-    :param cache_suffix: ``--kraken-cache-suffix`` (None = the HTR model name).
+    :param cache_suffix: ``--kraken-cache-suffix`` (None = the HTR model name, which the CLI allows only with
+        ``--legacy-key``: see :func:`rekraken_key_error`).
     :returns: ``(model_path, htr_model, cache_key)``.
     """
     model_path = kraken_model or KRAKEN_MODEL
@@ -950,6 +953,31 @@ def htr_cache_key_error(args: argparse.Namespace) -> Optional[str]:
     return "--htr-cache-key is for normal runs: " + "; ".join(f"{f} {reasons[f]}" for f in given)
 
 
+def rekraken_key_error(args: argparse.Namespace) -> Optional[str]:
+    """Why a ``--rekraken`` run's HTR cache key is refused, or None when it is explicit (or there is no ``--rekraken``).
+
+    The bare key (the HTR model name: :data:`HTR_MODEL_NAME` for the default model)
+    names no Kraken service, so a re-read filed under it relabels every page stamped
+    with a service key (``--htr-cache-key`` or ``stamp_htr_cache_key.py``) as that
+    reader's: the key must be named with ``--kraken-cache-suffix``, or the bare key
+    taken on purpose with ``--legacy-key``.
+    :param args: Parsed CLI arguments.
+    :returns: The error message for ``ap.error``, or None.
+    """
+    if not args.rekraken:
+        return None
+    legacy = getattr(args, "legacy_key", False)
+    if legacy and args.kraken_cache_suffix:
+        return "--legacy-key and --kraken-cache-suffix are exclusive: the bare key, or KEY"
+    if legacy or args.kraken_cache_suffix:
+        return None
+    _, htr_model, _ = rekraken_names(args.kraken_model, args.htr_model_name, None)
+    return (f"--rekraken needs --kraken-cache-suffix KEY naming the Kraken service (e.g. {htr_model}@k7.0.3-blla2026): "
+            f"the bare key {htr_model} names none, and a re-read filed under it relabels pages stamped with a "
+            f"service key (--htr-cache-key, stamp_htr_cache_key.py) as {htr_model}'s; pass --legacy-key to use the "
+            f"bare key on purpose")
+
+
 async def main_async(args: argparse.Namespace) -> None:
     """Resolve jobs, run them sequentially, append records (or run one of the rewrite modes).
 
@@ -1059,9 +1087,14 @@ if __name__ == "__main__":
                     help=f"--rekraken: name stamped as ai_read.htr_model (default the --kraken-model file stem, "
                          f"i.e. {HTR_MODEL_NAME} for the default model)")
     ap.add_argument("--kraken-cache-suffix", default=None, metavar="KEY",
-                    help="--rekraken: frags_by_htr key for the new fragments (default the HTR model name); give a "
-                         "distinct one to re-read with a same-named model (e.g. under a new segmenter) without "
-                         "replacing its earlier fragments")
+                    help=f"--rekraken: frags_by_htr key for the new fragments, naming the Kraken service that reads "
+                         f"them (e.g. {HTR_MODEL_NAME}@k7.0.3-blla2026); required unless --legacy-key, so a re-read "
+                         f"with a same-named model under a new kraken or segmenter never replaces or relabels "
+                         f"earlier fragments")
+    ap.add_argument("--legacy-key", action="store_true",
+                    help=f"--rekraken: file the re-read under the bare key, the HTR model name ({HTR_MODEL_NAME} "
+                         f"for the default model), on purpose; pages stamped with a service key (--htr-cache-key, "
+                         f"stamp_htr_cache_key.py) are then re-read and relabelled as that reader's")
     ap.add_argument("--all-cache", action="store_true",
                     help="--rekraken: every raw-cache entry, not only those behind --out (one read per image "
                          "hash; records are rebuilt in --out only)")
@@ -1084,8 +1117,8 @@ if __name__ == "__main__":
     if not (a.from_consensus or a.ids or a.restamp or a.rematch or a.rekraken):
         ap.error("give --from-consensus TIER, --ids FILE, --restamp, --rematch, or --rekraken")
     rekraken_only = [f for f, v in (("--kraken-model", a.kraken_model), ("--htr-model-name", a.htr_model_name),
-                                    ("--kraken-cache-suffix", a.kraken_cache_suffix), ("--all-cache", a.all_cache),
-                                    ("--force", a.force), ("--raw-dir", a.raw_dir)) if v]
+                                    ("--kraken-cache-suffix", a.kraken_cache_suffix), ("--legacy-key", a.legacy_key),
+                                    ("--all-cache", a.all_cache), ("--force", a.force), ("--raw-dir", a.raw_dir)) if v]
     if rekraken_only and not a.rekraken:
         ap.error(f"{', '.join(rekraken_only)}: --rekraken options only")
     key_error = htr_cache_key_error(a)
@@ -1095,4 +1128,7 @@ if __name__ == "__main__":
         ap.error("--rekraken re-reads the records in --out (or the raw cache): no jobs, no other mode")
     if a.rekraken and not (a.all_cache or Path(a.out).exists()):
         ap.error(f"--rekraken needs an existing --out ({a.out}) or --all-cache")
+    rekraken_error = rekraken_key_error(a)
+    if rekraken_error:
+        ap.error(rekraken_error)
     asyncio.run(main_async(a))

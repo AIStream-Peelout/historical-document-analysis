@@ -1,12 +1,16 @@
 """Tests for the Kraken-only re-run of the two-reader line pipeline (``--rekraken``).
 
 Kraken and downloads are mocked (an autouse fixture fails any call a test did
-not mock), so nothing here touches the Kraken service, LM Studio or ES.
+not mock), so nothing here touches the Kraken service, LM Studio or ES; the CLI
+test runs the module on an empty scratch set only.
 """
+import argparse
 import asyncio
 import hashlib
 import io
 import json
+import subprocess
+import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -349,3 +353,106 @@ def test_replace_records_carries_appends_and_refuses_shrink(tmp_path: Path) -> N
     with pytest.raises(RuntimeError):
         trl.replace_records(out, ["{}"] * 4, 4)
     assert out.read_text() == '{"b": 1}\n{"b": 2}\n{"a": 3}\n'
+
+
+SERVICE_KEY = "MiDRASH_Gen_01@k7.0.3-blla2026"
+
+
+def _cli_rekraken(pg: Dict[str, Any], **kw: Any) -> argparse.Namespace:
+    """The CLI's arguments for a ``--rekraken`` run over a test page (argparse's defaults; ``kw`` overrides).
+
+    :param pg: Page from :func:`_make_page`.
+    :param kw: Overrides (``legacy_key``, ``kraken_cache_suffix``, ``kraken_model``, ``rekraken`` ...).
+    :returns: The arguments.
+    """
+    return argparse.Namespace(**{
+        "rekraken": True, "out": str(pg["out"]), "work_dir": str(pg["work"]), "raw_dir": str(pg["raw"]),
+        "kraken_model": None, "htr_model_name": None, "kraken_cache_suffix": None, "legacy_key": False,
+        "all_cache": False, "force": False, "limit": 0, "min_free_gb": 0.0, "keep_images": False, **kw})
+
+
+def test_bare_rekraken_needs_legacy_key(page: Dict[str, Any]) -> None:
+    """A ``--rekraken`` key must be explicit: a suffix, or the bare model name on purpose with ``--legacy-key``."""
+    msg = trl.rekraken_key_error(_cli_rekraken(page))
+    assert msg.startswith("--rekraken needs --kraken-cache-suffix KEY naming the Kraken service")
+    assert f"the bare key {trl.HTR_MODEL_NAME} names none" in msg and msg.endswith("pass --legacy-key to use the "
+                                                                                   "bare key on purpose")
+    assert f"the bare key {NEW} names none" in trl.rekraken_key_error(_cli_rekraken(page, kraken_model=NEW_MODEL))
+    assert trl.rekraken_key_error(_cli_rekraken(page, legacy_key=True)) is None
+    assert trl.rekraken_key_error(_cli_rekraken(page, kraken_cache_suffix=SERVICE_KEY)) is None
+    assert trl.rekraken_key_error(_cli_rekraken(page, legacy_key=True, kraken_cache_suffix=SERVICE_KEY)) == (
+        "--legacy-key and --kraken-cache-suffix are exclusive: the bare key, or KEY")
+    assert trl.rekraken_key_error(_cli_rekraken(page, rekraken=False)) is None      # normal runs: not concerned
+
+
+def test_legacy_key_is_the_bare_key_pass(page: Dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--legacy-key`` runs the bare-key pass unchanged: legacy pages hold the key, service-stamped ones are relabelled."""
+    kraken = FakeKraken()
+    monkeypatch.setattr(trl, "transcribe_with_kraken_lines", kraken)
+    _serve(monkeypatch, {page["record"]["image_url"]: page["data"]})
+    args = _cli_rekraken(page, legacy_key=True)
+    assert trl.rekraken_key_error(args) is None
+    cache_before = page["cache"].read_text()
+    asyncio.run(trl.main_async(args))                  # the legacy frags answer for the bare key: nothing to read
+    assert kraken.calls == [] and page["cache"].read_text() == cache_before
+    assert _strip(json.loads(page["out"].read_text())["ai_read"]) == _strip(page["record"]["ai_read"])
+    # a page stamped with a service key (--htr-cache-key, stamp_htr_cache_key.py) is re-read and relabelled
+    entry = json.loads(cache_before)
+    entry["htr_model"] = SERVICE_KEY
+    page["cache"].write_text(json.dumps(entry, ensure_ascii=False))
+    record = json.loads(page["out"].read_text())
+    record["ai_read"]["htr_cache_key"] = SERVICE_KEY
+    page["out"].write_text(json.dumps(record, ensure_ascii=False) + "\n")
+    asyncio.run(trl.main_async(args))
+    assert kraken.calls == [(trl.KRAKEN_MODEL, f"{DOC}__0.jpg")]
+    assert json.loads(page["cache"].read_text())["frags_by_htr"] == {trl.HTR_MODEL_NAME: NEW_FRAGS}
+    ar = json.loads(page["out"].read_text())["ai_read"]
+    assert (ar["htr_model"], ar["n_agreed"]) == (trl.HTR_MODEL_NAME, 2) and "htr_cache_key" not in ar
+
+
+def test_suffix_rekraken_is_unchanged(page: Dict[str, Any], monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--kraken-cache-suffix KEY`` runs as before: re-read under KEY, record stamped with it, ``frags`` kept."""
+    kraken = FakeKraken()
+    monkeypatch.setattr(trl, "transcribe_with_kraken_lines", kraken)
+    _serve(monkeypatch, {page["record"]["image_url"]: page["data"]})
+    args = _cli_rekraken(page, kraken_cache_suffix=SERVICE_KEY)
+    assert trl.rekraken_key_error(args) is None
+    asyncio.run(trl.main_async(args))
+    assert kraken.calls == [(trl.KRAKEN_MODEL, f"{DOC}__0.jpg")]
+    entry = json.loads(page["cache"].read_text())
+    assert (entry["frags_by_htr"], entry["frags"]) == ({SERVICE_KEY: NEW_FRAGS}, OLD_FRAGS)
+    ar = json.loads(page["out"].read_text())["ai_read"]
+    assert (ar["htr_model"], ar["htr_cache_key"], ar["n_agreed"]) == (trl.HTR_MODEL_NAME, SERVICE_KEY, 2)
+
+
+def test_cli_refuses_a_bare_rekraken(tmp_path: Path) -> None:
+    """Through the CLI: a bare ``--rekraken`` is an argument error; ``--legacy-key`` or a suffix runs (empty set)."""
+    repo = Path(trl.__file__).resolve().parents[3]
+    out, raw = tmp_path / "out.jsonl", tmp_path / "raw"
+    out.write_text("")
+    raw.mkdir()
+    scratch = ["--out", str(out), "--raw-dir", str(raw), "--work-dir", str(tmp_path / "images")]
+
+    def cli(*argv: str) -> "subprocess.CompletedProcess[str]":
+        """Run the module's CLI from the repo root.
+
+        :param argv: Arguments.
+        :returns: The finished process.
+        """
+        return subprocess.run([sys.executable, "-m", "src.datasets.consensus.two_reader_lines", *argv], cwd=repo,
+                              capture_output=True, text=True, timeout=120)
+
+    bare = cli("--rekraken", *scratch)
+    assert bare.returncode == 2 and "error: --rekraken needs --kraken-cache-suffix KEY" in bare.stderr
+    assert not (tmp_path / "images").exists()                          # refused before anything ran
+    both = cli("--rekraken", "--legacy-key", "--kraken-cache-suffix", SERVICE_KEY, *scratch)
+    assert both.returncode == 2 and "--legacy-key and --kraken-cache-suffix are exclusive" in both.stderr
+    stray = cli("--ids", str(out), "--legacy-key", "--out", str(tmp_path / "normal.jsonl"), "--work-dir",
+                str(tmp_path / "images"), "--source-index", "genizah_merged_v6", "--site-env", str(tmp_path / "x.env"))
+    assert stray.returncode == 2 and "error: --legacy-key: --rekraken options only" in stray.stderr
+    legacy = cli("--rekraken", "--legacy-key", *scratch)
+    assert legacy.returncode == 0, legacy.stderr
+    assert f"rekraken {trl.HTR_MODEL_NAME} [key {trl.HTR_MODEL_NAME}]: 0 pages re-krakened" in legacy.stdout
+    keyed = cli("--rekraken", "--kraken-cache-suffix", SERVICE_KEY, *scratch)
+    assert keyed.returncode == 0, keyed.stderr
+    assert f"rekraken {trl.HTR_MODEL_NAME} [key {SERVICE_KEY}]: 0 pages re-krakened" in keyed.stdout
