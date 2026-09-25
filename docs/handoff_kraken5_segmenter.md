@@ -137,7 +137,7 @@ page and stay valid; only the Kraken fragments need redoing. `two_reader_lines.p
 command at roughly 24 s/page (≈57 h for the 8,577 records read by 2026-09-23, ≈6 days for all ~21k once
 the pipeline finishes), resumable. **Added 2026-09-23 (`tests/test_two_reader_rekraken.py`, 12 tests, smoke-tested on one
 page: identical fragments and n_agreed):** `--rekraken --kraken-model PATH --htr-model-name NAME
-[--kraken-cache-suffix KEY] [--all-cache] [--force] [--raw-dir DIR]`; new fragments go to
+--kraken-cache-suffix KEY [--all-cache] [--force] [--raw-dir DIR]` (since 2026-09-24 a bare `--rekraken` without a suffix is refused unless `--legacy-key` is passed on purpose, so k7-stamped pages can't be relabelled as legacy by accident; normal reads take `--htr-cache-key KEY` to stamp provenance at read time); new fragments go to
 `frags_by_htr[KEY]`, legacy `frags` = `MiDRASH_Gen_01` untouched; `--all-cache` groups cache entries by
 image hash (8,608 Kraken reads instead of 14,718). Caveat: the service keeps ONE model loaded and serves
 one request at a time, so a new-model pass alongside the running pipeline would reload the model on
