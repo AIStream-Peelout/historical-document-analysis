@@ -7,8 +7,8 @@ Four small DatasetDicts in the KTIV row schema (KTIV with transcription and
 grounding families; editions and QA split over several ``train_*`` splits)
 are saved, exported images-once and mixed. The mixture must repeat
 over-subscribed pools evenly, shuffle reproducibly, copy only the images its
-rows reference, load through ``ImagesOnceDataset`` and keep forbidden
-sources out of its card.
+rows reference, never put a val row on a train image, load through
+``ImagesOnceDataset`` and keep forbidden sources out of its card.
 """
 import json
 from collections import Counter
@@ -30,6 +30,8 @@ LOCATE_Q = 'Locate the phrase "שלום" on this page. Respond with ONLY {"bbox_
 READ_BOX_Q = "Transcribe ONLY the text inside the region bbox_2d = [1, 2, 30, 40]."
 BOX_A = '{"bbox_2d": [1, 2, 30, 40]}'
 VAL_ROWS = {"ktiv": 2, "pgp_editions": 1, "documentary_grounding": 1, "pgp_qa": 5}
+EXPORT_NAMES = {"ktiv": "ktiv", "pgp_editions": "editions", "documentary_grounding": "grounding",
+                "pgp_qa": "qa"}
 
 
 def _img(root: Path, i: int) -> Path:
@@ -78,9 +80,12 @@ def _export(root: Path, name: str, splits: Dict[str, List[Dict]]) -> Path:
     return mix.ensure_export(ds_dir, mix.export_dir_for(ds_dir))
 
 
-@pytest.fixture
-def sources(tmp_path: Path) -> Dict[str, Path]:
-    """dataset -> images-once export of the four tiny sources."""
+def _source_rows(tmp_path: Path) -> Dict[str, Dict[str, List[Dict]]]:
+    """dataset -> split -> rows of the four tiny sources (no val row on a train image).
+
+    :param tmp_path: Fixture directory.
+    :return: The rows.
+    """
     t = "Transcribe the page."
     ktiv = {"train": [_row(_img(tmp_path, 0), "fragment_transcribe", "k0_page", t, "שורה"),
                       _row(_img(tmp_path, 0), "locate", "k0_loc", LOCATE_Q, BOX_A),
@@ -100,10 +105,23 @@ def sources(tmp_path: Path) -> Dict[str, Path]:
     qa = {"train_qa_date": [_row(_img(tmp_path, 30), "qa_date", "q30", "When?", '{"line": 1, "text": "תשרי"}')],
           "train_qa_place": [_row(_img(tmp_path, 31), "qa_place", "q31", "Where?", '{"line": 2, "text": "פסטאט"}')],
           "val": [_row(_img(tmp_path, 32), "qa_date", "q32", "When?", '{"line": 1, "text": "ניסן"}')]}
-    return {"ktiv": _export(tmp_path, "ktiv", ktiv),
-            "pgp_editions": _export(tmp_path, "editions", editions),
-            "documentary_grounding": _export(tmp_path, "grounding", grounding),
-            "pgp_qa": _export(tmp_path, "qa", qa)}
+    return {"ktiv": ktiv, "pgp_editions": editions, "documentary_grounding": grounding, "pgp_qa": qa}
+
+
+def _export_all(tmp_path: Path, rows: Dict[str, Dict[str, List[Dict]]]) -> Dict[str, Path]:
+    """Export every source.
+
+    :param tmp_path: Fixture directory.
+    :param rows: dataset -> split -> rows.
+    :return: dataset -> images-once export.
+    """
+    return {d: _export(tmp_path, EXPORT_NAMES[d], splits) for d, splits in rows.items()}
+
+
+@pytest.fixture
+def sources(tmp_path: Path) -> Dict[str, Path]:
+    """dataset -> images-once export of the four tiny sources."""
+    return _export_all(tmp_path, _source_rows(tmp_path))
 
 
 def _build(sources: Dict[str, Path], out: Path, **overrides) -> Dict:
@@ -182,9 +200,69 @@ def test_build_quotas_passes_and_train_splits(sources, tmp_path):
     for task, source in zip(train["task"].to_pylist(), train["source"].to_pylist()):
         if source.startswith("ktiv_"):
             assert source == f"ktiv_{mix.classify_task(task)}"
-    assert result["mixture"]["val"]["pgp_qa"] == {"pool": 1, "requested": 5, "taken": 1}
+    assert result["mixture"]["val"]["pgp_qa"] == {"pool": 1, "eligible": 1, "requested": 5, "taken": 1,
+                                                  "dropped": 0, "refilled": 0}
+    assert result["manifest"]["val_dedupe"]["dropped_rows"] == 0
     assert result["manifest"]["splits"]["val"]["rows"] == 5
     assert result["mixture"]["buckets"]["train"] == {"grounding": 5, "qa": 4, "transcription": 11}
+
+
+def test_refill_val_draw_replaces_blocked_rows_while_the_pool_lasts():
+    rng = np.random.default_rng(0)
+    blocked = np.array([True, False, False, False, True])
+    idx, dropped = mix.refill_val_draw(np.array([0, 1, 2]), blocked, 3, rng)
+    assert idx.tolist() == [1, 2, 3] and dropped.tolist() == [0]      # row 3: the one clean spare
+    blocked = np.array([True, False, True, True, True])
+    idx, dropped = mix.refill_val_draw(np.array([0, 1, 2]), blocked, 3, rng)
+    assert idx.tolist() == [1] and dropped.tolist() == [0, 2]          # exhausted: smaller count
+    idx, dropped = mix.refill_val_draw(np.array([3, 1]), np.zeros(5, dtype=bool), 2, rng)
+    assert idx.tolist() == [1, 3] and dropped.tolist() == []           # nothing blocked: draw stands
+
+
+def _seed_drawing(dataset: str, pool: int, wanted: int, row: int) -> int:
+    """First seed whose initial val draw of a dataset takes a given pool row.
+
+    :param dataset: Dataset key.
+    :param pool: Val pool size.
+    :param wanted: Val rows requested.
+    :param row: Pool row that must be drawn.
+    :return: The seed.
+    """
+    return next(seed for seed in range(1000)
+                if row in mix.component_rng(seed, f"val/{dataset}").choice(pool, size=wanted,
+                                                                           replace=False))
+
+
+def test_val_never_shares_a_train_image(tmp_path):
+    rows = _source_rows(tmp_path)
+    t = "Transcribe the page."
+    # documentary val row 1 sits on an editions train page; three clean rows can replace it
+    rows["documentary_grounding"]["val"] = [
+        _row(_img(tmp_path, i), "locate", stem, LOCATE_Q, BOX_A)
+        for i, stem in ((22, "g22_loc"), (10, "g10_clash"), (23, "g23_loc"), (24, "g24_loc"))]
+    # editions val: one clean row + one on a KTIV train page -> nothing left to refill with
+    rows["pgp_editions"]["val"].append(_row(_img(tmp_path, 0), "fragment_transcribe", "e0_clash", t, "טקסט"))
+    sources = _export_all(tmp_path, rows)
+    seed = _seed_drawing("documentary_grounding", pool=4, wanted=2, row=1)
+    val_rows = {"ktiv": 2, "pgp_editions": 2, "documentary_grounding": 2, "pgp_qa": 1}
+    result = _build(sources, tmp_path / "out", seed=seed, val_rows=val_rows)
+
+    train = pq.read_table(tmp_path / "out" / "rows" / "train.parquet")
+    val = pq.read_table(tmp_path / "out" / "rows" / "val.parquet")
+    assert not set(val[images_once.SHA_COLUMN].to_pylist()) & set(train[images_once.SHA_COLUMN].to_pylist())
+    stems = val["stem"].to_pylist()
+    assert "g10_clash" not in stems and "e0_clash" not in stems
+    infos = result["mixture"]["val"]
+    assert infos["documentary_grounding"] == {"pool": 4, "eligible": 3, "requested": 2, "taken": 2,
+                                              "dropped": 1, "refilled": 1}
+    assert infos["pgp_editions"] == {"pool": 2, "eligible": 1, "requested": 2, "taken": 1,
+                                     "dropped": 1, "refilled": 0}
+    dedupe = json.loads((tmp_path / "out" / "manifest.json").read_text())["val_dedupe"]
+    assert dedupe == result["manifest"]["val_dedupe"]
+    assert sorted(dedupe["dropped_stems"]) == ["e0_clash", "g10_clash"]
+    assert dedupe["dropped_rows"] == 2 and dedupe["refilled_rows"] == 1 and dedupe["rule"]
+    assert result["manifest"]["splits"]["val"]["rows"] == len(stems) == 2 + 1 + 2 + 1
+    assert result["stats"]["val"]["by_source"]["documentary_grounding"] == 2
 
 
 def test_shuffle_is_deterministic_with_the_seed(sources, tmp_path):

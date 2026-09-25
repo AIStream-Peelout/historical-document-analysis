@@ -9,7 +9,8 @@ a train budget and materialised as one directory that
 :class:`~src.finetuning.qwen_hebrew.images_once.ImagesOnceDataset` loads::
 
     <out>/rows/train.parquet   sampled rows of every source, shuffled, + "source"
-    <out>/rows/val.parquet     fixed-size draws from each source's val split
+    <out>/rows/val.parquet     fixed-size draws from each source's val split,
+                               never on an image a train row uses
     <out>/images/<sha1>.jpg    only the images those rows reference
     <out>/manifest.json        rows / unique images / bytes per split
     <out>/mixture.json         config, per-component pool/quota/taken/passes, shares
@@ -29,6 +30,14 @@ replacement while the pool lasts; a quota larger than its pool takes whole
 passes over the pool plus one partial pass, so every row appears
 ``floor(q/n)`` or ``ceil(q/n)`` times. The union is shuffled with the seed,
 so any window of the map-style dataset carries the mixture proportions.
+
+Val never shares a page image with train: the sources split their pages
+independently (a PGP page can be val for the editions and train for the
+documentary grounding), so a drawn val row whose ``image_sha1`` (the page
+identity) backs any train row is dropped and replaced from the same source's
+remaining val rows on images not in train; when those run out the source
+keeps a smaller val count. ``manifest.json`` records the drops under
+``val_dedupe``.
 
 Usage (repo root):
     .venv/bin/python -m src.finetuning.qwen_hebrew.build_v22_mixture \\
@@ -75,6 +84,9 @@ DEFAULT_VAL_ROWS: Dict[str, int] = {
 SOURCE_COLUMN = "source"
 VAL_SPLIT = "val"
 BOX_MARKER = "bbox_2d"
+VAL_DEDUPE_RULE = ("val rows whose image_sha1 (page identity) also backs a train row are dropped "
+                   "and refilled from the same source's remaining val rows on images not in "
+                   "train; a source keeps a smaller count when those run out")
 FORBIDDEN_CARD_STRINGS = ("friedberg", "fjms", "fjp")
 
 # mixture component -> (dataset, bucket); a KTIV component keeps its bucket's tasks only
@@ -433,9 +445,35 @@ def materialize(pools: Mapping[str, pa.Table], quotas: Mapping[str, int],
     return table.take(pa.array(np.random.default_rng(seed).permutation(table.num_rows))), infos
 
 
-def sample_val(val_tables: Mapping[str, pa.Table], val_rows: Mapping[str, int],
-               seed: int) -> Tuple[pa.Table, Dict[str, Dict]]:
-    """Draw up to the requested rows (no repeats) from each dataset's val split.
+def refill_val_draw(drawn: np.ndarray, blocked: np.ndarray, wanted: int,
+                    rng: np.random.Generator) -> Tuple[np.ndarray, np.ndarray]:
+    """Drop drawn val rows on train images and refill from the pool's other allowed rows.
+
+    The first draw's allowed rows plus a uniform refill from the allowed rows
+    it missed form a uniform draw of the allowed rows; a draw that hits no
+    blocked row stands unchanged.
+
+    :param drawn: Pool row indices of the first draw (no repeats).
+    :type drawn: np.ndarray
+    :param blocked: Per pool row, True when its image also backs a train row.
+    :type blocked: np.ndarray
+    :param wanted: Rows requested.
+    :type wanted: int
+    :param rng: Generator for the refill.
+    :type rng: np.random.Generator
+    :return: (kept + refill indices, dropped indices), both sorted; fewer
+        than ``wanted`` rows only when the allowed rows run out.
+    :rtype: Tuple[np.ndarray, np.ndarray]
+    """
+    kept, dropped = drawn[~blocked[drawn]], drawn[blocked[drawn]]
+    spare = np.setdiff1d(np.flatnonzero(~blocked), drawn)
+    refill = rng.choice(spare, size=min(wanted - len(kept), len(spare)), replace=False)
+    return np.sort(np.concatenate([kept, refill]).astype(np.int64)), np.sort(dropped)
+
+
+def sample_val(val_tables: Mapping[str, pa.Table], val_rows: Mapping[str, int], seed: int,
+               train_images: frozenset = frozenset()) -> Tuple[pa.Table, Dict[str, Dict], Dict]:
+    """Draw up to the requested rows (no repeats) from each dataset's val split, off train images.
 
     :param val_tables: dataset -> val rows (one shared schema).
     :type val_tables: Mapping[str, pa.Table]
@@ -443,25 +481,39 @@ def sample_val(val_tables: Mapping[str, pa.Table], val_rows: Mapping[str, int],
     :type val_rows: Mapping[str, int]
     :param seed: Build seed.
     :type seed: int
-    :return: (shuffled val rows with ``source``, dataset -> {"pool", "requested", "taken"}).
-    :rtype: Tuple[pa.Table, Dict[str, Dict]]
+    :param train_images: ``image_sha1`` of every train row; val rows on
+        them are dropped and refilled (:func:`refill_val_draw`).
+    :type train_images: frozenset
+    :return: (shuffled val rows with ``source``, dataset -> {"pool",
+        "eligible", "requested", "taken", "dropped", "refilled"},
+        {"rule", "dropped_rows", "dropped_stems", "refilled_rows"}).
+    :rtype: Tuple[pa.Table, Dict[str, Dict], Dict]
     :raises ValueError: For a dataset without val rows loaded.
     """
     unknown = sorted(set(val_rows) - set(val_tables))
     if unknown:
         raise ValueError(f"val rows asked of unknown datasets {unknown}; known: {sorted(val_tables)}")
-    parts, infos = [], {}
+    parts, infos, dropped_stems = [], {}, []
     for dataset, wanted in val_rows.items():
         table = val_tables[dataset]
-        taken = min(wanted, table.num_rows)
-        idx = np.sort(component_rng(seed, f"val/{dataset}").choice(table.num_rows, size=taken,
-                                                                   replace=False))
+        rng = component_rng(seed, f"val/{dataset}")
+        drawn = rng.choice(table.num_rows, size=min(wanted, table.num_rows), replace=False)
+        blocked = np.array([sha in train_images for sha in table[SHA_COLUMN].to_pylist()], dtype=bool)
+        idx, dropped = refill_val_draw(drawn, blocked, wanted, rng)
+        stems = table["stem"].take(pa.array(dropped, pa.int64())).to_pylist()
+        if stems:
+            logger.info("val %s: dropped %d drawn rows on train images: %s", dataset, len(stems), stems)
+        dropped_stems.extend(stems)
         part = table.take(pa.array(idx, pa.int64()))
         parts.append(with_source(part, row_components(dataset, part)))
-        infos[dataset] = {"pool": table.num_rows, "requested": wanted, "taken": taken}
+        infos[dataset] = {"pool": table.num_rows, "eligible": int((~blocked).sum()), "requested": wanted,
+                          "taken": len(idx), "dropped": len(dropped),
+                          "refilled": len(idx) - (len(drawn) - len(dropped))}
     table = pa.concat_tables(parts)
     order = component_rng(seed, "val/shuffle").permutation(table.num_rows)
-    return table.take(pa.array(order)), infos
+    dedupe = {"rule": VAL_DEDUPE_RULE, "dropped_rows": len(dropped_stems), "dropped_stems": dropped_stems,
+              "refilled_rows": sum(i["refilled"] for i in infos.values())}
+    return table.take(pa.array(order)), infos, dedupe
 
 
 def mixture_meta(metas: Sequence[Dict]) -> Dict:
@@ -647,7 +699,9 @@ def card_text(mixture: Dict, manifest: Dict) -> str:
         f"| `{c}` | {i['bucket']} | {i['dataset']} | {i['pool']:,} | {i['share']:.2f} | "
         f"{i['taken']:,} | {mixture['realised_shares']['components'][c]:.3f} | {i['passes']} |"
         for c, i in comps.items())
-    val_rows = "\n".join(f"| {d} | {i['pool']:,} | {i['taken']} |" for d, i in mixture["val"].items())
+    val_rows = "\n".join(f"| {d} | {i['pool']:,} | {i['eligible']:,} | {i['requested']} | {i['taken']} | "
+                         f"{i['dropped']} | {i['refilled']} |" for d, i in mixture["val"].items())
+    dedupe = manifest["val_dedupe"]
     bucket_rows = "\n".join(f"| {b} | {n:,} | {mixture['realised_shares']['buckets'][b]:.3f} |"
                             for b, n in mixture["buckets"]["train"].items())
     ktiv_rows = "\n".join(f"| `{t}` | {e['bucket']} | {', '.join(e['sections'])} |"
@@ -706,10 +760,14 @@ the pool lasts; a quota above its pool takes whole passes plus one partial pass
 |---|---|---|
 {bucket_rows}
 
-Val rows (drawn without replacement from each dataset's val split):
+Val rows are drawn without replacement from each dataset's val split and never
+share a page image with train: the sources split pages independently, so a drawn
+val row whose image also backs a train row is dropped and refilled from the same
+dataset's remaining val rows on images not in train (eligible = val rows off
+train images). This build dropped {dedupe['dropped_rows']} and refilled {dedupe['refilled_rows']}.
 
-| dataset | val pool | taken |
-|---|---|---|
+| dataset | val pool | eligible | requested | taken | dropped | refilled |
+|---|---|---|---|---|---|---|
 {val_rows}
 
 KTIV task families by bucket (grounding = the answer is bbox JSON or the
@@ -807,7 +865,8 @@ def build_mixture(out_dir: Path, export_dirs: Mapping[str, Path], train_rows: in
                     ", ".join(entry["sections"]))
     pools = component_pools({d: s.train.cast(schema) for d, s in sources.items()}, quotas)
     train, infos = materialize(pools, quotas, seed)
-    val, val_infos = sample_val({d: s.val.cast(schema) for d, s in sources.items()}, val_rows, seed)
+    val, val_infos, val_dedupe = sample_val({d: s.val.cast(schema) for d, s in sources.items()},
+                                            val_rows, seed, frozenset(train[SHA_COLUMN].to_pylist()))
     image_dirs = {comp: sources[d].images_dir for comp, (d, _) in COMPONENTS.items() if d in sources}
     sizes = copy_images(referenced_images([train, val], image_dirs), out_dir / "images", workers)
     verify_images([train, val], out_dir / "images")
@@ -821,6 +880,7 @@ def build_mixture(out_dir: Path, export_dirs: Mapping[str, Path], train_rows: in
                 "image_bytes": sum(sizes.values()),
                 "row_image_bytes": sum(s["row_image_bytes"] for s in splits.values())}
     manifest["dedupe_ratio"] = round(manifest["row_image_bytes"] / max(1, manifest["image_bytes"]), 3)
+    manifest["val_dedupe"] = val_dedupe
     stats = mixture_stats({"train": train, "val": val})
     total = max(1, train.num_rows)
     mixture = {
