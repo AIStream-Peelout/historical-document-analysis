@@ -32,13 +32,19 @@ _VLM = "qwen3-vl-8b-heb-v21b-step1200"
 _BASE_KEY = "MiDRASH_Gen_01"
 
 
-def sample_pages(n: int, seed: int) -> list:
+def sample_pages(n: int, seed: int, pages_from: Path = None) -> list:
     """Documentary v21b records with a raw-cache entry holding Gen_01 fragments.
+
+    The records file grows while the consensus pipeline runs, so a seeded
+    shuffle of it is NOT a stable sample; pass ``pages_from`` (an earlier probe's
+    JSONL) to reuse exactly its pages, in its order.
 
     :param n: Sample size.
     :type n: int
     :param seed: RNG seed.
     :type seed: int
+    :param pages_from: Probe JSONL whose ``(doc_id, image_index)`` pages to reuse (overrides n/seed).
+    :type pages_from: Path
     :return: ``(record, cache entry)`` pairs.
     :rtype: list
     """
@@ -56,6 +62,10 @@ def sample_pages(n: int, seed: int) -> list:
         if cache.exists():
             r["document_type"] = doc_types[r["doc_id"]]
             cands.append((r, cache))
+    if pages_from:
+        order = [(x["doc_id"], x["image_index"]) for x in map(json.loads, open(pages_from))]
+        by_key = {(r["doc_id"], r["image_index"]): (r, cache) for r, cache in cands}
+        return [(by_key[k][0], json.loads(by_key[k][1].read_text())) for k in order if k in by_key]
     random.Random(seed).shuffle(cands)
     out = []
     for r, cache in cands:
@@ -140,7 +150,7 @@ async def main_async(args: argparse.Namespace) -> None:
         for line in open(args.out):
             x = json.loads(line)
             done[(x["doc_id"], x["image_index"])] = x
-    pages = sample_pages(args.n, args.seed)
+    pages = sample_pages(args.n, args.seed, args.pages_from)
     from src.models.ocr.kraken_transcriber import preload_kraken_model
     preload_kraken_model(args.kraken_model)
     with open(args.out, "a") as fh:
@@ -164,6 +174,8 @@ def main() -> None:
     p.add_argument("--work-dir", type=Path, required=True, help="oriented image cache (shared across tags)")
     p.add_argument("--n", type=int, default=60)
     p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--pages-from", type=Path, default=None,
+                   help="reuse the pages of an earlier probe JSONL (stable across a growing records file)")
     p.add_argument("--kraken-model", default=str(
         _REPO / "src/datasets/raw_data/cairo_genizah/custom_model_weights/MiDRASH_Gen_01.mlmodel"))
     args = p.parse_args()

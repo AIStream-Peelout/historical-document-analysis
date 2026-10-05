@@ -8,7 +8,7 @@
 #   train     ketos segtrain from blla2026 (container kraken-segtrain-ktiv-v1, detached, --restart no)
 #   resume    continue from a Lightning checkpoint: segtrain_ktiv.sh resume /out/<ckpt>.ckpt
 #
-# Shared prod host (docs/shared_studio_runtime.md): 6 CPUs, 9.5 GiB (working set plateaus ~8.5 GiB at the 1,600 px
+# Shared prod host (docs/shared_studio_runtime.md): 6 CPUs, 10 GiB (working set ~8.5-8.7 GiB at the 1,600 px
 # width cap; data loading in the main process: a forked loader worker deadlocks with OpenMP), oom-score-adj 1000 so
 # a VM-wide memory squeeze kills training (resumable) and never :8002, low cpu-shares so :8002 wins,
 # threads pinned (torch otherwise sees all 16 host cores), outputs + logs on the NAS, nice 10.
@@ -22,11 +22,11 @@ SEGMODELS=/Volumes/home/studio_offload/models/kraken_segmenters
 IMG=kraken-service:k7-base
 NAME=kraken-segtrain-ktiv-v1
 THREADS=6
-COMMON=(--cpus $THREADS --memory 9500m --oom-score-adj 1000 --cpu-shares 256 --shm-size 2g --log-opt max-size=50m --log-opt max-file=3
-        -e OMP_NUM_THREADS=$THREADS -e PYTHONPATH=/code -w /data
+COMMON=(--cpus $THREADS --memory 10g --oom-score-adj 1000 --cpu-shares 256 --shm-size 2g --log-opt max-size=50m --log-opt max-file=3
+        -e OMP_NUM_THREADS=$THREADS -e PYTHONPATH=/code -e COLUMNS=220 -e MALLOC_ARENA_MAX=2 -e MALLOC_MMAP_THRESHOLD_=131072 -e MALLOC_TRIM_THRESHOLD_=131072 -w /data
         -v "$STAGE:/data:ro" -v "$OUT:/out" -v "$SEGMODELS:/segmodels:ro" -v "$R/src/finetuning/kraken:/code:ro")
 KETOS=(nice -n 10 ketos --device cpu --threads $THREADS --workers 0 --seed 20260923)   # workers>0 deadlocks (fork + OpenMP)
-TRAIN_ARGS=(segtrain -f page -t train.lst -e val.lst -i /segmodels/blla_2026/blla.mlmodel --resize fail
+TRAIN_ARGS=(segtrain -f page -t train.lst -e val.lst --resize fail
             --augment -q early --lag 8 --min-epochs 5 -N 60 -F 1 -r 1e-4 --schedule cosine --cos-max 60
             --cos-min-lr 1e-5 --line-width 8 -o /out/ktiv_seg)
 
@@ -56,14 +56,15 @@ case "${1:-}" in
   train)
     mkdir -p "$OUT"
     [ -n "$(docker ps -aq -f name="^${NAME}$")" ] && { echo "container $NAME exists (resume or remove it)"; exit 1; }
-    docker run -d --name $NAME --restart no "${COMMON[@]}" $IMG "${KETOS[@]}" "${TRAIN_ARGS[@]}"
+    docker run -d -t --name $NAME --restart no "${COMMON[@]}" $IMG "${KETOS[@]}" "${TRAIN_ARGS[@]}" \
+      -i /segmodels/blla_2026/blla.mlmodel   # -t: live progress in logs
     nohup sh -c "docker logs -f $NAME >> '$OUT/train.log' 2>&1" >/dev/null 2>&1 &
     echo "started $NAME; log persisted to $OUT/train.log"
     ;;
   resume)
     CKPT=${2:?checkpoint path inside the container, e.g. /out/ktiv_seg_12.ckpt}
     docker rm $NAME >/dev/null 2>&1 || true
-    docker run -d --name $NAME --restart no "${COMMON[@]}" $IMG "${KETOS[@]}" "${TRAIN_ARGS[@]}" --resume "$CKPT"
+    docker run -d -t --name $NAME --restart no "${COMMON[@]}" $IMG "${KETOS[@]}" "${TRAIN_ARGS[@]}" --resume "$CKPT"
     nohup sh -c "docker logs -f $NAME >> '$OUT/train.log' 2>&1" >/dev/null 2>&1 &
     echo "resumed $NAME from $CKPT; log appended to $OUT/train.log"
     ;;

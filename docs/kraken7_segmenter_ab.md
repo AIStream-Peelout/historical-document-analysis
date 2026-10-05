@@ -220,6 +220,124 @@ excluded by `exclude_benchmark_manuscripts` + shingle decontamination).
   blla2026 with `KRAKEN_SEG_INPUT=rgb` (the fine-tune trains on RGB pages; the service segments nlbin output
   by default).
 
+### Mid-run evaluation after epoch 3 (2026-09-23 22:08–00:00, training paused and resumed)
+
+Validation (129 images, segtrain's own metrics): `val_bl_f1` blla2026 0.763 → epoch 1 0.935 → 2 0.943 → 3 0.945
+(`val_mean_iu` 0.389 → 0.482 / 0.482 / 0.488; early stopping monitors mean IoU, which is insensitive —
+checkpoints are chosen by baseline F1 and benchmark CER instead; all epoch checkpoints are kept).
+
+End to end, same harness scorer, Gen_01 recognition, epoch-3 checkpoint converted to safetensors and served
+with `KRAKEN_SEG_INPUT=rgb` (the fine-tune trains on colour pages):
+
+| religious (140), CER med | all | two-col (33) | single-col (107) | wins vs k4 |
+|---|---:|---:|---:|---:|
+| kraken_raw k4 | 0.680 | 0.679 | 0.681 | — |
+| kraken_raw blla2026, binarised (**prod since 12:26**) | 0.587 | 0.564 | 0.593 | 94/45 |
+| kraken_raw blla2026, rgb | 0.655 | 0.568 | 0.698 | 62/78 |
+| **kraken_raw fine-tuned e03, rgb** | **0.410** | **0.316** | **0.467** | 105/35 |
+| kraken_seg fine-tuned e03, rgb | 0.406 | 0.316 | 0.454 | 102/38 |
+| MiDRASH Zenodo (138) | 0.240 | | | |
+
+| PGP (131), CER med | raw | seg | wins vs k4 (raw) |
+|---|---:|---:|---:|
+| k4 | 0.358 | 0.437 | — |
+| blla2026 binarised (prod) | 0.297 | 0.295 | 99/31 |
+| blla2026 rgb | 0.305 | 0.297 | 95/36 |
+| **fine-tuned e03 rgb** | **0.270** | **0.274** | 113/18 |
+
+RGB input alone makes blla2026 worse on the religious pages (0.587 → 0.655), so the gain is the fine-tune's.
+PGP images are out-of-domain for the fine-tune (photographs, documentary hands) and still improve.
+Lines per GT line (religious): blla2026 1.39 → fine-tuned 0.98 (fragmentation gone).
+
+Agreement probe — **caveat: sample drift.** The probe's seeded sample is drawn from the growing v21b records
+file, so this run sampled a different 60 pages (848 VLM lines, 4 overlapping) than the earlier probes; the
+numbers are comparable only within the run: cached k4 fragments 9.1 % → blla2026 rgb 11.2 % (7 up / 8 down)
+→ fine-tuned e03 rgb 12.1 % (9 up / 3 down). No post-cut-over (k7) pages were in the sample. The probe now
+takes `--pages-from <earlier probe jsonl>` so later runs reuse identical pages; the next evaluation runs prod
+(blla2026 binarised), blla2026 rgb and the best checkpoint on the union of both samples (120 pages).
+The agreement gain is much smaller than the CER gain: agreement needs whole lines at ≥ 0.8 similarity, which
+on documentary hands is limited by Gen_01 recognition rather than segmentation.
+
+### Final evaluation (training stopped after epoch 10, 2026-09-24)
+
+Training: `val_bl_f1` 0.935 → 0.952 by epoch 4, flat through epoch 10 (stopped by decision; checkpoints e1–e10 kept,
+e8–e10 converted in `runs/ktiv_seg_v1/eval/`). **e10 chosen** (best on both benchmarks among e3/e9/e10).
+
+Test-time multi-view reading (k7 test image `kraken-service:k7-mv`, `KRAKEN_MULTISCALE=1 KRAKEN_ORIENT=1`, `views.py`):
+the remaining MiDRASH gap was mostly *text scale* — blla resizes every page to 1800 px height, and a third of the
+religious benchmark's pages reach the model with writing larger than 97 % of the training pages (recovery fell to
+0.53 there, 14 near-total failures) — plus ~5 rotated scans. Views shrink the writing (bottom padding, scale 0.5 /
+0.33, recognition at full resolution) and try 90°/270° when the upright read is fragmentary; the best-reading view
+wins. Reviewed by a 3-lens workflow + verification (fixed: bottom lines lost in shrunk views, over-eager rotation
+trigger, rotated reads breaking geometry reorder, Orli distortion).
+
+| CER median | religious raw / seg | 2-col / 1-col (seg) | PGP raw / seg |
+|---|---:|---:|---:|
+| k4 (old service) | 0.680 / 0.641 | 0.504 / 0.654 | 0.358 / 0.437 |
+| blla2026 binarised (**prod now**) | 0.587 / 0.574 | 0.399 / 0.587 | 0.297 / 0.295 |
+| blla2026 + multi-view | 0.462 / 0.397 | 0.299 / 0.404 | 0.272 / 0.287 |
+| fine-tuned e10 (rgb) | 0.409 / 0.399 | 0.314 / 0.461 | 0.264 / 0.267 |
+| **fine-tuned e10 + multi-view** | **0.336 / 0.334** | **0.248 / 0.361** | **0.253** / 0.267 |
+| MiDRASH Zenodo (138 matched) | 0.240 | | |
+
+Agreement probe on the 89 frozen documentary pages every configuration completed (1,178 VLM lines, rule v3):
+
+| reader | agreed | pages up/down vs k4 | Kraken s/page med / p90 |
+|---|---:|---:|---:|
+| k4 cached | 11.1 % | — | — |
+| blla2026 binarised (prod) | 12.8 % | 17 / 5 | 10.1 / 17.3 |
+| blla2026 + multi-view | 14.5 % | 22 / 5 | 25.4 / 37.1 |
+| fine-tuned e10 | 15.0 % | 19 / 2 | 8.4 / 16.0 |
+| **fine-tuned e10 + multi-view** | **16.6 %** | **26 / 2** | 22.4 / 33.6 |
+
+(Single-view e10 on all 116 frozen pages: 10.2 % → 14.4 %; prod 12.1 %.)
+
+**Robustness issue found:** the multi-view test containers were OOM-killed (8 GiB cap) after ~360 requests — the
+service's memory grows across requests (the same glibc fragmentation as training); 27 / 9 probe pages failed at the
+tail. Must be fixed (malloc arena/trim settings, `malloc_trim` per request) and soak-tested before any prod use.
+
+**Incident (2026-09-24 11:45 EDT):** with three test containers running beside prod, the 16 GiB Docker VM ran out
+of memory and the kernel killed prod `kraken-linewise` (not a container OOM; Docker restarted it). One pipeline page
+(job 415 of the v22c run) failed with `kraken` and is in `failures.jsonl` for retry. Prevention: test containers get
+`--oom-score-adj 1000`, at most two at a time.
+
+### Plan for the second swap (fine-tuned e10 + multi-view), agreed with the v22 consensus session
+
+* **When:** between pipeline runs, after v22c reaches DONE (ETA ~2026-09-25 12:30 EDT); a mid-run swap would
+  mislabel pages, because the pipeline's HTR key is fixed for the life of a process.
+* **Before:** memory-leak fix soak-tested (`src/services/kraken_microservice/k7/soak_test.py`, image
+  `kraken-service:k7-mv2`); v22 session runs `stamp_htr_cache_key.py --all-k7-logs logs/two_reader_v21b_v22c_0924.log`
+  on the finished v22c output (retroactive k7 key).
+* **Swap:** new prod image = k7-mv2 code + e10 weights + `KRAKEN_SEG_INPUT=rgb KRAKEN_MULTISCALE=1 KRAKEN_ORIENT=1`;
+  guards: a real `/transcribe_lines` request must succeed on the new container before anything resumes, disk ≥ 10 GB
+  free, no test containers running; old image kept for rollback; boundary logged.
+* **After:** the next pipeline run (and its watchdog's auto-resume line) is launched with
+  `--htr-cache-key MiDRASH_Gen_01@k7.0.3-ktivseg-e10-mv` (flag added in commit fbbb516 on kg/pipeline-version-stamp;
+  byte-identical to the stamp tool). A bare `--rekraken` without `--kraken-cache-suffix` is being made to refuse
+  unless `--legacy-key` is passed.
+* **Optional before that:** a same-config leak-fix swap of prod (`kraken-service:k7-blla2026-lf`, current key kept)
+  only with the user's OK, after `check_kraken_identity.py` shows identical fragments on ≥ 20 v22c pages.
+
+### Leak-fix swap (2026-09-24 23:35 EDT, user-approved)
+
+`:8002` → `kraken-service:k7-blla2026-lf` (same model and settings; `MALLOC_ARENA_MAX=2`, mmap/trim thresholds,
+`gc.collect()` + `malloc_trim(0)` after every request). Gates: soak 542 requests flat at 3.9 GiB with 0 failures
+(`soak_test.py`); identity 25/25 v22c pages, 745 fragments identical to prod's cache (`check_kraken_identity.py`).
+32 s STOP including a real `/transcribe_lines` check; boundary: jobs 1602–1603 old, 1604 onward new; no
+`failure=kraken`. In production afterwards: anon memory flat at 4.4–5.0 GiB over 611 requests / 6 h (the unfixed
+image climbed 4.8 → 8.4 GiB over ~500 requests toward its 10 GiB cap). Record `logs/kraken_leakfix_swap_0924.json`,
+trace `logs/kraken_prod_memtrace_0924.log`; rollback container `kraken-linewise-k7a` (stopped).
+
+### Second swap — fine-tuned e10 + multi-view in production (2026-09-25 15:12 EDT, user-approved)
+
+Between runs, agreed with the v22 session: it stopped the v22c cycle guard, watchdog and pipeline at 15:09 (last
+page job 3176), backed up the records file and stamped v22c (4,560 records → `MiDRASH_Gen_01@k7.0.3-blla2026`;
+9,412 pre-cut-over records untouched). `logs/kraken_ktivseg_swap_0925.sh` then swapped `:8002` to
+`kraken-service:k7-ktivseg-e10` (container ffc67056b29e; the prod image reproduced the evaluated outputs on 12/12
+benchmark pages, incl. rotated and rescaled views, before the swap) and verified health, preload and a real
+`/transcribe_lines` (71 lines). Rollback: `kraken-linewise-lf`. The next pipeline run (v22d) carries
+`--htr-cache-key MiDRASH_Gen_01@k7.0.3-ktivseg-e10-mv` on its launch and watchdog resume line.
+
 ## State
 
 * `:8002` runs k7-blla2026 (see cut-over record); test image `kraken-service:k7` (+ `KRAKEN_SEG_INPUT`),

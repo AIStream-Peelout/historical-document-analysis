@@ -91,7 +91,9 @@ async def run(bench: str, tag: str, model: str, limit: int, ids: set) -> None:
         res["seconds"] = round(time.time() - t0, 1)
         lines = res.get("lines", [])
         (outdir / f"kraken_raw_{tag}.txt").write_text("\n".join(l["text"] for l in lines), encoding="utf-8")
-        (outdir / f"kraken_seg_{tag}.txt").write_text(reorder_ocr_lines(lines), encoding="utf-8")
+        # a rotated read (KRAKEN_ORIENT) is re-ordered in its own, upright frame
+        geo = [{**l, "bbox": l["view_bbox"]} if l.get("view_bbox") else l for l in lines]
+        (outdir / f"kraken_seg_{tag}.txt").write_text(reorder_ocr_lines(geo), encoding="utf-8")
         lines_f.write_text(json.dumps(res, ensure_ascii=False), encoding="utf-8")
         print(f"  {i}/{len(docs)} {d['doc_id']} {len(lines)} lines {res['seconds']}s", flush=True)
 
