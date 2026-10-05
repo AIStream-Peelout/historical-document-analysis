@@ -1,14 +1,17 @@
 # File name: test_build_v22_mixture.py
 # Date: 9/24/26
 # Author: Isaac Godfried. Coded originally by Claude Opus 5.5.
-"""Tests for the v22 pilot mixture builder on tiny synthetic images-once sources.
+"""Tests for the v22 mixture builder on tiny synthetic images-once sources.
 
 Four small DatasetDicts in the KTIV row schema (KTIV with transcription and
 grounding families; editions and QA split over several ``train_*`` splits)
-are saved, exported images-once and mixed. The mixture must repeat
-over-subscribed pools evenly, shuffle reproducibly, copy only the images its
-rows reference, never put a val row on a train image, load through
-``ImagesOnceDataset`` and keep forbidden sources out of its card.
+are saved, exported images-once and mixed, plus two extra sources supplied
+with ``--source`` (Talmud replay and synthetic renders). The mixture must
+repeat over-subscribed pools evenly, shuffle reproducibly, copy only the
+images its rows reference, never put a val row on a train image, load
+through ``ImagesOnceDataset``, keep the pilot's defaults when no extra source
+is given, credit and rights-note every source it uses and keep forbidden
+sources out of its card.
 """
 import json
 from collections import Counter
@@ -31,7 +34,15 @@ READ_BOX_Q = "Transcribe ONLY the text inside the region bbox_2d = [1, 2, 30, 40
 BOX_A = '{"bbox_2d": [1, 2, 30, 40]}'
 VAL_ROWS = {"ktiv": 2, "pgp_editions": 1, "documentary_grounding": 1, "pgp_qa": 5}
 EXPORT_NAMES = {"ktiv": "ktiv", "pgp_editions": "editions", "documentary_grounding": "grounding",
-                "pgp_qa": "qa"}
+                "pgp_qa": "qa", "talmud": "talmud", "synthetic": "synthetic"}
+PILOT_DATASETS = ["ktiv", "pgp_editions", "documentary_grounding", "pgp_qa"]
+# recorded in genizah_v22_pilot/mixture.json (built 2026-09-24 with `--workers 32` only)
+PILOT_CONFIG_SHARES = {"ktiv_transcription": 0.3, "pgp_editions": 0.25, "ktiv_grounding": 0.15,
+                       "documentary_grounding": 0.1, "pgp_qa": 0.2}
+PILOT_CONFIG_VAL_ROWS = {"ktiv": 60, "pgp_editions": 60, "documentary_grounding": 40, "pgp_qa": 40}
+SIX_SHARES = {"ktiv_transcription": 0.25, "pgp_editions": 0.2, "ktiv_grounding": 0.15,
+              "documentary_grounding": 0.1, "pgp_qa": 0.1, "talmud_replay": 0.1, "synthetic": 0.1}
+SIX_VAL_ROWS = {**VAL_ROWS, "talmud": 2, "synthetic": 1}
 
 
 def _img(root: Path, i: int) -> Path:
@@ -118,10 +129,31 @@ def _export_all(tmp_path: Path, rows: Dict[str, Dict[str, List[Dict]]]) -> Dict[
     return {d: _export(tmp_path, EXPORT_NAMES[d], splits) for d, splits in rows.items()}
 
 
+def _extra_rows(tmp_path: Path) -> Dict[str, Dict[str, List[Dict]]]:
+    """dataset -> split -> rows of tiny Talmud-replay and synthetic sources (KTIV row schema).
+
+    :param tmp_path: Fixture directory.
+    :return: The rows (no val row on a train image).
+    """
+    t = "Transcribe the page."
+    talmud = {"train": [_row(_img(tmp_path, 40), "talmud_page", "t40", t, "גמרא"),
+                        _row(_img(tmp_path, 41), "talmud_page", "t41", t, "משנה")],
+              "val": [_row(_img(tmp_path, i), "talmud_page", f"t{i}", t, "תלמוד") for i in (42, 43, 44)]}
+    synthetic = {"train": [_row(_img(tmp_path, i), "synthetic_render", f"s{i}", t, "אבגד") for i in (50, 51, 52)],
+                 "val": [_row(_img(tmp_path, i), "synthetic_render", f"s{i}", t, "הוזח") for i in (53, 54)]}
+    return {"talmud": talmud, "synthetic": synthetic}
+
+
 @pytest.fixture
 def sources(tmp_path: Path) -> Dict[str, Path]:
     """dataset -> images-once export of the four tiny sources."""
     return _export_all(tmp_path, _source_rows(tmp_path))
+
+
+@pytest.fixture
+def full_sources(tmp_path: Path) -> Dict[str, Path]:
+    """dataset -> images-once export of the four pilot sources plus Talmud replay and synthetic."""
+    return _export_all(tmp_path, {**_source_rows(tmp_path), **_extra_rows(tmp_path)})
 
 
 def _build(sources: Dict[str, Path], out: Path, **overrides) -> Dict:
@@ -345,5 +377,385 @@ def test_current_export_is_reused(sources, tmp_path):
     assert not mix.export_is_current(tmp_path / "grounding", export)    # another source's export
 
 
+def _cli_args(sources: Dict[str, Path], tmp_path: Path, out: Path, *extra: str) -> List[str]:
+    """Command line of a 20-row fixture build (pilot DatasetDicts exported as needed).
+
+    :param sources: dataset -> images-once export.
+    :param tmp_path: Fixture directory (holds the saved DatasetDicts).
+    :param out: Mixture directory.
+    :param extra: Further arguments.
+    :return: argv for :func:`mix.main`.
+    """
+    return ["--out", str(out), "--train-rows", "20", "--workers", "2", "--ktiv-dir", str(sources["ktiv"]),
+            "--editions-dir", str(tmp_path / "editions"), "--grounding-dir", str(tmp_path / "grounding"),
+            "--qa-dir", str(tmp_path / "qa"), *extra]
+
+
+def test_parse_sources() -> None:
+    """``--source NAME=DIR`` takes the extra datasets only, each once."""
+    assert mix.parse_sources(["talmud=/nas/t", " synthetic = ~/s "]) == {
+        "talmud": Path("/nas/t"), "synthetic": Path("~/s").expanduser()}
+    assert mix.parse_sources([]) == {}
+    for spec, match in (("talmud", "NAME=DIR"), ("talmud=", "NAME=DIR"), ("=/nas/t", "NAME=DIR"),
+                        ("talmud_replay=/nas/t", "unknown dataset 'talmud_replay'"),
+                        ("ktiv=/nas/k", "--ktiv-dir"), ("pgp_qa=/nas/q", "--qa-dir")):
+        with pytest.raises(ValueError, match=match):
+            mix.parse_sources([spec])
+    with pytest.raises(ValueError, match="twice"):
+        mix.parse_sources(["talmud=/nas/a", "talmud=/nas/b"])
+
+
+def test_pilot_call_keeps_the_pilot_defaults() -> None:
+    """Without ``--source`` the pilot's command line resolves to its recorded shares, val rows, quotas."""
+    a = mix.build_parser().parse_args(["--workers", "32"])
+    assert a.source == [] and a.shares is None and a.val_rows is None
+    datasets = [*mix.PILOT_FLAGS, *mix.parse_sources(a.source)]
+    assert datasets == PILOT_DATASETS
+    shares, val_rows, quotas = mix.resolve_plan(datasets, a.train_rows, a.shares, a.val_rows)
+    assert list(shares.items()) == list(PILOT_CONFIG_SHARES.items())
+    assert list(val_rows.items()) == list(PILOT_CONFIG_VAL_ROWS.items())
+    assert quotas == {"ktiv_transcription": 2400, "pgp_editions": 2000, "ktiv_grounding": 1200,
+                      "documentary_grounding": 800, "pgp_qa": 1600}
+
+
+def test_default_shares_and_val_rows_follow_the_supplied_sources() -> None:
+    """Each supplied extra dataset adds its default share (pilot shares scaled) and val rows."""
+    six = PILOT_DATASETS + ["talmud", "synthetic"]
+    shares = mix.default_shares(six)
+    assert list(shares)[-2:] == ["talmud_replay", "synthetic"]
+    assert shares["talmud_replay"] == 0.08 and shares["synthetic"] == 0.07
+    assert sum(shares.values()) == pytest.approx(1.0)
+    for comp, share in mix.DEFAULT_SHARES.items():
+        assert shares[comp] == pytest.approx(share * 0.85)
+    only_talmud = mix.default_shares(PILOT_DATASETS + ["talmud"])
+    assert "synthetic" not in only_talmud and sum(only_talmud.values()) == pytest.approx(1.0)
+    assert mix.default_val_rows(six) == {**PILOT_CONFIG_VAL_ROWS, "talmud": 30, "synthetic": 20}
+    assert mix.default_val_rows(PILOT_DATASETS + ["synthetic"]) == {**PILOT_CONFIG_VAL_ROWS, "synthetic": 20}
+    assert mix.plan_quotas(shares, 20000)["talmud_replay"] == 1600
+
+
+def test_share_or_val_rows_without_a_source_is_an_error(sources, tmp_path) -> None:
+    """Shares or val rows needing an unsupplied or unfinished source fail before anything is written."""
+    shares = {**mix.DEFAULT_SHARES, "pgp_qa": 0.1, "talmud_replay": 0.1}
+    with pytest.raises(ValueError, match=r"talmud_replay needs dataset 'talmud' \(--source talmud=DIR\)"):
+        _build(sources, tmp_path / "out", shares=shares)
+    with pytest.raises(ValueError, match=r"val rows ask for dataset 'synthetic'"):
+        _build(sources, tmp_path / "out", val_rows={**VAL_ROWS, "synthetic": 2})
+    with pytest.raises(FileNotFoundError, match="talmud: .* not a finished images-once export"):
+        _build({**sources, "talmud": tmp_path / "talmud_in_progress"}, tmp_path / "out", shares=shares)
+    # the CLI checks the plan before any export step: the pilot dirs need not even exist
+    nowhere = str(tmp_path / "nowhere")
+    with pytest.raises(ValueError, match=r"--source talmud=DIR"):
+        mix.main(["--out", str(tmp_path / "cli"), "--shares", json.dumps(shares), "--ktiv-dir", nowhere,
+                  "--editions-dir", nowhere, "--grounding-dir", nowhere, "--qa-dir", nowhere])
+    with pytest.raises(FileNotFoundError, match="talmud: "):
+        mix.main(_cli_args(sources, tmp_path, tmp_path / "cli", "--source", f"talmud={nowhere}"))
+    assert not (tmp_path / "out").exists() and not (tmp_path / "cli").exists()
+
+
+def test_extra_sources_are_mixed_at_the_requested_shares(full_sources, tmp_path) -> None:
+    """``--source`` Talmud and synthetic rows join at their shares, each row under its one component."""
+    out = tmp_path / "cli"
+    mix.main(_cli_args(full_sources, tmp_path, out, "--source", f"talmud={full_sources['talmud']}",
+                       "--source", f"synthetic={full_sources['synthetic']}",
+                       "--shares", json.dumps(SIX_SHARES), "--val-rows", json.dumps(SIX_VAL_ROWS)))
+    mixture = json.loads((out / "mixture.json").read_text())
+    comps = mixture["components"]
+    assert {c: i["taken"] for c, i in comps.items()} == {
+        "ktiv_transcription": 5, "pgp_editions": 4, "ktiv_grounding": 3, "documentary_grounding": 2,
+        "pgp_qa": 2, "talmud_replay": 2, "synthetic": 2}
+    assert (comps["talmud_replay"]["dataset"], comps["talmud_replay"]["bucket"]) == ("talmud", "transcription")
+    assert (comps["synthetic"]["dataset"], comps["synthetic"]["pool"]) == ("synthetic", 3)
+    assert mixture["config"]["dirs"]["talmud"] == str(full_sources["talmud"])
+    assert mixture["train_splits"]["synthetic"] == ["train"]
+    train = _rows(out, "train")
+    assert {r["stem"] for r in train if r["source"] == "talmud_replay"} == {"t40", "t41"}
+    synthetic = [r["stem"] for r in train if r["source"] == "synthetic"]
+    assert len(set(synthetic)) == 2 and set(synthetic) <= {"s50", "s51", "s52"}
+    stats = json.loads((out / "stats.json").read_text())
+    assert stats["train"]["unique_images_by_source"]["talmud_replay"] == 2
+    assert stats["train"]["unique_images_by_source"]["ktiv_transcription"] == 3      # pages 0, 1, 2
+    assert comps["synthetic"]["unique_images"] == 2
+    assert stats["train"]["by_bucket"] == {"grounding": 5, "qa": 2, "transcription": 13}
+    assert {r["source"] for r in _rows(out, "val")} == set(comps)
+    direct = tmp_path / "direct"                            # the CLI builds what the direct call builds
+    _build(full_sources, direct, shares=SIX_SHARES, val_rows=SIX_VAL_ROWS)
+    for split in ("train", "val"):
+        assert _rows(out, split) == _rows(direct, split)
+    assert mix.self_check(out)["train"]["rows"] == 20
+
+
+def test_val_rows_of_extra_sources_avoid_train_images(tmp_path) -> None:
+    """Talmud and synthetic val rows are drawn, deduped against train images and refilled like any source."""
+    rows = {**_source_rows(tmp_path), **_extra_rows(tmp_path)}
+    t = "Transcribe the page."
+    # talmud val row 0 sits on a Talmud train page (40); three clean rows can replace it
+    rows["talmud"]["val"].insert(0, _row(_img(tmp_path, 40), "talmud_page", "t40_clash", t, "גמרא"))
+    # synthetic val: two clean rows + one on a KTIV train page (0), all three asked for
+    rows["synthetic"]["val"].append(_row(_img(tmp_path, 0), "synthetic_render", "s0_clash", t, "טקסט"))
+    sources = _export_all(tmp_path, rows)
+    seed = _seed_drawing("talmud", pool=4, wanted=2, row=0)
+    result = _build(sources, tmp_path / "out", seed=seed, shares=SIX_SHARES,
+                    val_rows={**VAL_ROWS, "talmud": 2, "synthetic": 3})
+
+    train = pq.read_table(tmp_path / "out" / "rows" / "train.parquet")
+    val = pq.read_table(tmp_path / "out" / "rows" / "val.parquet")
+    assert not set(val[images_once.SHA_COLUMN].to_pylist()) & set(train[images_once.SHA_COLUMN].to_pylist())
+    infos = result["mixture"]["val"]
+    assert infos["talmud"] == {"pool": 4, "eligible": 3, "requested": 2, "taken": 2, "dropped": 1, "refilled": 1}
+    assert infos["synthetic"] == {"pool": 3, "eligible": 2, "requested": 3, "taken": 2, "dropped": 1,
+                                  "refilled": 0}
+    assert sorted(result["manifest"]["val_dedupe"]["dropped_stems"]) == ["s0_clash", "t40_clash"]
+    assert result["stats"]["val"]["by_source"]["talmud_replay"] == 2
+    assert result["stats"]["val"]["by_source"]["synthetic"] == 2
+    assert result["mixture"]["val_missing_components"] == []
+
+
+def test_default_val_rows_cover_the_extra_sources(full_sources, tmp_path) -> None:
+    """With defaults, the extra sources get their default shares and val rows (capped by their pools)."""
+    result = _build(full_sources, tmp_path / "out", shares=None, val_rows=None)
+    cfg = result["mixture"]["config"]
+    assert cfg["shares"] == mix.default_shares(full_sources) and cfg["val_rows"]["talmud"] == 30
+    val = result["mixture"]["val"]
+    assert (val["talmud"]["requested"], val["talmud"]["taken"]) == (30, 3)
+    assert (val["synthetic"]["requested"], val["synthetic"]["taken"]) == (20, 2)
+    for comp, info in result["mixture"]["components"].items():
+        assert info["quota"] == round(cfg["shares"][comp] * 20)
+
+
+def test_card_lists_used_components_and_rights_notes(full_sources, tmp_path) -> None:
+    """The card lists every component with train rows and rights-notes each extra source it uses."""
+    result = _build(full_sources, tmp_path / "full", shares=SIX_SHARES, val_rows=SIX_VAL_ROWS)
+    card = (tmp_path / "full" / "README.md").read_text()
+    for comp, i in result["mixture"]["components"].items():
+        assert (f"| `{comp}` | {i['bucket']} | {i['dataset']} | {i['pool']:,} | {i['share']:.4g} | "
+                f"{i['taken']:,} |") in card
+        assert card.count(f"| `{comp}` |") == 1
+    assert "# Genizah v22 training mixture: full (images-once)" in card and "6 source datasets" in card
+    for note in ("HebrewBooks.org", "© Moznaim Publishers", '"No commercial use allowed"', "stays private",
+                 "generated renders", "CC-BY compatible", "NLI-KTIV", "Princeton Geniza Project"):
+        assert note in card
+    assert not any(word in card.lower() for word in mix.FORBIDDEN_CARD_STRINGS)
+
+    _build({d: full_sources[d] for d in PILOT_DATASETS}, tmp_path / "pilot")
+    card = (tmp_path / "pilot" / "README.md").read_text()
+    assert "Moznaim" not in card and "CC-BY" not in card and "4 source datasets" in card
+
+    # Talmud supplied but unused (share 0, no val rows): no row, no note
+    shares = {**SIX_SHARES, "talmud_replay": 0.0, "synthetic": 0.2}
+    _build(full_sources, tmp_path / "no_talmud", shares=shares, val_rows={**VAL_ROWS, "synthetic": 1})
+    card = (tmp_path / "no_talmud" / "README.md").read_text()
+    assert "`talmud_replay`" not in card and "Moznaim" not in card and "CC-BY compatible" in card
+    assert "5 source datasets" in card
+
+
+def test_layouts_tolerate_column_order_and_name_the_culprit(full_sources, tmp_path) -> None:
+    """An extra export with the KTIV columns in another order mixes; a real difference names its source."""
+    base = {"columns": ["image", "question", "answer"], "image_column": "image", "image_mode": None}
+    mix.check_layouts([base, {**base, "columns": ["answer", "image", "question"]}], ["ktiv", "talmud"])
+    with pytest.raises(ValueError, match=r"talmud lacks \['answer'\] and adds \['tractate'\]"):
+        mix.check_layouts([base, {**base, "columns": ["image", "question", "tractate"]}], ["ktiv", "talmud"])
+    with pytest.raises(ValueError, match="image_mode: synthetic has 'RGB', ktiv has None"):
+        mix.check_layouts([base, {**base, "image_mode": "RGB"}], ["ktiv", "synthetic"])
+    for path in (full_sources["talmud"] / "rows").glob("*.parquet"):      # "answer" moved last
+        table = pq.read_table(path)
+        meta = json.loads(table.schema.metadata[images_once.META_KEY])
+        meta["columns"] = [c for c in meta["columns"] if c != "answer"] + ["answer"]
+        table = table.select([c for c in table.column_names if c != "answer"] + ["answer"])
+        pq.write_table(table.replace_schema_metadata(
+            {images_once.META_KEY: json.dumps(meta, ensure_ascii=False).encode()}), path)
+    out = tmp_path / "out"
+    _build(full_sources, out, shares=SIX_SHARES, val_rows=SIX_VAL_ROWS)
+    ktiv_columns = pq.read_table(full_sources["ktiv"] / "rows" / "train.parquet").column_names
+    assert pq.read_table(out / "rows" / "train.parquet").column_names == ktiv_columns + ["source"]
+    ds = images_once.ImagesOnceDataset(out / "rows" / "train.parquet", out / "images")
+    talmud = [ds[i] for i in range(len(ds)) if ds[i]["source"] == "talmud_replay"]
+    assert {(item["stem"], item["answer"], item["question"]) for item in talmud} == {
+        ("t40", "גמרא", "Transcribe the page."), ("t41", "משנה", "Transcribe the page.")}
+
+
+def test_each_non_ktiv_dataset_feeds_exactly_one_component(monkeypatch) -> None:
+    """Every non-KTIV dataset maps all its rows to its one component; a second entry is refused."""
+    table = pa.table({"task": ["talmud_page", "anything"]})
+    assert set(mix.TASK_SPLIT_DATASETS) == {"ktiv", "vqa"}
+    datasets = {d for d, _ in mix.COMPONENTS.values()} - set(mix.TASK_SPLIT_DATASETS)
+    assert datasets == {"pgp_editions", "documentary_grounding", "pgp_qa", "talmud", "synthetic", "pgp_edition_pages",
+                        "arabic_editions", "agapet", "muharaf", "baybars", "iskandar"}
+    for dataset in datasets:
+        (comp,) = set(mix.row_components(dataset, table))
+        assert mix.COMPONENTS[comp][0] == dataset
+    assert mix.row_components("talmud", table) == ["talmud_replay", "talmud_replay"]
+    assert mix.row_components("agapet", table) == ["arabic_agapet", "arabic_agapet"]         # outside Arabic sets: one each
+    assert {mix.COMPONENTS[c] for c in mix.COMPONENTS if c.startswith("arabic_")} == {
+        ("arabic_editions", "transcription"), ("agapet", "transcription"), ("muharaf", "transcription"),
+        ("baybars", "transcription"), ("iskandar", "transcription")}
+    assert set(mix.RIGHTS_NOTES) >= {"arabic_editions", "agapet", "muharaf", "baybars", "iskandar"}
+    assert not any(bad in note.lower() for note in mix.RIGHTS_NOTES.values() for bad in mix.FORBIDDEN_CARD_STRINGS)
+    with pytest.raises(ValueError, match="unknown dataset"):
+        mix.row_components("talmud_replay", table)
+    monkeypatch.setitem(mix.COMPONENTS, "synthetic_boxes", ("synthetic", "grounding"))
+    with pytest.raises(ValueError, match="exactly one"):
+        mix.row_components("synthetic", table)
+
+
+def test_mixture_stats_count_unique_images_per_component() -> None:
+    """Stats report distinct images per component and skip missing target lengths."""
+    table = pa.table({"source": ["talmud_replay", "talmud_replay", "synthetic"], "task": ["p", "p", "s"],
+                      "target_chars": pa.array([4, None, 6], pa.int32()),
+                      images_once.SHA_COLUMN: ["a", "a", "b"]})
+    stats = mix.mixture_stats({"train": table})["train"]
+    assert stats["unique_images_by_source"] == {"synthetic": 1, "talmud_replay": 1}
+    assert stats["unique_images"] == 2 and stats["by_bucket"] == {"transcription": 3}
+    assert stats["mean_target_chars"] == {"synthetic": 6.0, "talmud_replay": 4.0}
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def test_transcription_rows_with_editors_marks_never_enter_the_mixture(tmp_path) -> None:
+    rows = _source_rows(tmp_path)
+    t = "Transcribe the page."
+    rows["pgp_editions"]["train_page"] += [_row(_img(tmp_path, 13), "fragment_transcribe", "e13_page", t, "שמואל $דויד$"),
+                                           _row(_img(tmp_path, 14), "fragment_transcribe", "e14_page", t, "דינרין ____")]
+    rows["pgp_editions"]["val"] += [_row(_img(tmp_path, 15), "fragment_transcribe", "e15_page", t, "כסף & ב")]
+    result = _build(_export_all(tmp_path, rows), tmp_path / "mix")
+    train = pq.read_table(tmp_path / "mix" / "rows" / "train.parquet").to_pylist()
+    val = pq.read_table(tmp_path / "mix" / "rows" / "val.parquet").to_pylist()
+    assert not {"e13_page", "e14_page", "e15_page"} & {r["stem"] for r in train + val}
+    assert {"e10_page", "e11_page"} <= {r["stem"] for r in train}                    # the clean pages are still drawn
+    assert any(r["task"] == "qa_date" and "{" in r["answer"] for r in train)        # JSON answers are not transcriptions
+    dropped = result["mixture"]["unclean_transcriptions_dropped"]
+    assert dropped["stems"] == {"pgp_editions": {"train": ["e13_page", "e14_page"], "val": ["e15_page"]}}
+    assert result["mixture"]["components"]["pgp_editions"]["pool"] == 3              # two pages + one line row
+
+
+def test_drop_unclean_transcriptions_keeps_the_table_when_nothing_is_dropped() -> None:
+    table = pa.table({"task": ["fragment_transcribe", "locate"], "answer": ["שורה [...]", '{"bbox_2d": [1, 2, 3, 4]}'],
+                      "stem": ["a", "b"]})
+    kept, dropped = mix.drop_unclean_transcriptions(table)
+    assert kept is table and dropped == []
+    kept, dropped = mix.drop_unclean_transcriptions(table, chars="[")
+    assert kept["stem"].to_pylist() == ["b"] and dropped == ["a"]
+
+
+def test_cli_neither_exports_nor_loads_a_pilot_dataset_the_plan_does_not_use(full_sources, tmp_path) -> None:
+    """A plan of KTIV + extra sources runs with pilot DatasetDict dirs that do not exist."""
+    nowhere = str(tmp_path / "nowhere")
+    out = tmp_path / "cli"
+    shares = {"ktiv_transcription": 0.5, "talmud_replay": 0.3, "synthetic": 0.2}
+    mix.main(["--out", str(out), "--train-rows", "10", "--workers", "2", "--ktiv-dir", str(full_sources["ktiv"]),
+              "--editions-dir", nowhere, "--grounding-dir", nowhere, "--qa-dir", nowhere,
+              "--source", f"talmud={full_sources['talmud']}", "--source", f"synthetic={full_sources['synthetic']}",
+              "--shares", json.dumps(shares), "--val-rows", json.dumps({"ktiv": 1, "talmud": 2, "synthetic": 1})])
+    mixture = json.loads((out / "mixture.json").read_text())
+    assert set(mixture["config"]["dirs"]) == {"ktiv", "talmud", "synthetic"} and not (tmp_path / "nowhere").exists()
+    assert {c: i["taken"] for c, i in mixture["components"].items()} == {"ktiv_transcription": 5, "talmud_replay": 3, "synthetic": 2}
+    assert mix.plan_datasets({"ktiv_transcription": 0.5, "pgp_qa": 0.0}, {"pgp_editions": 3, "talmud": 0}) == {"ktiv", "pgp_editions"}
+
+
+def test_train_variant_drops_components_and_keeps_order_meta_and_card(full_sources, tmp_path) -> None:
+    out = tmp_path / "mix"
+    _build(full_sources, out, shares=SIX_SHARES, val_rows=SIX_VAL_ROWS)
+    card_before = (out / "README.md").read_text()
+    info = mix.write_train_variant(out, "ctl", ["talmud_replay", "synthetic"])
+    full, kept = _rows(out, "train"), _rows(out, "train_ctl")
+    assert kept == [r for r in full if r["source"] not in ("talmud_replay", "synthetic")] and len(kept) == 16
+    assert info["rows"] == 16 and info["file"] == "rows/train_ctl.parquet" and "talmud_replay" not in info["by_source"]
+    variant = pq.read_table(out / "rows" / "train_ctl.parquet")
+    assert info["unique_images"] == len(set(variant["image_sha1"].to_pylist()))
+    meta = variant.schema.metadata
+    assert meta == pq.read_table(out / "rows" / "train.parquet").schema.metadata           # loads like the full file
+    ds = images_once.ImagesOnceDataset(out / "rows" / "train_ctl.parquet", out / "images")
+    assert len(ds) == 16 and ds[0]["image"].size[1] == 30
+    assert json.loads((out / "mixture.json").read_text())["train_variants"]["ctl"] == info
+    card = (out / "README.md").read_text()
+    assert "rows/train_ctl.parquet   16 rows: rows/train.parquet without synthetic, talmud_replay" in card
+    assert card.replace(card[card.index("rows/train_ctl.parquet"):card.index("images/<sha1>.jpg")], "") == card_before
+    with pytest.raises(ValueError, match="have no train rows"):
+        mix.write_train_variant(out, "bad", ["arabic_agapet"])
+    with pytest.raises(ValueError, match="drop every train row"):
+        mix.write_train_variant(out, "none", sorted({r["source"] for r in full}))
+
+
+def test_card_mentions_model_derived_boxes_only_with_documentary_grounding(full_sources, tmp_path) -> None:
+    _build(full_sources, tmp_path / "with", shares=SIX_SHARES, val_rows=SIX_VAL_ROWS)
+    assert "boxes are model-derived" in (tmp_path / "with" / "README.md").read_text()
+    sources = {d: p for d, p in full_sources.items() if d in ("ktiv", "talmud", "synthetic")}
+    _build(sources, tmp_path / "without", shares={"ktiv_transcription": 0.5, "talmud_replay": 0.3, "synthetic": 0.2},
+           val_rows={"ktiv": 1, "talmud": 2, "synthetic": 1})
+    assert "model-derived" not in (tmp_path / "without" / "README.md").read_text()
+
+
+def test_val_rows_come_from_trained_components_only(full_sources, tmp_path) -> None:
+    """A plan that trains KTIV transcription only draws no KTIV box rows into val; a full plan is unchanged."""
+    sources = {d: p for d, p in full_sources.items() if d in ("ktiv", "talmud")}
+    out = tmp_path / "transcription_only"
+    _build(sources, out, shares={"ktiv_transcription": 0.6, "talmud_replay": 0.4}, val_rows={"ktiv": 2, "talmud": 1})
+    val = _rows(out, "val")
+    assert [r["stem"] for r in val if r["source"].startswith("ktiv")] == ["k4_page"]          # k4_loc is a box row
+    assert json.loads((out / "mixture.json").read_text())["val"]["ktiv"] == {
+        "pool": 1, "eligible": 1, "requested": 2, "taken": 1, "dropped": 0, "refilled": 0}
+    both = tmp_path / "both"
+    _build(sources, both, shares={"ktiv_transcription": 0.3, "ktiv_grounding": 0.3, "talmud_replay": 0.4},
+           val_rows={"ktiv": 2, "talmud": 1})
+    assert {r["stem"] for r in _rows(both, "val") if r["source"].startswith("ktiv")} == {"k4_page", "k4_loc"}
+    table = pa.table({"task": ["locate", "fragment_transcribe"], "stem": ["a", "b"]})
+    assert mix.trained_component_rows("ktiv", table, {"talmud_replay"}) is table              # val-only dataset: untouched
+    assert mix.trained_component_rows("ktiv", table, {"ktiv_grounding"})["stem"].to_pylist() == ["a"]
+
+
+def _vqa_rows(tmp_path: Path) -> Dict[str, List[Dict]]:
+    """split -> rows of a tiny page-parse set: one train split per task family, like build_vqa_parse.py writes."""
+    parse = '[{"n": 1, "text": "שורה"}]'
+    q = "Line-by-line reading of this page (JSON, in reading order):\n" + parse + "\n\nWhich line gives the date?"
+    return {
+        "train_parse_lines": [_row(_img(tmp_path, 60 + i), "parse_lines", f"v{i}_parse", "Parse the page into JSON.", parse) for i in range(3)],
+        "train_question_from_parse": [_row(_img(tmp_path, 60 + i), "question_from_parse", f"v{i}_q", q, '{"answer": "שורה", "line": 1}') for i in range(3)],
+        "train_lookup_from_parse": [_row(_img(tmp_path, 60), "lookup_from_parse", "v0_lookup", q, '{"line": 1, "text": "שורה"}')],
+        "val": [_row(_img(tmp_path, 70), "parse_lines", "v70_parse", "Parse the page into JSON.", parse),
+                _row(_img(tmp_path, 70), "question_from_parse", "v70_q", q, '{"answer": null}'),
+                _row(_img(tmp_path, 71), "question_from_parse", "v71_q", q, '{"answer": null}'),
+                _row(_img(tmp_path, 71), "lookup_from_parse", "v71_lookup", q, '{"line": 1, "text": "שורה"}')]}
+
+
+def test_one_export_feeds_a_component_per_task_family_and_val_quotas_may_name_components(sources, tmp_path) -> None:
+    """The page-parse set comes in as one export; each task family is its own component with its own share and val quota."""
+    ds_dir = tmp_path / "vqa"
+    DatasetDict({s: Dataset.from_list(rows, features=FEATURES) for s, rows in _vqa_rows(tmp_path).items()}).save_to_disk(str(ds_dir))
+    export = mix.ensure_export(ds_dir, mix.export_dir_for(ds_dir))
+    srcs = {"ktiv": sources["ktiv"], "vqa": export}
+    shares = {"ktiv_transcription": 0.4, "vqa_parse_lines": 0.3, "vqa_question": 0.3}
+    out = tmp_path / "mix"
+    result = _build(srcs, out, train_rows=10, shares=shares, val_rows={"ktiv": 1, "vqa_question": 2, "vqa_parse_lines": 1})
+    train, val = _rows(out, "train"), _rows(out, "val")
+    assert Counter(r["source"] for r in train) == {"ktiv_transcription": 4, "vqa_parse_lines": 3, "vqa_question": 3}
+    assert {r["stem"] for r in train if r["source"] == "vqa_question"} == {"v0_q", "v1_q", "v2_q"}
+    assert "v0_lookup" not in {r["stem"] for r in train}                                   # an unrequested family stays out
+    assert sorted(r["stem"] for r in val if r["source"].startswith("vqa")) == ["v70_parse", "v70_q", "v71_q"]
+    info = result["mixture"]["val"]
+    assert info["vqa_question"]["taken"] == 2 and info["vqa_question"]["pool"] == 2 and info["vqa_parse_lines"]["pool"] == 1
+    assert result["mixture"]["components"]["vqa_question"]["bucket"] == "question_from_parse"
+    assert mix.val_dataset("vqa_question") == "vqa" and mix.val_dataset("vqa") == "vqa" and mix.val_dataset("pgp_qa") == "pgp_qa"
+    assert mix.plan_datasets(shares, {"vqa_question": 2}) == {"ktiv", "vqa"}
+    dataset_wide = tmp_path / "mix2"                                                      # a dataset key still draws across its families
+    _build(srcs, dataset_wide, train_rows=10, shares=shares, val_rows={"ktiv": 1, "vqa": 3})
+    assert sorted(r["stem"] for r in _rows(dataset_wide, "val") if r["source"].startswith("vqa")) == ["v70_parse", "v70_q", "v71_q"]
+    with pytest.raises(ValueError, match=r"val rows ask for dataset 'vqa'"):
+        _build({"ktiv": sources["ktiv"]}, tmp_path / "bad", train_rows=10, shares={"ktiv_transcription": 1.0}, val_rows={"vqa_question": 1})
+    with pytest.raises(ValueError, match="without a component"):
+        mix.row_components("vqa", pa.table({"task": ["parse_lines", "essay"]}))
+
+
+def test_a_page_parse_with_editors_marks_takes_its_questions_with_it() -> None:
+    """One unclean JSON parse line drops every row of that dataset on the same image; clean pages are untouched."""
+    q = '{"answer": "דויד", "line": 1}'
+    table = pa.table({
+        "task": ["parse_lines", "question_from_parse", "parse_lines", "question_from_parse", "locate"],
+        "answer": ['[{"n": 1, "text": "שמואל $דויד$"}]', q, '[{"n": 1, "text": "שורה [...]"}]', q, '{"bbox_2d": [1, 2, 3, 4]}'],
+        "stem": ["p1_parse", "p1_q", "p2_parse", "p2_q", "p3_loc"],
+        images_once.SHA_COLUMN: ["img1", "img1", "img2", "img2", "img3"]})
+    kept, dropped = mix.drop_unclean_transcriptions(table)
+    assert kept["stem"].to_pylist() == ["p2_parse", "p2_q", "p3_loc"] and dropped == ["p1_parse", "p1_q"]
+    assert mix.unclean_answer("parse_lines", '[{"n": 1, "text": "ab"}]') is False           # JSON syntax is not page text
+    assert mix.unclean_answer("question_from_parse", '{"answer": "a_b"}') is False and mix.unclean_answer("line_transcribe", "a_b")
