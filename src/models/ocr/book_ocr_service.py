@@ -41,6 +41,31 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+
+def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
+    """Write *data* as JSON to *path* via a same-directory temp file and rename.
+
+    The results JSON doubles as the resume checkpoint, and it is rewritten after
+    every page. Writing in place meant a kill or a full disk mid-dump left a
+    truncated file, losing every page already paid for; ``os.replace`` keeps the
+    previous version intact until the new one is complete.
+
+    :param path: Destination JSON path.
+    :param data: JSON-serialisable results.
+    """
+    import json as _json
+
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".tmp")
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            _json.dump(data, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 class BookOCRService:
     """
     Service for extracting text from scanned PDF documents using Google Cloud Vision OCR.
@@ -313,9 +338,7 @@ class BookOCRService:
             def _write_checkpoint():
                 if cp_path:
                     try:
-                        cp_path.parent.mkdir(parents=True, exist_ok=True)
-                        with open(cp_path, 'w', encoding='utf-8') as _f:
-                            _json.dump(results, _f, indent=2, ensure_ascii=False)
+                        _atomic_write_json(cp_path, results)
                     except Exception as _e:
                         logger.warning(f"Failed to write checkpoint after page: {_e}")
 
@@ -437,8 +460,7 @@ class BookOCRService:
         
         # Save results
         try:
-            with open(output_path, 'w', encoding='utf-8') as f:
-                json.dump(results, f, indent=2, ensure_ascii=False)
+            _atomic_write_json(output_path, results)
             
             logger.info(f"OCR results saved to: {output_path}")
             if save_images and results.get('images_dir'):
@@ -525,9 +547,7 @@ class BookOCRService:
             def _write_checkpoint():
                 if cp_path:
                     try:
-                        cp_path.parent.mkdir(parents=True, exist_ok=True)
-                        with open(cp_path, 'w', encoding='utf-8') as _f:
-                            _json.dump(results, _f, indent=2, ensure_ascii=False)
+                        _atomic_write_json(cp_path, results)
                     except Exception as _e:
                         logger.warning(f"Failed to write checkpoint: {_e}")
 
@@ -644,8 +664,7 @@ class BookOCRService:
             'mode': 'text_only'
         }
 
-        with open(output_path_obj, 'w', encoding='utf-8') as f:
-            json.dump(results, f, indent=2, ensure_ascii=False)
+        _atomic_write_json(output_path_obj, results)
 
         logger.info(f"Text-only results saved to: {output_path_obj}")
         if save_images and results.get('images_dir'):

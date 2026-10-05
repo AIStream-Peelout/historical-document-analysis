@@ -84,6 +84,47 @@ Output: per-page raw text + page images in the book directory.
 
 ---
 
+## Tracking Stages and Filling Gaps
+
+The batch drivers treat a book as done once any `*_structured.json` exists, so
+never-started PDFs, partial runs and `[VALIDATION FAILED]` pages go unnoticed.
+Two tools work at page granularity instead:
+
+```bash
+# Offline ledger: one row per PDF, with the next step for each
+python -m src.datasets.indexing.bibliography.academic_pipeline_status --todo \
+    --markdown artifacts/academic_pipeline_status/status.md
+
+# OCR + Pass 1 + step 2.5 for named PDFs, only on missing or failed pages
+PYTHONPATH=. .venv/bin/python -m src.datasets.indexing.bibliography.fill_initial_stages \
+    --pdf thesis_bible/ej_arrant.pdf --dry-run
+```
+
+- **Next-step values:**
+  - `metadata+…`: no usable metadata file resolves.
+  - `ocr`: OCR is missing or incomplete.
+  - `pass1` / `pass1_gaps`: pages have OCR text but no valid structured file.
+  - `stray_pages`: a page file's name disagrees with its `metadata.page_number`.
+  - `full_text`: step 2.5 was not run.
+  - `pass2-4` / `pass2-4_stale`: there are no v3 relations, or Pass 1 output is newer than the `.v3_complete` sentinel.
+- **Structured variants.** Elasticsearch indexes the variant with the most files, Pass 2 lets the last-sorted copy win, and Pass 4 reads the first copy `rglob` returns.
+  - Gaps are measured against one *target* variant: most valid pages, then most files.
+  - The filler writes into that variant.
+  - Other variants with failed or text-less copies are listed under **Hazards** in the Markdown.
+- **OCR mode (`--ocr-mode auto`):** the embedded text layer for born-digital PDFs, Cloud Vision otherwise. Vision covers:
+  - scans with a third-party OCR layer (full-page image or invisible text);
+  - thin text layers;
+  - Hebrew stored in visual order (words starting with a final-form letter).
+
+  An existing text-layer OCR that fails these checks blocks Pass 1 until it is redone with Vision, or until `--accept-suspect-ocr` is passed.
+- **Pass 1 backend:** Gemini (`gemini-3.5-flash`) by default; `--backend lm_studio` is also available. Transient API errors are retried.
+- **Disk:** the filler refuses OCR that would take free disk below `--min-free-gb` (default 8), using a size estimate from rendering sample pages.
+- **`academic_literature/.pipeline_ignore`:** globs both tools refuse, for non-scholarly files and duplicates. It is local, because `raw_data` is gitignored.
+- **Metadata for a new PDF in a folder shared by several works:** put `<stem>_metadata.json` inside the book directory (`<stem>/`). Elasticsearch's resolver checks the book directory first.
+- **Passes 2–4 still run separately:** `run_kg_overnight.py --only <book_dir_name>`.
+
+---
+
 ## Pass 1 — Structured Page Extraction
 
 **Script:** `src/models/llm/academic/structured_json_llm.py` · **per page** ·

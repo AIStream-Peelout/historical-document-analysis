@@ -25,6 +25,7 @@ from PIL import Image
 import dotenv
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.providers.google import GoogleProvider
@@ -640,7 +641,14 @@ Extract the structured data according to the schema. Return ONLY valid JSON, no 
                 self._save_failed_output(page_number, pdf_name, raw_response, ocr_text, validation_error)
 
                 # Try to extract and fix JSON
-                extracted_json = self._extract_json_from_response(raw_response)
+                # A provider-side refusal (Gemini content filter: RECITATION, SAFETY,
+                # PROHIBITED_CONTENT, ...) carries the raw API response as .body; the
+                # "JSON" in it is not page output, and rescuing it would save an empty
+                # page that passes validation and is never retried.
+                if isinstance(validation_error, UnexpectedModelBehavior) and validation_error.body:
+                    extracted_json = None
+                else:
+                    extracted_json = self._extract_json_from_response(raw_response)
 
                 if extracted_json:
                     logger.info(f"Extracted JSON from failed response, attempting to fix...")
@@ -780,7 +788,14 @@ Extract the structured data according to the schema. Return ONLY valid JSON, no 
                 self._save_failed_output(page_number, pdf_name, raw_response, ocr_text, validation_error)
 
                 # Try to extract and fix JSON
-                extracted_json = self._extract_json_from_response(raw_response)
+                # A provider-side refusal (Gemini content filter: RECITATION, SAFETY,
+                # PROHIBITED_CONTENT, ...) carries the raw API response as .body; the
+                # "JSON" in it is not page output, and rescuing it would save an empty
+                # page that passes validation and is never retried.
+                if isinstance(validation_error, UnexpectedModelBehavior) and validation_error.body:
+                    extracted_json = None
+                else:
+                    extracted_json = self._extract_json_from_response(raw_response)
 
                 if extracted_json:
                     logger.info(f"Extracted JSON from failed response, attempting to fix...")
