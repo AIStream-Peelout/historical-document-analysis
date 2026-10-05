@@ -1,15 +1,19 @@
 # File name: build_pgp_qa.py
 # Date: 9/22/26
 # Author: Isaac Godfried. Coded originally by Claude Opus 5.5.
-"""Build ``pgp_qa_v1``: extractive question answering on side-verified PGP edition pages.
+"""Build ``pgp_qa``: extractive question answering on side-verified PGP edition pages.
 
 Status: included in the v22 mixture; review sample available at ``qa_review_sample.md`` (design:
 ``docs/v22_dataset.md`` §3.4). The ``qa_party_formula`` rule was admitted after a manual spot check
-(``qa_party_formula_spotcheck.md``).
+(``qa_party_formula_spotcheck.md``). ``pgp_qa_v1`` fed the v22a pilot, which learned the answer
+format but not retrieval; v2 (2026-09-28, default output ``pgp_qa_v2``) answers text first, caps the
+share of any one answer, balances abstention against ``qa_date`` and paraphrases the questions (see
+"Balance" below).
 
 Every answer is a verbatim span of ONE line of the page transcription that
-``build_pgp_editions`` produced for the same image (its ``manifest.jsonl``), returned with that
-line's one-based index as ``{"line": N, "text": "..."}``. The span is always WHOLE token(s) exactly
+``build_pgp_editions`` produced for the same image (its ``manifest.jsonl``), returned text first
+with that line's one-based index as ``{"text": "...", "line": N}`` (the model writes the quote
+before it commits to a line number). The span is always WHOLE token(s) exactly
 as written, never part of a word: a name or place written with an attached prefix letter is quoted
 with it ("בדמשק", not "דמשק"); :func:`quote` raises :class:`AnswerSpanError` otherwise, and the
 build re-checks every emitted answer. PGP metadata only VALIDATES a line, it never becomes an
@@ -34,13 +38,14 @@ answer:
 * ``qa_party`` — legal documents: an acknowledgment line (אנא ... בן/בר/בת, מודה/מודים/אשהד/נשהד)
   on which a PGP Party or Witness is located exactly; the answer is the whole line.
 * ``qa_abstain`` — the date question answered ``{"answer": "not stated"}`` on pages with no date
-  indication anywhere in the edition and no PGP date of any kind (at most 10% of QA rows and
-  20% of pages). The same abstention clause is part of every ``qa_date`` question.
+  indication anywhere in the edition and no PGP date of any kind (about ``--abstain-ratio`` x the
+  ``qa_date`` rows, on at most 20% of pages). The same abstention clause is part of every
+  ``qa_date`` question, and both families draw their wordings from the same table.
 
 Set-valued and span rows (added 2026-09-24):
 
 * ``qa_witnesses_list`` / ``qa_parties_list`` — roles PGP lists for two or more people: the
-  answer is a JSON list of ``{"line": N, "text": name}`` in line order, emitted only when EVERY
+  answer is a JSON list of ``{"text": name, "line": N}`` in line order, emitted only when EVERY
   holder is located exactly (certain relations, one line each, no ``[...]`` in the line) and a
   completeness check passes, per name: witnesses -- every ``X בן|בר|ביר|ברבי Y`` in the signature
   region (last 8 main-text lines plus margins/address) is a located witness span, and every
@@ -65,21 +70,37 @@ Set-valued and span rows (added 2026-09-24):
   Hebrew script (a table of common places plus places.csv variants), matched as exact tokens on
   exactly one line; the answer is the whole token(s) as written, prefix included (בדמשק).
 
-At most 3 QA rows per page image (a list row counts as one); answer lines containing ``[...]`` are
-skipped. The split is
-the page's document split from ``build_pgp_editions``. Outputs (NAS): the DatasetDict (one
-split per family + ``val``), ``stats.json``, ``manifest.jsonl`` and a 250-row stratified
-human-review sample (``qa_review_sample.jsonl`` / ``.md``).
+Balance (v2). A validated QA pair is a *fact*; at most ``--max-rows-per-page`` (3) facts per page
+image (a list counts as one) and answer lines containing ``[...]`` are skipped. Before that per-page
+cut, within each family no single answer -- compared after stripping nikud, folding final letters
+and collapsing whitespace (:func:`answer_key`; a list by its sorted items) -- may exceed
+``--max-answer-share`` (0.20) of the family's train facts, though one fact per answer is always
+allowed: the excess candidates are dropped in ``stable_hash`` order and the pages' next candidates
+take the freed slots (v1: 47% of the ``qa_place`` answers were בפסטאט and the model learned the
+prior). Val pages keep their natural answer distribution. Abstention facts number
+``--abstain-ratio`` (0.8) x the ``qa_date`` facts, bounded by the eligible pages with a free slot and
+by 20% of all pages (v1 capped them at 10% of all QA rows: 100 of 384 eligible pages). Each train
+fact is emitted ``--paraphrases`` (2) times with distinct question wordings drawn by ``stable_hash``
+from :data:`PARAPHRASES`; the paraphrase twins share the answer, task, section and stem and differ
+only in the question. Val keeps one row per fact with the canonical wording (index 0), so held-out
+scoring stays one row per fact. The split is the page's document split from ``build_pgp_editions``.
+Outputs (NAS): the DatasetDict (one split per family + ``val``), ``stats.json``, ``manifest.jsonl``
+(one record per fact, with the wordings it was emitted with) and a 250-fact stratified human-review
+sample (``qa_review_sample.jsonl`` / ``.md``).
 
 Usage (repo root, after ``build_pgp_editions``)::
 
-    nice -n 10 .venv/bin/python -m src.finetuning.qwen_hebrew.build_pgp_qa
+    nice -n 10 .venv/bin/python -m src.finetuning.qwen_hebrew.build_pgp_qa \\
+        --editions-dir /Volumes/home/studio_offload/datasets/pgp_editions_v1 \\
+        --output-dir /Volumes/home/studio_offload/datasets/pgp_qa_v2 \\
+        --max-rows-per-page 3 --max-answer-share 0.20 --abstain-ratio 0.8 --paraphrases 2
 """
 import argparse
 import collections
 import csv
 import json
 import logging
+import math
 import re
 import sys
 import unicodedata
@@ -88,6 +109,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from src.datasets.evaluations.metrics import normalize_whitespace, strip_nikud
 from src.datasets.qa import invert_names as inv
 from src.finetuning.qwen_hebrew import build_pgp_editions as eds_builder
 from src.finetuning.qwen_hebrew.build_pgp_editions import DOCUMENTS_CSV, load_csv_by, save_dataset, stable_hash
@@ -98,14 +120,17 @@ logger = logging.getLogger(__name__)
 
 NAS_DATASETS = eds_builder.NAS_DATASETS
 DEFAULT_EDITIONS = NAS_DATASETS / "pgp_editions_v1"
-DEFAULT_OUT = NAS_DATASETS / "pgp_qa_v1"
+DEFAULT_OUT = NAS_DATASETS / "pgp_qa_v2"
+V1_DIR = NAS_DATASETS / "pgp_qa_v1"           # its spot-check file is carried into new builds
 RELATIONS_CSV = inv.RELATIONS_CSV
 PLACES_CSV = eds_builder.CG / "pgp_raw/data/places.csv"
 SPOTCHECK_FILE = "qa_party_formula_spotcheck.md"
 LABEL_SOURCE = "pgp_edition_qa"
-MAX_ROWS_PER_PAGE = 3
-ABSTAIN_MAX_ROW_SHARE = 0.10
+MAX_ROWS_PER_PAGE = 3          # facts per page image (a list answer counts as one)
+MAX_ANSWER_SHARE = 0.20        # no answer above this share of its family's train facts
+ABSTAIN_RATIO = 0.8            # abstention facts per qa_date fact
 ABSTAIN_MAX_PAGE_SHARE = 0.20
+PARAPHRASES_PER_FACT = 2       # train rows per fact, each with its own question wording (val: 1)
 REVIEW_SAMPLE = 250
 SEED = eds_builder.SPLIT_SEED
 
@@ -124,26 +149,146 @@ PERSON_ROLES = {"Sender": "sender", "Recipient": "recipient", "Witness": "witnes
 ROLE_PRIORITY = ("Sender", "Recipient", "Party", "Validating judge", "Witness")
 
 PERSON_PROMPT = ('Who is the {role}? Quote the name exactly as written on the page, including any attached '
-                 'prefix letter, as JSON {{"line": N, "text": "<name as written>"}}.')
-DATE_PROMPT = ('Quote the line that gives the date of this document, as JSON {"line": N, "text": "<line>"}, '
+                 'prefix letter, as JSON {{"text": "<name as written>", "line": N}}.')
+DATE_PROMPT = ('Quote the line that gives the date of this document, as JSON {"text": "<line>", "line": N}, '
                'or answer {"answer": "not stated"} if the page carries no date.')
 KETUBAH_PROMPT = ('Who are the groom and the bride? Quote the line naming them, as JSON '
-                  '{"line": N, "text": "<line>"}.')
+                  '{"text": "<line>", "line": N}.')
 PARTY_PROMPT = ('Quote the line in which a party to the document identifies themself, as JSON '
-                '{"line": N, "text": "<line>"}.')
+                '{"text": "<line>", "line": N}.')
 ABSTAIN_ANSWER = json.dumps({"answer": "not stated"})
 WITNESS_LIST_PROMPT = ('Quote the names of the witnesses who signed this document exactly as written, including '
-                       'any attached prefix letter, as a JSON list of {"line": N, "text": "<name as written>"}.')
-WITNESS_LINE_PROMPT = 'Quote one line in which a witness signs, as JSON {"line": N, "text": "<line>"}.'
+                       'any attached prefix letter, as a JSON list of {"text": "<name as written>", "line": N}.')
+WITNESS_LINE_PROMPT = 'Quote one line in which a witness signs, as JSON {"text": "<line>", "line": N}.'
 PARTY_LIST_PROMPT = ('Quote the names of the parties to this document exactly as written, including any attached '
-                     'prefix letter, as a JSON list of {"line": N, "text": "<name as written>"}.')
-PARTY_LINE_PROMPT = 'Quote one line naming a party to this document, as JSON {"line": N, "text": "<line>"}.'
+                     'prefix letter, as a JSON list of {"text": "<name as written>", "line": N}.')
+PARTY_LINE_PROMPT = 'Quote one line naming a party to this document, as JSON {"text": "<line>", "line": N}.'
 MONTH_PROMPT = ('In which month was this document written? Quote the month exactly as written, including any '
-                'attached prefix letter, as JSON {"line": N, "text": "<month token>"}.')
+                'attached prefix letter, as JSON {"text": "<month token>", "line": N}.')
 YEAR_PROMPT = ('In which year was this document written? Quote the year exactly as written, as JSON '
-               '{"line": N, "text": "<year expression>"}.')
+               '{"text": "<year expression>", "line": N}.')
 KETUBAH_NAME_PROMPT = ('Who is the {role}? Quote the name exactly as written, including any attached prefix '
-                       'letter, as JSON {{"line": N, "text": "<name>"}}.')
+                       'letter, as JSON {{"text": "<name>", "line": N}}.')
+PLACE_WRITTEN_PROMPT = ('Where was this document written? Quote the word(s) naming the place exactly as written on '
+                        'the page, including any attached prefix letter, as JSON {"text": "<as written>", "line": N}.')
+PLACE_SENT_PROMPT = ('To where was this document sent? Quote the word(s) naming the place exactly as written on the '
+                     'page, including any attached prefix letter, as JSON {"text": "<as written>", "line": N}.')
+
+# Question wordings per family (``qa_place`` per section). Index 0 is the canonical prompt above,
+# the one QARow.question carries and the val split uses. Every wording asks the same question with
+# the same answer instruction: the text-first JSON example, "including any attached prefix letter"
+# wherever the canonical prompt has it, and the abstention clause in every date wording. The person
+# and ketubba-name wordings are str.format templates ({role}; literal braces doubled).
+_DATE_WORDINGS = (
+    DATE_PROMPT,
+    'Which line of the page gives the date of this document? Quote that whole line as JSON '
+    '{"text": "<line>", "line": N}; if the page carries no date, answer {"answer": "not stated"}.',
+    'Copy the line that records the date of this document exactly as written, as JSON '
+    '{"text": "<line>", "line": N}, or answer {"answer": "not stated"} if no date appears on the page.',
+    'Find the dating line of this document and quote it as JSON {"text": "<line>", "line": N}. If the page '
+    'carries no date, answer {"answer": "not stated"}.')
+_PARTY_WORDINGS = (
+    PARTY_PROMPT,
+    'Which line contains the self-identification of a party to this document? Quote it as JSON '
+    '{"text": "<line>", "line": N}.',
+    'Copy the line where a party to the document introduces themself, exactly as written, as JSON '
+    '{"text": "<line>", "line": N}.',
+    'Find the line in which one of the parties to the document states who they are, and quote it as JSON '
+    '{"text": "<line>", "line": N}.')
+_KETUBAH_NAME_WORDINGS = (
+    KETUBAH_NAME_PROMPT,
+    'Name the {role} of this marriage document, quoting the name as written, including any attached prefix '
+    'letter, as JSON {{"text": "<name>", "line": N}}.',
+    'What is the name of the {role}? Copy it exactly as written on the page, including any attached prefix '
+    'letter, as JSON {{"text": "<name>", "line": N}}.',
+    "Find the {role}'s name on the page and quote it exactly as written, including any attached prefix letter, "
+    'as JSON {{"text": "<name>", "line": N}}.')
+PARAPHRASES: Dict[str, Tuple[str, ...]] = {
+    "qa_person": (
+        PERSON_PROMPT,
+        'Name the {role} of this document. Copy the name exactly as it is written on the page, including any '
+        'attached prefix letter, as JSON {{"text": "<name as written>", "line": N}}.',
+        'Which person is the {role}? Give the name as written on the page, including any attached prefix '
+        'letter, as JSON {{"text": "<name as written>", "line": N}}.',
+        'Find the name of the {role} on the page and quote it exactly as written, including any attached '
+        'prefix letter, as JSON {{"text": "<name as written>", "line": N}}.'),
+    "qa_date": _DATE_WORDINGS,
+    "qa_abstain": _DATE_WORDINGS,          # the date question: the wording never tells the two branches apart
+    "qa_ketubah_parties": (
+        KETUBAH_PROMPT,
+        'Quote the line of this marriage document that names the groom and the bride, as JSON '
+        '{"text": "<line>", "line": N}.',
+        'Which line names the couple, the groom and the bride? Answer with the whole line as JSON '
+        '{"text": "<line>", "line": N}.',
+        'Copy the line in which the groom and the bride are named, exactly as written, as JSON '
+        '{"text": "<line>", "line": N}.'),
+    "qa_party": _PARTY_WORDINGS,
+    "qa_party_formula": _PARTY_WORDINGS,   # same question as qa_party
+    "qa_witnesses_list": (
+        WITNESS_LIST_PROMPT,
+        'Who signed this document as witnesses? List every witness name exactly as written, including any '
+        'attached prefix letter, as a JSON list of {"text": "<name as written>", "line": N}.',
+        'List all the witnesses whose signatures appear on this document, quoting each name exactly as written, '
+        'including any attached prefix letter, as a JSON list of {"text": "<name as written>", "line": N}.',
+        'Give the names of the witnesses who signed this document as written on the page, including any '
+        'attached prefix letter, as a JSON list of {"text": "<name as written>", "line": N}.'),
+    "qa_witness_line": (
+        WITNESS_LINE_PROMPT,
+        'Copy one of the lines that bear a witness signature, exactly as written, as JSON '
+        '{"text": "<line>", "line": N}.',
+        'Which line holds the signature of a witness? Quote one such line as JSON {"text": "<line>", "line": N}.',
+        'Find a line in which one of the witnesses signs and quote it as JSON {"text": "<line>", "line": N}.'),
+    "qa_parties_list": (
+        PARTY_LIST_PROMPT,
+        'Who are the parties to this document? List each name exactly as written, including any attached '
+        'prefix letter, as a JSON list of {"text": "<name as written>", "line": N}.',
+        'List all the parties to this document, quoting each name as written on the page, including any '
+        'attached prefix letter, as a JSON list of {"text": "<name as written>", "line": N}.',
+        'Give the names of the parties to this document as written on the page, including any attached '
+        'prefix letter, as a JSON list of {"text": "<name as written>", "line": N}.'),
+    "qa_party_line": (
+        PARTY_LINE_PROMPT,
+        'Copy one line of the page that names a party to this document, exactly as written, as JSON '
+        '{"text": "<line>", "line": N}.',
+        'Which line names one of the parties to this document? Quote one such line as JSON '
+        '{"text": "<line>", "line": N}.',
+        'Find a line in which a party to this document is named and quote it as JSON '
+        '{"text": "<line>", "line": N}.'),
+    "qa_date_month": (
+        MONTH_PROMPT,
+        'What month does the date of this document give? Quote the month name as written, including any '
+        'attached prefix letter, as JSON {"text": "<month token>", "line": N}.',
+        'Name the month in which this document was written, quoting it exactly as written, including any '
+        'attached prefix letter, as JSON {"text": "<month token>", "line": N}.',
+        "Quote the month of this document's date exactly as written on the page, including any attached "
+        'prefix letter, as JSON {"text": "<month token>", "line": N}.'),
+    "qa_date_year": (
+        YEAR_PROMPT,
+        'What year does the date of this document give? Quote the year expression as written, as JSON '
+        '{"text": "<year expression>", "line": N}.',
+        'Name the year in which this document was written, quoting it exactly as written, as JSON '
+        '{"text": "<year expression>", "line": N}.',
+        "Quote the year of this document's date exactly as written on the page, as JSON "
+        '{"text": "<year expression>", "line": N}.'),
+    "qa_ketubah_groom": _KETUBAH_NAME_WORDINGS,
+    "qa_ketubah_bride": _KETUBAH_NAME_WORDINGS,
+    "qa_place:written": (
+        PLACE_WRITTEN_PROMPT,
+        'In which place was this document written? Quote the place name exactly as written, including any '
+        'attached prefix letter, as JSON {"text": "<as written>", "line": N}.',
+        'Name the place where this document was written, quoting the word(s) as written on the page, '
+        'including any attached prefix letter, as JSON {"text": "<as written>", "line": N}.',
+        'At which place was this document written? Copy the word(s) naming it exactly as written, including '
+        'any attached prefix letter, as JSON {"text": "<as written>", "line": N}.'),
+    "qa_place:sent": (
+        PLACE_SENT_PROMPT,
+        'What is the destination of this document? Quote the place name exactly as written, including any '
+        'attached prefix letter, as JSON {"text": "<as written>", "line": N}.',
+        'Name the place this document was sent to, quoting the word(s) as written on the page, including any '
+        'attached prefix letter, as JSON {"text": "<as written>", "line": N}.',
+        'To which place was this document addressed? Copy the word(s) naming it exactly as written, including '
+        'any attached prefix letter, as JSON {"text": "<as written>", "line": N}.'),
+}
 
 # ----------------------------------------------------------------------------- answers
 
@@ -189,7 +334,7 @@ def name_as_written(line: str, span: str) -> Optional[str]:
 
 
 def quote(lines: Sequence[str], n: int, text: str) -> str:
-    """The JSON answer ``{"line": n, "text": text}``, enforcing the extractive contract.
+    """The JSON answer ``{"text": text, "line": n}`` (text first), enforcing the extractive contract.
 
     :param lines: Page transcription lines.
     :param n: One-based line index.
@@ -200,11 +345,11 @@ def quote(lines: Sequence[str], n: int, text: str) -> str:
     """
     assert 1 <= n <= len(lines), f"line {n} out of range"
     check_whole_tokens(text, lines[n - 1])
-    return json.dumps({"line": n, "text": text}, ensure_ascii=False)
+    return json.dumps({"text": text, "line": n}, ensure_ascii=False)
 
 
 def quote_list(lines: Sequence[str], items: Sequence[Tuple[int, str]]) -> str:
-    """The JSON list answer ``[{"line": n, "text": text}, ...]``, each item asserted like :func:`quote`.
+    """The JSON list answer ``[{"text": text, "line": n}, ...]``, each item asserted like :func:`quote`.
 
     :param lines: Page transcription lines.
     :param items: ``(one-based line, span)`` in answer order.
@@ -215,11 +360,11 @@ def quote_list(lines: Sequence[str], items: Sequence[Tuple[int, str]]) -> str:
     assert items, "empty list answer"
     for n, text in items:
         quote(lines, n, text)
-    return json.dumps([{"line": n, "text": t} for n, t in items], ensure_ascii=False)
+    return json.dumps([{"text": t, "line": n} for n, t in items], ensure_ascii=False)
 
 
 def answer_items(answer: str) -> List[Dict[str, Any]]:
-    """The ``{"line", "text"}`` items of a JSON answer (one for a span answer, several for a list).
+    """The ``{"text", "line"}`` items of a JSON answer (one for a span answer, several for a list).
 
     :param answer: JSON answer.
     :returns: Items (empty for the abstention answer).
@@ -228,6 +373,32 @@ def answer_items(answer: str) -> List[Dict[str, Any]]:
     if isinstance(obj, list):
         return obj
     return [obj] if "line" in obj else []
+
+
+_FINALS = str.maketrans({"ך": "כ", "ם": "מ", "ן": "נ", "ף": "פ", "ץ": "צ"})
+_QUOTES = str.maketrans({"׳": "'", "’": "'", "‘": "'", "״": '"', "“": '"', "”": '"'})
+
+
+def normalise_answer(text: str) -> str:
+    """Fold an answer text for the per-answer cap: nikud stripped, typographic quotes mapped to ASCII,
+    final letters folded, whitespace collapsed.
+
+    The same folding as ``normalise_hebrew`` of the v22 task evaluation (a test keeps them equal),
+    so "one answer" here is one answer to the scorer too.
+
+    :param text: Answer text.
+    :returns: Folded text.
+    """
+    return normalize_whitespace(strip_nikud(text or "").translate(_QUOTES).translate(_FINALS))
+
+
+def answer_key(answer: str) -> str:
+    """The identity of a JSON answer under the per-answer cap.
+
+    :param answer: JSON answer.
+    :returns: The folded item texts, sorted (a list answer is a set of names) and joined with " | ".
+    """
+    return " | ".join(sorted(normalise_answer(str(it["text"])) for it in answer_items(answer)))
 
 
 def check_answer(family: str, answer: str, lines: Sequence[str]) -> None:
@@ -800,6 +971,8 @@ class QARow:
     :param line: One-based answer line (0 for abstain).
     :param evidence: What validated the row (for review).
     :param priority: Lower wins the per-page cap.
+    :param prompt_args: Fills the family's :data:`PARAPHRASES` templates (``{"role": ...}`` for
+        persons and ketubba names; empty when the wordings are plain strings).
     """
 
     family: str
@@ -809,6 +982,7 @@ class QARow:
     line: int
     evidence: Dict[str, Any] = field(default_factory=dict)
     priority: int = 9
+    prompt_args: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -877,7 +1051,8 @@ def person_rows(page: Dict[str, Any], ctx: QAContext, index: PageIndex,
                           quote(lines, hit.line, text), hit.line,
                           {"relation": r["relation"], "person_name": r["person_name"], "person_slug": r["person_slug"],
                            "query": hit.query, "tier": hit.tier, "kind": hit.kind, "source": hit.source},
-                          priority=PRIORITY["qa_person"] + ROLE_PRIORITY.index(base)))
+                          priority=PRIORITY["qa_person"] + ROLE_PRIORITY.index(base),
+                          prompt_args={"role": PERSON_ROLES[base]}))
     return rows, located
 
 
@@ -1157,7 +1332,8 @@ def ketubah_name_rows(page: Dict[str, Any], meta: Dict[str, str], index: PageInd
         fam = f"qa_ketubah_{role}"
         rows.append(QARow(fam, role, KETUBAH_NAME_PROMPT.format(role=role), quote(lines, h.line, text), h.line,
                           {"description": (meta.get("description") or "")[:300], "parsed": couple.get(role),
-                           "query": h.query, "tier": h.tier, "kind": h.kind}, priority=PRIORITY[fam]))
+                           "query": h.query, "tier": h.tier, "kind": h.kind}, priority=PRIORITY[fam],
+                          prompt_args={"role": role}))
     return rows
 
 
@@ -1230,10 +1406,6 @@ def party_formula_row(page: Dict[str, Any], meta: Dict[str, str], stats: collect
 
 # ----------------------------------------------------------------------------- places
 
-PLACE_WRITTEN_PROMPT = ('Where was this document written? Quote the word(s) naming the place exactly as written on '
-                        'the page, including any attached prefix letter, as JSON {"line": N, "text": "<as written>"}.')
-PLACE_SENT_PROMPT = ('To where was this document sent? Quote the word(s) naming the place exactly as written on the '
-                     'page, including any attached prefix letter, as JSON {"line": N, "text": "<as written>"}.')
 # Hebrew-script names of common places (keys: folded PGP names); places.csv adds its own variants
 PLACE_TABLE: Dict[str, List[str]] = {
     "fustat": ["פסטאט", "פוסטאט", "פסטט", "מצרים"], "cairo": ["אלקאהרה", "קאהרה"],
@@ -1391,28 +1563,131 @@ def page_candidates(page: Dict[str, Any], ctx: QAContext, stats: collections.Cou
     return rows, abstain_eligible(page, meta, ctx)
 
 
-def apply_caps(pages: Sequence[Dict[str, Any]], cands: Dict[str, List[QARow]], eligible: Dict[str, bool],
-               max_rows: int = MAX_ROWS_PER_PAGE, abstain_row_share: float = ABSTAIN_MAX_ROW_SHARE,
-               abstain_page_share: float = ABSTAIN_MAX_PAGE_SHARE) -> Dict[str, List[QARow]]:
-    """Per-page cap, then abstention rows within the row and page shares.
+def answer_limit(n_family: int, share: float) -> int:
+    """Most facts one answer may have in a family of ``n_family`` train facts (never below one).
 
-    :param pages: Manifest records (``key`` field set).
+    :param n_family: The family's train facts.
+    :param share: Maximum answer share.
+    :returns: ``max(1, floor(share * n_family))``.
+    """
+    return max(1, math.floor(share * n_family + 1e-9))
+
+
+def cap_answer_shares(pages: Sequence[Dict[str, Any]], cands: Dict[str, List[QARow]], max_rows: int,
+                      share: float, dropped: Optional[collections.Counter] = None) -> Dict[str, List[QARow]]:
+    """Drop train candidates whose answer exceeds ``share`` of its family's train facts.
+
+    The count is taken on what the per-page cut would keep (the first ``max_rows`` remaining
+    candidates of every train page). An answer (:func:`answer_key`) above :func:`answer_limit`
+    keeps the candidates with the lowest ``stable_hash`` and the rest are removed from the candidate
+    lists, so each page's next candidate moves up into the freed slot. Dropping shrinks the family
+    and a refill can add rows, so the count repeats until no answer is above its limit; candidates
+    only ever leave, so this ends. Val pages and ``qa_abstain`` are never touched.
+
+    :param pages: Manifest records (``key`` and ``split`` set).
+    :param cands: ``page key -> candidate rows`` sorted by priority.
+    :param max_rows: Facts per page image.
+    :param share: Maximum answer share within a family.
+    :param dropped: ``family -> candidates dropped`` (updated when given).
+    :returns: ``page key -> remaining candidates`` (same order).
+    """
+    train = [p["key"] for p in pages if p.get("split") != "val"]
+    gone: Set[Tuple[str, int]] = set()
+    while True:
+        groups: Dict[Tuple[str, str], List[Tuple[int, str, int]]] = collections.defaultdict(list)
+        n_family: collections.Counter = collections.Counter()
+        for k in train:
+            live = [(i, r) for i, r in enumerate(cands.get(k, [])) if (k, i) not in gone][:max_rows]
+            for i, r in live:
+                if r.family == "qa_abstain":
+                    continue
+                a = answer_key(r.answer)
+                groups[(r.family, a)].append((stable_hash(f"{SEED}:answer_cap:{k}:{r.family}:{r.section}:{a}"), k, i))
+                n_family[r.family] += 1
+        excess = [m for (fam, _), members in groups.items()
+                  for m in sorted(members)[answer_limit(n_family[fam], share):]]
+        if not excess:
+            break
+        gone.update((k, i) for _, k, i in excess)
+    if dropped is not None:
+        dropped.update(cands[k][i].family for k, i in gone)
+    return {k: [r for i, r in enumerate(v) if (k, i) not in gone] for k, v in cands.items()}
+
+
+def abstain_budget(n_date: int, ratio: float, n_pages: int, page_share: float, n_open: int) -> int:
+    """How many abstention facts to add.
+
+    :param n_date: ``qa_date`` facts kept (all splits).
+    :param ratio: Abstention facts per ``qa_date`` fact.
+    :param n_pages: Pages in the build.
+    :param page_share: Maximum share of pages carrying an abstention fact.
+    :param n_open: Eligible pages that still have a free slot.
+    :returns: ``min(floor(ratio * n_date), floor(page_share * n_pages), n_open)``.
+    """
+    return max(0, min(math.floor(ratio * n_date + 1e-9), math.floor(page_share * n_pages + 1e-9), n_open))
+
+
+def apply_caps(pages: Sequence[Dict[str, Any]], cands: Dict[str, List[QARow]], eligible: Dict[str, bool],
+               max_rows: int = MAX_ROWS_PER_PAGE, abstain_ratio: float = ABSTAIN_RATIO,
+               abstain_page_share: float = ABSTAIN_MAX_PAGE_SHARE, max_answer_share: float = MAX_ANSWER_SHARE,
+               info: Optional[Dict[str, Any]] = None) -> Dict[str, List[QARow]]:
+    """Per-answer cap on the train candidates, the per-page cut, then the abstention facts.
+
+    :param pages: Manifest records (``key`` and ``split`` set).
     :param cands: ``page key -> candidate rows`` sorted by priority.
     :param eligible: ``page key -> abstain eligible``.
-    :param max_rows: QA rows per page image.
-    :param abstain_row_share: Maximum share of abstain rows among all QA rows.
-    :param abstain_page_share: Maximum share of pages carrying an abstain row.
-    :returns: ``page key -> kept rows``.
+    :param max_rows: Facts per page image.
+    :param abstain_ratio: Abstention facts per kept ``qa_date`` fact.
+    :param abstain_page_share: Maximum share of pages carrying an abstention fact.
+    :param max_answer_share: Maximum share of one answer within a family's train facts.
+    :param info: Filled with ``answer_cap_dropped`` (family -> candidates) and ``abstain`` (budget
+        arithmetic) when given.
+    :returns: ``page key -> kept facts``.
     """
-    kept = {p["key"]: list(cands.get(p["key"], []))[:max_rows] for p in pages}
-    n_other = sum(len(v) for v in kept.values())
-    budget = min(int(abstain_row_share * n_other / (1 - abstain_row_share)), int(abstain_page_share * len(pages)))
+    dropped: collections.Counter = collections.Counter()
+    capped = cap_answer_shares(pages, cands, max_rows, max_answer_share, dropped)
+    kept = {p["key"]: list(capped.get(p["key"], []))[:max_rows] for p in pages}
+    n_date = sum(r.family == "qa_date" for v in kept.values() for r in v)
     order = sorted((p["key"] for p in pages if eligible.get(p["key"]) and len(kept[p["key"]]) < max_rows),
                    key=lambda k: stable_hash(f"{SEED}:abstain:{k}"))
-    for k in order[:max(0, budget)]:
+    budget = abstain_budget(n_date, abstain_ratio, len(pages), abstain_page_share, len(order))
+    for k in order[:budget]:
         kept[k].append(QARow("qa_abstain", "no_date", DATE_PROMPT, ABSTAIN_ANSWER, 0,
                              {"pgp_date_fields": "none", "date_indications_in_edition": "none"}, priority=8))
+    if info is not None:
+        info["answer_cap_dropped"] = dict(dropped)
+        info["abstain"] = {"ratio": abstain_ratio, "qa_date_facts": n_date,
+                           "ratio_budget": math.floor(abstain_ratio * n_date + 1e-9),
+                           "page_share_budget": math.floor(abstain_page_share * len(pages) + 1e-9),
+                           "eligible_pages": sum(bool(eligible.get(p["key"])) for p in pages),
+                           "eligible_pages_with_free_slot": len(order), "facts": budget}
     return kept
+
+
+def row_wordings(row: QARow) -> List[str]:
+    """Every wording of a row's question from :data:`PARAPHRASES`, the canonical one first.
+
+    :param row: QA row (family and, for ``qa_place``, section pick the table; ``prompt_args`` fill it).
+    :returns: The wordings.
+    :raises AssertionError: When the canonical wording is not the row's question.
+    """
+    table = PARAPHRASES.get(f"{row.family}:{row.section}") or PARAPHRASES[row.family]
+    out = [t.format(**row.prompt_args) if row.prompt_args else t for t in table]
+    assert out[0] == row.question, f"{row.family}/{row.section}: the question is not the canonical wording"
+    return out
+
+
+def draw_wordings(n: int, k: int, fact_key: str) -> List[int]:
+    """``k`` distinct wording indices out of ``n``, drawn deterministically per fact.
+
+    :param n: Wordings available.
+    :param k: Wordings wanted.
+    :param fact_key: The fact's identity (its stem).
+    :returns: Indices in draw order.
+    :raises AssertionError: Unless ``1 <= k <= n``.
+    """
+    assert 1 <= k <= n, f"{k} wordings requested, {n} available"
+    return sorted(range(n), key=lambda v: stable_hash(f"{SEED}:paraphrase:{fact_key}:{v}"))[:k]
 
 
 # ----------------------------------------------------------------------------- review sample
@@ -1452,10 +1727,12 @@ def review_markdown(sample: Sequence[Dict[str, Any]], stats: Dict[str, Any]) -> 
     :param stats: Build stats.
     :returns: Markdown text.
     """
-    out = ["# pgp_qa_v1 — human review sample", "",
+    facts = stats.get("facts_by_family", stats["rows_by_family"])
+    out = [f"# {stats.get('dataset', 'pgp_qa')} — human review sample", "",
            f"**Status: {stats['status']}.**", "",
-           f"Built {stats['generated_at']} from `{stats['editions_manifest']}`. Rows per family: "
-           f"{json.dumps(stats['rows_by_family'])}. Sample: {len(sample)} rows, stratified by family.", "",
+           f"Built {stats['generated_at']} from `{stats['editions_manifest']}`. Facts per family: "
+           f"{json.dumps(facts)}. Sample: {len(sample)} facts, stratified by family (a train fact is "
+           f"emitted once per question wording; the other wordings are listed under it).", "",
            "Each row shows the page image link, the question, the target JSON, the full page line the "
            "answer quotes, and the PGP evidence that validated it. Mark rows that are wrong.", ""]
     fam = None
@@ -1464,7 +1741,9 @@ def review_markdown(sample: Sequence[Dict[str, Any]], stats: Dict[str, Any]) -> 
             fam = r["family"]
             out += [f"## {fam}", ""]
         out += [f"### {i}. `{r['stem']}` — {r['canonical_id']} (image {r['image_index']})", "",
-                f"- image: {r['image_url']}", f"- question: {r['question']}", f"- answer: `{r['answer']}`",
+                f"- image: {r['image_url']}", f"- question: {r['question']}"]
+        out += [f"- also asked as: {q}" for q in r.get("questions", [])[1:]]
+        out += [f"- answer: `{r['answer']}`",
                 f"- answer line {r['line'] or '-'}: {r['answer_line'] or '(abstention: no date line on the page)'}",
                 f"- evidence: `{json.dumps(r['evidence'], ensure_ascii=False)}`", ""]
     return "\n".join(out) + "\n"
@@ -1504,13 +1783,82 @@ def edition_lines_of(pgpids: Set[str]) -> Dict[str, List[str]]:
     return out
 
 
-def build(editions_dir: Path, out_dir: Path) -> Dict[str, Any]:
-    """Build ``pgp_qa_v1`` from the editions manifest.
+def emit_rows(pages: Sequence[Dict[str, Any]], kept: Dict[str, List[QARow]],
+              paraphrases: int = PARAPHRASES_PER_FACT) -> Tuple[Dict[str, List[Dict[str, Any]]], List[Dict[str, Any]]]:
+    """Dataset rows and the per-fact manifest of the kept facts.
+
+    A train fact becomes ``paraphrases`` rows whose questions are distinct wordings drawn by
+    :func:`draw_wordings`; the twins share image, answer, task, section and stem. A val fact becomes
+    one row with the canonical wording. Every answer is re-checked (:func:`check_answer`) first.
+
+    :param pages: Manifest records (``key`` set).
+    :param kept: ``page key -> kept facts``.
+    :param paraphrases: Wordings per train fact.
+    :returns: ``(split name -> rows, one manifest record per fact)``.
+    :raises AnswerSpanError: When an answer is not whole token(s) of its line (a bug, never a skip).
+    """
+    split_rows: Dict[str, List[Dict[str, Any]]] = {f"train_{f}": [] for f in FAMILIES}
+    split_rows["val"] = []
+    manifest: List[Dict[str, Any]] = []
+    for p in pages:
+        is_val = p["split"] == "val"
+        for j, q in enumerate(kept[p["key"]]):
+            stem = f"pgpqa_{p['pgpid']}_{p['image_index']}_{q.family}_{j}"
+            check_answer(q.family, q.answer, p["lines"])     # raises: a violation is a bug, never a skip
+            wordings = row_wordings(q)
+            variants = [0] if is_val else draw_wordings(len(wordings), paraphrases, stem)
+            for v in variants:
+                split_rows["val" if is_val else f"train_{q.family}"].append(
+                    {"image": p["image_path"], "question": wordings[v], "answer": q.answer, "task": q.family,
+                     "section": q.section, "stem": stem, "label_source": LABEL_SOURCE,
+                     "target_chars": len(q.answer), "target_tokens": 0, "image_width": p["image_width"],
+                     "image_height": p["image_height"]})
+            items = answer_items(q.answer)
+            manifest.append({"stem": stem, "family": q.family, "section": q.section, "pgpid": p["pgpid"],
+                             "canonical_id": p["canonical_id"], "image_index": p["image_index"],
+                             "image_url": p["image_url"], "split": p["split"], "question": wordings[variants[0]],
+                             "questions": [wordings[v] for v in variants], "prompt_variants": variants,
+                             "answer": q.answer, "line": q.line,
+                             "answer_line": " || ".join(f"[{n}] {p['lines'][n - 1]}" for n in
+                                                        sorted({it["line"] for it in items})) if len(items) > 1
+                             else (p["lines"][q.line - 1] if q.line else ""),
+                             "line_countable_from_top": bool(q.line and p["countable"][q.line - 1]),
+                             "line_region": p["regions"][q.line - 1] if q.line else "", "evidence": q.evidence})
+    return split_rows, manifest
+
+
+def top_answers(manifest: Sequence[Dict[str, Any]], n: int = 5) -> Dict[str, List[Tuple[str, int, float]]]:
+    """The most frequent answers of each family's train facts (the prior a model could learn).
+
+    :param manifest: Per-fact manifest records.
+    :param n: Answers per family.
+    :returns: ``family -> [(answer key, facts, share of the family's train facts), ...]``.
+    """
+    by_fam: Dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    for m in manifest:
+        if m["split"] != "val" and m["family"] != "qa_abstain":
+            by_fam[m["family"]][answer_key(m["answer"])] += 1
+    return {f: [(a, c, round(c / sum(cnt.values()), 3)) for a, c in cnt.most_common(n)]
+            for f, cnt in sorted(by_fam.items(), key=lambda kv: FAMILIES.index(kv[0]))}
+
+
+def build(editions_dir: Path, out_dir: Path, max_rows: int = MAX_ROWS_PER_PAGE,
+          max_answer_share: float = MAX_ANSWER_SHARE, abstain_ratio: float = ABSTAIN_RATIO,
+          paraphrases: int = PARAPHRASES_PER_FACT) -> Dict[str, Any]:
+    """Build the QA dataset from the editions manifest.
 
     :param editions_dir: ``pgp_editions_v1`` output (``manifest.jsonl``).
     :param out_dir: Destination (NAS).
+    :param max_rows: Facts per page image.
+    :param max_answer_share: Maximum share of one answer within a family's train facts.
+    :param abstain_ratio: Abstention facts per ``qa_date`` fact.
+    :param paraphrases: Question wordings (rows) per train fact.
     :returns: The stats dict.
+    :raises ValueError: When ``paraphrases`` is not between 1 and the smallest wording table.
     """
+    min_wordings = min(len(t) for t in PARAPHRASES.values())
+    if not 1 <= paraphrases <= min_wordings:
+        raise ValueError(f"--paraphrases must be between 1 and {min_wordings}, got {paraphrases}")
     manifest_path = editions_dir / "manifest.jsonl"
     pages = [json.loads(ln) for ln in manifest_path.read_text(encoding="utf-8").splitlines() if ln.strip()]
     for p in pages:
@@ -1525,56 +1873,53 @@ def build(editions_dir: Path, out_dir: Path) -> Dict[str, Any]:
     cands, eligible = {}, {}
     for p in pages:
         cands[p["key"]], eligible[p["key"]] = page_candidates(p, ctx, stats_c, funnel)
-    kept = apply_caps(pages, cands, eligible)
+    cap_info: Dict[str, Any] = {}
+    kept = apply_caps(pages, cands, eligible, max_rows=max_rows, abstain_ratio=abstain_ratio,
+                      max_answer_share=max_answer_share, info=cap_info)
+    split_rows, manifest = emit_rows(pages, kept, paraphrases)
+    all_rows = [r for rows in split_rows.values() for r in rows]
+    assert len({(r["stem"], r["question"]) for r in all_rows}) == len(all_rows), "rows are distinct by question"
 
-    split_rows: Dict[str, List[Dict[str, Any]]] = {f"train_{f}": [] for f in FAMILIES}
-    split_rows["val"] = []
-    manifest: List[Dict[str, Any]] = []
-    for p in pages:
-        for j, q in enumerate(kept[p["key"]]):
-            stem = f"pgpqa_{p['pgpid']}_{p['image_index']}_{q.family}_{j}"
-            check_answer(q.family, q.answer, p["lines"])     # raises: a violation is a bug, never a skip
-            items = answer_items(q.answer)
-            r = {"image": p["image_path"], "question": q.question, "answer": q.answer, "task": q.family,
-                 "section": q.section, "stem": stem, "label_source": LABEL_SOURCE, "target_chars": len(q.answer),
-                 "target_tokens": 0, "image_width": p["image_width"], "image_height": p["image_height"]}
-            split_rows["val" if p["split"] == "val" else f"train_{q.family}"].append(r)
-            manifest.append({"stem": stem, "family": q.family, "section": q.section, "pgpid": p["pgpid"],
-                             "canonical_id": p["canonical_id"], "image_index": p["image_index"],
-                             "image_url": p["image_url"], "split": p["split"], "question": q.question,
-                             "answer": q.answer, "line": q.line,
-                             "answer_line": " || ".join(f"[{n}] {p['lines'][n - 1]}" for n in
-                                                        sorted({it["line"] for it in items})) if len(items) > 1
-                             else (p["lines"][q.line - 1] if q.line else ""),
-                             "line_countable_from_top": bool(q.line and p["countable"][q.line - 1]),
-                             "line_region": p["regions"][q.line - 1] if q.line else "", "evidence": q.evidence})
     fam_counts = collections.Counter(m["family"] for m in manifest)
     stats = {
-        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "generated_at": datetime.now(timezone.utc).isoformat(), "dataset": out_dir.name,
         "status": "included in the v22 mixture; review sample available at qa_review_sample.md",
         "editions_manifest": str(manifest_path), "pages": len(pages),
         "pages_with_qa_rows": sum(1 for v in kept.values() if v),
-        "rows_by_family": dict(fam_counts), "rows_by_split": {k: len(v) for k, v in split_rows.items()},
-        "rows_by_family_and_section": dict(collections.Counter(f"{m['family']}:{m['section']}" for m in manifest)),
+        "facts_by_family": dict(fam_counts),
+        "facts_by_family_and_split": {f: dict(collections.Counter(m["split"] for m in manifest if m["family"] == f))
+                                      for f in FAMILIES if fam_counts.get(f)},
+        "rows_by_family": dict(collections.Counter(r["task"] for r in all_rows)),
+        "rows_by_split": {k: len(v) for k, v in split_rows.items()},
+        "rows_total": len(all_rows),
+        "rows_by_family_and_section": dict(collections.Counter(f"{r['task']}:{r['section']}" for r in all_rows)),
         "candidates_before_page_cap": dict(collections.Counter(q.family for v in cands.values() for q in v)),
+        "answer_cap": {"max_answer_share": max_answer_share, "dropped_candidates": cap_info["answer_cap_dropped"],
+                       "top_train_answers": top_answers(manifest)},
+        "abstain": cap_info["abstain"],
         "abstain_eligible_pages": sum(eligible.values()),
+        "paraphrases": {"train_rows_per_fact": paraphrases, "val_rows_per_fact": 1,
+                        "val_wording": "canonical (index 0)",
+                        "wordings_used": dict(collections.Counter(
+                            f"{m['family']}:{v}" for m in manifest for v in m["prompt_variants"]))},
         "answer_lines_countable_from_top": sum(m["line_countable_from_top"] for m in manifest if m["line"]),
         "validation_counters": dict(stats_c),
         "set_valued_funnel": {role: {
             "documents_with_2plus_holders": len(funnel[role]["has_role"]),
             "documents_all_holders_located": len(funnel[role]["all_located"]),
             "documents_complete": len(funnel[role]["complete"]),
-            "list_rows": fam_counts.get(SET_ROLES[role][0], 0),
-            "fallback_rows": fam_counts.get(SET_ROLES[role][1], 0)} for role in SET_ROLES},
+            "list_facts": fam_counts.get(SET_ROLES[role][0], 0),
+            "fallback_facts": fam_counts.get(SET_ROLES[role][1], 0)} for role in SET_ROLES},
         "place_funnel": {"documents_with_origin_destination_or_location": len(funnel["Place"]["with_place"]),
                          "documents_with_a_candidate_located": len(funnel["Place"]["located"]),
-                         "rows": fam_counts.get("qa_place", 0),
-                         "rows_by_section": dict(collections.Counter(m["section"] for m in manifest
-                                                                     if m["family"] == "qa_place"))},
+                         "facts": fam_counts.get("qa_place", 0),
+                         "facts_by_section": dict(collections.Counter(m["section"] for m in manifest
+                                                                      if m["family"] == "qa_place"))},
         "answer_invariant": "every answer text is whole token(s) of its line exactly as written "
-                            "(prefix letters kept); checked on every emitted row",
-        "rules": {"max_rows_per_page": MAX_ROWS_PER_PAGE, "abstain_max_row_share": ABSTAIN_MAX_ROW_SHARE,
-                  "abstain_max_page_share": ABSTAIN_MAX_PAGE_SHARE,
+                            "(prefix letters kept); checked on every emitted fact",
+        "rules": {"max_rows_per_page": max_rows, "max_answer_share": max_answer_share,
+                  "abstain_ratio": abstain_ratio, "abstain_max_page_share": ABSTAIN_MAX_PAGE_SHARE,
+                  "paraphrases": paraphrases, "answer_format": 'text first: {"text": "...", "line": N}',
                   "person_rule": "status located AND exact token match AND tier 1 or kunya+given; "
                                  "not uncertain; role unique in PGP; span on one line; no [...] in the line",
                   "set_rule": "roles with >= 2 PGP holders: list only when every holder is located, on one "
@@ -1588,8 +1933,9 @@ def build(editions_dir: Path, out_dir: Path) -> Dict[str, Any]:
         "manifest.jsonl": "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in manifest),
         "qa_review_sample.jsonl": "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in sample),
         "qa_review_sample.md": review_markdown(sample, stats)}
-    spotcheck = out_dir / SPOTCHECK_FILE           # the manual spot check survives rebuilds
-    if spotcheck.exists():
+    # the manual spot check survives rebuilds; a new version directory takes v1's
+    spotcheck = next((d / SPOTCHECK_FILE for d in (out_dir, V1_DIR) if (d / SPOTCHECK_FILE).exists()), None)
+    if spotcheck is not None:
         sidecars[SPOTCHECK_FILE] = spotcheck.read_text(encoding="utf-8")
     save_dataset(split_rows, out_dir, sidecars)
     logger.info("stats: %s", json.dumps(stats, ensure_ascii=False, indent=1))
@@ -1602,8 +1948,19 @@ def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--editions-dir", type=Path, default=DEFAULT_EDITIONS)
     ap.add_argument("--output-dir", type=Path, default=DEFAULT_OUT)
+    ap.add_argument("--max-rows-per-page", type=int, default=MAX_ROWS_PER_PAGE,
+                    help="facts per page image; a list answer counts as one (default %(default)s)")
+    ap.add_argument("--max-answer-share", type=float, default=MAX_ANSWER_SHARE,
+                    help="maximum share of one normalised answer within a family's train facts "
+                         "(default %(default)s)")
+    ap.add_argument("--abstain-ratio", type=float, default=ABSTAIN_RATIO,
+                    help="abstention facts per qa_date fact, bounded by the eligible pages and by "
+                         f"{ABSTAIN_MAX_PAGE_SHARE * 100:.0f}%% of all pages (default %(default)s)")
+    ap.add_argument("--paraphrases", type=int, default=PARAPHRASES_PER_FACT,
+                    help="question wordings (rows) per train fact; val keeps one (default %(default)s)")
     a = ap.parse_args()
-    build(a.editions_dir, a.output_dir)
+    build(a.editions_dir, a.output_dir, max_rows=a.max_rows_per_page, max_answer_share=a.max_answer_share,
+          abstain_ratio=a.abstain_ratio, paraphrases=a.paraphrases)
 
 
 if __name__ == "__main__":

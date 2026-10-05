@@ -327,3 +327,14 @@ def test_fetch_page_image_verifies_hash_and_dims(tmp_path, monkeypatch):
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def test_benchmark_index_holds_out_the_registered_benchmarks():
+    from src.datasets.evaluations.benchmark_registry import registered_benchmark_documents
+
+    registered, _ = registered_benchmark_documents()
+    idx = bdg.load_benchmark_index()
+    one = sorted(registered)[0]
+    assert registered <= idx.ids and bdg.decontam_reason(one, (), bdg.DocRefs(), idx) == "benchmark_id"
+    assert one not in bdg.load_benchmark_index(extra_ids=()).ids
+    assert "Some_new_doc_1" in bdg.load_benchmark_index(extra_ids=["Some_new_doc_1"]).ids

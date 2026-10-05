@@ -396,13 +396,37 @@ def test_line_by_number_rows():
 
 
 def test_line_of_phrase_row():
-    """The phrase is unique on the page and the answer quotes its whole line."""
+    """The phrase is unique on the page and the answer quotes its whole line, text first."""
     ans = B.assemble_answer(_ed("\n".join(RECTO)), [True], None)
     q, a, n = B.line_of_phrase_item(ans, random.Random(3))
     obj = json.loads(a)
     phrase = q.split("«")[1].split("»")[0]
     assert obj["line"] == n and obj["text"] == ans.lines[n - 1] and phrase in obj["text"]
     assert ans.text.count(phrase) == 1
+    assert list(obj) == ["text", "line"]
+
+
+@pytest.mark.parametrize("lines", [RECTO, RECTO + VERSO, UNRELATED])
+def test_json_answers_are_text_first(lines):
+    """Every JSON answer the builder emits is serialised text first, like its prompt example.
+
+    ``page`` and ``line_by_number`` answer in plain text; the only JSON-answer family,
+    ``line_of_phrase_text``, writes ``{"text": ..., "line": N}`` in that key order (the ``pgp_qa``
+    v2 convention, so the v22 mixture carries one order).
+    """
+    rows = B.rows_for_page(_page("7", 0, "aa", lines), {"width": 100, "height": 200}, B.Path("x.jpg"))
+    json_families = set()
+    for fam, r in rows:
+        if not r["answer"].startswith(("{", "[")):
+            continue
+        json_families.add(fam)
+        obj = json.loads(r["answer"])
+        assert list(obj) == ["text", "line"], fam
+        assert r["answer"].startswith('{"text": ') and r["answer"] == B.line_answer_json(obj["text"], obj["line"])
+        assert obj["text"] == lines[obj["line"] - 1]
+    assert json_families == {"line_of_phrase_text"}
+    assert {fam for fam, _ in rows} == set(B.FAMILIES)
+    assert B.LINE_OF_PHRASE_PROMPT.index('"text"') < B.LINE_OF_PHRASE_PROMPT.index('"line"')
 
 
 def test_row_schema_matches_ktiv_features():
@@ -530,3 +554,16 @@ def test_distinct_pages_and_other_documents_are_kept():
     dropped.reason = "side_incomplete"
     assert B.drop_duplicate_side_photos(pages + [dropped]) == 0
     assert [p.reason for p in pages] == ["", "", ""] and dropped.reason == "side_incomplete"
+
+
+def test_load_benchmark_holds_out_the_registered_benchmarks():
+    """Documents of a later benchmark are excluded by id and by fragment key."""
+    from src.datasets.evaluations.benchmark_registry import registered_benchmark_documents
+
+    gate = B.DecontamGate()
+    registered, _ = registered_benchmark_documents()
+    assert registered <= B.load_benchmark(gate).ids
+    without = B.load_benchmark(gate, extra_ids=())
+    with_one = B.load_benchmark(gate, extra_ids={"New_York_JTS_ENA_3919_3"})
+    assert "New_York_JTS_ENA_3919_3" in with_one.ids - without.ids
+    assert B.fragment_key("ENA 3919.3", gate) in with_one.keys - without.keys          # the same fragment under its shelfmark

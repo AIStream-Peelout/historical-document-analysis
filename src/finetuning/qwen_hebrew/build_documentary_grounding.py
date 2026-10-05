@@ -82,6 +82,7 @@ from src.finetuning.qwen_hebrew.build_ktiv_dataset import (
     _READBOX_PROMPT,
     _positive,
 )
+from src.datasets.evaluations.benchmark_registry import registered_benchmark_documents
 from src.finetuning.qwen_hebrew.ktiv_layout import GAP_TOKEN, hebrew_letters
 
 try:  # optional layer: without it the id / image-url / sys_num layers still apply
@@ -588,7 +589,8 @@ def build_benchmark_index(ids: Iterable[str], image_urls: Iterable[str] = (),
 
 
 def load_benchmark_index(bench_ids_path: Path = BENCH_IDS_PATH, bench_path: Path = BENCH_PATH,
-                         religious_path: Path = RELIGIOUS_BENCH_PATH) -> BenchmarkIndex:
+                         religious_path: Path = RELIGIOUS_BENCH_PATH,
+                         extra_ids: Optional[Iterable[str]] = None) -> BenchmarkIndex:
     """Load the benchmark files that exist into a :class:`BenchmarkIndex`.
 
     :param bench_ids_path: ``decontam/benchmark_ids.json``.
@@ -597,10 +599,14 @@ def load_benchmark_index(bench_ids_path: Path = BENCH_IDS_PATH, bench_path: Path
     :type bench_path: Path
     :param religious_path: Religious benchmark (KTIV sys_nums + shelfmarks).
     :type religious_path: Path
+    :param extra_ids: Canonical ids held out by other benchmarks; default: every registered
+        benchmark (``benchmark_registry``, e.g. the Arabic-script benchmark).
+    :type extra_ids: Optional[Iterable[str]]
     :return: The index.
     :rtype: BenchmarkIndex
     """
     ids: Set[str] = set(json.loads(bench_ids_path.read_text())) if bench_ids_path.exists() else set()
+    ids |= set(registered_benchmark_documents()[0] if extra_ids is None else extra_ids)
     urls: Set[str] = set()
     if bench_path.exists():
         docs = json.loads(bench_path.read_text())["docs"]

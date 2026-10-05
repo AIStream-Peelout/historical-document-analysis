@@ -37,9 +37,13 @@ reader evidence shows that the edition text is on it (design: ``docs/v22_dataset
 
 Rows per included page (KTIV :data:`FEATURES`, ``label_source="pgp_edition"``): ``page``
 (the KTIV page prompt; answer = kept blocks with line breaks, margins/address blocks after the
-main text), ``line_by_number`` (<= 2) and ``line_of_phrase_text`` (1). The line-structure rows
-only address the side's first main block, and only lines above any line the edition does not
-render (a lost ``[...]`` line), so "line N" is the N-th line of the image's main text.
+main text), ``line_by_number`` (<= 2; answer = the line as plain text) and ``line_of_phrase_text``
+(1). ``line_of_phrase_text`` is the builder's only JSON answer and is written text first,
+``{"text": "<the whole line>", "line": N}`` (:func:`line_answer_json`), the order ``pgp_qa`` v2
+uses: the model quotes the line before it commits to a line number, its weakest skill (builds
+before 2026-09-28 wrote ``{"line": N, "text": ...}``). The line-structure rows only address the
+side's first main block, and only lines above any line the edition does not render (a lost
+``[...]`` line), so "line N" is the N-th line of the image's main text.
 
 Re-runnable: pages without an evidence file are skipped, so each run picks up what the
 pipeline has read since. The split is decided per document on the fixed usable set, and the
@@ -78,6 +82,7 @@ from PIL import ImageOps
 
 from src.datasets.cleaning.clean_genizah_transcriptions import GAP, clean_diplomatic
 from src.datasets.consensus.line_rule import letters, similarity
+from src.datasets.evaluations.benchmark_registry import registered_benchmark_documents
 from src.datasets.evaluations.helper_eval_scripts.decontam_gate import DecontamGate
 from src.finetuning.qwen_hebrew.build_ktiv_dataset import DECONTAM_SHINGLE, FEATURES
 from src.finetuning.qwen_hebrew.ktiv_layout import GAP_TOKEN
@@ -138,7 +143,7 @@ DOWNLOAD_WORKERS = 4
 LINE_BY_NUMBER_PROMPT = ("What is the text of line {n}, counting from the first line at the top of "
                          "the main text? Quote it exactly.")
 LINE_OF_PHRASE_PROMPT = ('Which line contains the phrase «{phrase}»? Answer as JSON '
-                         '{{"line": N, "text": "<the whole line>"}}.')
+                         '{{"text": "<the whole line>", "line": N}}.')
 FAMILIES = ("page", "line_by_number", "line_of_phrase_text")
 TASK_OF_FAMILY = {"page": "fragment_transcribe", "line_by_number": "line_by_number",
                   "line_of_phrase_text": "line_of_phrase_text"}
@@ -1035,12 +1040,26 @@ def unique_phrases(ans: Answer, i: int) -> List[str]:
     return out
 
 
+def line_answer_json(text: str, line: int) -> str:
+    """Serialise a line answer text first: ``{"text": "<the line>", "line": N}``.
+
+    The quote comes before the line number (the ``pgp_qa`` v2 order), so the model does not
+    commit to a line number, its weakest skill, before it has written the text.
+
+    :param text: The whole line as written.
+    :param line: One-based line number.
+    :returns: The JSON answer.
+    """
+    return json.dumps({"text": text, "line": line}, ensure_ascii=False)
+
+
 def line_of_phrase_item(ans: Answer, rng: random.Random) -> Optional[Tuple[str, str, int]]:
     """One ``line_of_phrase_text`` question/answer pair.
 
     :param ans: Assembled answer.
     :param rng: Seeded RNG.
-    :returns: ``(question, JSON answer, one-based line number)`` or None.
+    :returns: ``(question, text-first JSON answer {"text": <line>, "line": N}, one-based line
+        number)`` or None.
     """
     hosts = numbered_candidates(ans)
     rng.shuffle(hosts)
@@ -1048,8 +1067,7 @@ def line_of_phrase_item(ans: Answer, rng: random.Random) -> Optional[Tuple[str, 
         phrases = unique_phrases(ans, i)
         if phrases:
             phrase = rng.choice(phrases)
-            answer = json.dumps({"line": i + 1, "text": ans.lines[i]}, ensure_ascii=False)
-            return LINE_OF_PHRASE_PROMPT.format(phrase=phrase), answer, i + 1
+            return LINE_OF_PHRASE_PROMPT.format(phrase=phrase), line_answer_json(ans.lines[i], i + 1), i + 1
     return None
 
 
@@ -1275,15 +1293,19 @@ class Benchmark:
     all_shingles: Set[str]
 
 
-def load_benchmark(gate: DecontamGate, ids_path: Path = BENCH_IDS_JSON, gt_path: Path = BENCH_GT_JSON) -> Benchmark:
+def load_benchmark(gate: DecontamGate, ids_path: Path = BENCH_IDS_JSON, gt_path: Path = BENCH_GT_JSON,
+                   extra_ids: Optional[Iterable[str]] = None) -> Benchmark:
     """Load benchmark ids, fragment keys and GT shingles.
 
     :param gate: Decontamination gate.
     :param ids_path: ``decontam/benchmark_ids.json``.
     :param gt_path: Verified benchmark JSON (``docs[*].gt``).
+    :param extra_ids: Canonical ids held out by other benchmarks; default: every registered
+        benchmark (``benchmark_registry``, e.g. the Arabic-script benchmark).
     :returns: The benchmark.
     """
     ids = set(json.loads(ids_path.read_text(encoding="utf-8")))
+    ids |= set(registered_benchmark_documents()[0] if extra_ids is None else extra_ids)
     docs = json.loads(gt_path.read_text(encoding="utf-8"))["docs"]
     keys = {k for k in (fragment_key(x, gate) for x in list(ids) + [d.get("shelf_mark", "") for d in docs]) if k}
     keys |= {k for k in (fragment_key(k0, gate) for k0 in gate.bench_keys) if k}
@@ -1849,11 +1871,10 @@ def prepare(inputs_dir: Path, served_path: Path, raw_dir: Path = RAW_DIR,
     editions = load_editions()
     merged = load_merged(MERGED_JSONL, set(editions))
     served = load_served(served_path)
-    bench_ids = set(json.loads(BENCH_IDS_JSON.read_text(encoding="utf-8")))
-    docs, not_usable = usable_documents(editions, merged, served, bench_ids)
-    parsed = {p: parse_edition(editions[p]["content"]) for p in docs}
     gate = DecontamGate()
     bench = load_benchmark(gate)
+    docs, not_usable = usable_documents(editions, merged, served, bench.ids)
+    parsed = {p: parse_edition(editions[p]["content"]) for p in docs}
     trained = load_trained_ids()
     fragments = load_fragment_pgpids()
     gate_info = gate_documents(docs, editions, parsed, merged, load_csv_by(DOCUMENTS_CSV, "pgpid"), fragments,

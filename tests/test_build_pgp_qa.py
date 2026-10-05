@@ -6,9 +6,12 @@
 Every answer must be whole token(s) of one page line exactly as written, prefix letters kept
 (``quote`` and the build's emission check raise otherwise); metadata only validates. Covers the
 month table and date-line detection, the strict person-location rule, ketubba name parsing, the
-party line, abstention eligibility, the per-page and abstention caps and the review sample.
+party line, abstention eligibility, the per-page cap and the review sample, and the v2 balance
+rules: text-first answers, the per-answer share cap, the abstention budget and the paraphrased
+questions (K wordings per train fact, one canonical wording per val fact).
 """
 import collections
+import itertools
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -71,6 +74,19 @@ def test_quote_accepts_a_span_of_the_line():
     assert json.loads(Q.quote(LETTER, 2, "יוסף בן יעקב")) == {"line": 2, "text": "יוסף בן יעקב"}
 
 
+def test_answers_are_text_first():
+    """The serialized answer puts the quote before the line number (span and list answers alike);
+    the abstention answer is unchanged."""
+    ans = Q.quote(LETTER, 2, "יוסף בן יעקב")
+    assert ans == '{"text": "יוסף בן יעקב", "line": 2}'
+    assert list(json.loads(ans)) == ["text", "line"]
+    lst = Q.quote_list(["אב גד", "הו זח"], [(1, "אב"), (2, "הו")])
+    assert lst == '[{"text": "אב", "line": 1}, {"text": "הו", "line": 2}]'
+    assert all(list(it) == ["text", "line"] for it in json.loads(lst))
+    assert Q.ABSTAIN_ANSWER == '{"answer": "not stated"}'
+    assert Q.answer_items(ans) == [{"text": "יוסף בן יעקב", "line": 2}] and Q.answer_items(Q.ABSTAIN_ANSWER) == []
+
+
 @pytest.mark.parametrize("n,text,err", [
     (2, "יוסף בר יעקב", Q.AnswerSpanError),      # not on the line
     (1, "יוסף בן יעקב", Q.AnswerSpanError),      # on another line
@@ -125,7 +141,7 @@ def test_build_raises_on_a_part_of_word_answer(tmp_path, monkeypatch):
     monkeypatch.setattr(Q, "load_relations", lambda path, pgpids: {})
     monkeypatch.setattr(Q, "edition_lines_of", lambda pgpids: {})
     bad = Q.QARow("qa_place", "written", Q.PLACE_WRITTEN_PROMPT,
-                  json.dumps({"line": 1, "text": "דמשק"}, ensure_ascii=False), 1, priority=Q.PRIORITY["qa_place"])
+                  json.dumps({"text": "דמשק", "line": 1}, ensure_ascii=False), 1, priority=Q.PRIORITY["qa_place"])
     monkeypatch.setattr(Q, "page_candidates", lambda p, c, stats, funnel=None: ([bad], False))
     with pytest.raises(Q.AnswerSpanError):
         Q.build(tmp_path, tmp_path / "out")
@@ -362,37 +378,171 @@ def test_party_row_requires_a_located_party_on_the_line():
 # --------------------------------------------------------------------------- caps + sample
 
 
-def _qa(family: str, line: int = 1, priority: int = 5) -> Q.QARow:
-    """A synthetic QA row.
+_SERIAL = itertools.count()
+
+
+def _word(n: int) -> str:
+    """A distinct Hebrew token per integer (its digits spelled with letters).
+
+    :param n: Integer.
+    :returns: Token.
+    """
+    return "".join("אבגדהוזחטי"[int(d)] for d in str(n))
+
+
+def _qa(family: str, line: int = 1, priority: int = 5, text: Optional[str] = None) -> Q.QARow:
+    """A synthetic QA row; every call answers a different token unless ``text`` is given.
 
     :param family: Row family.
     :param line: Answer line.
     :param priority: Cap priority.
+    :param text: Answer text (one token line), default a fresh token.
     :returns: Row.
     """
-    return Q.QARow(family, "s", "q", Q.quote(["אבגד"], 1, "אבגד") if family != "qa_abstain" else Q.ABSTAIN_ANSWER,
+    text = text or _word(next(_SERIAL))
+    return Q.QARow(family, "s", "q", Q.quote([text], 1, text) if family != "qa_abstain" else Q.ABSTAIN_ANSWER,
                    line, priority=priority)
 
 
-def test_caps_rows_per_page_and_abstention_shares():
-    """<= 3 rows per page; abstain rows <= 10% of all QA rows and on <= 20% of pages."""
+def test_caps_rows_per_page_and_abstention_budget():
+    """<= 3 facts per page; abstention facts = floor(0.8 x qa_date facts), within 20% of pages."""
     pages = [page(LETTER, key=f"k{i}") for i in range(100)]
     cands = {f"k{i}": [_qa("qa_person"), _qa("qa_date"), _qa("qa_party"), _qa("qa_person")] for i in range(40)}
     eligible = {f"k{i}": True for i in range(40, 100)}
-    kept = Q.apply_caps(pages, cands, eligible)
+    info: Dict[str, Any] = {}
+    kept = Q.apply_caps(pages, cands, eligible, info=info)
     assert all(len(v) <= Q.MAX_ROWS_PER_PAGE for v in kept.values())
     rows = [r for v in kept.values() for r in v]
-    n_abstain = sum(r.family == "qa_abstain" for r in rows)
-    assert 0 < n_abstain <= Q.ABSTAIN_MAX_ROW_SHARE * len(rows)
+    n_date, n_abstain = (sum(r.family == f for r in rows) for f in ("qa_date", "qa_abstain"))
+    assert n_date == 40 and n_abstain == 20                          # min(floor(0.8 * 40) = 32, 20% of 100)
     assert sum(any(r.family == "qa_abstain" for r in v) for v in kept.values()) <= Q.ABSTAIN_MAX_PAGE_SHARE * len(pages)
+    assert info["abstain"] == {"ratio": 0.8, "qa_date_facts": 40, "ratio_budget": 32, "page_share_budget": 20,
+                               "eligible_pages": 60, "eligible_pages_with_free_slot": 60, "facts": 20}
+    assert info["answer_cap_dropped"] == {}
+
+
+def test_abstention_follows_the_date_count():
+    """With room on the pages, abstention facts track 0.8 x the qa_date facts (v1's 10% row cap is gone)."""
+    pages = [page(LETTER, key=f"k{i}") for i in range(200)]
+    cands = {f"k{i}": [_qa("qa_date", priority=2), _qa("qa_person"), _qa("qa_place", priority=4)] for i in range(25)}
+    kept = Q.apply_caps(pages, cands, {f"k{i}": True for i in range(100, 200)})
+    rows = [r for v in kept.values() for r in v]
+    assert sum(r.family == "qa_abstain" for r in rows) == 20          # floor(0.8 * 25); v1 allowed 8
+    assert all(r.question == Q.DATE_PROMPT and r.answer == Q.ABSTAIN_ANSWER for r in rows if r.family == "qa_abstain")
 
 
 def test_abstention_page_share_binds():
-    """With few other rows the page share (20%) still bounds abstention."""
+    """With many date facts the page share (20%) still bounds abstention."""
     pages = [page(LETTER, key=f"k{i}") for i in range(50)]
-    cands = {f"k{i}": [_qa("qa_date")] * 3 for i in range(40)}
+    cands = {f"k{i}": [_qa("qa_date"), _qa("qa_date"), _qa("qa_date")] for i in range(40)}
     kept = Q.apply_caps(pages, cands, {f"k{i}": True for i in range(40, 50)})
-    assert sum(r.family == "qa_abstain" for v in kept.values() for r in v) <= min(10, int(0.2 * 50))
+    assert sum(r.family == "qa_abstain" for v in kept.values() for r in v) == min(96, int(0.2 * 50))
+
+
+@pytest.mark.parametrize("n_date,n_pages,n_open,expected", [
+    (186, 2352, 384, 148),      # the v1 page set: floor(0.8 * 186), neither bound binds
+    (186, 2352, 100, 100),      # only 100 eligible pages with a free slot
+    (186, 500, 384, 100),       # 20% of 500 pages
+    (0, 2352, 384, 0),          # no date facts, no abstention
+    (5, 2352, 384, 4),          # floor(4.0) even with float error
+])
+def test_abstain_budget(n_date, n_pages, n_open, expected):
+    """min(floor(ratio x qa_date facts), floor(page share x pages), eligible pages with a free slot)."""
+    assert Q.abstain_budget(n_date, 0.8, n_pages, 0.2, n_open) == expected
+
+
+# --------------------------------------------------------------------------- per-answer cap
+
+
+FUSTAT = "בפסטאט"
+
+
+def _fustat_pages() -> Tuple[List[Dict[str, Any]], Dict[str, List[Q.QARow]]]:
+    """40 train pages, 30 of them answering the place question with בפסטאט (5 written with a dagesh),
+    and 10 val pages that all answer בפסטאט; each train page has a person candidate after the cut.
+
+    :returns: ``(pages, candidates)``.
+    """
+    pages = [page(LETTER, key=f"t{i}") for i in range(40)]
+    val = [page(LETTER, key=f"v{i}") for i in range(10)]
+    for p in val:
+        p["split"] = "val"
+    cands = {}
+    for i in range(40):
+        place = FUSTAT if i < 25 else "בּפסטאט" if i < 30 else None
+        cands[f"t{i}"] = [_qa("qa_date", priority=2), _qa("qa_date_month", priority=3),
+                          _qa("qa_place", priority=4, text=place), _qa("qa_person", priority=5)]
+    for i in range(10):
+        cands[f"v{i}"] = [_qa("qa_place", priority=4, text=FUSTAT)]
+    return pages + val, cands
+
+
+def test_answer_cap_breaks_a_dominant_answer():
+    """30 of 40 train place facts answer בפסטאט: it keeps 2 of 12 (2 <= floor(0.2 * 12)); the freed
+    slots go to the pages' next (lower-priority) candidate; val pages keep their answers."""
+    pages, cands = _fustat_pages()
+    info: Dict[str, Any] = {}
+    kept = Q.apply_caps(pages, cands, {}, info=info)
+    train_place = [r for k, v in kept.items() if k.startswith("t") for r in v if r.family == "qa_place"]
+    fustat = [r for r in train_place if Q.answer_key(r.answer) == Q.normalise_answer(FUSTAT)]
+    assert len(train_place) == 12 and len(fustat) == 2
+    assert len(fustat) <= Q.answer_limit(len(train_place), Q.MAX_ANSWER_SHARE)
+    assert info["answer_cap_dropped"] == {"qa_place": 28}
+    for k, v in kept.items():
+        if k.startswith("t"):
+            assert len(v) == 3 and [r.family for r in v][:2] == ["qa_date", "qa_date_month"]
+            assert v[2].family == "qa_place" or v[2] is cands[k][3]          # the person moved up
+    assert sum(r.family == "qa_person" for v in kept.values() for r in v) == 28
+    assert all([r.family for r in kept[f"v{i}"]] == ["qa_place"] for i in range(10))
+
+
+def test_answer_cap_is_deterministic():
+    """The same facts survive on a rerun and whatever the page order (stable_hash, not position)."""
+    pages, cands = _fustat_pages()
+    kept_of = lambda ps: sorted(k for k, v in Q.apply_caps(ps, cands, {}).items()  # noqa: E731
+                                if any(r.family == "qa_place" and FUSTAT[1:] in r.answer for r in v)
+                                and k.startswith("t"))
+    assert kept_of(pages) == kept_of(pages) == kept_of(pages[::-1])
+
+
+def test_answer_cap_counts_nikud_and_final_letter_variants_as_one_answer():
+    """Answer identity: nikud stripped, final letters folded, whitespace collapsed; a list is a set."""
+    one = lambda t: Q.answer_key(Q.quote([t], 1, t))  # noqa: E731
+    assert one("בּפסטאט") == one(FUSTAT) == Q.normalise_answer(FUSTAT)
+    assert one("אברהם") == one("אברהמ")
+    assert one("בפסטאט") != one("פסטאט")                     # a different token is a different answer
+    lines = ["אב גד", "הו זח"]
+    assert Q.answer_key(Q.quote_list(lines, [(1, "אב"), (2, "הו")])) == Q.answer_key(
+        Q.quote_list(lines, [(2, "הו"), (1, "אב")]))
+    assert Q.answer_key(Q.ABSTAIN_ANSWER) == ""
+
+
+def test_answer_normalisation_matches_the_task_eval():
+    """The cap folds answers exactly like the v22 task evaluation's scorer."""
+    from src.finetuning.qwen_hebrew.eval_harness.v22_task_eval import normalise_hebrew
+    for text in ("בְּפֻסְטָאט", "אברהם  בן\tיצחק", "התקס״ה ליצירה", "ד׳תתי״א", "ר’ נתן", "  שלום ", ""):
+        assert Q.normalise_answer(text) == normalise_hebrew(text)
+
+
+def test_answer_cap_always_allows_one_fact_per_answer():
+    """A tiny family whose answers are all distinct keeps everything (each is 50% of 2 facts)."""
+    pages = [page(LETTER, key=f"k{i}") for i in range(2)]
+    cands = {"k0": [_qa("qa_ketubah_groom")], "k1": [_qa("qa_ketubah_groom")]}
+    assert sum(len(v) for v in Q.apply_caps(pages, cands, {}).values()) == 2
+    assert Q.answer_limit(2, 0.2) == 1 and Q.answer_limit(126, 0.2) == 25 and Q.answer_limit(125, 0.2) == 25
+
+
+def test_answer_cap_refill_is_capped_too():
+    """A refill that brings in more of a capped answer is counted again (the cap is a fixed point)."""
+    pages = [page(LETTER, key=f"k{i}") for i in range(20)]
+    cands = {f"k{i}": [_qa("qa_place", priority=4, text=FUSTAT), _qa("qa_person", priority=5, text="יוסף")]
+             for i in range(20)}
+    kept = Q.apply_caps(pages, cands, {}, max_rows=1)
+    rows = [r for v in kept.values() for r in v]
+    for fam in ("qa_place", "qa_person"):
+        n = sum(r.family == fam for r in rows)
+        assert 1 <= n <= Q.answer_limit(n, 0.2)                   # one answer per family: one fact each
+    assert Q.apply_caps(pages, cands, {}, max_rows=1, max_answer_share=1.0)["k0"][0].family == "qa_place"
 
 
 def test_review_sample_is_stratified():
@@ -755,3 +905,148 @@ def test_status_text():
                                                                     "generated_at": "t", "editions_manifest": "m",
                                                                     "rows_by_family": {}})
 
+
+
+# --------------------------------------------------------------------------- paraphrased questions
+
+
+def _formatted(table: Tuple[str, ...]) -> List[str]:
+    """A wording table as the model sees it (templates filled with a role).
+
+    :param table: Wordings.
+    :returns: Filled wordings.
+    """
+    return [t.format(role="sender") if "{role}" in t else t for t in table]
+
+
+def test_every_family_has_a_wording_table():
+    """Each family (qa_place per section) has 3-4 distinct wordings, the canonical prompt first."""
+    for fam in Q.FAMILIES:
+        for key in (["qa_place:written", "qa_place:sent"] if fam == "qa_place" else [fam]):
+            table = Q.PARAPHRASES[key]
+            assert 3 <= len(table) <= 4 and len(set(table)) == len(table), key
+    assert Q.PARAPHRASES["qa_person"][0] is Q.PERSON_PROMPT and Q.PARAPHRASES["qa_date"][0] is Q.DATE_PROMPT
+    assert Q.PARAPHRASES["qa_place:written"][0] is Q.PLACE_WRITTEN_PROMPT
+    assert Q.PARAPHRASES["qa_place:sent"][0] is Q.PLACE_SENT_PROMPT
+    assert Q.PARAPHRASES["qa_abstain"] is Q.PARAPHRASES["qa_date"]          # the two branches share the question
+    assert Q.PARAPHRASES["qa_party_formula"] is Q.PARAPHRASES["qa_party"]
+
+
+@pytest.mark.parametrize("key", sorted(Q.PARAPHRASES))
+def test_wordings_keep_the_answer_instruction(key):
+    """Every wording asks for JSON with the text-first example; the prefix-letter, list and abstention
+    clauses appear in a wording exactly when the canonical prompt has them."""
+    table = _formatted(Q.PARAPHRASES[key])
+    for w in table:
+        assert "JSON" in w and '{"text": "<' in w and '>", "line": N}' in w and '{"line"' not in w, w
+        assert "{" not in w.replace('{"text"', "").replace('{"answer"', ""), w     # no unfilled template
+        for clause in ("including any attached prefix letter", '{"answer": "not stated"}', "JSON list"):
+            assert (clause in w) == (clause in table[0]), (clause, w)
+
+
+def test_draw_wordings_is_deterministic_and_distinct():
+    """K distinct indices per fact, stable across calls; over many facts every wording is drawn."""
+    draws = [Q.draw_wordings(4, 2, f"pgpqa_{i}_0_qa_date_0") for i in range(200)]
+    assert draws == [Q.draw_wordings(4, 2, f"pgpqa_{i}_0_qa_date_0") for i in range(200)]
+    assert all(len(set(d)) == 2 for d in draws) and {v for d in draws for v in d} == {0, 1, 2, 3}
+    with pytest.raises(AssertionError):
+        Q.draw_wordings(4, 5, "x")
+
+
+# LETTER without its third line, which names אלאסכנדריה a second time
+PLACE_LINES = ["וכאן דלך בפסטאט מצרים דעל נילוס נהרא", "ואנפדתה אלי אלאסכנדריה מע אלרסול", LETTER[0], LETTER[1],
+               LETTER[3]]
+
+
+def _emit_fixture() -> Tuple[List[Dict[str, Any]], Dict[str, List[Q.QARow]]]:
+    """A train page with a person and two place facts, a train page with an abstention fact and a val
+    page with one place fact.
+
+    :returns: ``(pages, kept facts)``.
+    """
+    train, blank, val = page(PLACE_LINES, key="t"), page(LETTER, pgpid="3", key="a"), page(PLACE_LINES, pgpid="2", key="v")
+    val["split"] = "val"
+    c = ctx(relations={"1": [rel("Yosef b. Yaʿaqov", "Sender")]})
+    person, _ = Q.person_rows(train, c, Q.page_index(PLACE_LINES), collections.Counter())
+    places = _places(PLACE_LINES, {"location": "Fustat", "destination": "Alexandria"})
+    abstain = Q.QARow("qa_abstain", "no_date", Q.DATE_PROMPT, Q.ABSTAIN_ANSWER, 0, priority=8)
+    return [train, blank, val], {"t": person + places, "a": [abstain], "v": places[:1]}
+
+
+def test_emit_rows_paraphrases_train_facts_and_keeps_val_canonical():
+    """Train: K rows per fact sharing answer, task, section and stem, with distinct wordings from the
+    family's table; val: one row per fact with the canonical question; one manifest record per fact."""
+    pages, kept = _emit_fixture()
+    split_rows, manifest = Q.emit_rows(pages, kept, paraphrases=2)
+    train = [r for name, rows in split_rows.items() if name != "val" for r in rows]
+    assert len(train) == 2 * 4 and len(split_rows["val"]) == 1 and len(manifest) == 5
+    facts = {f"pgpqa_{p['pgpid']}_0_{q.family}_{j}": q for p in pages[:2] for j, q in enumerate(kept[p["key"]])}
+    by_stem: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
+    for r in train:
+        by_stem[r["stem"]].append(r)
+    assert set(by_stem) == set(facts)
+    for stem, twins in by_stem.items():
+        q = facts[stem]
+        assert len(twins) == 2 and len({t["question"] for t in twins}) == 2
+        assert {(t["answer"], t["task"], t["section"], t["image"]) for t in twins} == {
+            (q.answer, q.family, q.section, "p.jpg")}
+        assert all(t["question"] in Q.row_wordings(q) for t in twins)
+    assert all("sender" in t["question"] for t in by_stem["pgpqa_1_0_qa_person_0"])
+    assert all(t["question"] in Q.PARAPHRASES["qa_date"] and t["answer"] == Q.ABSTAIN_ANSWER
+               for t in by_stem["pgpqa_3_0_qa_abstain_0"])
+    (v,) = split_rows["val"]
+    assert v["question"] == Q.PLACE_WRITTEN_PROMPT and v["stem"] == "pgpqa_2_0_qa_place_0"
+    rec = {m["stem"]: m for m in manifest}
+    assert rec["pgpqa_2_0_qa_place_0"]["prompt_variants"] == [0]
+    assert all(len(m["questions"]) == 2 and m["question"] == m["questions"][0] for m in manifest if m["split"] == "train")
+    assert Q.emit_rows(pages, kept, paraphrases=2) == (split_rows, manifest)          # deterministic
+
+
+@pytest.mark.parametrize("k", [1, 3, 4])
+def test_emit_rows_k_wordings(k):
+    """K rows per train fact, still one per val fact; rows are distinct by (stem, question)."""
+    pages, kept = _emit_fixture()
+    split_rows, _ = Q.emit_rows(pages, kept, paraphrases=k)
+    train = [r for name, rows in split_rows.items() if name != "val" for r in rows]
+    assert len(train) == 4 * k and len(split_rows["val"]) == 1
+    assert len({(r["stem"], r["question"]) for r in train}) == len(train)
+
+
+def test_build_rejects_impossible_paraphrase_counts(tmp_path):
+    """K must be between 1 and the smallest wording table (checked before anything is read)."""
+    for k in (0, 5):
+        with pytest.raises(ValueError):
+            Q.build(tmp_path, tmp_path / "out", paraphrases=k)
+
+
+def test_build_end_to_end(tmp_path, monkeypatch):
+    """A two-page build: K train rows per fact, one val row per fact, text-first answers, stats."""
+    from datasets import load_from_disk
+    from PIL import Image
+
+    img = tmp_path / "p.jpg"
+    Image.new("RGB", (10, 10), "white").save(img)
+    train, val = page(PLACE_LINES, pgpid="1"), page(PLACE_LINES, pgpid="2")
+    val.update(split="val", canonical_id="D")
+    for p in (train, val):
+        p["image_path"] = str(img)
+    (tmp_path / "manifest.jsonl").write_text("".join(json.dumps(p, ensure_ascii=False) + "\n" for p in (train, val)),
+                                             encoding="utf-8")
+    monkeypatch.setattr(Q, "V1_DIR", tmp_path / "no_v1")
+    monkeypatch.setattr(Q.inv, "load_people", lambda: ({}, {}))
+    monkeypatch.setattr(Q.inv, "build_name_lexicon", lambda people: set())
+    monkeypatch.setattr(Q, "load_csv_by", lambda path, key: {})
+    monkeypatch.setattr(Q, "load_relations", lambda path, pgpids: {})
+    monkeypatch.setattr(Q, "edition_lines_of", lambda pgpids: {})
+    monkeypatch.setattr(Q, "page_candidates", lambda p, c, stats, funnel=None: (
+        Q.place_rows(p, {"location": "Fustat", "destination": "Alexandria"}, PLACES, stats), False))
+    stats = Q.build(tmp_path, tmp_path / "out", paraphrases=2)
+    dsd = load_from_disk(str(tmp_path / "out"))
+    assert dsd["train_qa_place"].num_rows == 4 and dsd["val"].num_rows == 2
+    assert len(set(dsd["train_qa_place"]["question"])) >= 3 and set(dsd["val"]["question"]) == {
+        Q.PLACE_WRITTEN_PROMPT, Q.PLACE_SENT_PROMPT}
+    assert all(a.startswith('{"text": ') for a in list(dsd["train_qa_place"]["answer"]) + list(dsd["val"]["answer"]))
+    assert stats["facts_by_family"] == {"qa_place": 4} and stats["rows_total"] == 6
+    assert stats["facts_by_family_and_split"] == {"qa_place": {"train": 2, "val": 2}}
+    assert stats["rules"]["paraphrases"] == 2 and stats["abstain"]["facts"] == 0
+    assert len((tmp_path / "out" / "manifest.jsonl").read_text(encoding="utf-8").splitlines()) == 4
