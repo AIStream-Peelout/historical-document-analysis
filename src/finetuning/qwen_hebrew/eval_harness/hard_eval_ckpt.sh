@@ -1,6 +1,6 @@
 #!/bin/zsh
 # One series checkpoint through hard evals: merge -> convert -> LM Studio ->
-# (lite: flip-slice ~66 items | full: religious-140 + PGP-131 + 3-way compare)
+# (lite: flip-slice ~66 items | full: PGP-131 first, then religious-140, then 3-way compare)
 # -> W&B log (run v19c_hard_evals) -> local cleanup (NAS masters kept).
 # Lives in the repo (NOT /private/tmp — that dir is wiped on every reboot).
 set -e
@@ -20,8 +20,12 @@ echo "local free: ${FREE}Gi ($MODE eval, step $STEP)"
 FREE_MIN=18; [ "$MODE" = "stage" ] && FREE_MIN=12
 [ "$FREE" -ge $FREE_MIN ] || { echo "ABORT: need >=${FREE_MIN}Gi free"; exit 1; }
 
+# FORCE_LOCAL unset = NAS mode when the share is mounted; FORCE_LOCAL=disk = everything on local disk (a share that
+# is mounted but slow, e.g. over Wi-Fi); any other FORCE_LOCAL value = RAM-disk mode (share away, local disk tight).
 NAS_UP=0; [ -d /Volumes/home/studio_offload ] && [ -z "$FORCE_LOCAL" ] && NAS_UP=1
 echo "NAS_UP=$NAS_UP (FORCE_LOCAL=${FORCE_LOCAL:-0})"
+LOCAL_HF_HOME=${LOCAL_HF_HOME:-$HOME/hf_home_merge_local}      # local-disk mode keeps the 16 GB base model here between checkpoints
+BF16_TMP=$REPO/models/.tmp-$NAME-bf16                          # under models/ (git-ignored); removed after the convert
 
 if [ -d "$MLX_LOCAL" ]; then
   echo "=== [1-2/4] $NAME already staged locally — skipping merge/convert $(date) ==="
@@ -40,6 +44,17 @@ elif [ "$NAS_UP" = "1" ]; then
   fi
   echo "=== [3/4] stage + LM Studio $(date) ==="
   if [ ! -d "$MLX_LOCAL" ]; then cp -R "$MLX_NAS" "$MLX_LOCAL"; fi
+elif [ "$FORCE_LOCAL" = "disk" ]; then
+  echo "=== [1/4] merge $NAME (LOCAL-DISK mode: base cache $LOCAL_HF_HOME, no NAS master) $(date) ==="
+  [ "$FREE" -ge 45 ] || { echo "ABORT: local-disk mode needs >=45Gi free (base cache 16 + merged bf16 17 + MLX 9)"; exit 1; }
+  rm -rf "$BF16_TMP"
+  HF_HOME=$LOCAL_HF_HOME KEEP_BASE_CACHE=1 $REPO/.venv/bin/python $SCRATCH/merge_ckpt_generic.py \
+    --repo isaacmg/qwen3-vl-8b-hebrew-$VER-ckpt --revision $REV --out "$BF16_TMP"
+  echo "=== [2/4] MLX convert (local read -> local write) $(date) ==="
+  cd $REPO && .venv-mlx/bin/python -m mlx_vlm convert \
+    --hf-path "$BF16_TMP" --mlx-path "$MLX_LOCAL" -q --q-bits 8
+  rm -rf "$BF16_TMP"
+  echo "=== [3/4] stage + LM Studio $(date) ==="
 else
   echo "=== [1/4] merge $NAME (RAMDISK mode — NAS unavailable) $(date) ==="
   if [ ! -d "$MLX_LOCAL" ]; then
@@ -83,9 +98,10 @@ fi
 echo "=== [4/4] $MODE eval $(date) ==="
 if [ "$MODE" = "full" ]; then
   cd $REPO/src/datasets/evaluations
+  # PGP-131 (documentary) FIRST: it is the primary target from v22 on (user, 2026-09-28); religious 140 second.
+  $REPO/.venv/bin/python $SCRATCH/run_pgp131_v19b.py $NAME
   PYTHONPATH=$REPO $REPO/.venv/bin/python helper_eval_scripts/run_religious_benchmark.py \
     --vlm-model $NAME
-  $REPO/.venv/bin/python $SCRATCH/run_pgp131_v19b.py $NAME
   PYTHONPATH=$REPO $REPO/.venv/bin/python helper_eval_scripts/score_genizah_offline.py \
     --benchmark verified --no-wandb | sed -n '15,45p'
   cd $REPO && .venv/bin/python $SCRATCH/compare_series.py --ver $VER --step $STEP --wandb

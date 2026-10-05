@@ -25,7 +25,8 @@ if NAS_UP:
     os.environ.setdefault("HF_HOME", "/Volumes/home/studio_offload/hf_home_merge")
 # NAS down: default local HF cache; the 16GB base cache is purged right after
 # the model loads into RAM (before saving) so local disk never holds
-# cache + merged bf16 simultaneously.
+# cache + merged bf16 simultaneously. KEEP_BASE_CACHE=1 (hard_eval_ckpt.sh's
+# local-disk mode, HF_HOME set by the caller) keeps it for the next checkpoint.
 import dotenv
 
 REPO = Path("/Users/isaac/Documents/GitHub/historical-document-analysis")
@@ -58,15 +59,15 @@ sd = load_file(adapter_dir / "adapter_model.safetensors")
 has_merger_full = any("merger" in k and "lora" not in k for k in sd)
 print(f"adapter: {len(sd)} tensors, merger full-weight keys: {has_merger_full}", flush=True)
 
-print(f"loading base bf16 on CPU (cache on {'NAS' if NAS_UP else 'LOCAL, purged after load'})...",
-      flush=True)
+_where = "NAS" if NAS_UP else "LOCAL, kept" if os.environ.get("KEEP_BASE_CACHE") else "LOCAL, purged after load"
+print(f"loading base bf16 on CPU (cache on {_where})...", flush=True)
 processor = AutoProcessor.from_pretrained(BASE, token=token)
 # ALWAYS mmap-load (low_cpu_mem_usage=True): with the cache on a RAM-backed
 # volume this is Metal-safe and halves process RAM — loading fully into RAM
 # (=False) stacked with a large ramdisk caused the 2026-09-01 swap incident.
 model = Qwen3VLForConditionalGeneration.from_pretrained(
     BASE, dtype=torch.bfloat16, low_cpu_mem_usage=True, token=token)
-if not NAS_UP:
+if not NAS_UP and not os.environ.get("KEEP_BASE_CACHE"):      # local-disk mode keeps the base between checkpoints
     _cache = Path(os.environ.get("HF_HOME", Path.home() / ".cache/huggingface")) \
         / "hub/models--Qwen--Qwen3-VL-8B-Instruct"
     if _cache.exists():
