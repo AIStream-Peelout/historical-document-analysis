@@ -95,6 +95,11 @@ P_GROUNDED = ('Transcribe this manuscript page line by line. Respond with ONLY '
               'Preserve reading order.')
 VLM_MAX_TOKENS = 3500
 _NUM = (int, float)
+# one line entry of a grounded reply in the prompt's key order. The text runs to the `", "bbox_2d": [` delimiter, so
+# a plain `"` inside it (Hebrew abbreviations: ס"ז, כ"ז) does not end it, and it may not run into the next entry.
+_ENTRY_RE = re.compile(r'\{\s*"text"\s*:\s*"((?:(?!"\s*\}\s*,?\s*\{\s*"text"\s*:).)*?)"\s*,\s*"bbox_2d"\s*:\s*'
+                       r'\[\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*\]\s*\}',
+                       re.S)
 
 
 # ---------------------------------------------------------------------------
@@ -300,8 +305,37 @@ def _clamp_box(box: List[float]) -> List[int]:
     return [min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)]
 
 
+def _entry_text(field: str) -> str:
+    """Decode the text field of a line entry matched by :data:`_ENTRY_RE`.
+
+    :param field: The characters between the field's quotes, still JSON-escaped; may hold a plain ``"``.
+    :type field: str
+    :return: The text. A field that is valid JSON string content is decoded as such; otherwise only the
+        escapes ``\\"``, ``\\\\`` and ``\\n`` are undone.
+    :rtype: str
+    """
+    try:
+        return json.loads(f'"{field}"')
+    except json.JSONDecodeError:
+        return field.replace('\\"', '"').replace("\\n", " ").replace("\\\\", "\\")
+
+
+def entry_objects(text: str) -> List[Dict[str, Any]]:
+    """Line entries of a grounded reply found by their shape instead of by JSON parsing.
+
+    Used when the reply is not valid JSON: a plain ``"`` inside a text (Hebrew abbreviations) unbalances the
+    quotes, and a parser that tracks strings then drops every entry up to the next stray quote.
+
+    :param text: Raw reply.
+    :type text: str
+    :return: ``{"text", "bbox_2d"}`` objects of the complete entries, in reply order.
+    :rtype: List[Dict[str, Any]]
+    """
+    return [{"text": _entry_text(m.group(1)), "bbox_2d": [float(v) for v in m.groups()[1:]]} for m in _ENTRY_RE.finditer(text)]
+
+
 def parse_grounded(raw: Optional[str]) -> Tuple[bool, List[Dict[str, Any]]]:
-    """Parse the VLM's JSON-array reply, tolerating truncation and trailing prose.
+    """Parse the VLM's JSON-array reply, tolerating truncation, trailing prose and plain quotes inside a text.
 
     :param raw: Model output.
     :returns: ``(parsed, lines)`` with ``lines`` as ``{text, box}`` (box 0-1000 floats).
@@ -317,6 +351,7 @@ def parse_grounded(raw: Optional[str]) -> Tuple[bool, List[Dict[str, Any]]]:
             objs = arr if isinstance(arr, list) else []
         except json.JSONDecodeError:
             objs = []
+    by_shape = entry_objects(text) if not objs else []
     if not objs:                                     # truncated array: recover closed objects
         depth, start, in_str, esc = 0, None, False, False
         for i, ch in enumerate(text):
@@ -342,6 +377,8 @@ def parse_grounded(raw: Optional[str]) -> Tuple[bool, List[Dict[str, Any]]]:
                     except json.JSONDecodeError:
                         pass
                     start = None
+    if len(by_shape) >= len(objs):                   # unbalanced quotes hide entries from the scan above
+        objs = by_shape
     lines = []
     for o in objs:
         if not isinstance(o, dict):

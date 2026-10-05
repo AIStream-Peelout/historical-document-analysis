@@ -400,3 +400,34 @@ def test_cli_offers_the_flag_and_refuses_it_with_a_rewrite_mode(tmp_path: Path) 
     assert refused.returncode == 2
     assert "--htr-cache-key is for normal runs: --rematch" in refused.stderr
     assert not (tmp_path / "images").exists()
+
+
+# ----------------------------------------------------------------------------- reply parser: plain quotes inside a text
+
+def _reply(texts, close="]"):
+    return "[" + ", ".join('{"text": "%s", "bbox_2d": [57, %d, 453, %d]}' % (t, 90 + 25 * i, 115 + 25 * i)
+                           for i, t in enumerate(texts)) + close
+
+
+def test_parse_grounded_keeps_every_line_when_a_text_holds_a_plain_quote():
+    texts = ['הודה ס"ז לתת לו', "שכר שביר ראיינו", 'כ"ז שכר מתעטף', "יום שערבה מערב", 'ה"ק על פנינו']
+    parsed, lines = trl.parse_grounded(_reply(texts))
+    assert parsed and [ln["text"] for ln in lines] == texts
+    assert lines[2]["box"] == [57.0, 140.0, 453.0, 165.0]
+    # one stray quote, array cut by the token cap in the middle of the last entry: the complete entries survive
+    cut = _reply(texts)[:-30]
+    parsed, lines = trl.parse_grounded(cut)
+    assert parsed and [ln["text"] for ln in lines] == texts[:4]
+
+
+def test_parse_grounded_is_unchanged_for_valid_json_and_other_shapes():
+    texts = ["שורה ראשונה", 'מילה \\"מצוטטת\\" כאן', "שורה שלישית"]
+    parsed, lines = trl.parse_grounded(_reply(texts) + "\nDone.")
+    assert parsed and [ln["text"] for ln in lines] == ["שורה ראשונה", 'מילה "מצוטטת" כאן', "שורה שלישית"]      # escaped quotes decode
+    box_first = '[{"bbox_2d": [1, 2, 3, 4], "text": "א"}, {"bbox_2d": [1, 5, 3, 8], "text": "ב"'                 # truncated, box first
+    assert trl.parse_grounded(box_first) == (True, [{"text": "א", "box": [1.0, 2.0, 3.0, 4.0]}])
+    assert trl.parse_grounded("") == (False, []) and trl.parse_grounded("no json here") == (False, [])
+    # an entry without a box is never merged into the next one
+    mixed = '[{"text": "בלי תיבה"}, {"text": "עם ס"ז תיבה", "bbox_2d": [1, 2, 3, 4]}]'
+    assert trl.parse_grounded(mixed) == (True, [{"text": 'עם ס"ז תיבה', "box": [1.0, 2.0, 3.0, 4.0]}])
+    assert trl.entry_objects('{"text": "a\\\\b", "bbox_2d": [0.5, 1, 2, 3]}') == [{"text": "a\\b", "bbox_2d": [0.5, 1.0, 2.0, 3.0]}]
