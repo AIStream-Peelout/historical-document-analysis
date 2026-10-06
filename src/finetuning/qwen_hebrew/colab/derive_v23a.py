@@ -365,6 +365,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--arm", choices=[*ARMS, "all"], default="run",
                     help="run = the run; control = without the outside sets; r64 = rank-64 adapter; all = the three files")
     ap.add_argument("--control", action="store_true", help="same as --arm control")
+    ap.add_argument("--host", choices=["colab", "lambda"], default="colab",
+                    help="lambda = the Lambda Cloud edition (<notebook>_lambda.ipynb + lambda_setup.sh beside it)")
     args = ap.parse_args(argv)
     if args.revision != "PIN-AFTER-PUSH" and not re.fullmatch(r"[0-9a-f]{40}", args.revision):
         raise SystemExit("revision must be a 40-hex sha or PIN-AFTER-PUSH")
@@ -376,9 +378,16 @@ def main(argv: Optional[List[str]] = None) -> None:
         arm = ARMS[name]
         path = args.out or HERE / arm.notebook
         out = derive(nb, args.revision, arm)
+        if args.host == "lambda":
+            from src.finetuning.qwen_hebrew.colab import host_lambda
+            nb_name, sh_name = host_lambda.lambda_files(path.name)
+            path = path.with_name(nb_name)
+            out = host_lambda.to_lambda(out, nb_name)
+            (path.parent / sh_name).write_text(host_lambda.setup_script(), encoding="utf-8")
+            print(f"wrote {path.parent / sh_name}")
         path.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
         print(f"wrote {path} ({len(out['cells'])} cells; revision {args.revision}; run {arm.run_name}, {arm.train_rows:,} rows, "
-              f"rank {arm.lora_rank})")
+              f"rank {arm.lora_rank}; host {args.host})")
 
 
 if __name__ == "__main__":
