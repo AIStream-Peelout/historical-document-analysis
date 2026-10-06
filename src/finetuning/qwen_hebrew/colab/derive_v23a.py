@@ -56,6 +56,13 @@ HERE = Path(__file__).resolve().parent
 DATA_REPO = "isaacmg/genizah_v23a_arabic"
 LR = "1e-4"
 WARMUP_RATIO = "0.05"
+# Colab terminated the first v23a session at step 445 with the Hub at step 400 (2026-10-05); at ~65 s a step,
+# saving every 50 steps caps what a termination costs at ~55 min. Evals stay at 100 (not in the session plan).
+SAVE_STEPS = 50
+# Both v23a sessions were killed 7 h 55 min after wandb.init (2026-10-05 20:18 and 2026-10-06 07:00 EDT, GPU busy,
+# no resource pressure): an ~8 h runtime lifetime, not the documented 24 h. The session ends itself at 7.5 h with a
+# clean save + push, so a kill costs nothing; raise it only after a session has provably run longer.
+TIME_BUDGET_H = 7.5
 MIN_VAL_ROWS = 100
 # floors at about 0.8 of the planned shares (SHARES in logs/next_round/arabic/build_v23a.sh)
 SHARE_FLOORS = ('(("arabic_editions", 0.09), ("arabic_agapet", 0.06), ("arabic_muharaf", 0.18), ("arabic_baybars", 0.07), '
@@ -313,6 +320,7 @@ def derive(nb: Dict, revision: str, arm: Arm = MAIN) -> Dict:
     # --- helper cell: steps ---------------------------------------------------------------------
     c7 = "".join(cells[7]["source"])
     c7 = _replace_line(c7, r"^MAX_STEPS = 2500$", f"MAX_STEPS = {arm.max_steps}", "max steps")
+    c7 = _replace_line(c7, r"^TIME_BUDGET_H = 21.5$", f"TIME_BUDGET_H = {TIME_BUDGET_H}   # Colab killed both v23a sessions at ~8 h; see derive_v23a.TIME_BUDGET_H", "time budget")
     cells[7]["source"] = c7.splitlines(keepends=True)
     # --- training cell --------------------------------------------------------------------------
     c8 = "".join(cells[8]["source"])
@@ -326,6 +334,8 @@ def derive(nb: Dict, revision: str, arm: Arm = MAIN) -> Dict:
     c8 = _replace_line(c8, r"^\s*learning_rate=3e-5,", f"        learning_rate={LR},                # a new script has to be learned; v22b's 3e-5 only adjusted a converged model", "lr")
     c8 = _replace_once(c8, 'warmup_ratio=0.02, lr_scheduler_type="cosine", weight_decay=0.01,',
                        f'warmup_ratio={WARMUP_RATIO}, lr_scheduler_type="cosine", weight_decay=0.01,', "warm-up")
+    c8 = _replace_once(c8, "save_steps=100, save_total_limit=2,",
+                       f"save_steps={SAVE_STEPS}, save_total_limit=2,   # a termination costs at most {SAVE_STEPS} steps (the Hub's last-checkpoint follows every save)", "save steps")
     # the Hebrew runs publish their checkpoints; this one trains on Muharaf (CC BY-NC-SA), so its repo starts private
     c8 = _replace_once(c8, 'hub_strategy="checkpoint", hub_private_repo=False,',
                        'hub_strategy="checkpoint", hub_private_repo=True,    # Muharaf is CC BY-NC-SA: private until the licence question is decided', "private checkpoints")

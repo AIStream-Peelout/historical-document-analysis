@@ -117,6 +117,7 @@ def test_training_cells_deltas(derived):
     _, b = derived
     c7, c8, c9 = _src(b, 7), _src(b, 8), _src(b, 9)
     assert f"\nMAX_STEPS = {dv.MAX_STEPS}\n" in c7 and "MAX_STEPS = 2500" not in c7
+    assert f"\nTIME_BUDGET_H = {dv.TIME_BUDGET_H}   #" in c7 and "TIME_BUDGET_H = 21.5" not in c7 and dv.TIME_BUDGET_H == 7.5   # ~8 h Colab lifetime
     for needle in (f'CKPT_REPO = "{dv.CKPT_REPO}"', 'OUT_DIR = "outputs_v23a"', 'RESUME_ROOT = "/content/v23a_resume"',
                    "max_steps=MAX_STEPS", f"learning_rate={dv.LR},", f"warmup_ratio={dv.WARMUP_RATIO},",
                    f'run_name="{dv.RUN_NAME}"', f'wandb.init(project="qwen-hebrew-finetune", name="{dv.RUN_NAME}", ',
@@ -125,9 +126,13 @@ def test_training_cells_deltas(derived):
                    "TimeBudgetTrainerCallback(budget_s=TIME_BUDGET_H * 3600)", "ensure_hub_checkpoint(CKPT_REPO, OUT_DIR, _final_step)"):
         assert needle in c8, needle
     for gone in ("v22b-ckpt", "outputs_v22b", "v22b_resume", 'name="genizah_v22b"', "learning_rate=3e-5", "warmup_ratio=0.02",
-                 "hub_private_repo=False"):
+                 "hub_private_repo=False", "save_steps=100,"):
         assert gone not in c8, gone
     assert 'hub_strategy="checkpoint", hub_private_repo=True,' in c8                 # NC-SA data in the mixture
+    # a Colab termination costs at most SAVE_STEPS steps; evals keep their cadence (100 is not a multiple constraint
+    # here: load_best_model_at_end is off, and neither cadence is part of the locked session plan)
+    assert f"save_steps={dv.SAVE_STEPS}, save_total_limit=2," in c8 and dv.SAVE_STEPS == 50
+    assert 'eval_strategy="steps", eval_steps=100,' in c8 and "load_best_model_at_end" not in c8
     assert f'MERGED_REPO = "{dv.MERGED_REPO}"' in c9 and "v22a-merged" not in c9 and "v22b-merged" not in c9
     assert c9.count('"v23a-merged"') == 2
 
