@@ -1,0 +1,2639 @@
+{
+"talmud": [
+{
+"model": "claude_opus_4_8",
+"section": "gemara",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.7061,
+"median": 0.2916,
+"pct_fail": 0.4923,
+"pct_collapse": 0.2462
+},
+{
+"model": "claude_opus_4_8",
+"section": "rashi",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.7184,
+"median": 0.7811,
+"pct_fail": 0.9385,
+"pct_collapse": 0.0154
+},
+{
+"model": "claude_opus_4_8",
+"section": "tosafot",
+"n": 63,
+"coverage": 1.0,
+"mean": 0.7864,
+"median": 0.8382,
+"pct_fail": 0.9524,
+"pct_collapse": 0.0
+},
+{
+"model": "claude_sonnet_5",
+"section": "gemara",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.63,
+"median": 0.3984,
+"pct_fail": 0.6769,
+"pct_collapse": 0.1692
+},
+{
+"model": "claude_sonnet_5",
+"section": "rashi",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.7791,
+"median": 0.7927,
+"pct_fail": 1.0,
+"pct_collapse": 0.0
+},
+{
+"model": "claude_sonnet_5",
+"section": "tosafot",
+"n": 63,
+"coverage": 1.0,
+"mean": 0.8355,
+"median": 0.8219,
+"pct_fail": 1.0,
+"pct_collapse": 0.0159
+},
+{
+"model": "gemini_flash",
+"section": "gemara",
+"n": 64,
+"coverage": 0.9846,
+"mean": 0.1546,
+"median": 0.0356,
+"pct_fail": 0.1562,
+"pct_collapse": 0.0156
+},
+{
+"model": "gemini_flash",
+"section": "rashi",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.5942,
+"median": 0.718,
+"pct_fail": 0.8,
+"pct_collapse": 0.0154
+},
+{
+"model": "gemini_flash",
+"section": "tosafot",
+"n": 63,
+"coverage": 1.0,
+"mean": 0.783,
+"median": 0.7709,
+"pct_fail": 0.9365,
+"pct_collapse": 0.0794
+},
+{
+"model": "gemini_pro",
+"section": "gemara",
+"n": 19,
+"coverage": 0.2923,
+"mean": 0.0151,
+"median": 0.0141,
+"pct_fail": 0.0,
+"pct_collapse": 0.0
+},
+{
+"model": "gemini_pro",
+"section": "rashi",
+"n": 9,
+"coverage": 0.1385,
+"mean": 0.2994,
+"median": 0.1094,
+"pct_fail": 0.4444,
+"pct_collapse": 0.0
+},
+{
+"model": "gemini_pro",
+"section": "tosafot",
+"n": 12,
+"coverage": 0.1905,
+"mean": 0.1547,
+"median": 0.0761,
+"pct_fail": 0.0833,
+"pct_collapse": 0.0833
+},
+{
+"model": "gpt_5_2",
+"section": "gemara",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.8802,
+"median": 0.9066,
+"pct_fail": 1.0,
+"pct_collapse": 0.0462
+},
+{
+"model": "gpt_5_2",
+"section": "rashi",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.9329,
+"median": 0.9485,
+"pct_fail": 1.0,
+"pct_collapse": 0.0154
+},
+{
+"model": "gpt_5_2",
+"section": "tosafot",
+"n": 63,
+"coverage": 1.0,
+"mean": 1.2515,
+"median": 0.9576,
+"pct_fail": 1.0,
+"pct_collapse": 0.0476
+},
+{
+"model": "gpt_5_6_sol",
+"section": "gemara",
+"n": 20,
+"coverage": 0.3077,
+"mean": 0.376,
+"median": 0.1563,
+"pct_fail": 0.4,
+"pct_collapse": 0.15
+},
+{
+"model": "gpt_5_6_sol",
+"section": "rashi",
+"n": 20,
+"coverage": 0.3077,
+"mean": 0.9466,
+"median": 0.8845,
+"pct_fail": 1.0,
+"pct_collapse": 0.4
+},
+{
+"model": "gpt_5_6_sol",
+"section": "tosafot",
+"n": 19,
+"coverage": 0.3016,
+"mean": 0.7851,
+"median": 0.6839,
+"pct_fail": 0.7895,
+"pct_collapse": 0.1579
+},
+{
+"model": "kraken_seg",
+"section": "gemara",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.0806,
+"median": 0.0404,
+"pct_fail": 0.0308,
+"pct_collapse": 0.0
+},
+{
+"model": "kraken_seg",
+"section": "rashi",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.3916,
+"median": 0.2898,
+"pct_fail": 0.4923,
+"pct_collapse": 0.0
+},
+{
+"model": "kraken_seg",
+"section": "tosafot",
+"n": 63,
+"coverage": 1.0,
+"mean": 0.2885,
+"median": 0.2289,
+"pct_fail": 0.3492,
+"pct_collapse": 0.0
+},
+{
+"model": "qwen3_vl_8b",
+"section": "gemara",
+"n": 65,
+"coverage": 1.0,
+"mean": 5.0846,
+"median": 3.6274,
+"pct_fail": 1.0,
+"pct_collapse": 1.0
+},
+{
+"model": "qwen3_vl_8b",
+"section": "rashi",
+"n": 65,
+"coverage": 1.0,
+"mean": 4.4541,
+"median": 3.3893,
+"pct_fail": 1.0,
+"pct_collapse": 1.0
+},
+{
+"model": "qwen3_vl_8b",
+"section": "tosafot",
+"n": 63,
+"coverage": 1.0,
+"mean": 6.1061,
+"median": 3.7427,
+"pct_fail": 1.0,
+"pct_collapse": 0.9524
+},
+{
+"model": "qwen3_vl_8b_heb_rashi_v15",
+"section": "gemara",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.0586,
+"median": 0.0477,
+"pct_fail": 0.0154,
+"pct_collapse": 0.0
+},
+{
+"model": "qwen3_vl_8b_heb_rashi_v15",
+"section": "rashi",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.3618,
+"median": 0.1439,
+"pct_fail": 0.2,
+"pct_collapse": 0.0615
+},
+{
+"model": "qwen3_vl_8b_heb_rashi_v15",
+"section": "tosafot",
+"n": 63,
+"coverage": 1.0,
+"mean": 0.5122,
+"median": 0.1296,
+"pct_fail": 0.2222,
+"pct_collapse": 0.0635
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step1000",
+"section": "gemara",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.0902,
+"median": 0.0046,
+"pct_fail": 0.0308,
+"pct_collapse": 0.0154
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step1000",
+"section": "rashi",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.0471,
+"median": 0.0136,
+"pct_fail": 0.0462,
+"pct_collapse": 0.0154
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step1000",
+"section": "tosafot",
+"n": 63,
+"coverage": 1.0,
+"mean": 0.099,
+"median": 0.0133,
+"pct_fail": 0.1111,
+"pct_collapse": 0.0
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step1100",
+"section": "gemara",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.013,
+"median": 0.0038,
+"pct_fail": 0.0154,
+"pct_collapse": 0.0
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step1100",
+"section": "rashi",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.1832,
+"median": 0.0143,
+"pct_fail": 0.0923,
+"pct_collapse": 0.0308
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step1100",
+"section": "tosafot",
+"n": 63,
+"coverage": 1.0,
+"mean": 0.308,
+"median": 0.0112,
+"pct_fail": 0.0952,
+"pct_collapse": 0.0476
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step600",
+"section": "gemara",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.0134,
+"median": 0.004,
+"pct_fail": 0.0154,
+"pct_collapse": 0.0
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step600",
+"section": "rashi",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.2255,
+"median": 0.0169,
+"pct_fail": 0.1385,
+"pct_collapse": 0.0615
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step600",
+"section": "tosafot",
+"n": 63,
+"coverage": 1.0,
+"mean": 0.1257,
+"median": 0.0137,
+"pct_fail": 0.127,
+"pct_collapse": 0.0317
+},
+{
+"model": "qwen3_vl_8b_heb_v17_step800",
+"section": "gemara",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.0142,
+"median": 0.0047,
+"pct_fail": 0.0154,
+"pct_collapse": 0.0
+},
+{
+"model": "qwen3_vl_8b_heb_v17_step800",
+"section": "rashi",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.0835,
+"median": 0.0147,
+"pct_fail": 0.0769,
+"pct_collapse": 0.0308
+},
+{
+"model": "qwen3_vl_8b_heb_v17_step800",
+"section": "tosafot",
+"n": 63,
+"coverage": 1.0,
+"mean": 0.0368,
+"median": 0.012,
+"pct_fail": 0.0159,
+"pct_collapse": 0.0159
+},
+{
+"model": "vision_ocr_seg",
+"section": "gemara",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.0556,
+"median": 0.0334,
+"pct_fail": 0.0154,
+"pct_collapse": 0.0
+},
+{
+"model": "vision_ocr_seg",
+"section": "rashi",
+"n": 65,
+"coverage": 1.0,
+"mean": 0.7366,
+"median": 0.7441,
+"pct_fail": 1.0,
+"pct_collapse": 0.0154
+},
+{
+"model": "vision_ocr_seg",
+"section": "tosafot",
+"n": 63,
+"coverage": 1.0,
+"mean": 0.706,
+"median": 0.7367,
+"pct_fail": 0.9841,
+"pct_collapse": 0.0159
+}
+],
+"genizah": [
+{
+"model": "claude_opus_4_8",
+"n": 131,
+"abstained": 0.282,
+"loop": 0.023,
+"hallucinated": 0.29,
+"substantive": 0.405,
+"ngramP": 0.0647,
+"f1": 0.3658,
+"cer_sub": 0.4163,
+"n_sub": 53
+},
+{
+"model": "claude_sonnet_5",
+"n": 131,
+"abstained": 0.084,
+"loop": 0.015,
+"hallucinated": 0.679,
+"substantive": 0.221,
+"ngramP": 0.0289,
+"f1": 0.3663,
+"cer_sub": 0.4346,
+"n_sub": 29
+},
+{
+"model": "gemini_flash",
+"n": 122,
+"abstained": 0.115,
+"loop": 0.074,
+"hallucinated": 0.385,
+"substantive": 0.426,
+"ngramP": 0.0643,
+"f1": 0.1964,
+"cer_sub": 0.5418,
+"n_sub": 52
+},
+{
+"model": "gemini_pro",
+"n": 68,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.412,
+"substantive": 0.588,
+"ngramP": 0.1739,
+"f1": 0.4209,
+"cer_sub": 0.4318,
+"n_sub": 40
+},
+{
+"model": "gemma_4_31b_it_mlx",
+"n": 1,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 1.0,
+"substantive": 0.0,
+"ngramP": 0.0,
+"f1": 0.0188,
+"cer_sub": null,
+"n_sub": 0
+},
+{
+"model": "gpt_5_2",
+"n": 1,
+"abstained": 1.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"substantive": 0.0,
+"ngramP": 0.0,
+"f1": 0.0,
+"cer_sub": null,
+"n_sub": 0
+},
+{
+"model": "gpt_5_6_sol",
+"n": 131,
+"abstained": 0.504,
+"loop": 0.008,
+"hallucinated": 0.214,
+"substantive": 0.275,
+"ngramP": 0.0,
+"f1": 0.0344,
+"cer_sub": 0.7363,
+"n_sub": 36
+},
+{
+"model": "kraken_raw",
+"n": 131,
+"abstained": 0.008,
+"loop": 0.0,
+"hallucinated": 0.023,
+"substantive": 0.969,
+"ngramP": 0.4759,
+"f1": 0.7298,
+"cer_sub": 0.3442,
+"n_sub": 127
+},
+{
+"model": "kraken_seg",
+"n": 122,
+"abstained": 0.008,
+"loop": 0.0,
+"hallucinated": 0.016,
+"substantive": 0.975,
+"ngramP": 0.474,
+"f1": 0.6785,
+"cer_sub": 0.4097,
+"n_sub": 119
+},
+{
+"model": "qwen3_vl_8b",
+"n": 131,
+"abstained": 0.115,
+"loop": 0.588,
+"hallucinated": 0.282,
+"substantive": 0.015,
+"ngramP": 0.0,
+"f1": 0.0098,
+"cer_sub": 0.4928,
+"n_sub": 2
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step1100",
+"n": 131,
+"abstained": 0.008,
+"loop": 0.168,
+"hallucinated": 0.687,
+"substantive": 0.137,
+"ngramP": 0.0101,
+"f1": 0.0833,
+"cer_sub": 0.3731,
+"n_sub": 18
+},
+{
+"model": "qwen3_vl_8b_heb_v17_step800",
+"n": 131,
+"abstained": 0.008,
+"loop": 0.031,
+"hallucinated": 0.298,
+"substantive": 0.664,
+"ngramP": 0.1672,
+"f1": 0.553,
+"cer_sub": 0.379,
+"n_sub": 87
+},
+{
+"model": "qwen3_vl_8b_heb_v18a_step700",
+"n": 131,
+"abstained": 0.0,
+"loop": 0.031,
+"hallucinated": 0.221,
+"substantive": 0.748,
+"ngramP": 0.186,
+"f1": 0.6162,
+"cer_sub": 0.4073,
+"n_sub": 98
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_sections",
+"n": 131,
+"abstained": 0.0,
+"loop": 0.038,
+"hallucinated": 0.038,
+"substantive": 0.924,
+"ngramP": 0.4614,
+"f1": 0.7251,
+"cer_sub": 0.4453,
+"n_sub": 121
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_step400",
+"n": 131,
+"abstained": 0.0,
+"loop": 0.023,
+"hallucinated": 0.084,
+"substantive": 0.893,
+"ngramP": 0.4499,
+"f1": 0.7944,
+"cer_sub": 0.2533,
+"n_sub": 117
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_step700",
+"n": 131,
+"abstained": 0.0,
+"loop": 0.008,
+"hallucinated": 0.092,
+"substantive": 0.901,
+"ngramP": 0.4751,
+"f1": 0.8074,
+"cer_sub": 0.2494,
+"n_sub": 118
+},
+{
+"model": "qwen3_vl_8b_heb_v19a_step1300",
+"n": 131,
+"abstained": 0.0,
+"loop": 0.015,
+"hallucinated": 0.008,
+"substantive": 0.977,
+"ngramP": 0.5997,
+"f1": 0.8624,
+"cer_sub": 0.1957,
+"n_sub": 128
+},
+{
+"model": "qwen3_vl_8b_heb_v19a_step700",
+"n": 131,
+"abstained": 0.0,
+"loop": 0.008,
+"hallucinated": 0.023,
+"substantive": 0.969,
+"ngramP": 0.5843,
+"f1": 0.8541,
+"cer_sub": 0.1986,
+"n_sub": 127
+},
+{
+"model": "vision_ocr_raw",
+"n": 131,
+"abstained": 0.13,
+"loop": 0.0,
+"hallucinated": 0.573,
+"substantive": 0.298,
+"ngramP": 0.0265,
+"f1": 0.1163,
+"cer_sub": 0.6487,
+"n_sub": 39
+},
+{
+"model": "vision_ocr_seg",
+"n": 123,
+"abstained": 0.138,
+"loop": 0.008,
+"hallucinated": 0.545,
+"substantive": 0.309,
+"ngramP": 0.0238,
+"f1": 0.1077,
+"cer_sub": 0.6456,
+"n_sub": 38
+},
+{
+"model": "qwen3_vl_8b_heb_v20a_step1800",
+"n": 131,
+"abstained": 0.0,
+"loop": 0.008,
+"hallucinated": 0.008,
+"substantive": 0.985,
+"ngramP": 0.642,
+"f1": 0.8751,
+"cer_sub": 0.1836,
+"n_sub": 129
+}
+],
+"genizah_script": [
+{
+"model": "claude_opus_4_8",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.2957,
+"f1": 0.7903
+},
+{
+"model": "claude_opus_4_8",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 0.667,
+"abstained": 0.167,
+"loop": 0.0,
+"hallucinated": 0.167,
+"ngramP": 0.277,
+"f1": 0.7368
+},
+{
+"model": "claude_opus_4_8",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 0.7,
+"abstained": 0.15,
+"loop": 0.05,
+"hallucinated": 0.1,
+"ngramP": 0.1619,
+"f1": 0.6092
+},
+{
+"model": "claude_opus_4_8",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 0.317,
+"abstained": 0.305,
+"loop": 0.024,
+"hallucinated": 0.354,
+"ngramP": 0.0573,
+"f1": 0.3232
+},
+{
+"model": "claude_opus_4_8",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.364,
+"abstained": 0.364,
+"loop": 0.0,
+"hallucinated": 0.273,
+"ngramP": 0.0438,
+"f1": 0.1407
+},
+{
+"model": "claude_sonnet_5",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.1569,
+"f1": 0.7206
+},
+{
+"model": "claude_sonnet_5",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 0.333,
+"abstained": 0.333,
+"loop": 0.0,
+"hallucinated": 0.333,
+"ngramP": 0.0219,
+"f1": 0.4996
+},
+{
+"model": "claude_sonnet_5",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 0.6,
+"abstained": 0.0,
+"loop": 0.05,
+"hallucinated": 0.35,
+"ngramP": 0.1383,
+"f1": 0.6083
+},
+{
+"model": "claude_sonnet_5",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 0.122,
+"abstained": 0.098,
+"loop": 0.0,
+"hallucinated": 0.78,
+"ngramP": 0.02,
+"f1": 0.3244
+},
+{
+"model": "claude_sonnet_5",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.182,
+"abstained": 0.045,
+"loop": 0.045,
+"hallucinated": 0.727,
+"ngramP": 0.0244,
+"f1": 0.3705
+},
+{
+"model": "gemini_flash",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.4921,
+"f1": 0.8313
+},
+{
+"model": "gemini_flash",
+"bucket": "aramaic",
+"n": 5,
+"substantive": 0.6,
+"abstained": 0.0,
+"loop": 0.2,
+"hallucinated": 0.2,
+"ngramP": 0.4961,
+"f1": 0.1693
+},
+{
+"model": "gemini_flash",
+"bucket": "hebrew",
+"n": 19,
+"substantive": 0.632,
+"abstained": 0.158,
+"loop": 0.105,
+"hallucinated": 0.105,
+"ngramP": 0.4101,
+"f1": 0.609
+},
+{
+"model": "gemini_flash",
+"bucket": "judaeo_arabic",
+"n": 75,
+"substantive": 0.373,
+"abstained": 0.093,
+"loop": 0.067,
+"hallucinated": 0.467,
+"ngramP": 0.0572,
+"f1": 0.19
+},
+{
+"model": "gemini_flash",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.364,
+"abstained": 0.182,
+"loop": 0.045,
+"hallucinated": 0.409,
+"ngramP": 0.0505,
+"f1": 0.1693
+},
+{
+"model": "gemini_pro",
+"bucket": "aramaic",
+"n": 2,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.7349,
+"f1": 0.908
+},
+{
+"model": "gemini_pro",
+"bucket": "hebrew",
+"n": 12,
+"substantive": 0.833,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.167,
+"ngramP": 0.4588,
+"f1": 0.8154
+},
+{
+"model": "gemini_pro",
+"bucket": "judaeo_arabic",
+"n": 39,
+"substantive": 0.487,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.513,
+"ngramP": 0.0954,
+"f1": 0.294
+},
+{
+"model": "gemini_pro",
+"bucket": "untagged",
+"n": 15,
+"substantive": 0.6,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.4,
+"ngramP": 0.2839,
+"f1": 0.3836
+},
+{
+"model": "gemma_4_31b_it_mlx",
+"bucket": "judaeo_arabic",
+"n": 1,
+"substantive": 0.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 1.0,
+"ngramP": 0.0,
+"f1": 0.0188
+},
+{
+"model": "gpt_5_2",
+"bucket": "judaeo_arabic",
+"n": 1,
+"substantive": 0.0,
+"abstained": 1.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.0,
+"f1": 0.0
+},
+{
+"model": "gpt_5_6_sol",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.1588,
+"f1": 0.5297
+},
+{
+"model": "gpt_5_6_sol",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 0.667,
+"abstained": 0.333,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.3734,
+"f1": 0.4419
+},
+{
+"model": "gpt_5_6_sol",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 0.4,
+"abstained": 0.3,
+"loop": 0.0,
+"hallucinated": 0.3,
+"ngramP": 0.0488,
+"f1": 0.1941
+},
+{
+"model": "gpt_5_6_sol",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 0.195,
+"abstained": 0.598,
+"loop": 0.012,
+"hallucinated": 0.195,
+"ngramP": 0.0,
+"f1": 0.0178
+},
+{
+"model": "gpt_5_6_sol",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.318,
+"abstained": 0.409,
+"loop": 0.0,
+"hallucinated": 0.273,
+"ngramP": 0.0132,
+"f1": 0.0532
+},
+{
+"model": "kraken_raw",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.6062,
+"f1": 0.8947
+},
+{
+"model": "kraken_raw",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.2921,
+"f1": 0.5428
+},
+{
+"model": "kraken_raw",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 0.95,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.05,
+"ngramP": 0.4899,
+"f1": 0.7574
+},
+{
+"model": "kraken_raw",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 0.988,
+"abstained": 0.012,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.4979,
+"f1": 0.7534
+},
+{
+"model": "kraken_raw",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.909,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.091,
+"ngramP": 0.442,
+"f1": 0.7216
+},
+{
+"model": "kraken_seg",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.6062,
+"f1": 0.8953
+},
+{
+"model": "kraken_seg",
+"bucket": "aramaic",
+"n": 5,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.3401,
+"f1": 0.5578
+},
+{
+"model": "kraken_seg",
+"bucket": "hebrew",
+"n": 19,
+"substantive": 0.947,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.053,
+"ngramP": 0.5047,
+"f1": 0.7409
+},
+{
+"model": "kraken_seg",
+"bucket": "judaeo_arabic",
+"n": 76,
+"substantive": 0.987,
+"abstained": 0.013,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.4773,
+"f1": 0.6536
+},
+{
+"model": "kraken_seg",
+"bucket": "untagged",
+"n": 21,
+"substantive": 0.952,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.048,
+"ngramP": 0.4549,
+"f1": 0.723
+},
+{
+"model": "qwen3_vl_8b",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 0.0,
+"abstained": 0.0,
+"loop": 1.0,
+"hallucinated": 0.0,
+"ngramP": 0.0,
+"f1": 0.0096
+},
+{
+"model": "qwen3_vl_8b",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 0.167,
+"abstained": 0.167,
+"loop": 0.5,
+"hallucinated": 0.167,
+"ngramP": 0.0,
+"f1": 0.0107
+},
+{
+"model": "qwen3_vl_8b",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 0.05,
+"abstained": 0.1,
+"loop": 0.6,
+"hallucinated": 0.25,
+"ngramP": 0.0,
+"f1": 0.0174
+},
+{
+"model": "qwen3_vl_8b",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 0.0,
+"abstained": 0.11,
+"loop": 0.598,
+"hallucinated": 0.293,
+"ngramP": 0.0,
+"f1": 0.0089
+},
+{
+"model": "qwen3_vl_8b",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.0,
+"abstained": 0.136,
+"loop": 0.545,
+"hallucinated": 0.318,
+"ngramP": 0.0,
+"f1": 0.0111
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step1100",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 0.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 1.0,
+"ngramP": 0.0656,
+"f1": 0.6453
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step1100",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 0.5,
+"abstained": 0.0,
+"loop": 0.167,
+"hallucinated": 0.333,
+"ngramP": 0.1082,
+"f1": 0.5498
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step1100",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 0.5,
+"abstained": 0.0,
+"loop": 0.05,
+"hallucinated": 0.45,
+"ngramP": 0.0873,
+"f1": 0.5901
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step1100",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 0.037,
+"abstained": 0.012,
+"loop": 0.183,
+"hallucinated": 0.768,
+"ngramP": 0.002,
+"f1": 0.0505
+},
+{
+"model": "qwen3_vl_8b_heb_v16_step1100",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.091,
+"abstained": 0.0,
+"loop": 0.227,
+"hallucinated": 0.682,
+"ngramP": 0.0003,
+"f1": 0.0352
+},
+{
+"model": "qwen3_vl_8b_heb_v17_step800",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.2655,
+"f1": 0.7663
+},
+{
+"model": "qwen3_vl_8b_heb_v17_step800",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 0.667,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.333,
+"ngramP": 0.2411,
+"f1": 0.7293
+},
+{
+"model": "qwen3_vl_8b_heb_v17_step800",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 0.8,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.2,
+"ngramP": 0.2595,
+"f1": 0.7117
+},
+{
+"model": "qwen3_vl_8b_heb_v17_step800",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 0.671,
+"abstained": 0.012,
+"loop": 0.024,
+"hallucinated": 0.293,
+"ngramP": 0.1555,
+"f1": 0.5357
+},
+{
+"model": "qwen3_vl_8b_heb_v17_step800",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.5,
+"abstained": 0.0,
+"loop": 0.091,
+"hallucinated": 0.409,
+"ngramP": 0.1256,
+"f1": 0.2697
+},
+{
+"model": "qwen3_vl_8b_heb_v18a_step700",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.3304,
+"f1": 0.7886
+},
+{
+"model": "qwen3_vl_8b_heb_v18a_step700",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 0.667,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.333,
+"ngramP": 0.2231,
+"f1": 0.7103
+},
+{
+"model": "qwen3_vl_8b_heb_v18a_step700",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 0.75,
+"abstained": 0.0,
+"loop": 0.05,
+"hallucinated": 0.2,
+"ngramP": 0.2631,
+"f1": 0.7172
+},
+{
+"model": "qwen3_vl_8b_heb_v18a_step700",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 0.793,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.207,
+"ngramP": 0.191,
+"f1": 0.6
+},
+{
+"model": "qwen3_vl_8b_heb_v18a_step700",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.591,
+"abstained": 0.0,
+"loop": 0.136,
+"hallucinated": 0.273,
+"ngramP": 0.1414,
+"f1": 0.2166
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_sections",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.5831,
+"f1": 0.8087
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_sections",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.3482,
+"f1": 0.6791
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_sections",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 0.85,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.15,
+"ngramP": 0.5038,
+"f1": 0.7411
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_sections",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 0.951,
+"abstained": 0.0,
+"loop": 0.037,
+"hallucinated": 0.012,
+"ngramP": 0.4544,
+"f1": 0.7267
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_sections",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.864,
+"abstained": 0.0,
+"loop": 0.091,
+"hallucinated": 0.045,
+"ngramP": 0.4405,
+"f1": 0.6762
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_step400",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.6239,
+"f1": 0.8976
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_step400",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.4109,
+"f1": 0.7977
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_step400",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 0.9,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.1,
+"ngramP": 0.4845,
+"f1": 0.8422
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_step400",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 0.902,
+"abstained": 0.0,
+"loop": 0.012,
+"hallucinated": 0.085,
+"ngramP": 0.4323,
+"f1": 0.7819
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_step400",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.818,
+"abstained": 0.0,
+"loop": 0.091,
+"hallucinated": 0.091,
+"ngramP": 0.4418,
+"f1": 0.8075
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_step700",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.6615,
+"f1": 0.9057
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_step700",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.4207,
+"f1": 0.7856
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_step700",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 0.9,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.1,
+"ngramP": 0.4975,
+"f1": 0.8496
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_step700",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 0.927,
+"abstained": 0.0,
+"loop": 0.012,
+"hallucinated": 0.061,
+"ngramP": 0.4804,
+"f1": 0.7968
+},
+{
+"model": "qwen3_vl_8b_heb_v18b_step700",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.773,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.227,
+"ngramP": 0.4466,
+"f1": 0.8038
+},
+{
+"model": "qwen3_vl_8b_heb_v19a_step1300",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.7514,
+"f1": 0.9286
+},
+{
+"model": "qwen3_vl_8b_heb_v19a_step1300",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.592,
+"f1": 0.8479
+},
+{
+"model": "qwen3_vl_8b_heb_v19a_step1300",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 0.95,
+"abstained": 0.0,
+"loop": 0.05,
+"hallucinated": 0.0,
+"ngramP": 0.626,
+"f1": 0.8851
+},
+{
+"model": "qwen3_vl_8b_heb_v19a_step1300",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 0.988,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.012,
+"ngramP": 0.5889,
+"f1": 0.857
+},
+{
+"model": "qwen3_vl_8b_heb_v19a_step1300",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.955,
+"abstained": 0.0,
+"loop": 0.045,
+"hallucinated": 0.0,
+"ngramP": 0.5919,
+"f1": 0.8596
+},
+{
+"model": "qwen3_vl_8b_heb_v19a_step700",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.7266,
+"f1": 0.9226
+},
+{
+"model": "qwen3_vl_8b_heb_v19a_step700",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.5485,
+"f1": 0.8385
+},
+{
+"model": "qwen3_vl_8b_heb_v19a_step700",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.6231,
+"f1": 0.8861
+},
+{
+"model": "qwen3_vl_8b_heb_v19a_step700",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.5575,
+"f1": 0.8499
+},
+{
+"model": "qwen3_vl_8b_heb_v19a_step700",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.818,
+"abstained": 0.0,
+"loop": 0.045,
+"hallucinated": 0.136,
+"ngramP": 0.5533,
+"f1": 0.8531
+},
+{
+"model": "vision_ocr_raw",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.1193,
+"f1": 0.4635
+},
+{
+"model": "vision_ocr_raw",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 0.5,
+"abstained": 0.167,
+"loop": 0.0,
+"hallucinated": 0.333,
+"ngramP": 0.1405,
+"f1": 0.4502
+},
+{
+"model": "vision_ocr_raw",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 0.65,
+"abstained": 0.1,
+"loop": 0.0,
+"hallucinated": 0.25,
+"ngramP": 0.2389,
+"f1": 0.5268
+},
+{
+"model": "vision_ocr_raw",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 0.195,
+"abstained": 0.146,
+"loop": 0.0,
+"hallucinated": 0.659,
+"ngramP": 0.0,
+"f1": 0.0832
+},
+{
+"model": "vision_ocr_raw",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.273,
+"abstained": 0.091,
+"loop": 0.0,
+"hallucinated": 0.636,
+"ngramP": 0.0247,
+"f1": 0.1288
+},
+{
+"model": "vision_ocr_seg",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.1193,
+"f1": 0.4687
+},
+{
+"model": "vision_ocr_seg",
+"bucket": "aramaic",
+"n": 5,
+"substantive": 0.6,
+"abstained": 0.2,
+"loop": 0.0,
+"hallucinated": 0.2,
+"ngramP": 0.2207,
+"f1": 0.5393
+},
+{
+"model": "vision_ocr_seg",
+"bucket": "hebrew",
+"n": 19,
+"substantive": 0.632,
+"abstained": 0.105,
+"loop": 0.0,
+"hallucinated": 0.263,
+"ngramP": 0.2413,
+"f1": 0.5565
+},
+{
+"model": "vision_ocr_seg",
+"bucket": "judaeo_arabic",
+"n": 76,
+"substantive": 0.211,
+"abstained": 0.145,
+"loop": 0.013,
+"hallucinated": 0.632,
+"ngramP": 0.0,
+"f1": 0.0664
+},
+{
+"model": "vision_ocr_seg",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.273,
+"abstained": 0.136,
+"loop": 0.0,
+"hallucinated": 0.591,
+"ngramP": 0.0174,
+"f1": 0.1105
+},
+{
+"model": "qwen3_vl_8b_heb_v20a_step1800",
+"bucket": "arabic_script",
+"n": 1,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.7896,
+"f1": 0.9419
+},
+{
+"model": "qwen3_vl_8b_heb_v20a_step1800",
+"bucket": "aramaic",
+"n": 6,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.6305,
+"f1": 0.8739
+},
+{
+"model": "qwen3_vl_8b_heb_v20a_step1800",
+"bucket": "hebrew",
+"n": 20,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.6608,
+"f1": 0.8908
+},
+{
+"model": "qwen3_vl_8b_heb_v20a_step1800",
+"bucket": "judaeo_arabic",
+"n": 82,
+"substantive": 1.0,
+"abstained": 0.0,
+"loop": 0.0,
+"hallucinated": 0.0,
+"ngramP": 0.6376,
+"f1": 0.871
+},
+{
+"model": "qwen3_vl_8b_heb_v20a_step1800",
+"bucket": "untagged",
+"n": 22,
+"substantive": 0.909,
+"abstained": 0.0,
+"loop": 0.045,
+"hallucinated": 0.045,
+"ngramP": 0.6292,
+"f1": 0.8808
+}
+],
+"confusions": {
+"genizah": {
+"kraken_raw": {
+"ה/ח": {
+"swaps": 126,
+"gt": 9697,
+"rate": 0.012993709394658142
+},
+"ד/ר": {
+"swaps": 459,
+"gt": 9629,
+"rate": 0.04766850140201475
+},
+"ו/ן": {
+"swaps": 113,
+"gt": 13534,
+"rate": 0.00834934239692626
+},
+"ב/כ": {
+"swaps": 387,
+"gt": 8777,
+"rate": 0.04409251452660362
+},
+"ג/נ": {
+"swaps": 89,
+"gt": 5725,
+"rate": 0.01554585152838428
+},
+"ט/ס": {
+"swaps": 34,
+"gt": 2811,
+"rate": 0.012095339736748489
+},
+"ם/ס": {
+"swaps": 97,
+"gt": 3878,
+"rate": 0.025012893243940175
+},
+"ע/צ": {
+"swaps": 32,
+"gt": 5322,
+"rate": 0.006012777151446824
+},
+"י/ו": {
+"swaps": 479,
+"gt": 21867,
+"rate": 0.021905153884849315
+},
+"ז/ן": {
+"swaps": 27,
+"gt": 3745,
+"rate": 0.007209612817089452
+},
+"כ/פ": {
+"swaps": 86,
+"gt": 5601,
+"rate": 0.01535440099982146
+},
+"ת/ח": {
+"swaps": 61,
+"gt": 6834,
+"rate": 0.008925958443078724
+},
+"ה/ת": {
+"swaps": 173,
+"gt": 12377,
+"rate": 0.01397753898359861
+},
+"ם/ט": {
+"swaps": 17,
+"gt": 2977,
+"rate": 0.005710446758481693
+},
+"ן/ר": {
+"swaps": 39,
+"gt": 8384,
+"rate": 0.004651717557251908
+},
+"צ/ץ": {
+"swaps": 2,
+"gt": 1578,
+"rate": 0.0012674271229404308
+},
+"מ/ם": {
+"swaps": 16,
+"gt": 7958,
+"rate": 0.0020105554159336515
+},
+"נ/ן": {
+"swaps": 30,
+"gt": 7124,
+"rate": 0.004211117349803481
+},
+"כ/ך": {
+"swaps": 8,
+"gt": 4252,
+"rate": 0.0018814675446848542
+},
+"פ/ף": {
+"swaps": 1,
+"gt": 2421,
+"rate": 0.0004130524576621231
+}
+},
+"qwen3_vl_8b_heb_v17_step800": {
+"ה/ח": {
+"swaps": 170,
+"gt": 6087,
+"rate": 0.02792837194020043
+},
+"ד/ר": {
+"swaps": 481,
+"gt": 6010,
+"rate": 0.0800332778702163
+},
+"ו/ן": {
+"swaps": 98,
+"gt": 8804,
+"rate": 0.01113130395274875
+},
+"ב/כ": {
+"swaps": 292,
+"gt": 5680,
+"rate": 0.05140845070422535
+},
+"ג/נ": {
+"swaps": 61,
+"gt": 3693,
+"rate": 0.016517736257785
+},
+"ט/ס": {
+"swaps": 23,
+"gt": 1629,
+"rate": 0.014119091467157766
+},
+"ם/ס": {
+"swaps": 110,
+"gt": 2515,
+"rate": 0.0437375745526839
+},
+"ע/צ": {
+"swaps": 86,
+"gt": 3318,
+"rate": 0.02591922845087402
+},
+"י/ו": {
+"swaps": 445,
+"gt": 14367,
+"rate": 0.03097375930952878
+},
+"ז/ן": {
+"swaps": 12,
+"gt": 2208,
+"rate": 0.005434782608695652
+},
+"כ/פ": {
+"swaps": 132,
+"gt": 3439,
+"rate": 0.03838325094504216
+},
+"ת/ח": {
+"swaps": 108,
+"gt": 4366,
+"rate": 0.024736601007787448
+},
+"ה/ת": {
+"swaps": 228,
+"gt": 7797,
+"rate": 0.029242016160061564
+},
+"ם/ט": {
+"swaps": 7,
+"gt": 2056,
+"rate": 0.003404669260700389
+},
+"ן/ר": {
+"swaps": 42,
+"gt": 5173,
+"rate": 0.008119079837618403
+},
+"צ/ץ": {
+"swaps": 9,
+"gt": 947,
+"rate": 0.009503695881731784
+},
+"מ/ם": {
+"swaps": 21,
+"gt": 5192,
+"rate": 0.004044684129429892
+},
+"נ/ן": {
+"swaps": 44,
+"gt": 4421,
+"rate": 0.009952499434517077
+},
+"כ/ך": {
+"swaps": 10,
+"gt": 2681,
+"rate": 0.003729951510630362
+},
+"פ/ף": {
+"swaps": 9,
+"gt": 1401,
+"rate": 0.006423982869379015
+}
+},
+"qwen3_vl_8b_heb_v18b_step700": {
+"ה/ח": {
+"swaps": 143,
+"gt": 9206,
+"rate": 0.015533347816641322
+},
+"ד/ר": {
+"swaps": 591,
+"gt": 8884,
+"rate": 0.0665240882485367
+},
+"ו/ן": {
+"swaps": 87,
+"gt": 12693,
+"rate": 0.0068541715906405105
+},
+"ב/כ": {
+"swaps": 445,
+"gt": 8359,
+"rate": 0.053236033018303625
+},
+"ג/נ": {
+"swaps": 71,
+"gt": 5458,
+"rate": 0.013008427995602785
+},
+"ט/ס": {
+"swaps": 41,
+"gt": 2582,
+"rate": 0.015879163439194422
+},
+"ם/ס": {
+"swaps": 120,
+"gt": 3718,
+"rate": 0.0322754168908015
+},
+"ע/צ": {
+"swaps": 67,
+"gt": 4965,
+"rate": 0.013494461228600202
+},
+"י/ו": {
+"swaps": 448,
+"gt": 20485,
+"rate": 0.021869660727361483
+},
+"ז/ן": {
+"swaps": 21,
+"gt": 3549,
+"rate": 0.005917159763313609
+},
+"כ/פ": {
+"swaps": 97,
+"gt": 5307,
+"rate": 0.018277746372715283
+},
+"ת/ח": {
+"swaps": 68,
+"gt": 6474,
+"rate": 0.01050355267222737
+},
+"ה/ת": {
+"swaps": 174,
+"gt": 11750,
+"rate": 0.014808510638297872
+},
+"ם/ט": {
+"swaps": 11,
+"gt": 2884,
+"rate": 0.0038141470180305132
+},
+"ן/ר": {
+"swaps": 28,
+"gt": 7764,
+"rate": 0.0036063884595569293
+},
+"צ/ץ": {
+"swaps": 3,
+"gt": 1450,
+"rate": 0.0020689655172413794
+},
+"מ/ם": {
+"swaps": 25,
+"gt": 7462,
+"rate": 0.003350308228357009
+},
+"נ/ן": {
+"swaps": 35,
+"gt": 6778,
+"rate": 0.005163765122455002
+},
+"כ/ך": {
+"swaps": 4,
+"gt": 3989,
+"rate": 0.001002757583354224
+},
+"פ/ף": {
+"swaps": 7,
+"gt": 2296,
+"rate": 0.003048780487804878
+}
+}
+},
+"talmud": {
+"qwen3_vl_8b_heb_v17_step800": {
+"ה/ח": {
+"swaps": 23,
+"gt": 28450,
+"rate": 0.0008084358523725835
+},
+"ד/ר": {
+"swaps": 33,
+"gt": 31570,
+"rate": 0.0010452961672473868
+},
+"ו/ן": {
+"swaps": 26,
+"gt": 38569,
+"rate": 0.0006741165184474578
+},
+"ב/כ": {
+"swaps": 95,
+"gt": 25879,
+"rate": 0.003670930097762665
+},
+"ג/נ": {
+"swaps": 42,
+"gt": 12466,
+"rate": 0.003369164126423873
+},
+"ט/ס": {
+"swaps": 6,
+"gt": 6267,
+"rate": 0.0009573958831977022
+},
+"ם/ס": {
+"swaps": 41,
+"gt": 9187,
+"rate": 0.00446282790900185
+},
+"ע/צ": {
+"swaps": 9,
+"gt": 10923,
+"rate": 0.0008239494644328481
+},
+"י/ו": {
+"swaps": 59,
+"gt": 67933,
+"rate": 0.0008685027895131968
+},
+"ז/ן": {
+"swaps": 2,
+"gt": 9391,
+"rate": 0.00021296986476413587
+},
+"כ/פ": {
+"swaps": 8,
+"gt": 14328,
+"rate": 0.0005583472920156337
+},
+"ת/ח": {
+"swaps": 102,
+"gt": 19890,
+"rate": 0.005128205128205128
+},
+"ה/ת": {
+"swaps": 24,
+"gt": 35120,
+"rate": 0.000683371298405467
+},
+"ם/ט": {
+"swaps": 0,
+"gt": 8864,
+"rate": 0.0
+},
+"ן/ר": {
+"swaps": 5,
+"gt": 26326,
+"rate": 0.0001899263085922662
+},
+"צ/ץ": {
+"swaps": 3,
+"gt": 3100,
+"rate": 0.000967741935483871
+},
+"מ/ם": {
+"swaps": 0,
+"gt": 25056,
+"rate": 0.0
+},
+"נ/ן": {
+"swaps": 1,
+"gt": 16106,
+"rate": 6.208866261020738e-05
+},
+"כ/ך": {
+"swaps": 1,
+"gt": 10979,
+"rate": 9.108297659167502e-05
+},
+"פ/ף": {
+"swaps": 1,
+"gt": 5845,
+"rate": 0.00017108639863130882
+}
+},
+"qwen3_vl_8b_heb_v18b_step700": {
+"ה/ח": {
+"swaps": 14,
+"gt": 27787,
+"rate": 0.0005038327275344585
+},
+"ד/ר": {
+"swaps": 11,
+"gt": 30624,
+"rate": 0.00035919540229885057
+},
+"ו/ן": {
+"swaps": 15,
+"gt": 37688,
+"rate": 0.0003980046699214604
+},
+"ב/כ": {
+"swaps": 41,
+"gt": 25199,
+"rate": 0.0016270486924084288
+},
+"ג/נ": {
+"swaps": 16,
+"gt": 12180,
+"rate": 0.0013136288998357964
+},
+"ט/ס": {
+"swaps": 4,
+"gt": 6058,
+"rate": 0.0006602839220864972
+},
+"ם/ס": {
+"swaps": 29,
+"gt": 8922,
+"rate": 0.0032503922887245013
+},
+"ע/צ": {
+"swaps": 1,
+"gt": 10684,
+"rate": 9.359790340696369e-05
+},
+"י/ו": {
+"swaps": 28,
+"gt": 66230,
+"rate": 0.0004227691378529367
+},
+"ז/ן": {
+"swaps": 1,
+"gt": 9194,
+"rate": 0.00010876658690450294
+},
+"כ/פ": {
+"swaps": 0,
+"gt": 14004,
+"rate": 0.0
+},
+"ת/ח": {
+"swaps": 27,
+"gt": 19480,
+"rate": 0.0013860369609856264
+},
+"ה/ת": {
+"swaps": 9,
+"gt": 34399,
+"rate": 0.00026163551266025173
+},
+"ם/ט": {
+"swaps": 0,
+"gt": 8660,
+"rate": 0.0
+},
+"ן/ר": {
+"swaps": 0,
+"gt": 25653,
+"rate": 0.0
+},
+"צ/ץ": {
+"swaps": 1,
+"gt": 3052,
+"rate": 0.000327653997378768
+},
+"מ/ם": {
+"swaps": 0,
+"gt": 24463,
+"rate": 0.0
+},
+"נ/ן": {
+"swaps": 0,
+"gt": 15738,
+"rate": 0.0
+},
+"כ/ך": {
+"swaps": 3,
+"gt": 10722,
+"rate": 0.0002797985450475658
+},
+"פ/ף": {
+"swaps": 1,
+"gt": 5703,
+"rate": 0.0001753463089601964
+}
+}
+}
+},
+"confusion_by_bucket": {
+"genizah:arabic_script": {
+"kraken_raw": {
+"swaps": 33,
+"gt": 1894,
+"rate": 0.017423442449841606
+},
+"qwen3_vl_8b_heb_v17_step800": {
+"swaps": 38,
+"gt": 1894,
+"rate": 0.02006335797254488
+},
+"qwen3_vl_8b_heb_v18b_step700": {
+"swaps": 17,
+"gt": 1894,
+"rate": 0.00897571277719113
+}
+},
+"genizah:aramaic": {
+"kraken_raw": {
+"swaps": 81,
+"gt": 4082,
+"rate": 0.019843214110730034
+},
+"qwen3_vl_8b_heb_v17_step800": {
+"swaps": 126,
+"gt": 4082,
+"rate": 0.030867221950024497
+},
+"qwen3_vl_8b_heb_v18b_step700": {
+"swaps": 125,
+"gt": 6062,
+"rate": 0.020620257340811615
+}
+},
+"genizah:hebrew": {
+"kraken_raw": {
+"swaps": 398,
+"gt": 21612,
+"rate": 0.018415694984268
+},
+"qwen3_vl_8b_heb_v17_step800": {
+"swaps": 425,
+"gt": 19592,
+"rate": 0.021692527562270313
+},
+"qwen3_vl_8b_heb_v18b_step700": {
+"swaps": 473,
+"gt": 22926,
+"rate": 0.020631597313094302
+}
+},
+"genizah:judaeo_arabic": {
+"kraken_raw": {
+"swaps": 1303,
+"gt": 92587,
+"rate": 0.014073250024301468
+},
+"qwen3_vl_8b_heb_v17_step800": {
+"swaps": 1380,
+"gt": 51630,
+"rate": 0.02672864613596746
+},
+"qwen3_vl_8b_heb_v18b_step700": {
+"swaps": 1456,
+"gt": 83823,
+"rate": 0.017369934266251507
+}
+},
+"genizah:untagged": {
+"kraken_raw": {
+"swaps": 461,
+"gt": 24316,
+"rate": 0.018958710314196416
+},
+"qwen3_vl_8b_heb_v17_step800": {
+"swaps": 419,
+"gt": 14586,
+"rate": 0.028726175784999315
+},
+"qwen3_vl_8b_heb_v18b_step700": {
+"swaps": 415,
+"gt": 21348,
+"rate": 0.01943976016488664
+}
+},
+"talmud:gemara": {
+"qwen3_vl_8b_heb_v17_step800": {
+"swaps": 120,
+"gt": 132176,
+"rate": 0.0009078804018883913
+},
+"qwen3_vl_8b_heb_v18b_step700": {
+"swaps": 58,
+"gt": 132176,
+"rate": 0.0004388088609127224
+}
+},
+"talmud:rashi": {
+"qwen3_vl_8b_heb_v17_step800": {
+"swaps": 197,
+"gt": 129397,
+"rate": 0.0015224464245693486
+},
+"qwen3_vl_8b_heb_v18b_step700": {
+"swaps": 73,
+"gt": 128360,
+"rate": 0.0005687129947023995
+}
+},
+"talmud:tosafot": {
+"qwen3_vl_8b_heb_v17_step800": {
+"swaps": 164,
+"gt": 144676,
+"rate": 0.0011335674196134812
+},
+"qwen3_vl_8b_heb_v18b_step700": {
+"swaps": 70,
+"gt": 135904,
+"rate": 0.000515069460795856
+}
+}
+},
+"forgetting": [
+{
+"model": "qwen3-vl-8b-heb-v16-step1000",
+"domain": "synthetic_rashi",
+"n": 30,
+"mean": 0.021673333333333333,
+"median": 0.00775,
+"pct_fail": 0.0
+},
+{
+"model": "qwen3-vl-8b-heb-v16-step1000",
+"domain": "talmud_crop_transcribe",
+"n": 16,
+"mean": 1.27523125,
+"median": 0.7477,
+"pct_fail": 0.75
+},
+{
+"model": "qwen3-vl-8b-heb-v16-step1000",
+"domain": "talmud_page_extract",
+"n": 4,
+"mean": 0.014525,
+"median": 0.0109,
+"pct_fail": 0.0
+},
+{
+"model": "qwen3-vl-8b-heb-v17-step800",
+"domain": "synthetic_rashi",
+"n": 30,
+"mean": 0.024716666666666668,
+"median": 0.00825,
+"pct_fail": 0.0
+},
+{
+"model": "qwen3-vl-8b-heb-v17-step800",
+"domain": "talmud_crop_transcribe",
+"n": 16,
+"mean": 1.75644375,
+"median": 0.7895,
+"pct_fail": 0.75
+},
+{
+"model": "qwen3-vl-8b-heb-v17-step800",
+"domain": "talmud_page_extract",
+"n": 4,
+"mean": 0.012575,
+"median": 0.0137,
+"pct_fail": 0.0
+},
+{
+"model": "qwen3-vl-8b-heb-v18a-step700",
+"domain": "synthetic_rashi",
+"n": 30,
+"mean": 0.021573333333333333,
+"median": 0.0077,
+"pct_fail": 0.0
+},
+{
+"model": "qwen3-vl-8b-heb-v18a-step700",
+"domain": "talmud_crop_transcribe",
+"n": 16,
+"mean": 2.5707125,
+"median": 0.71105,
+"pct_fail": 0.75
+},
+{
+"model": "qwen3-vl-8b-heb-v18a-step700",
+"domain": "talmud_page_extract",
+"n": 4,
+"mean": 0.011375,
+"median": 0.01115,
+"pct_fail": 0.0
+},
+{
+"model": "qwen3-vl-8b-heb-v18b-step700",
+"domain": "synthetic_rashi",
+"n": 30,
+"mean": 0.019056666666666666,
+"median": 0.0017,
+"pct_fail": 0.0
+},
+{
+"model": "qwen3-vl-8b-heb-v18b-step700",
+"domain": "talmud_crop_transcribe",
+"n": 16,
+"mean": 1.00389375,
+"median": 0.73125,
+"pct_fail": 0.75
+},
+{
+"model": "qwen3-vl-8b-heb-v18b-step700",
+"domain": "talmud_page_extract",
+"n": 4,
+"mean": 0.0066,
+"median": 0.00645,
+"pct_fail": 0.0
+}
+],
+"benchmark": {
+"n": 131,
+"frozen": "2026-07-24",
+"criteria": "triage A; single image; >=200 visible chars; passes all is_training_clean content checks EXCEPT gap count; disjoint from genizah_clean_v1 train+val (rev 9f6e289d); ranked by gap density ascending, top 150",
+"visible_chars_total": 146271,
+"visible_chars_median": 897,
+"n_dup_repaired": 14,
+"n_excluded_misaligned": 19,
+"institutions": [
+[
+"Cambridge University Library",
+106
+],
+[
+"Oxford",
+12
+],
+[
+"Jewish Theological Seminary",
+11
+],
+[
+"John Rylands Library, University of Manchester",
+2
+]
+],
+"script_buckets": [
+[
+"judaeo_arabic",
+82
+],
+[
+"untagged",
+22
+],
+[
+"hebrew",
+20
+],
+[
+"aramaic",
+6
+],
+[
+"arabic_script",
+1
+]
+]
+},
+"specimen": {
+"fragment_id": "Cambridge_CUL_T_S_10J4_10",
+"script": "judaeo_arabic",
+"tier": "A",
+"gt_letters": 878,
+"n_modes": 4,
+"models": {
+"kraken_raw": {
+"mode": "substantive",
+"ngramP": 0.6845,
+"f1": 0.8367,
+"cer": 0.2423,
+"text": "ⲙ\nשהדותא דהות באנפנא אנן שהדי דחתמות ידנא לתחתא כן הוה חצר אלינא\nה\nואלמנא לעטאר כגק' מרור יעקב הוזקן הנכבד ישצו בר כ\nם\nרחיי\nמרור\nים הפרנס נבע וקאל לנא אשהדו עלי ואקנו מני מעכשו ואכתבו\nבגמיע אלאלפאט̇ אלמחכמה ואלמעאני אלמולדה ובכל לישאני דזכואתא\nאלשיך אבו אלמנא כ'ג'ק מרור שלמה הזקן הנכבד ישצו בר\nאביעי בחבור ה זל הכון בידה לליום ובעדה חגה וותאה\nענדכם באוכד מעאני אלאקראראת ואו תקהא פי צ̇חה ועני וג̇ואז אמו\nטאיעא מן גיר קהר ולא גבר ולא אכראה ולא סנו ולא גלט ילא עלה בי מן מיצ̇תא\nגיר \nמן גמיע מחסדאת אלשהאדה אללי קד קבצת ותם למות מנה מן כאנ\nמאלה סבעה וכמסון דינארא ובא עינא מרעקילא ואזנה מצריה גיאדא נחאחא\nוצארת אלי ותחת יבצתי והאי וכידי עלי אלכמאל ואלתמאם בעד צחה אלנה\nאלוזן ואלג̇מיע בידי דונר אביע פיה ואשתרי\nלנא גמיעא פי\nאולהא מס\nומא בעתה\nצנאעה אלעטר ופי מא אעלם\nפחט̇ אלואפר מדה סנר כאמלה אתני עשר שהרא כואמל\nאלטהרנא הדא לדיהו אד\nקברהו\nמן פאידה כי\nמן סור א תל זלומי\nמצארבין מע ארבאב אלאמואל ואשר\nכצוץ דון ראס אלמאל וא\nע שי' ממא יד\nה\n]ם לה פי חיותה\nהשום שבוע\n]ה אלמבלג אלמעע לאעמל לה פיהו\nמכסונן\nען הדא\nא\nחו"
+},
+"qwen3_vl_8b_heb_v18b_step700": {
+"mode": "substantive",
+"ngramP": 0.7883,
+"f1": 0.9309,
+"cer": 0.1084,
+"text": "שהדותא דהות באנפנא אנן שהדי דחתמות ידנא לתחתא כן הוה חצר אלינא אלשיך אבו אלמנא אלעטאר כגק מרור יעקב הזקן הנכבד ישצו בר כגק מרור דויד הזקן הנכבד הפרנס נבע וקאל לנא אשהדו עלי ואקנו מני מעכשו ואכתבו ואמתמו עלי בגמיע אלתפאטו אלמחכמה ואלמעאני אלמולדה ובכל לישאני דזכואתא וסלמא דלך אלי אלשיך אבו אלמנא כגק מרור שלמה הזקן הנכבד ישצו בר כגק מרור חיים השביעי בחבורה זל ליכון בידה לליום ובעדה הוה וקתאק אצני מקר ענדכם באוכד מעאני אלאקראראת ואותקהא פי צחה מא גוואז אמר טאיעא מן גיר קהר ולא גבר ולא אבהאה ולא סהו ולא גלט ולא עלה בי מן מרץ ולא גיר דלך מן גמיע מפסדאת אלשהאדה אצני קד קבצת ואכלמת מנה מן כאלאץ מאלה סבעה וכמסון דינארא דהבא עינא מתאקילא ואזנה מצריה גיאדה צחאחא וצארת אלי ותחת קבצת וחודי ובידי עלי אלכמאל ואלתמאם בעד צחה אלוקד ואלוזן ולגמיע בידי דונח אביע פיה ואשתרי פי צנאעה אלעטר ופי מא אעלם אולא מוסתהל עהטנא הדא אלדי הו אדר ועשוי מי סנה אתליזל כואמול ומיא בעתה קבורה פי דלך מן פאידה כא מצארבין מע ארבאב אלאמואל ואשהר כצוץ דון ראס אלמאל ואנן ליס לה פי חיאת פי שי ממא יכץ אלפאידה שום שבוע מנה אלמבלג אלמדכור לאעמל לה פיה ו מכסונן אן מן הדא אלמ"
+},
+"claude_opus_4_8": {
+"mode": "abstained",
+"ngramP": 0.0,
+"f1": 0.1307,
+"cer": 0.8871,
+"text": "I'm unable to provide a reliable, accurate character-by-character transcription of this particular manuscript. While I can see it is a Judaeo-Arabic/Hebrew-script document written in a Middle Eastern cursive hand (typical of Cairo Genizah legal or letter documents), the combination of the faded ink, damage to the parchment, blue restoration marks, and the cursive script make it impossible for me to transcribe the text with the accuracy and confidence that would be responsible.\n\nProducing a fabricated or guessed transcription would risk introducing serious errors into what may be a scholarly context. For an authoritative reading, I'd recommend consulting the Friedberg Genizah Project (FGP) or the Princeton Geniza Project databases, which often have expert transcriptions of T-S shelfmark items like this one (T-S 10J4.10), or a specialist in Judaeo-Arabic paleography."
+},
+"claude_sonnet_5": {
+"mode": "hallucinated",
+"ngramP": 0.0074,
+"f1": 0.2442,
+"cer": 0.643,
+"text": "# Transcription\n\n**T-S 10J4.10**\n\n```\n10\n\nשהעידוני יהודה בן יוסף אנ[?]שהדי · דוד תמוית ורנח לסכתריח בק דוד היט לעטח\nעליו אבו ולתמי לטוהר מדך לעודל · עקב דהוק הנברי טעון בד נגד חדגור\nעוו יהוד הובד יחמד נגוד נקלטח ורק[?]נתו משהדו עלנ ותקנו מלך מעכשו ומכפבו\nמסמו ל[?] גני עוליתפמט לוחרמה ולמעאט להוגליה ומל נשמע יוכות\nוטלל ילך לטית אחשתי טוך ורדו לטוה שלוה היקבנבצל טין נר בוגך\nמרוד היעברמע בהזורוילת בית בעריה ולום ופעדה גדה ותהך אלת\nמיד עטלה בהוזעדוית טשתי עדך יוד וקהם פ עהד עלל נעוה מוד\nמהעטח ותנעדקהד יטהד ולהגידבה יגבר יעל תפגר ותפרו נגה ילה מגידקוה\nנר ילנרם מוית ופפשתתלשתי מלל תדקצית תוד מתד עיד מנע נלוק\nמולה סנעה ותמפוט יעוית ראם עתקוק כם ותנה ותעלה נטתקוה\nויעדכעל ותילר בעיתם וחרי וצוי על עלמות (ולתחתום סעד תפה עלד\nולא וחן ולעמות אביועפוד וטערי עהד תעטהעלטור ותפוט מעלס\nאך לגא בטדגית עיה פיה כום עלד סנד פדד עוית ותט כפנתלה שהר עשד\nאוחא ומהדראל אתונה תרמעיה ותד אתה גדות סה אי הו אתד\nותא בתגד יגצדצו פוילתפרייה ומ\nמיכתדעצין תנתדכתב עתוגל ותשה\nכענוק דון ומתמלוית פס לס פ תיוגר\nמיט תוחא · יינ עמד עוית ותד שוט שנוה\nותנעלמעל למרתו לאתמל נעטה,\n\nמוצפוין אף\nעתידה עד\n```"
+},
+"gemini_flash": {
+"mode": "substantive",
+"ngramP": 0.115,
+"f1": 0.4295,
+"cer": 0.5519,
+"text": "שיהיה זה האות באמנה אנשא אללה אלרחמן ונעם לבעליה כן הוה חצי אלף\nמאתים ושמנה ועשרים שנה למרור יעקב הזקן הנכבד ישצו בר פלג מרור\nסעדיה הזקן הנכבד נפשם צרורה בצרור החיים ואנחן מן מעשנו ואכתבנו\nושהדנא עלי אנפוסנא ואחצרנא אלעדים אלדכורא וצחחנא מעני דלך וכתבנא\nאלכתאב לבעליה מן דון כרה פדלך מרור שמואל הזקן הנכבד ישצו בר פלג\nמרור חיים השביעי בחבורה זצל כן ביהל לזכות ובעיאד אלף ותמאן מאה\nמקד עשרין ואתנין מעאמלה אלעראק ואלשאם ותקדם פי דלך ואן אלמוכאר\nסלימאן אלגזר קהל אלגבר אלדי אכרמה אללה וסלמה וסלם עליה מן חית אנה\nקד לאזם גמיע מסאלכה אלשרעיה מן קבל קדשיה אללה יתברך שמו ומן מאל\nמעה סבעה וכמסין דינאר והדא אלדי וקע עליה אלמנא ועלייה גמיע אלחמאל\nאלשרעיה ואלתקלידיין ואלרסום עלי מא דכרנא וראינאהם בעד דלך קד\nאלאם אלגמיע ביד אלשיך אבי עלי אלמשרף סלמה אללה ופיה מא תעלם\nמן דארת אלדראהם פיה פאלאמר קד סהל ופיהא מן עשר שנין כותבנא\nאלדא אלכתאב באמנא אלרחמן הו אלדי [?] סהל עלינא\nומה בעד דלך צדקן פי דלך ופי גמיע כו[?]\nאלמצריין ואלמכתב באמנא ומש[?]\nכיום דן ונסתעין בה פי חיוני\nשש מאות ושמנים שנה שבוע\nאלרחמן ונעם לבעליה\nמפאלם\n[?]"
+},
+"gpt_5_6_sol": {
+"mode": "abstained",
+"ngramP": 0.0,
+"f1": 0.0,
+"cer": 1.0,
+"text": "[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]\n[?]"
+},
+"qwen3_vl_8b": {
+"mode": "loop_collapse",
+"ngramP": 0.0,
+"f1": 0.0073,
+"cer": 6.2605,
+"text": "סִיוֹרִיִּים וְחָרְבִּים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים אֲרָבִים א"
+}
+},
+"ground_truth": "שהדותא דהות באנפנא אנן שהדי דחתמות ידנא לתחתא כן הוה חצר אלינא אלשיך אבו אלמנא אלעטאר כגק מרור יעקב הזקן הנכבד ישצו בר כגק מרור דויד הזקן הנכבד הפרנס נבע וקאל לנא אשהדו עלי ואקנו מני מעכשו ואכתבו ואכתמו עלי בגמיע אלאלפאט אלמחכמה ואלמעאני אלמוכדה ובכל לישאני דזכואתא וסלמו דלך אלי אלשיך אבו אלמנא כגק מרור שלמה הזקן הנכבד ישצו בר כגק מרור חיים השביעי בחבורה זל ליכון בידה לליום ובעדה חגה וותאק אנני מקר ענדכם באוכד מעאני אלאקראראת ואותקהא פי צחה מני וגואז אמר טאיעא מן גיר קהר ולא גבר ולא אכראה ולא סהו ולא גלט ולא עלה בי מן מרץ ולא גיר דלך מן גמיע מפסדאת אלשהאדה אנני קד קבצת (ותס)למת מנה מן כאלץ מאלה סבעה וכמסון דינארא דהבא עינא מתאקילא ואזנה מצריה גיאדא צחאחא וצארת אלי ותחת קבצתי וחוזי ובידי עלי אלכמאל ואלתמאם בעד צחה אלנק [...] ואלוזן ואלגמיע בידי דונה אביע פיה ואשתרי פי צנאעה אלעטר ופי מא אעלם אן לנא גמיעא פיה אלחט אלואפר מדה סנה כאמלה אתני עשר שהרא כואמל אולהא מסתהל שהרנא הדא אלדי הו אדר [...] שון מן סנה אתלז [...] ומא בעתה הק בר הו פי דלך מן פאידה כ [...] מצארבין מע ארבאב אלאמואל ואשר [...] כצוץ דון ראס אלמאל ואן ליס לה פי חיות [...] פי שי ממא יכץ אלפאידה שום שבוע [...] מנה אלכבלג אלמדכור לאעמל לה פיה ו [...] מכסונן מן [...] מן הדא אלמ [...]"
+},
+"loop": {
+"01_10_page_001": {
+"gt": "פתח באשרי וסיים באשרי.\nאלמא חדא היא דאשרי כל חוסי בו סיומא דלמה רגשו גוים הוא:\nבריוני.\nפריצים:\nחַטאים כתיב.\nקרי ביה\nחֲטאים שיכלה יצר הרע:\nשפיל.\nהשפיל עצמך לסוף המקרא כל דבר שהוא בסוף קרוי שפילו של דבר:\nסמוכים לעד לעולם.\nבדברי תורה\nכתיב [אחרי] נאמנים כל פקודיו סמוכים סמיכת כל פקודיו עשוים באמת וישר ולצורך ולא דבר רק:\nכלום יש עבד שמורד ברבו.\nויבא\nלהכחיש את דברי הנביא:\nאמור לו כלום יש בן כו'.\nוהא חזינן הכא דהוה:\nהכא נמי הוה.\nסופיה להיות:\nואמר שירה.\nכנגד כולם אמר\nשירה לכששרתה רוח הקודש עליו:\nוכל קרבי.\nעל שם קרבי אמו שדר\nבתוכן:\nמאי משמע.\nדעל יום המיתה\nנאמר:\nבא וראה וכו'.\nהוא סבר דהכי\nבעי מאי שנא קרבים דנקט:\nחמשה\nברכי נפשי.\nלעיל חשיב להו:\nמאי\nדכתיב מי כהחכם ומי יודע פשר דבר.\nמשום דאיירי בסופה בסמיכת גאולה\nלתפלה נקט ליה:\nדאשכחן דאזל אליהו\nלגבי אחאב.\nדכתיב וילך אליהו\nלהראות אל אחאב:\nיהורם אזל לגבי\nאלישע.\nכשהלכו על מואב הוא ויהושפט\n(במלכים ב ג)\nדמתוך שלא היו הולכים\nזה אצל זה לא היה מוכיחו על שלא\nנשא אשה:\nכבשי דרחמנא.\nסתרים\nדהקב\"ה כמו רישא בכבשא\n(חולין\nד' צג:)\nבהטמנת האפר:\nנגזרה\nגזרה.\nשתמות:\nמקובלני מבית\nאבי אבא.\nדוד שראה את המלאך\nוחרבו שלופה בידו בסוף ספר שמואל\n(ב כד)\nולא מנע עצמו מן הרחמים:\n אבי",
+"gt_chars": 1104,
+"gt_nikkud": 2,
+"out_chars": 6465,
+"out_nikkud": 2802,
+"preamble": "בְּאַבְרָם הַבְּרִיךְ עַל הַבִּיבִּחַ הַתְּחִידָה שֶׁהָרְשָׁה לְכָל",
+"unit": "הַבִּיבִּחַ הַתְּחִידָה לְכָל",
+"repeats": 213
+},
+"01_10b_page_001": {
+"gt": "אבי אבא שחפה את ההיכל.\nשלמה:\nשגנז ספר רפואות.\nכדי שיבקשו רחמים:\nגירר עצמות אביו.\nלפי שהיה רשע בזהו ולא נהג בו כבוד\nבקבורתו להוציאו כהוגן במטות זהב וכסף:\nסתם מי גיחון.\nמי שלוח בדברי הימים\n(ב לב)\nולמה כדי שלא יבאו מלכי אשור וימצאו מים לשתות\nולא זהו גיחון הנהר הגדול דההוא לאו בא\"י הוא אלא מעין קטן הוא סמוך לירושלים שנאמר והורדתם אותו אל גיחון\n(מ\"א א)\nומתרגמינן\nותחתון יתיה לשילוחא:\nעבר ניסן בניסן.\nקס\"ד משנתקדש החדש לשם ניסן נמלך לעבר את השנה ועשאו אדר כמו שנאמר בדברי הימים\n(ב ל)\nויועץ המלך (חזקיהו) לעשות\nהפסח בחדש השני:\nביום שלשים של\nאדר.\nואע\"פ שלא נתקדש החדש\nשעדיין לא באו עדים:\nהתולה בזכות\nעצמו.\nשאומר בתפלתו עשה לי בזכותי\nכגון חזקיהו שאמר זכר נא את אשר\nהתהלכתי לפניך וגו':\nפרועה.\nמגולה\nשניטלה תקרה שלה:\nהרוצה להנות.\nמשל אחרים:\nיהנה.\nואין איסור\nבדבר:\nכאלישע.\nכמו שמצינו באלישע\nשנהנה:\nוהרוצה שלא להנות.\nמשל\nאחרים:\nאל יהנה.\nואין בדבר לא\nמשום גסות רוח ולא משום שנאה:\nכשמואל הרמתי.\nכמו שמצינו בשמואל\nהרמתי שלא רצה להנות:\nכי שם\nביתו.\nלעיל מיניה כתיב והיה מדי\nשנה בשנה וסבב בית אל והמצפה\nושפט את ישראל וסמיך ליה ותשובתו\nהרמתה כי שם ביתו וכי איני יודע\nששם ביתו אלא אכולהו מקומות דקרא\nדלעיל מיניה קאי שכל מקום שהיה הולך\nשם היה נושא כל כלי תשמישי בית\nעמו ואהל חנייתו שלא להנות מן\nאחרים:\nבהוד יפיה.\nבדדיה:\nתפלה\nלעני.\nדרך עניות:\nיכוין את רגליו.\nזו אצל זו:\nורגליהם רגל ישרה.\nנראין כרגל אחד:\nהקורא מכאן\nואילך לא הפסיד.\nשהרי הוא כאדם\nשקורא אחת מכל הפרשיות שבתורה\nואע\"פ שלא יצא ידי ק\"ש יש לו קבול שכר\nכעוסק בתורה:\nמתני'\nיטה.\nעל\nצדו:\nבשכבך.\nדרך שכיבה:\nיעמוד.\nדכתיב ובקומך:\nכדרכו.\nאו בקימה\nאו בשכיבה או בישיבה או מהלך:\n גמ'",
+"gt_chars": 1510,
+"gt_nikkud": 0,
+"out_chars": 7021,
+"out_nikkud": 2340,
+"preamble": "",
+"unit": "אֲנִי",
+"repeats": 1170
+}
+},
+"kraken_decomp": {
+"reported": {
+"gemara": 1.0,
+"rashi": 1.0,
+"tosafot": 1.0,
+"note": "OCR → text-LLM segmenter → per-section CER, all 65 pages"
+},
+"conditional": {
+"gemara": 0.041,
+"rashi": 0.4,
+"tosafot": 0.207,
+"note": "the 13 pages per section where the segmenter returned text"
+},
+"layoutfree": {
+"pooled": 0.014,
+"gemara": 0.014,
+"mean": 0.019,
+"n_lines": 105,
+"n_pages": 2,
+"pct_under_10": 99,
+"pct_verbatim": 46,
+"note": "each GT line matched anywhere in the flat OCR (free end-gap alignment)"
+},
+"v17": {
+"gemara": 0.0047,
+"rashi": 0.0147,
+"tosafot": 0.012,
+"note": "fine-tuned VLM, end-to-end, all 65 pages"
+},
+"rerun": {
+"gemara": 0.0404,
+"rashi": 0.2898,
+"tosafot": 0.2289,
+"note": "re-run 2026-08-21 with the quota clear · 65/65 pages, 0 failures"
+}
+}
+}

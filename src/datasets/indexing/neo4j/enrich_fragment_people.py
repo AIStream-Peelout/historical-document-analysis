@@ -402,7 +402,7 @@ class FragmentPeopleEnricher:
             if edges:
                 logger.debug(f"  Would write {definite} definite + {possible} possible edges")
                 for e in edges[:3]:
-                    logger.debug(f"    {e['shelfmark']} → {e['person_name']} [{e['certainty']}]")
+                    logger.debug(f"    {e['display_shelfmark']} → {e['person_name']} [{e['certainty']}]")
             return {"edges_definite": definite, "edges_possible": possible}
 
         with self.driver.session(database=self.database) as session:
@@ -410,7 +410,7 @@ class FragmentPeopleEnricher:
                 try:
                     session.execute_write(_write_edge, edge)
                 except Exception as exc:
-                    logger.warning(f"  Write failed {edge['shelfmark']} → {edge['person_name']}: {exc}")
+                    logger.warning(f"  Write failed {edge['display_shelfmark']} → {edge['person_name']}: {exc}")
 
         return {"edges_definite": definite, "edges_possible": possible}
 

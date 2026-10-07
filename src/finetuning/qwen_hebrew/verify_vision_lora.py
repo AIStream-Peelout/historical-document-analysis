@@ -28,11 +28,16 @@ import dotenv
 
 dotenv.load_dotenv()
 
-EXPECTED_VISION_TENSORS = 108
+EXPECTED_VISION_TENSORS = 108   # tower blocks; v19b+ adapters add 8 merger tensors
+EXPECTED_MERGER_TENSORS = 8
 
 
 def summarize_adapter(path: Path) -> dict:
-    """Count nonzero vision/language lora_B tensors in a safetensors adapter.
+    """Count nonzero vision/merger/language lora_B tensors in an adapter.
+
+    The merger family (``visual.merger`` + ``visual.deepstack_merger_list``)
+    is reported separately from the tower: v19b was the first run to adapt
+    it, and pre-v19b adapters legitimately have zero merger tensors.
 
     :param path: Path to ``adapter_model.safetensors``.
     :returns: Dict with totals and per-family nonzero counts plus the max
@@ -41,15 +46,23 @@ def summarize_adapter(path: Path) -> dict:
     from safetensors.torch import load_file
 
     state = load_file(str(path))
-    vis_b = {n: t for n, t in state.items() if ".visual." in n and "lora_B" in n}
-    lang_b = {n: t for n, t in state.items()
-              if ".visual." not in n and "lora_B" in n}
+    vis_b, mrg_b, lang_b = {}, {}, {}
+    for n, t in state.items():
+        if "lora_B" not in n:
+            continue
+        if ".visual." in n:
+            (mrg_b if "merger" in n else vis_b)[n] = t
+        else:
+            lang_b[n] = t
     vis_nonzero = [n for n, t in vis_b.items() if t.abs().max().item() > 0]
+    mrg_nonzero = [n for n, t in mrg_b.items() if t.abs().max().item() > 0]
     lang_nonzero = [n for n, t in lang_b.items() if t.abs().max().item() > 0]
     vis_max = max((t.abs().max().item() for t in vis_b.values()), default=0.0)
     return {
         "vision_total": len(vis_b),
         "vision_nonzero": len(vis_nonzero),
+        "merger_total": len(mrg_b),
+        "merger_nonzero": len(mrg_nonzero),
         "language_total": len(lang_b),
         "language_nonzero": len(lang_nonzero),
         "vision_max_abs": vis_max,
@@ -95,19 +108,26 @@ if __name__ == "__main__":
 
     adapter = resolve_adapter(args.repo, args.revision, args.path)
     s = summarize_adapter(adapter)
-    print(f"{adapter}\n  vision lora_B : {s['vision_nonzero']}/{s['vision_total']} "
+    print(f"{adapter}\n  tower lora_B  : {s['vision_nonzero']}/{s['vision_total']} "
           f"nonzero (max |ΔB| {s['vision_max_abs']:.3e})\n"
+          f"  merger lora_B : {s['merger_nonzero']}/{s['merger_total']} nonzero\n"
           f"  language lora_B: {s['language_nonzero']}/{s['language_total']} nonzero")
 
-    ok_shape = s["vision_total"] == EXPECTED_VISION_TENSORS
-    if not ok_shape:
-        print(f"FAIL: expected {EXPECTED_VISION_TENSORS} vision lora_B tensors, "
+    if s["vision_total"] != EXPECTED_VISION_TENSORS:
+        print(f"FAIL: expected {EXPECTED_VISION_TENSORS} tower lora_B tensors, "
               f"found {s['vision_total']}")
+        sys.exit(1)
+    if s["merger_total"] not in (0, EXPECTED_MERGER_TENSORS):
+        print(f"FAIL: expected 0 or {EXPECTED_MERGER_TENSORS} merger lora_B "
+              f"tensors, found {s['merger_total']}")
         sys.exit(1)
     if args.expect == "trained" and s["vision_nonzero"] != s["vision_total"]:
         print("FAIL: vision LoRA did not train (the v1.5–v1.7 failure mode)")
         sys.exit(1)
-    if args.expect == "frozen" and s["vision_nonzero"] != 0:
-        print("FAIL: vision LoRA moved but this arm expected it frozen")
+    if args.expect == "trained" and s["merger_nonzero"] != s["merger_total"]:
+        print("FAIL: merger LoRA present but did not train")
+        sys.exit(1)
+    if args.expect == "frozen" and s["vision_nonzero"] + s["merger_nonzero"] != 0:
+        print("FAIL: vision/merger LoRA moved but this arm expected it frozen")
         sys.exit(1)
     print(f"OK: adapter matches --expect {args.expect}")

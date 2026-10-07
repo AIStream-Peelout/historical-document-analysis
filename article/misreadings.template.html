@@ -1,0 +1,2358 @@
+<title>Three Ways to Misread</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,600;1,300;1,400&family=IBM+Plex+Mono:wght@400;500;600&family=Frank+Ruhl+Libre:wght@300;500;700&display=swap">
+
+<style>
+/* ============================================================
+   TOKENS — complete light palette on bare :root.
+   Cool graphite ground; warmth is reserved for failure states.
+   Series + status hues are the validated data-viz palette, verbatim.
+   ============================================================ */
+:root {
+  color-scheme: light;
+  --ground:      #f2f3f4;
+  --surface:     #fbfbfc;
+  --surface-2:   #ebedef;
+  --ink:         #0e1116;
+  --ink-2:       #4a5260;
+  --ink-3:       #656d7b;
+  --rule:        #dfe1e5;
+  --rule-strong: #c6cad1;
+  --accent:      #1f3f6e;
+  --accent-soft: #e4ebf4;
+
+  /* categorical — slots 1/2/3 */
+  --s1: #2a78d6;
+  --s2: #eb6834;
+  --s3: #1baf7a;
+
+  /* status — fixed in both modes, always shipped with a text label */
+  --good:     #0ca30c;
+  --warning:  #fab219;
+  --serious:  #ec835a;
+  --critical: #d03b3b;
+
+  /* sequential blue ramp */
+  --q1: #cde2fb; --q2: #9ec5f4; --q3: #6da7ec;
+  --q4: #3987e5; --q5: #256abf; --q6: #104281;
+
+  --grid: #e6e8ec;
+  --shadow: 0 1px 2px rgba(14,17,22,.05), 0 8px 24px -16px rgba(14,17,22,.25);
+
+  --measure: 34rem;
+  --wide: 72rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground:      #0f1115;
+    --surface:     #171a20;
+    --surface-2:   #1e222a;
+    --ink:         #eceef2;
+    --ink-2:       #a8b0bd;
+    --ink-3:       #8b939f;
+    --rule:        #262b33;
+    --rule-strong: #38404b;
+    --accent:      #6ea3e0;
+    --accent-soft: #1b2735;
+    --s1: #3987e5;
+    --s2: #d95926;
+    --s3: #199e70;
+    --q1: #104281; --q2: #184f95; --q3: #256abf;
+    --q4: #3987e5; --q5: #6da7ec; --q6: #9ec5f4;
+    --grid: #21262e;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground:      #0f1115;
+  --surface:     #171a20;
+  --surface-2:   #1e222a;
+  --ink:         #eceef2;
+  --ink-2:       #a8b0bd;
+  --ink-3:       #8b939f;
+  --rule:        #262b33;
+  --rule-strong: #38404b;
+  --accent:      #6ea3e0;
+  --accent-soft: #1b2735;
+  --s1: #3987e5;
+  --s2: #d95926;
+  --s3: #199e70;
+  --q1: #104281; --q2: #184f95; --q3: #256abf;
+  --q4: #3987e5; --q5: #6da7ec; --q6: #9ec5f4;
+  --grid: #21262e;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+}
+
+/* ============================================================
+   BASE
+   ============================================================ */
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--ground);
+  color: var(--ink);
+  font-family: Spectral, Georgia, "Times New Roman", serif;
+  font-size: 18px;
+  line-height: 1.68;
+  font-weight: 400;
+  -webkit-font-smoothing: antialiased;
+}
+.mono { font-family: "IBM Plex Mono", ui-monospace, SFMono-Regular, Menlo, monospace; }
+.heb  { font-family: "Frank Ruhl Libre", "Times New Roman", serif; }
+
+.wrap { max-width: var(--wide); margin: 0 auto; padding: 0 1.5rem; }
+.col  { max-width: var(--measure); margin-inline: auto; }
+.col > * + * { margin-top: 1.1em; }
+
+h1, h2, h3 { font-weight: 600; text-wrap: balance; line-height: 1.18; margin: 0; }
+p { margin: 0; }
+a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+a:focus-visible, button:focus-visible, th:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 2px;
+}
+strong { font-weight: 600; }
+em { font-style: italic; }
+
+.eyebrow {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  font-size: .6875rem; font-weight: 600;
+  letter-spacing: .14em; text-transform: uppercase;
+  color: var(--ink-3);
+}
+.num { font-variant-numeric: tabular-nums; }
+
+/* ============================================================
+   MASTHEAD
+   ============================================================ */
+.masthead { padding: 5.5rem 0 2.5rem; }
+.masthead .col { max-width: 44rem; }
+.rule-top { height: 2px; background: var(--ink); margin-bottom: 1.5rem; }
+.masthead h1 {
+  font-size: clamp(2.6rem, 7vw, 4.4rem);
+  font-weight: 300; letter-spacing: -.022em; line-height: 1.02;
+  margin-bottom: .6rem;
+}
+.masthead h1 em { font-weight: 300; color: var(--accent); }
+.standfirst {
+  font-size: 1.25rem; color: var(--ink-2); font-weight: 300;
+  max-width: 40rem; line-height: 1.55;
+}
+.byline {
+  margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--rule);
+  display: flex; flex-wrap: wrap; gap: 1.5rem;
+}
+.byline div { display: flex; flex-direction: column; gap: .15rem; }
+.byline .v { font-size: .95rem; color: var(--ink-2); }
+
+/* ============================================================
+   HERO SPECIMEN — the thesis, delivered before any prose
+   ============================================================ */
+.hero { padding: 1rem 0 3.5rem; }
+.specimen-head {
+  display: flex; flex-wrap: wrap; align-items: baseline;
+  gap: .75rem 1.5rem; margin-bottom: 1.25rem;
+  padding-bottom: .75rem; border-bottom: 1px solid var(--rule);
+}
+.specimen-head h2 { font-size: 1.35rem; font-weight: 600; }
+.specimen-head .meta { font-size: .8rem; color: var(--ink-3); }
+
+.spec-grid {
+  display: grid; gap: 2px;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  background: var(--rule); border: 1px solid var(--rule);
+}
+.spec-cell {
+  background: var(--surface); padding: 1rem 1.1rem 1.15rem;
+  display: flex; flex-direction: column; gap: .6rem; min-width: 0;
+}
+.spec-cell.is-gt { background: var(--accent-soft); }
+.spec-label { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; }
+.spec-label .who {
+  font-family: "IBM Plex Mono", monospace; font-size: .7rem; font-weight: 600;
+  letter-spacing: .04em; color: var(--ink);
+}
+.chip {
+  display: inline-flex; align-items: center; gap: .3rem;
+  font-family: "IBM Plex Mono", monospace; font-size: .625rem; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase;
+  padding: .12rem .4rem; border-radius: 2px;
+  border: 1px solid currentColor; white-space: nowrap;
+}
+.chip::before {
+  content: ""; width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; flex: none;
+}
+.chip-good     { color: var(--good); }
+.chip-warning  { color: #8a6000; }
+.chip-serious  { color: #a84a22; }
+.chip-critical { color: var(--critical); }
+.chip-truth    { color: var(--accent); }
+:root[data-theme="dark"] .chip-warning { color: var(--warning); }
+:root[data-theme="dark"] .chip-serious { color: var(--serious); }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .chip-warning { color: var(--warning); }
+  :root:not([data-theme="light"]) .chip-serious { color: var(--serious); }
+}
+.spec-text {
+  font-size: .95rem; line-height: 1.5; color: var(--ink);
+  height: 8.5rem; overflow-y: auto; overflow-wrap: break-word;
+  padding-inline-end: .25rem;
+  /* the fade marks a cut as deliberate rather than broken, in page and in export */
+  -webkit-mask-image: linear-gradient(to bottom, #000 6.8rem, transparent 8.4rem);
+  mask-image: linear-gradient(to bottom, #000 6.8rem, transparent 8.4rem);
+  scrollbar-width: none;
+}
+.spec-text::-webkit-scrollbar { width: 0; height: 0; }
+.spec-text.heb { font-size: 1.05rem; line-height: 1.75; }
+.spec-text.latin { font-family: Spectral, serif; font-size: .85rem; color: var(--ink-2); }
+.spec-text.sheet {
+  font-family: "IBM Plex Mono", ui-monospace, monospace; font-size: .72rem;
+  line-height: 1.5; white-space: pre-wrap; color: var(--ink-2);
+}
+.spec-foot {
+  margin-top: auto; padding-top: .5rem; border-top: 1px solid var(--rule);
+  font-family: "IBM Plex Mono", monospace; font-size: .65rem;
+  color: var(--ink-3); display: flex; justify-content: space-between; gap: .5rem;
+}
+.hero-read {
+  margin-top: 1.25rem; font-size: .95rem; color: var(--ink-2);
+  max-width: 46rem; font-style: italic;
+}
+
+/* ============================================================
+   PROSE + APPARATUS RAIL
+   ============================================================ */
+.section { padding: 3.5rem 0 0; }
+.section-head { max-width: var(--measure); margin: 0 auto 1.75rem; }
+.section-head h2 {
+  font-size: 2rem; font-weight: 300; letter-spacing: -.015em; margin-top: .35rem;
+}
+.prose {
+  max-width: var(--measure); margin-inline: auto;
+  border-left: 1px solid var(--rule); padding-left: 1.5rem;
+}
+.prose > * + * { margin-top: 1.1em; }
+.prose h3 { font-size: 1.1rem; font-weight: 600; margin-top: 2rem; }
+.lede { font-size: 1.08rem; color: var(--ink-2); }
+.pull {
+  border-left: 2px solid var(--accent); padding: .1rem 0 .1rem 1.1rem;
+  font-size: 1.05rem; font-style: italic; color: var(--ink);
+}
+
+/* ============================================================
+   EXHIBIT CARDS
+   ============================================================ */
+.exhibit {
+  margin: 2.5rem auto; background: var(--surface);
+  border: 1px solid var(--rule); border-radius: 3px;
+  box-shadow: var(--shadow); overflow: hidden;
+}
+.ex-head {
+  padding: 1.15rem 1.5rem .9rem;
+  border-bottom: 1px solid var(--rule);
+  display: flex; flex-wrap: wrap; gap: .5rem 1.25rem; align-items: baseline;
+}
+.ex-head .ex-n {
+  font-family: "IBM Plex Mono", monospace; font-size: .6875rem; font-weight: 600;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--accent);
+}
+.ex-head h3 { font-size: 1.15rem; font-weight: 600; flex: 1 1 20rem; }
+.ex-body { padding: 1.25rem 1.5rem 1rem; }
+.ex-foot {
+  padding: .9rem 1.5rem 1.15rem; border-top: 1px solid var(--rule);
+  background: var(--surface-2);
+}
+.finding { font-size: .95rem; font-style: italic; color: var(--ink); }
+.source {
+  margin-top: .5rem; font-family: "IBM Plex Mono", monospace;
+  font-size: .65rem; color: var(--ink-3); line-height: 1.55; word-break: break-word;
+}
+
+/* controls */
+.controls {
+  display: flex; flex-wrap: wrap; gap: .4rem 1.25rem;
+  align-items: center; margin-bottom: 1rem;
+}
+.seg { display: inline-flex; border: 1px solid var(--rule-strong); border-radius: 3px; overflow: hidden; }
+.seg button {
+  font-family: "IBM Plex Mono", monospace; font-size: .7rem; font-weight: 500;
+  letter-spacing: .03em; padding: .3rem .7rem; border: 0; cursor: pointer;
+  background: var(--surface); color: var(--ink-2); line-height: 1.6;
+}
+.seg button + button { border-left: 1px solid var(--rule-strong); }
+.seg button[aria-pressed="true"] { background: var(--accent); color: var(--surface); }
+:root[data-theme="dark"] .seg button[aria-pressed="true"] { color: #0f1115; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .seg button[aria-pressed="true"] { color: #0f1115; }
+}
+.ctl-label {
+  font-family: "IBM Plex Mono", monospace; font-size: .65rem;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+}
+
+/* legend */
+.legend { display: flex; flex-wrap: wrap; gap: .4rem 1.1rem; margin-bottom: .9rem; }
+.legend span {
+  display: inline-flex; align-items: center; gap: .4rem;
+  font-family: "IBM Plex Mono", monospace; font-size: .7rem; color: var(--ink-2);
+}
+.legend i { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+
+.chart { width: 100%; overflow-x: auto; }
+.chart svg { display: block; }
+svg text { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+/* stat tiles */
+.stats { display: grid; gap: 1px; background: var(--rule); border: 1px solid var(--rule); }
+.stats.c3 { grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); }
+.stat { background: var(--surface); padding: .95rem 1.1rem; }
+.stat .v {
+  font-family: "IBM Plex Mono", monospace; font-size: 1.85rem; font-weight: 400;
+  letter-spacing: -.02em; line-height: 1.1; color: var(--ink);
+}
+.stat .v.crit { color: var(--critical); }
+.stat .k { margin-top: .3rem; font-size: .8rem; color: var(--ink-2); line-height: 1.4; }
+
+/* tables */
+.tbl-wrap { overflow-x: auto; border: 1px solid var(--rule); border-radius: 3px; }
+table { border-collapse: collapse; width: 100%; font-size: .82rem; }
+caption {
+  text-align: left; padding: .75rem 1rem; font-size: .8rem; color: var(--ink-2);
+  border-bottom: 1px solid var(--rule); background: var(--surface-2);
+}
+th, td {
+  padding: .45rem .8rem; text-align: right; white-space: nowrap;
+  border-bottom: 1px solid var(--rule);
+}
+th:first-child, td:first-child { text-align: left; }
+thead th {
+  font-family: "IBM Plex Mono", monospace; font-size: .65rem; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3);
+  background: var(--surface); position: sticky; top: 0; cursor: pointer;
+  border-bottom: 1px solid var(--rule-strong);
+}
+thead th[aria-sort="ascending"]::after  { content: " ↑"; color: var(--accent); }
+thead th[aria-sort="descending"]::after { content: " ↓"; color: var(--accent); }
+td { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+td:first-child { font-size: .75rem; color: var(--ink); }
+tbody tr:hover td { background: var(--surface-2); }
+.hl td { background: var(--accent-soft); }
+.hl:hover td { background: var(--accent-soft); }
+
+/* loop-collapse specimen */
+.loop-grid {
+  display: grid; gap: 2px; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr));
+  background: var(--rule); border: 1px solid var(--rule);
+}
+.loop-cell { background: var(--surface); padding: 1.05rem 1.15rem 1.15rem; min-width: 0; }
+.loop-cell > * + * { margin-top: .85rem; }
+.loop-head { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; }
+.loop-head .who {
+  font-family: "IBM Plex Mono", monospace; font-size: .72rem; font-weight: 600;
+  letter-spacing: .04em; color: var(--ink);
+}
+.loop-sub {
+  font-family: "IBM Plex Mono", monospace; font-size: .62rem;
+  letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3);
+  padding-bottom: .3rem; border-bottom: 1px solid var(--rule);
+}
+.loop-gt {
+  font-family: "Frank Ruhl Libre", serif; font-size: 1rem; line-height: 1.7;
+  color: var(--ink-2); max-height: 5.4rem; overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 3.9rem, transparent 5.3rem);
+  mask-image: linear-gradient(to bottom, #000 3.9rem, transparent 5.3rem);
+}
+/* the literal run: enough repetitions to SEE the loop, faded where it is cut */
+.loop-run {
+  font-family: "Frank Ruhl Libre", serif; font-size: 1rem; line-height: 1.85;
+  color: var(--ink); height: 11.1rem; overflow: hidden; overflow-wrap: break-word;
+  -webkit-mask-image: linear-gradient(to bottom, #000 8.4rem, transparent 11rem);
+  mask-image: linear-gradient(to bottom, #000 8.4rem, transparent 11rem);
+}
+.loop-pre { color: var(--ink); }
+.loop-none {
+  color: var(--ink-3); font-family: Spectral, serif; font-size: .82rem;
+}
+.loop-first { border-bottom: 1.5px solid var(--serious); }
+.loop-count {
+  display: flex; align-items: center; gap: .6rem; margin-top: .1rem;
+  font-family: "IBM Plex Mono", monospace; font-size: .72rem; font-weight: 600;
+  color: var(--serious); white-space: nowrap;
+}
+.loop-count::before { content: ""; height: 1.5px; width: 18px; background: var(--serious); flex: none; }
+.loop-count::after { content: ""; height: 1px; background: var(--serious); opacity: .35; flex: 1; }
+.loop-stats {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: .5rem;
+  padding-top: .75rem; border-top: 1px solid var(--rule);
+}
+.loop-stats div { display: flex; flex-direction: column; gap: .1rem; }
+.loop-stats .v {
+  font-family: "IBM Plex Mono", monospace; font-size: 1rem;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+}
+.loop-stats .v.bad { color: var(--critical); }
+.loop-stats .k {
+  font-family: "IBM Plex Mono", monospace; font-size: .56rem;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--ink-3);
+}
+
+/* tooltip */
+#tip {
+  position: fixed; z-index: 60; pointer-events: none; opacity: 0;
+  transition: opacity .09s ease; max-width: 20rem;
+  background: var(--ink); color: var(--ground);
+  border-radius: 3px; padding: .5rem .65rem;
+  font-family: "IBM Plex Mono", monospace; font-size: .7rem; line-height: 1.5;
+  box-shadow: 0 4px 16px rgba(0,0,0,.28);
+}
+#tip .t { font-weight: 600; display: block; margin-bottom: .15rem; }
+#tip .r { display: flex; justify-content: space-between; gap: 1rem; }
+
+footer {
+  margin-top: 4rem; padding: 2rem 0 3.5rem;
+  border-top: 1px solid var(--rule);
+}
+footer .col { font-size: .8rem; color: var(--ink-3); }
+footer p + p { margin-top: .6rem; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* export mode: one exhibit, doubled, for PNG capture */
+body.export { background: var(--ground); }
+body.export > *:not(.export-stage) { display: none !important; }
+.export-stage { padding: 24px; width: 1180px; }
+.export-stage .exhibit { margin: 0; }
+.export-stage .hero { padding: 0; }
+.export-stage .wrap { padding: 0; max-width: none; }
+</style>
+
+<div id="tip" role="status" aria-live="polite"></div>
+
+<header class="masthead">
+  <div class="wrap">
+    <div class="col">
+      <div class="rule-top"></div>
+      <div class="eyebrow">An investigation · Cairo Genizah &amp; Talmud Bavli</div>
+      <h1>Three ways to <em>misread</em></h1>
+      <p class="standfirst">
+        Nine exhibits on how vision-language models fail when asked to read
+        thousand-year-old Hebrew manuscripts — and why the most dangerous
+        failure is the one that looks like success.
+      </p>
+      <div class="byline">
+        <div><span class="eyebrow">Evidence</span><span class="v mono num">131 fragments · 65 pages · 18 systems</span></div>
+        <div><span class="eyebrow">Benchmark frozen</span><span class="v mono num">2026-07-24</span></div>
+        <div><span class="eyebrow">Scoring</span><span class="v mono">offline, recomputed from raw outputs</span></div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<section class="hero" id="ex-specimen">
+  <div class="wrap">
+    <div class="specimen-head">
+      <h2 class="mono">T-S 10J4.10</h2>
+      <span class="meta mono">Cambridge University Library · Judaeo-Arabic · Tier A · 878 letters of ground truth</span>
+    </div>
+    <div class="spec-grid" id="spec-grid"></div>
+    <p class="hero-read">
+      One fragment. Seven systems. Every panel below claims to be a transcription
+      of the same page — and only the scoring pipeline can tell you which ones are.
+    </p>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">The problem</div>
+      <h2>A number that ranks the shape of failure</h2>
+    </div>
+    <div class="prose">
+      <p class="lede">
+        Character error rate is the standard measure for transcription, and on this
+        material it is close to useless. A model that declines to answer, a model
+        that repeats one word four thousand times, and a model that invents a
+        fluent page of legal Hebrew all produce a CER — and the three numbers are
+        not comparable, because they are not measuring the same thing.
+      </p>
+      <p>
+        So the scoring pipeline here reports something else first: <strong>what the
+        model did</strong>. Every transcription is classified into one of four
+        behaviours before any error rate is computed, using thresholds that need no
+        ground truth to apply.
+      </p>
+      <p class="pull">
+        Abstention is honest. Looping is obvious. Hallucination is neither — it is
+        the failure that survives review, and the one that quietly poisons a corpus.
+      </p>
+      <p>
+        The classifier is deliberately blunt. Under 25 characters, or a refusal
+        phrase, counts as <strong>abstained</strong>. If a single repeated 12-gram
+        covers 45% or more of the output, that is <strong>loop collapse</strong>.
+        If fewer than 10% of the output's 5-grams appear anywhere in the ground
+        truth — in any order — the text is not on this page, and it is
+        <strong>hallucinated</strong>. Everything else is a
+        <strong>substantive</strong> attempt, and only there does CER get reported.
+      </p>
+      <p>
+        Order-independence matters more than it sounds. Genizah leaves are
+        palimpsests, margins, and interlinear insertions; the "correct" reading
+        order is an editorial decision. An n-gram precision score does not care
+        about order, so it stays meaningful where CER falls apart, and it answers
+        the only question that matters for hallucination: <em>is this text on the
+        page at all?</em>
+      </p>
+    </div>
+
+    <div class="exhibit" id="ex-taxonomy" style="max-width:72rem">
+      <div class="ex-head">
+        <span class="ex-n">Exhibit 1</span>
+        <h3>What sixteen systems actually did with 131 fragments</h3>
+      </div>
+      <div class="ex-body">
+        <div class="controls">
+          <span class="ctl-label">Sort by</span>
+          <div class="seg" id="tax-sort" role="group" aria-label="Sort systems">
+            <button data-k="substantive" aria-pressed="true">Read</button>
+            <button data-k="hallucinated" aria-pressed="false">Hallucinated</button>
+            <button data-k="abstained" aria-pressed="false">Abstained</button>
+            <button data-k="loop" aria-pressed="false">Looped</button>
+          </div>
+        </div>
+        <div class="legend" id="tax-legend"></div>
+        <div class="chart" id="tax-chart"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          For a year the top of this chart belonged to Kraken — a plain HTR engine
+          with no language model, reading 96.9% of the corpus while Claude Sonnet 5
+          hallucinated 67.9% of it: the engine that knew the least Hebrew invented
+          the least Hebrew. The v1.9a checkpoints were the first VLMs to beat it
+          on its own terms — 97.7% read, 0.8% invented — and v2.0a, the current
+          checkpoint, extends that to 98.5% read at the same 0.8%.
+        </p>
+        <p class="source">genizah_offline_summary.csv · 131 verified fragments · recomputed offline from raw model outputs · two single-fragment probes (Gemma 4, GPT-5.2) omitted from the chart, present in Table A</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        Abstention deserves its own specimen, because it turns out to be strangely
+        personal. On the same Judaeo-Arabic fragment, every frontier model refuses
+        in its own house style.
+      </p>
+    </div>
+
+    <div class="exhibit" id="ex-abstain" style="max-width:72rem">
+      <div class="ex-head">
+        <span class="ex-n">Specimen</span>
+        <h3>Abstention — four house styles of refusal</h3>
+      </div>
+      <div class="ex-body">
+        <div class="specimen-head" style="margin-bottom:1rem">
+          <h2 class="mono" style="font-size:1.1rem" id="abstain-frag"></h2>
+          <span class="meta mono" id="abstain-meta"></span>
+        </div>
+        <div class="spec-grid" id="abstain-grid"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          Four refusals, one page. GPT-5.6 Sol files an answer sheet — it read the
+          one legible header line, then entered [?] twenty-seven times. Claude Opus
+          writes a short essay on why it will not guess. Gemini Flash starts
+          working — "Line 1:" and two real words — then dissolves mid-thought.
+          Claude Sonnet 5 declines every word yet faithfully reproduces the page's
+          <em>layout</em> in placeholders, an empty form in the shape of the
+          manuscript. The temperament trade is real: Opus abstains on 28% of the
+          corpus and hallucinates 29%; its sibling Sonnet abstains on 8% and
+          hallucinates 68%. Refusal is what not-inventing looks like.
+        </p>
+        <p class="source">transcription_raw_outputs/Cambridge_CUL_T_S_10J12_4/&lt;model&gt;.txt · classifier: under 25 letters or a refusal phrase · all four outputs scored n-gram precision 0.000</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">Part one</div>
+      <h2>First, the easy corpus</h2>
+    </div>
+    <div class="prose">
+      <p class="lede">
+        Before the manuscripts, a sanity check on printed text. The Talmud Bavli in
+        the Vilna layout is typeset, high-contrast, and utterly regular — three
+        text bodies per page in three different faces: square type for the
+        <em>gemara</em>, Rashi script for the commentary, a third block for
+        <em>tosafot</em>. If a model cannot read this, it cannot read anything.
+      </p>
+      <p>Most of them could not read it.</p>
+    </div>
+
+    <div class="exhibit" id="ex-talmud">
+      <div class="ex-head">
+        <span class="ex-n">Exhibit 2</span>
+        <h3>Character error rate on printed Talmud pages</h3>
+      </div>
+      <div class="ex-body">
+        <div class="controls">
+          <span class="ctl-label">Statistic</span>
+          <div class="seg" id="tal-stat" role="group" aria-label="Statistic">
+            <button data-k="median" aria-pressed="true">Median</button>
+            <button data-k="mean" aria-pressed="false">Mean</button>
+          </div>
+        </div>
+        <div class="legend" id="tal-legend"></div>
+        <div class="chart" id="tal-chart"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          Base Qwen3-VL-8B does not merely do badly — at a median CER of 3.63 it
+          emits roughly four wrong characters for every correct one. Among systems
+          nobody trained for this, four now read the gemara: Gemini Pro at 0.014 on
+          the 19 pages its quota allowed, Cloud Vision at 0.033, Gemini Flash at
+          0.036, and Kraken at 0.040 — the last three at full coverage. Rashi
+          script defeats all four.
+        </p>
+        <p class="source">talmud_paper_summary.csv · 65 gemara / 65 rashi / 63 tosafot pages · log scale · hollow marker = coverage below 50%</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        "Collapse" is a polite word for what that actually looks like. Both pages
+        below are Rashi columns from the Vilna Berakhot — clean, typeset, entirely
+        legible. The base model was asked to transcribe them.
+      </p>
+    </div>
+
+    <div class="exhibit" id="ex-loop" style="max-width:72rem">
+      <div class="ex-head">
+        <span class="ex-n">Specimen</span>
+        <h3>Loop collapse — base Qwen3-VL-8B on two Rashi columns</h3>
+      </div>
+      <div class="ex-body">
+        <div class="loop-grid" id="loop-grid"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          Neither output is a misreading — it is generation with the page switched
+          off. The giveaway is the vowel points: Vilna Rashi type carries almost
+          none, and these two columns have two and zero respectively. The model
+          supplied 2,802 and 2,340. Every one of them was invented, which means the
+          text was never being read off the page at all.
+        </p>
+        <p class="source">transcription_raw_outputs/&lt;doc&gt;/qwen3_vl_8b_rashi.txt · CER from talmud_paper_long.csv · cycle detected as the smallest repeating token unit at the tail</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        One row in that table deserves a correction rather than a caption. Kraken
+        and Cloud Vision are not scored end-to-end: both read a Vilna page column
+        by column, interleaving the marginal apparatus with the three text bodies,
+        so their flat output is passed to a text LLM that extracts each section
+        before scoring. When that extractor returns nothing, the section scores a
+        CER of exactly 1.0 — and it returned nothing on 80% of Kraken's
+        page-sections and <strong>100% of Cloud Vision's</strong>. A number that
+        lands on exactly 1.000 for all 193 sections is not a measurement of
+        reading.
+      </p>
+      <p>
+        On the 13 pages per section that were processed before the cap hit, Kraken
+        reads gemara at a median CER of 0.041 — respectable, and roughly where
+        Gemini Flash sits. On the two pages where the unsegmented output still
+        survives on disk, Kraken's flat read captures 91% of the ground truth's
+        5-grams. The engine can read the page. The billing account could not pay
+        for the step that sorts what it read.
+      </p>
+    </div>
+
+    <div class="exhibit" id="ex-kraken-decomp" style="max-width:72rem">
+      <div class="ex-head">
+        <span class="ex-n">Note</span>
+        <h3>What Kraken's 1.0 was actually made of</h3>
+      </div>
+      <div class="ex-body">
+        <div class="legend" id="kd-legend"></div>
+        <div class="chart" id="kd-chart"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          One engine, one set of pages, five ways of scoring it. The reported 1.0
+          was a billing artefact; re-running the pipeline with the quota clear puts
+          Kraken at a median 0.040 on gemara at full coverage — better than every
+          frontier API that answered every page, and roughly 9× behind the
+          fine-tuned VLM. The layout-free row is the upper bound on its pure
+          reading: 0.014 when routing is not its problem. Between 0.014 and 0.290
+          lies everything Kraken does not know about what a Vilna page is.
+        </p>
+        <p class="source">talmud_paper_long.csv (reported, conditional) · re-run: W&amp;B talmud-kraken-reseg-20260821, 65/65 pages · layout-free figure computed from kraken_flat.txt on the 2 pages that retain it — 105 GT lines of 25+ letters, free end-gap alignment</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        Two things in that chart deserve suspicion, and the first one turned out to
+        be our fault rather than the models'. Gemini Pro's excellent gemara score is
+        computed over 19 of 65 pages — not because it refused the rest, but because
+        the project's Gemini billing cap was exhausted 21% of the way through the
+        run. Every image upload after that point returned
+        <code class="mono">429 … exceeded its monthly spending cap</code>, 310 times
+        in a row. The benchmark recorded that as missing coverage and moved on.
+      </p>
+      <p>
+        The same 429 took out the OCR pipeline, which routes its flat text through
+        a Gemini segmentation call: 702 failures, and with them 79% of the
+        section extractions for Kraken and Cloud Vision. Their reported CER of
+        1.000 is the sound a spending cap makes.
+      </p>
+      <p>
+        Kraken's row has since been re-run — 2026-08-21, quota restored, 65 of 65
+        pages, zero failures. It reads the median gemara page at
+        <strong>0.040</strong> rather than 1.000, at full coverage, which puts a
+        plain HTR engine ahead of every frontier API that attempted the whole
+        benchmark. Rashi and Tosafot land at 0.290 and 0.229: the segmenter still
+        struggles to pull the commentary blocks cleanly out of a column-interleaved
+        stream, and it fired its own quality guards 68 times doing it. Cloud
+        Vision's re-run followed on 2026-08-24 and completed the pair: 0.033 on
+        gemara — the best untrained gemara reading in the benchmark — against 0.74
+        on both Rashi-script sections, where Kraken's Hebrew-trained model keeps a
+        2.5× edge.
+      </p>
+      <p>
+        The second is the gap between mean and median — and that gap is the whole
+        argument about metrics.
+      </p>
+    </div>
+
+    <div class="exhibit" id="ex-meanmed">
+      <div class="ex-head">
+        <span class="ex-n">Exhibit 3</span>
+        <h3>Where the average goes to hide — gemara pages</h3>
+      </div>
+      <div class="ex-body">
+        <div class="legend" id="mm-legend"></div>
+        <div class="chart" id="mm-chart"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          Claude Opus 4.8 reads the median gemara page at CER 0.29 and averages
+          0.71. The mean is not describing reading accuracy; it is describing the
+          16 pages out of 65 where the decoder collapsed entirely.
+        </p>
+        <p class="source">talmud_paper_summary.csv · gemara section · bar spans median → mean</p>
+      </div>
+    </div>
+
+    <div class="exhibit" id="ex-talmud-final" style="max-width:72rem">
+      <div class="ex-head">
+        <span class="ex-n">Results</span>
+        <h3>Where the Talmud benchmark landed</h3>
+      </div>
+      <div class="ex-body">
+        <div class="legend" id="final-legend"></div>
+        <div class="chart" id="final-chart"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          The fine-tuned checkpoints cluster at 0.004–0.005 median CER on gemara —
+          the four are within noise of each other — and they are the only family
+          that clears the usable line on all three text bodies at full coverage.
+          v1.7 is the shipped flagship, chosen on its Genizah behaviour rather than
+          these scores. Gemini Pro is the closest general model at 0.014, and it
+          answered 19 of the 65 gemara pages; the rest of the frontier field sits
+          an order of magnitude behind an 8B open model. Both OCR rows are
+          now real measurements: Cloud Vision edges Kraken on gemara (0.033 vs
+          0.040) but collapses on Rashi script (0.74 vs 0.29) — generic OCR reads
+          the type, the Hebrew-trained HTR reads the script.
+        </p>
+        <p class="source">talmud_paper_summary.csv · median CER, log scale · 65 gemara / 65 rashi / 63 tosafot pages · hollow marker = coverage below 50%</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        Fine-tuning fixes the printed corpus, and it fixes it almost embarrassingly
+        fast. An 8-billion-parameter open model, LoRA-adapted on section crops from
+        the same corpus, goes from the worst system in the benchmark to the best.
+      </p>
+    </div>
+
+    <div class="exhibit" id="ex-arc">
+      <div class="ex-head">
+        <span class="ex-n">Exhibit 4</span>
+        <h3>Six checkpoints from collapse to state of the art</h3>
+      </div>
+      <div class="ex-body">
+        <div class="legend" id="arc-legend"></div>
+        <div class="chart" id="arc-chart"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          From median CER 3.63 to 0.005 on gemara — a 700× improvement that took
+          two training generations. At this point the problem looked solved.
+        </p>
+        <p class="source">talmud_paper_summary.csv · median CER, log scale · checkpoints in training order</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">Part two</div>
+      <h2>Then, the real thing</h2>
+    </div>
+    <div class="prose">
+      <p class="lede">
+        The Cairo Genizah is not typeset. It is a storeroom's worth of discarded
+        handwriting — legal deeds, letters, shopping lists, children's alphabets —
+        in a dozen hands, on damaged paper and parchment, much of it in
+        Judaeo-Arabic: Arabic language written in Hebrew letters. There is no
+        printing press anywhere in it.
+      </p>
+      <p>
+        Running the Talmud-trained models on 131 verified Genizah fragments is where
+        the investigation properly begins.
+      </p>
+    </div>
+
+    <div class="exhibit" id="ex-cliff">
+      <div class="ex-head">
+        <span class="ex-n">Exhibit 5</span>
+        <h3>The same models, both corpora</h3>
+      </div>
+      <div class="ex-body">
+        <div class="legend" id="cliff-legend"></div>
+        <div class="chart" id="cliff-chart"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          Every system degrades — the fine-tuned v1.7 by 81×, Gemini Pro by 31×,
+          Kraken by 10×, Cloud Vision by 19×. With both OCR rows re-run, no line
+          improves any more — the earlier "improvements" were billing artefacts at
+          the printed end, not manuscript competence. And the Genizah end is
+          flattered twice: it is CER conditional on a substantive attempt, and the
+          dot size shows how thin that subset gets — Claude Sonnet 5's 0.43 rests
+          on 22% of the corpus, Kraken's 0.41 on 98%.
+        </p>
+        <p class="source">talmud_paper_summary.csv (gemara median) → genizah_offline_summary.csv (cer_median_substantive) · log scale · different denominators — see note · systems below 25 substantive attempts held out (base Qwen3-VL n=2, v1.6·1100 n=18)</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        A drop was expected. What was not expected is <em>where</em> the drop
+        concentrates. Splitting the same 131 fragments by the language of the text
+        turns a general difficulty into a specific one.
+      </p>
+    </div>
+
+    <div class="exhibit" id="ex-script">
+      <div class="ex-head">
+        <span class="ex-n">Exhibit 6</span>
+        <h3>Hallucination rate by script and language</h3>
+      </div>
+      <div class="ex-body">
+        <div class="legend" id="script-legend"></div>
+        <div class="chart" id="script-chart"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          Every off-the-shelf language-model-bearing system hallucinates more on
+          Judaeo-Arabic than on Hebrew — Claude Sonnet 5 goes from 35% to 78%,
+          Gemini Pro from 17% to 51%. Kraken, which has no language prior to fall
+          back on, invents nothing at all on any of the 82 Judaeo-Arabic fragments —
+          and v2.0a, fine-tuned on this material, now matches it at zero. The failure is
+          not reading the letters; it is what the model does when the letters stop
+          forming words it expects.
+        </p>
+        <p class="source">genizah_offline_by_script.csv · cell = % of that bucket's fragments classified hallucinated · n shown per cell</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        This is the mechanism the whole investigation turns on. A vision-language
+        model reading a damaged manuscript is doing two things at once: recognising
+        letterforms, and predicting plausible text. When the letterforms are clear,
+        the two agree. When the ink has faded and the hand is unfamiliar and the
+        language is not the one the prior expects, the second process keeps running
+        without the first — and produces beautiful, well-formed, entirely invented
+        Hebrew.
+      </p>
+      <p class="pull">
+        The model is not lying about what it sees. It has stopped looking.
+      </p>
+      <h3>How literally that turned out to be true</h3>
+      <p>
+        Midway through this work, a check on the shipped adapters found something
+        that made the phrase uncomfortably precise. Every Qwen3-VL adapter through
+        v1.7 carried 108 vision-tower LoRA tensors whose <code
+        class="mono">lora_B</code> weights were <em>exactly zero</em>. Unsloth's
+        gradient-checkpointing hook never reached the vision tower, so the gradient
+        stopped at the projector. Every "vision fine-tune" up to that point had
+        trained the language half of the model and nothing else.
+      </p>
+      <p>
+        No metric caught it. Training loss fell. Validation CER improved. The
+        Talmud benchmark set records. Nothing short of reading the weights
+        themselves could see it — which is why the fix now ships with a script that
+        asserts, tensor by tensor, that the vision LoRA actually moved.
+      </p>
+    </div>
+
+    <div class="exhibit" id="ex-lora">
+      <div class="ex-head">
+        <span class="ex-n">Exhibit 7</span>
+        <h3>The same recipe, with the vision tower actually training</h3>
+      </div>
+      <div class="ex-body">
+        <div class="stats c3" id="lora-stats"></div>
+        <div class="legend" id="lora-legend" style="margin-top:1.25rem"></div>
+        <div class="chart" id="lora-chart"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          v1.8a and v1.8b are the same data, the same hyperparameters, the same
+          step count. The only difference is whether gradient reached the vision
+          tower. Hallucination falls by more than half and n-gram precision
+          multiplies by 2.6 — the model starts looking, and stops guessing.
+        </p>
+        <p class="source">genizah_offline_summary.csv · v18a_step700 (vision frozen) vs v18b_step700 (vision trained) · verify_vision_lora.py</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="exhibit" id="ex-genizah-final" style="max-width:72rem">
+      <div class="ex-head">
+        <span class="ex-n">Results</span>
+        <h3>Where the Genizah benchmark landed</h3>
+      </div>
+      <div class="ex-body">
+        <div class="legend" id="gzf-legend"></div>
+        <div class="chart" id="gzf-chart"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          Aligned F1 by script bucket, the reading-quality counterpart to the
+          behaviour chart. The v1.9a checkpoints were the first systems of any
+          kind to pair a Kraken-level read rate with VLM-level accuracy; v2.0a,
+          the current checkpoint, pushes that to 98.5% of fragments attempted,
+          0.8% hallucinated, and a median F1 of 0.875 (v1.9a: 0.862), with the
+          best F1 on four of the five script buckets including Judaeo-Arabic.
+          Two generations ago the best open model hallucinated 30% of this
+          corpus.
+        </p>
+        <p class="source">genizah_offline_summary.csv + by_script.csv · median aligned F1 per bucket · hollow marker = under half that bucket read substantively · Aramaic (n=6) and Arabic script (n=1) omitted · scored 2026-08-21 · v2.0a scored 2026-09-05</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        One more lens before going down to the letter: plain character error rate,
+        every model, every document it produced. CER's known fault is on display
+        here — each model computes it on the exam it chose to sit — so every row
+        carries its own <em>n</em>.
+      </p>
+    </div>
+
+    <div class="exhibit" id="ex-cer" style="max-width:72rem">
+      <div class="ex-head">
+        <span class="ex-n">Results</span>
+        <h3>CER, in detail — every model, every document</h3>
+      </div>
+      <div class="ex-body">
+        <div class="chart" id="cer-chart"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding" id="cer-finding">
+          v2.0a · 1500 posts the best Genizah CER of any system — median 0.179 —
+          and it is the only sub-0.2 median computed on essentially the whole
+          benchmark (130 of 131 fragments). Every frontier median above it hides
+          survivorship: Claude Opus's 0.416 is scored on the 40% of fragments it
+          agreed to read, Sonnet's on 22%. Kraken raw is the only non-fine-tuned
+          system pairing near-full coverage with a sub-0.35 median. On the printed
+          Talmud the fine-tunes pin the distribution against zero (median 0.010)
+          while the base model leaves the chart entirely — 190 of 193 pages beyond
+          CER 1.0, the loop-collapse signature measured in character arithmetic.
+          A number computed after each model picks its own exam is not one number.
+        </p>
+        <p class="source">genizah_offline_long.csv (strict CER, substantive outputs only) + talmud_paper_long.csv (strict CER, all outputs, 3 sections × 65 pages) · one dot per document · † partial coverage · dots beyond 1.0 pinned in the ≥1 lane</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">Part three</div>
+      <h2>Down at the letter</h2>
+    </div>
+    <div class="prose">
+      <p class="lede">
+        Strip away abstention, looping and hallucination, and look only at the
+        transcriptions that genuinely tried. What is left is the honest error — and
+        it is not distributed randomly across the alphabet.
+      </p>
+      <p>
+        Hebrew has several pairs of letters that differ by a stroke or a corner.
+        <span class="heb" dir="rtl" style="font-size:1.15em">ד</span> and
+        <span class="heb" dir="rtl" style="font-size:1.15em">ר</span> differ by
+        whether the top-right corner is square or rounded.
+        <span class="heb" dir="rtl" style="font-size:1.15em">ב</span> and
+        <span class="heb" dir="rtl" style="font-size:1.15em">כ</span> differ by a
+        heel. In a printed book, these are unambiguous. In a hurried eleventh-century
+        cursive hand, they routinely are not — and a probe that aligns each
+        transcription against the ground truth can count exactly how often each pair
+        gets swapped.
+      </p>
+    </div>
+
+    <div class="exhibit" id="ex-conf">
+      <div class="ex-head">
+        <span class="ex-n">Exhibit 8</span>
+        <h3>Confusable-pair swap rates: manuscript hand vs printed type</h3>
+      </div>
+      <div class="ex-body">
+        <div class="controls">
+          <span class="ctl-label">Corpus</span>
+          <div class="seg" id="conf-corpus" role="group" aria-label="Corpus">
+            <button data-k="genizah" aria-pressed="true">Genizah manuscript</button>
+            <button data-k="talmud" aria-pressed="false">Printed Talmud</button>
+          </div>
+        </div>
+        <div class="legend" id="conf-legend"></div>
+        <div class="chart" id="conf-chart"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          The identical model swaps <span class="heb" dir="rtl">ד</span>/<span class="heb" dir="rtl">ר</span>
+          on 6.65% of occurrences in manuscript hands and 0.036% in printed type —
+          a factor of 185. Across all twenty tracked pairs the gap is 36×. Hebrew
+          is not the hard part; handwriting is.
+        </p>
+        <p class="source">confusable_pairs.csv · alignment-based substitution counts, pooled within corpus · rate = swaps ÷ occurrences of either letter</p>
+      </div>
+    </div>
+
+    <div class="prose">
+      <p>
+        Kraken is the quiet winner here too. Pooled across the twenty tracked pairs
+        on Genizah material it swaps at 1.58%, against 1.83% for the best
+        vision-language model and 2.60% for the generation before it. An engine
+        with no idea what the words mean discriminates letterforms slightly better
+        than one that does — and when it fails, it fails visibly, into nonsense
+        rather than into fluency.
+      </p>
+      <p>
+        Which is the practical conclusion of the whole investigation. The
+        language prior that makes a VLM good at printed Talmud is the same
+        faculty that makes it dangerous on a damaged Judaeo-Arabic deed. The two
+        cannot be separated by prompting, and they were not separated by
+        fine-tuning until the vision tower was genuinely in the loop.
+      </p>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">Provenance</div>
+      <h2>What the benchmark had to survive first</h2>
+    </div>
+    <div class="prose">
+      <p class="lede">
+        None of the above means anything if the ground truth is wrong. Published
+        Genizah transcriptions are editions, not OCR targets: they carry
+        reconstructions of lost text in brackets, they sometimes describe a
+        different leaf than the image attached to them, and a scraping error can
+        duplicate a passage so that a perfect transcription scores as half wrong.
+      </p>
+    </div>
+
+    <div class="exhibit" id="ex-bench">
+      <div class="ex-head">
+        <span class="ex-n">Exhibit 9</span>
+        <h3>From 5,714 candidate documents to 131 admissible fragments</h3>
+      </div>
+      <div class="ex-body">
+        <div class="stats c3" id="bench-stats"></div>
+        <div class="chart" id="bench-chart" style="margin-top:1.5rem"></div>
+      </div>
+      <div class="ex-foot">
+        <p class="finding">
+          Fourteen fragments needed duplicated ground truth repaired; nineteen were
+          dropped outright because no system's reading overlapped the transcription
+          enough to believe they described the same leaf. The survivors are disjoint
+          from every training split, and each one's editorial reconstructions are
+          rendered as gaps rather than as text a model is expected to invent.
+        </p>
+        <p class="source">genizah_test_v1_verified.json · frozen 2026-07-24 · criteria and audit lists recorded in the artifact itself</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="section">
+  <div class="wrap">
+    <div class="section-head">
+      <div class="eyebrow">Appendix</div>
+      <h2>The full tables</h2>
+    </div>
+    <div class="prose">
+      <p>
+        Every figure above is recomputed from these. Click a column head to sort.
+      </p>
+    </div>
+    <div class="exhibit" style="max-width:72rem">
+      <div class="ex-head">
+        <span class="ex-n">Table A</span>
+        <h3>Genizah behaviour — 131 verified fragments</h3>
+      </div>
+      <div class="ex-body"><div class="tbl-wrap" id="tbl-genizah"></div></div>
+    </div>
+    <div class="exhibit" style="max-width:72rem">
+      <div class="ex-head">
+        <span class="ex-n">Table B</span>
+        <h3>Talmud Bavli — 65 pages, three sections</h3>
+      </div>
+      <div class="ex-body"><div class="tbl-wrap" id="tbl-talmud"></div></div>
+    </div>
+    <div class="exhibit" style="max-width:72rem">
+      <div class="ex-head">
+        <span class="ex-n">Table C</span>
+        <h3>Cross-generation forgetting probe</h3>
+      </div>
+      <div class="ex-body"><div class="tbl-wrap" id="tbl-forget"></div></div>
+      <div class="ex-foot">
+        <p class="finding">
+          A control run on the corpus the models were trained on. All four
+          generations still read full Talmud pages and synthetic Rashi renders
+          essentially perfectly; all four fail the isolated-crop task at a median
+          CER near 0.73. Whatever v1.8b gained on manuscripts, it did not lose on
+          print.
+        </p>
+        <p class="source">forgetting_probe.jsonl · seeded sample, 50 generations per model · LM Studio harness</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap"><div class="col">
+    <p><strong>Method.</strong> All scores are recomputed offline from each
+    system's raw saved output against repaired ground truth, so a correction to
+    the ground truth never requires re-running a model. Failure-mode thresholds:
+    abstention below 25 characters or on a refusal phrase; loop collapse at a
+    repeated-12-gram coverage of 0.45; hallucination below 0.10 order-independent
+    5-gram precision. CER is reported only for substantive attempts and never as a
+    bare mean.</p>
+    <p><strong>Caveats.</strong> Coverage differs by system, and not always for
+    reasons that reflect the model. Genuine failures — decode-time token caps,
+    timeouts, recitation blocks — are deliberately counted as failures here, since
+    a model that cannot finish a page has failed it; a truncated generation is kept
+    and scored rather than dropped. A billing cap is not that. In the 2026-07-13
+    run an exhausted Gemini spending cap produced 1,015 of the 1,084 recorded
+    failures: it cost Gemini Pro roughly 35 of 65 pages outright and degraded 30
+    more, and it destroyed the Kraken and Cloud Vision section scores outright,
+    since their pipeline routes through a Gemini segmentation call. Kraken
+    (2026-08-21) and Gemini Flash (2026-08-23, now 98.5–100% coverage) have since
+    been re-run with the cap clear, and Cloud Vision followed on 2026-08-24; only Gemini Pro remains pending. GPT-5.6 Sol's
+    30.8% is neither — it is a deliberate 20-page sample. Three different things,
+    one coverage column.
+    Talmud and Genizah CER are not the same denominator and the cross-corpus
+    exhibit is a directional comparison, not a like-for-like one. The
+    unseen-font generalisation probe was still running when these figures were
+    frozen and is not reported here.</p>
+    <p class="mono" style="margin-top:1rem">Cairo Genizah AI project · figures generated 2026-08-20</p>
+  </div></div>
+</footer>
+
+<script>
+const DATA = /*__DATA__*/;
+
+/* ---------- helpers ---------- */
+const NS = "http://www.w3.org/2000/svg";
+const el = (t, a = {}, kids = []) => {
+  const n = document.createElementNS(NS, t);
+  for (const k in a) if (a[k] !== null && a[k] !== undefined) n.setAttribute(k, a[k]);
+  (Array.isArray(kids) ? kids : [kids]).forEach(c =>
+    n.appendChild(typeof c === "string" ? document.createTextNode(c) : c));
+  return n;
+};
+const pct = v => (v * 100).toFixed(1) + "%";
+const fmt = v => v >= 100 ? v.toFixed(0) : v >= 10 ? v.toFixed(1) : v >= 1 ? v.toFixed(2) : v.toFixed(3);
+
+const LABELS = {
+  kraken_raw: "Kraken HTR (raw)", kraken_seg: "Kraken HTR (segmented)",
+  claude_opus_4_8: "Claude Opus 4.8", claude_sonnet_5: "Claude Sonnet 5",
+  gemini_pro: "Gemini Pro", gemini_flash: "Gemini Flash",
+  gpt_5_2: "GPT-5.2", gpt_5_6_sol: "GPT-5.6 Sol",
+  gemma_4_31b_it_mlx: "Gemma 4 31B",
+  vision_ocr_raw: "Cloud Vision OCR (raw)", vision_ocr_seg: "Cloud Vision OCR (seg)",
+  qwen3_vl_8b: "Qwen3-VL-8B (base)",
+  qwen3_vl_8b_heb_rashi_v15: "Hebrew v1.5",
+  qwen3_vl_8b_heb_v16_step600: "Hebrew v1.6 · 600",
+  qwen3_vl_8b_heb_v16_step1000: "Hebrew v1.6 · 1000",
+  qwen3_vl_8b_heb_v16_step1100: "Hebrew v1.6 · 1100",
+  qwen3_vl_8b_heb_v17_step800: "Hebrew v1.7 · 800",
+  qwen3_vl_8b_heb_v18a_step700: "Hebrew v1.8a · vision frozen",
+  qwen3_vl_8b_heb_v18b_step700: "Hebrew v1.8b · vision trained",
+  qwen3_vl_8b_heb_v18b_step400: "Hebrew v1.8b · 400",
+  qwen3_vl_8b_heb_v18b_sections: "Hebrew v1.8b · sectioned",
+  qwen3_vl_8b_heb_v19a_step700: "Hebrew v1.9a · 700",
+  qwen3_vl_8b_heb_v19a_step1300: "Hebrew v1.9a · 1300",
+  qwen3_vl_8b_heb_v19b_step1300: "Hebrew v1.9b · 1300",
+  qwen3_vl_8b_heb_v19c_step1200: "Hebrew v1.9c · 1200",
+  qwen3_vl_8b_heb_v20a_step1500: "Hebrew v2.0a · 1500",
+  qwen3_vl_8b_heb_v20a_step1800: "Hebrew v2.0a · 1800",
+  "qwen3-vl-8b-heb-v16-step1000": "Hebrew v1.6 · 1000",
+  "qwen3-vl-8b-heb-v17-step800": "Hebrew v1.7 · 800",
+  "qwen3-vl-8b-heb-v18a-step700": "Hebrew v1.8a · vision frozen",
+  "qwen3-vl-8b-heb-v18b-step700": "Hebrew v1.8b · vision trained"
+};
+const lbl = m => LABELS[m] || m;
+
+const BUCKETS = {
+  judaeo_arabic: "Judaeo-Arabic", hebrew: "Hebrew", aramaic: "Aramaic",
+  arabic_script: "Arabic script", untagged: "Untagged"
+};
+
+const MODES = [
+  { k: "substantive",  t: "Read substantively", c: "var(--good)" },
+  { k: "abstained",    t: "Abstained",          c: "var(--warning)" },
+  { k: "loop",         t: "Loop collapse",      c: "var(--serious)" },
+  { k: "hallucinated", t: "Hallucinated",       c: "var(--critical)" }
+];
+
+/* ---------- tooltip ---------- */
+const tip = document.getElementById("tip");
+function showTip(e, html) {
+  tip.innerHTML = html;
+  tip.style.opacity = 1;
+  const r = tip.getBoundingClientRect();
+  let x = e.clientX + 14, y = e.clientY + 14;
+  if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14;
+  if (y + r.height > innerHeight - 8) y = e.clientY - r.height - 14;
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+}
+const hideTip = () => { tip.style.opacity = 0; };
+function hover(node, html) {
+  node.addEventListener("mousemove", e => showTip(e, html));
+  node.addEventListener("mouseleave", hideTip);
+  node.style.cursor = "crosshair";
+}
+function legend(id, items) {
+  document.getElementById(id).innerHTML = items.map(i =>
+    `<span><i style="background:${i.c}"></i>${i.t}</span>`).join("");
+}
+
+/* ---------- log scale ---------- */
+const mkLog = (lo, hi, x0, x1) => {
+  const a = Math.log10(lo), b = Math.log10(hi);
+  return v => x0 + (Math.log10(Math.max(v, lo)) - a) / (b - a) * (x1 - x0);
+};
+function logTicks(lo, hi) {
+  const t = [];
+  for (let e = Math.floor(Math.log10(lo)); e <= Math.ceil(Math.log10(hi)); e++) {
+    const v = Math.pow(10, e);
+    if (v >= lo && v <= hi) t.push(v);
+  }
+  return t;
+}
+
+/* ============================================================
+   HERO SPECIMEN
+   ============================================================ */
+(function () {
+  const s = DATA.specimen;
+  const order = ["kraken_raw", "qwen3_vl_8b_heb_v18b_step700", "claude_sonnet_5",
+                 "qwen3_vl_8b", "claude_opus_4_8", "gpt_5_6_sol", "gemini_flash"];
+  const modeChip = {
+    substantive: ["chip-good", "read"], hallucinated: ["chip-critical", "hallucinated"],
+    abstained: ["chip-warning", "abstained"], loop_collapse: ["chip-serious", "loop collapse"]
+  };
+  const isLatin = t => (t.match(/[A-Za-z]/g) || []).length > t.length * 0.3;
+  const trunc = (t, n) => t.length > n ? t.slice(0, n) + " …" : t;
+
+  let html = `<div class="spec-cell is-gt">
+      <div class="spec-label"><span class="who">GROUND TRUTH</span>
+        <span class="chip chip-truth">verified</span></div>
+      <div class="spec-text heb" dir="rtl">${trunc(s.ground_truth, 400)}</div>
+      <div class="spec-foot"><span>editorial transcription</span><span class="num">${s.gt_letters} letters</span></div>
+    </div>`;
+
+  order.forEach(m => {
+    const d = s.models[m]; if (!d) return;
+    const [cls, word] = modeChip[d.mode] || ["chip-good", d.mode];
+    const latin = isLatin(d.text || "");
+    html += `<div class="spec-cell">
+      <div class="spec-label"><span class="who">${lbl(m).toUpperCase()}</span>
+        <span class="chip ${cls}">${word}</span></div>
+      <div class="spec-text ${latin ? "latin" : "heb"}" ${latin ? "" : 'dir="rtl"'}>${
+        trunc((d.text || "").replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c])), 400)}</div>
+      <div class="spec-foot"><span>n-gram prec.</span><span class="num">${d.ngramP.toFixed(3)}</span></div>
+    </div>`;
+  });
+  document.getElementById("spec-grid").innerHTML = html;
+})();
+
+/* ============================================================
+   RESULTS — CER distributions, both corpora
+   ============================================================ */
+(function () {
+  const C = DATA.cer; if (!C) return;
+  const NS = "http://www.w3.org/2000/svg";
+  const FAM = { ft: "var(--s1)", vlm: "var(--s2)", ocr: "var(--s3)" };
+  const FAMN = { ft: "Fine-tuned Qwen3-VL-8B", vlm: "Frontier VLM", ocr: "OCR / HTR" };
+  const W = 1190, GUT = 248, X0 = 258, X1 = 946, OV0 = 956, OV1 = 996, MEDX = 1072, NX = 1186, RH = 29;
+  const x = v => X0 + Math.min(v, 1) * (X1 - X0);
+  const jit = i => (((i * 2654435761) % 1000) / 1000 - 0.5);
+  const host = document.getElementById("cer-chart");
+
+  function panel(title, sub, rows, nfmt) {
+    const H = 46 + rows.length * RH + 34;
+    const svg = document.createElementNS(NS, "svg");
+    svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+    svg.style.cssText = "width:100%;height:auto;display:block;margin-bottom:1.2rem";
+    let g = `<text x="0" y="15" fill="var(--ink-1)" font-family="'IBM Plex Mono',monospace" font-size="13" font-weight="600">${title}</text>`;
+    g += `<text x="0" y="32" fill="var(--ink-3)" font-family="'IBM Plex Mono',monospace" font-size="10.5">${sub}</text>`;
+    const top = 46, bot = top + rows.length * RH;
+    for (const t of [0, 0.25, 0.5, 0.75, 1]) {
+      g += `<line x1="${x(t)}" y1="${top}" x2="${x(t)}" y2="${bot}" stroke="var(--ink-3)" stroke-opacity="${t === 0 || t === 1 ? .4 : .16}" stroke-width="1"/>`;
+      g += `<text x="${x(t)}" y="${bot + 16}" fill="var(--ink-3)" font-family="'IBM Plex Mono',monospace" font-size="10" text-anchor="middle">${t}</text>`;
+    }
+    g += `<rect x="${OV0}" y="${top}" width="${OV1 - OV0}" height="${bot - top}" fill="var(--ink-3)" fill-opacity=".06"/>`;
+    g += `<text x="${(OV0 + OV1) / 2}" y="${bot + 16}" fill="var(--ink-3)" font-family="'IBM Plex Mono',monospace" font-size="10" text-anchor="middle">≥1</text>`;
+    g += `<text x="${MEDX}" y="${top - 6}" fill="var(--ink-3)" font-family="'IBM Plex Mono',monospace" font-size="9.5" text-anchor="end">median</text>`;
+    g += `<text x="${NX}" y="${top - 6}" fill="var(--ink-3)" font-family="'IBM Plex Mono',monospace" font-size="9.5" text-anchor="end">n</text>`;
+    rows.forEach((r, ri) => {
+      const cy = top + ri * RH + RH / 2, col = FAM[r.fam];
+      const name = lbl(r.m) + (r.partial ? " †" : "");
+      g += `<text x="${GUT}" y="${cy + 3.5}" fill="var(--ink-2)" font-family="'IBM Plex Mono',monospace" font-size="11.5" text-anchor="end">${name}</text>`;
+      if (r.med === null) return;
+      if (r.dots.length >= 4) g += `<rect x="${x(r.q1)}" y="${cy - 5}" width="${Math.max(x(r.q3) - x(r.q1), 1.5)}" height="10" rx="2" fill="${col}" fill-opacity=".14"/>`;
+      let dots = "";
+      r.dots.forEach((v, i) => {
+        const inOv = v > 1;
+        const dx = inOv ? OV0 + 4 + (((i * 48271) % 1000) / 1000) * (OV1 - OV0 - 8) : x(v);
+        dots += `<circle cx="${dx.toFixed(1)}" cy="${(cy + jit(i + ri * 977) * 13).toFixed(1)}" r="2.4" fill="${col}" fill-opacity=".42"><title>${v}</title></circle>`;
+      });
+      g += dots;
+      if (r.over > 20) g += `<text x="${(OV0 + OV1) / 2}" y="${cy + 3.5}" fill="var(--ink-1)" font-family="'IBM Plex Mono',monospace" font-size="9.5" font-weight="600" text-anchor="middle">${r.over}</text>`;
+      g += `<line x1="${x(r.med)}" y1="${cy - 8}" x2="${x(r.med)}" y2="${cy + 8}" stroke="var(--ink-1)" stroke-width="2.4"><title>median ${r.med}</title></line>`;
+      g += `<text x="${MEDX}" y="${cy + 3.5}" fill="var(--ink-1)" font-family="'IBM Plex Mono',monospace" font-size="11" text-anchor="end">${r.med.toFixed(3)}</text>`;
+      g += `<text x="${NX}" y="${cy + 3.5}" fill="var(--ink-3)" font-family="'IBM Plex Mono',monospace" font-size="10.5" text-anchor="end">${nfmt(r)}</text>`;
+    });
+    svg.innerHTML = g;
+    host.appendChild(svg);
+  }
+  const lg = document.createElementNS(NS, "svg");
+  lg.setAttribute("viewBox", `0 0 ${W} 24`);
+  lg.style.cssText = "width:100%;height:auto;display:block;margin-bottom:.4rem";
+  let lgh = "";
+  const LX = { ft: 6, vlm: 236, ocr: 396 };
+  for (const f of ["ft", "vlm", "ocr"]) {
+    lgh += `<circle cx="${LX[f]}" cy="11" r="4.5" fill="${FAM[f]}"/><text x="${LX[f] + 10}" y="15" fill="var(--ink-2)" font-family="'IBM Plex Mono',monospace" font-size="11">${FAMN[f]}</text>`;
+  }
+  lgh += `<rect x="526" y="3" width="3" height="16" fill="var(--ink-1)"/><text x="536" y="15" fill="var(--ink-2)" font-family="'IBM Plex Mono',monospace" font-size="11">median</text>`;
+  lg.innerHTML = lgh;
+  host.appendChild(lg);
+  panel("CAIRO GENIZAH — manuscript", "strict CER per fragment, substantive outputs only · sorted by median",
+    C.genizah, r => `${r.n_sub}/${r.n}`);
+  panel("TALMUD — print", "strict CER per section-document, all outputs · 65 pages × gemara, rashi, tosafot",
+    C.talmud, r => `${r.n}`);
+})();
+
+/* ============================================================
+   SPECIMEN — abstention house styles
+   ============================================================ */
+(function () {
+  const A = DATA.abstain; if (!A) return;
+  const esc = t => t.replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+  document.getElementById("abstain-frag").textContent = A.frag;
+  document.getElementById("abstain-meta").textContent =
+    `Cambridge University Library · ${A.script} · Tier ${A.tier} · ${A.gt_letters.toLocaleString()} letters of ground truth — every panel below is a refusal`;
+  document.getElementById("abstain-grid").innerHTML = A.cases.map(c => {
+    const latin = c.model === "claude_opus_4_8";
+    return `<div class="spec-cell">
+      <div class="spec-label"><span class="who">${lbl(c.model).toUpperCase()}</span>
+        <span class="chip chip-warning">abstained</span></div>
+      <div class="spec-label" style="margin-top:-.3rem"><span style="font-family:Spectral,serif;font-style:italic;font-size:.8rem;color:var(--ink-3)">${c.style}</span></div>
+      <div class="spec-text ${latin ? "latin" : "sheet"}">${esc(c.text)}</div>
+      <div class="spec-foot"><span>abstains on ${(c.abstain_rate*100).toFixed(0)}% of corpus</span><span class="num">${c.chars.toLocaleString()} chars</span></div>
+    </div>`;
+  }).join("");
+})();
+
+/* ============================================================
+   SPECIMEN — loop collapse on Rashi
+   ============================================================ */
+(function () {
+  const esc = s => s.replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+  /* Emit enough repetitions to overfill the six-line window, so the reader sees
+     the loop as texture; the box clips and fades, the caption carries the total. */
+  const runOf = d => {
+    const out = [];
+    let chars = 0;
+    for (let i = 1; i < d.repeats && chars < 760; i++) { out.push(d.unit); chars += d.unit.length + 1; }
+    return out.join(" ");
+  };
+  const cap = d => {
+    const n = d.unit.split(/\s+/).length;
+    const what = n === 1 ? "the same word" : `the same ${n} words`;
+    return `${what} × ${d.repeats.toLocaleString()} — to the token cap`;
+  };
+  const CASES = [
+    { doc: "01_10_page_001",  title: "BERAKHOT 10a · RASHI",  cer: 5.36 },
+    { doc: "01_10b_page_001", title: "BERAKHOT 10b · RASHI", cer: 4.30 }
+  ];
+  const html = CASES.map(c => {
+    const d = DATA.loop[c.doc]; if (!d) return "";
+    const ratio = d.out_chars / d.gt_chars;
+    return `<div class="loop-cell">
+      <div class="loop-head">
+        <span class="who">${c.title}</span>
+        <span class="chip chip-serious">loop collapse</span>
+      </div>
+      <div class="loop-sub">On the page — printed Rashi, ${d.gt_chars.toLocaleString()} characters</div>
+      <div class="loop-gt" dir="rtl">${esc(d.gt.slice(0, 260))}</div>
+      <div class="loop-sub">What the model wrote</div>
+      <div class="loop-run" dir="rtl">${
+        d.preamble ? `<span class="loop-pre">${esc(d.preamble)} </span>`
+                   : `<span class="loop-none">no preamble — the loop starts at the first token</span><br>`
+      }<span class="loop-first">${esc(d.unit)}</span> ${esc(runOf(d))}</div>
+      <div class="loop-count">${cap(d)}</div>
+      <div class="loop-stats">
+        <div><span class="v">${d.out_chars.toLocaleString()}</span><span class="k">chars out</span></div>
+        <div><span class="v">${ratio.toFixed(1)}×</span><span class="k">the page</span></div>
+        <div><span class="v bad">${d.out_nikkud.toLocaleString()}</span><span class="k">vowel pts (page: ${d.gt_nikkud})</span></div>
+        <div><span class="v">${c.cer.toFixed(2)}</span><span class="k">CER</span></div>
+      </div>
+    </div>`;
+  }).join("");
+  document.getElementById("loop-grid").innerHTML = html;
+})();
+
+/* ============================================================
+   EXHIBIT 1 — failure taxonomy
+   ============================================================ */
+(function () {
+  legend("tax-legend", MODES.map(m => ({ c: m.c, t: m.t })));
+  let sortKey = "substantive";
+
+  function draw() {
+    const rows = DATA.genizah.filter(r => r.n >= 50)
+      .slice().sort((a, b) => b[sortKey] - a[sortKey]);
+    const W = 1040, padL = 210, padR = 56, rowH = 26, top = 30;
+    const H = top + rows.length * rowH + 16;
+    const x0 = padL, x1 = W - padR;
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+      "aria-label": "Stacked share of failure modes per system" });
+
+    [0, .25, .5, .75, 1].forEach(t => {
+      const x = x0 + t * (x1 - x0);
+      svg.appendChild(el("line", { x1: x, x2: x, y1: top - 8, y2: H - 16,
+        stroke: "var(--grid)", "stroke-width": 1 }));
+      svg.appendChild(el("text", { x, y: top - 14, "text-anchor": "middle",
+        "font-size": 10, fill: "var(--ink-3)" }, (t * 100) + "%"));
+    });
+
+    rows.forEach((r, i) => {
+      const y = top + i * rowH;
+      svg.appendChild(el("text", { x: padL - 12, y: y + 13, "text-anchor": "end",
+        "font-size": 11, fill: "var(--ink)" }, lbl(r.model)));
+      let acc = 0;
+      MODES.forEach(m => {
+        const v = r[m.k]; if (v <= 0) return;
+        const xa = x0 + acc * (x1 - x0), w = v * (x1 - x0);
+        const rect = el("rect", { x: xa, y: y + 3, width: Math.max(w - 2, .5), height: rowH - 9,
+          fill: m.c, rx: 1.5 });
+        hover(rect, `<span class="t">${lbl(r.model)}</span>
+          <span class="r"><span>${m.t}</span><span>${pct(v)}</span></span>
+          <span class="r"><span>fragments</span><span>${Math.round(v * r.n)} / ${r.n}</span></span>`);
+        svg.appendChild(rect);
+        if (w > 52) svg.appendChild(el("text", { x: xa + w / 2 - 1, y: y + 17,
+          "text-anchor": "middle", "font-size": 9.5, "font-weight": 600,
+          fill: (m.k === "abstained" || m.k === "loop") ? "#3a2a00" : "#fff",
+          "pointer-events": "none" },
+          Math.round(v * 100) + "%"));
+        acc += v;
+      });
+      svg.appendChild(el("text", { x: x1 + 8, y: y + 13, "font-size": 9.5,
+        fill: "var(--ink-3)" }, "n=" + r.n));
+    });
+    const c = document.getElementById("tax-chart");
+    c.innerHTML = ""; c.appendChild(svg);
+  }
+  document.querySelectorAll("#tax-sort button").forEach(b =>
+    b.addEventListener("click", () => {
+      document.querySelectorAll("#tax-sort button").forEach(o =>
+        o.setAttribute("aria-pressed", o === b));
+      sortKey = b.dataset.k; draw();
+    }));
+  draw();
+})();
+
+/* ============================================================
+   EXHIBIT 2 — Talmud CER dot plot
+   ============================================================ */
+(function () {
+  const SEC = [{ k: "gemara", t: "Gemara", c: "var(--s1)" },
+               { k: "rashi", t: "Rashi", c: "var(--s2)" },
+               { k: "tosafot", t: "Tosafot", c: "var(--s3)" }];
+  legend("tal-legend", SEC.concat([{ c: "transparent", t: "hollow marker = coverage below 50%" }]));
+  let stat = "median";
+
+  function draw() {
+    const byModel = {};
+    DATA.talmud.forEach(r => (byModel[r.model] = byModel[r.model] || {})[r.section] = r);
+    const models = Object.keys(byModel).sort((a, b) =>
+      (byModel[a].gemara?.[stat] ?? 9) - (byModel[b].gemara?.[stat] ?? 9));
+    const W = 1040, padL = 210, padR = 40, rowH = 30, top = 34;
+    const H = top + models.length * rowH + 34;
+    const x0 = padL, x1 = W - padR;
+    const LO = 0.001, HI = 10;
+    const X = mkLog(LO, HI, x0, x1);
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+      "aria-label": "Talmud character error rate by model and section" });
+
+    logTicks(LO, HI).forEach(v => {
+      const x = X(v);
+      svg.appendChild(el("line", { x1: x, x2: x, y1: top - 8, y2: H - 34,
+        stroke: "var(--grid)", "stroke-width": 1 }));
+      svg.appendChild(el("text", { x, y: top - 14, "text-anchor": "middle",
+        "font-size": 10, fill: "var(--ink-3)" }, v < 1 ? v.toString() : v.toFixed(0)));
+    });
+    const xr = X(0.1);
+    svg.appendChild(el("line", { x1: xr, x2: xr, y1: top - 8, y2: H - 34,
+      stroke: "var(--accent)", "stroke-width": 1, opacity: .5 }));
+    svg.appendChild(el("text", { x: xr, y: H - 20, "text-anchor": "middle",
+      "font-size": 9.5, fill: "var(--accent)" }, "CER 0.10 — usable"));
+
+    models.forEach((m, i) => {
+      const y = top + i * rowH + 8;
+      svg.appendChild(el("text", { x: padL - 12, y: y + 4, "text-anchor": "end",
+        "font-size": 11, fill: "var(--ink)" }, lbl(m)));
+      svg.appendChild(el("line", { x1: x0, x2: x1, y1: y, y2: y,
+        stroke: "var(--grid)", "stroke-width": 1, opacity: .55 }));
+      SEC.forEach((s, si) => {
+        const r = byModel[m][s.k]; if (!r) return;
+        const yy = y + (si - 1) * 6.5;
+        const low = r.coverage < 0.5;
+        const dot = el("circle", { cx: X(r[stat]), cy: yy, r: 4.5, fill: low ? "var(--surface)" : s.c,
+          stroke: s.c, "stroke-width": low ? 1.6 : 1.6, "stroke-dasharray": low ? "2 1.6" : null });
+        hover(dot, `<span class="t">${lbl(m)} · ${s.t}</span>
+          <span class="r"><span>median CER</span><span>${fmt(r.median)}</span></span>
+          <span class="r"><span>mean CER</span><span>${fmt(r.mean)}</span></span>
+          <span class="r"><span>pages &gt; 0.3</span><span>${pct(r.pct_fail)}</span></span>
+          <span class="r"><span>coverage</span><span>${pct(r.coverage)} (${r.n})</span></span>`);
+        svg.appendChild(dot);
+      });
+    });
+    svg.appendChild(el("text", { x: (x0 + x1) / 2, y: H - 4, "text-anchor": "middle",
+      "font-size": 10, fill: "var(--ink-3)" },
+      (stat === "median" ? "Median" : "Mean") + " character error rate (log scale)"));
+    const c = document.getElementById("tal-chart"); c.innerHTML = ""; c.appendChild(svg);
+  }
+  document.querySelectorAll("#tal-stat button").forEach(b =>
+    b.addEventListener("click", () => {
+      document.querySelectorAll("#tal-stat button").forEach(o =>
+        o.setAttribute("aria-pressed", o === b));
+      stat = b.dataset.k; draw();
+    }));
+  draw();
+})();
+
+/* ============================================================
+   EXHIBIT 3 — mean vs median dumbbell
+   ============================================================ */
+(function () {
+  legend("mm-legend", [{ c: "var(--s1)", t: "Median page" },
+                       { c: "var(--s2)", t: "Mean (average)" }]);
+  const rows = DATA.talmud.filter(r => r.section === "gemara" && r.n >= 19)
+    .slice().sort((a, b) => (b.mean - b.median) - (a.mean - a.median));
+  const W = 1040, padL = 210, padR = 48, rowH = 28, top = 34;
+  const H = top + rows.length * rowH + 30;
+  const x0 = padL, x1 = W - padR, LO = 0.001, HI = 10, X = mkLog(LO, HI, x0, x1);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+    "aria-label": "Median versus mean character error rate on gemara" });
+
+  logTicks(LO, HI).forEach(v => {
+    const x = X(v);
+    svg.appendChild(el("line", { x1: x, x2: x, y1: top - 8, y2: H - 30,
+      stroke: "var(--grid)", "stroke-width": 1 }));
+    svg.appendChild(el("text", { x, y: top - 14, "text-anchor": "middle",
+      "font-size": 10, fill: "var(--ink-3)" }, v < 1 ? v.toString() : v.toFixed(0)));
+  });
+  rows.forEach((r, i) => {
+    const y = top + i * rowH + 8;
+    svg.appendChild(el("text", { x: padL - 12, y: y + 4, "text-anchor": "end",
+      "font-size": 11, fill: "var(--ink)" }, lbl(r.model)));
+    const a = X(Math.min(r.median, r.mean)), b = X(Math.max(r.median, r.mean));
+    svg.appendChild(el("line", { x1: a, x2: b, y1: y, y2: y,
+      stroke: "var(--rule-strong)", "stroke-width": 2, "stroke-linecap": "round" }));
+    [["median", r.median, "var(--s1)"], ["mean", r.mean, "var(--s2)"]].forEach(([k, v, c]) => {
+      const dot = el("circle", { cx: X(v), cy: y, r: 4.5, fill: c,
+        stroke: "var(--surface)", "stroke-width": 2 });
+      hover(dot, `<span class="t">${lbl(r.model)}</span>
+        <span class="r"><span>median CER</span><span>${fmt(r.median)}</span></span>
+        <span class="r"><span>mean CER</span><span>${fmt(r.mean)}</span></span>
+        <span class="r"><span>pages &gt; 1.0 CER</span><span>${pct(r.pct_collapse)} (${Math.round(r.pct_collapse * r.n)})</span></span>`);
+      svg.appendChild(dot);
+    });
+    const ratio = r.mean / Math.max(r.median, 1e-6);
+    if (ratio > 1.6) svg.appendChild(el("text", { x: b + 8, y: y + 3.5, "font-size": 9.5,
+      fill: "var(--ink-3)" }, "×" + ratio.toFixed(1)));
+  });
+  svg.appendChild(el("text", { x: (x0 + x1) / 2, y: H - 4, "text-anchor": "middle",
+    "font-size": 10, fill: "var(--ink-3)" }, "Character error rate, gemara section (log scale)"));
+  const c = document.getElementById("mm-chart"); c.innerHTML = ""; c.appendChild(svg);
+})();
+
+/* ============================================================
+   EXHIBIT 4 — fine-tune arc
+   ============================================================ */
+(function () {
+  const ORDER = ["qwen3_vl_8b", "qwen3_vl_8b_heb_rashi_v15", "qwen3_vl_8b_heb_v16_step600",
+    "qwen3_vl_8b_heb_v16_step1000", "qwen3_vl_8b_heb_v16_step1100", "qwen3_vl_8b_heb_v17_step800"];
+  const SHORT = ["base", "v1.5", "v1.6·600", "v1.6·1000", "v1.6·1100", "v1.7·800"];
+  const SEC = [{ k: "gemara", t: "Gemara", c: "var(--s1)" },
+               { k: "rashi", t: "Rashi", c: "var(--s2)" },
+               { k: "tosafot", t: "Tosafot", c: "var(--s3)" }];
+  legend("arc-legend", SEC);
+  const byModel = {};
+  DATA.talmud.forEach(r => (byModel[r.model] = byModel[r.model] || {})[r.section] = r);
+
+  const W = 1040, padL = 66, padR = 96, top = 30, botH = 46;
+  const H = 330, y0 = top, y1 = H - botH;
+  const x = i => padL + i * (W - padL - padR) / (ORDER.length - 1);
+  const LO = 0.001, HI = 10;
+  const Y = v => y1 - (Math.log10(Math.max(v, LO)) - Math.log10(LO)) /
+    (Math.log10(HI) - Math.log10(LO)) * (y1 - y0);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+    "aria-label": "Median CER across fine-tuning checkpoints" });
+
+  logTicks(LO, HI).forEach(v => {
+    const y = Y(v);
+    svg.appendChild(el("line", { x1: padL, x2: W - padR, y1: y, y2: y,
+      stroke: "var(--grid)", "stroke-width": 1 }));
+    svg.appendChild(el("text", { x: padL - 10, y: y + 3.5, "text-anchor": "end",
+      "font-size": 10, fill: "var(--ink-3)" }, v < 1 ? v.toString() : v.toFixed(0)));
+  });
+  const yr = Y(0.1);
+  svg.appendChild(el("line", { x1: padL, x2: W - padR, y1: yr, y2: yr,
+    stroke: "var(--accent)", "stroke-width": 1, opacity: .5 }));
+
+  ORDER.forEach((m, i) => svg.appendChild(el("text", { x: x(i), y: H - 24,
+    "text-anchor": "middle", "font-size": 10, fill: "var(--ink-2)" }, SHORT[i])));
+
+  const ends = [];
+  SEC.forEach(s => {
+    const pts = ORDER.map((m, i) => byModel[m]?.[s.k] ? [x(i), Y(byModel[m][s.k].median), byModel[m][s.k], m] : null)
+      .filter(Boolean);
+    svg.appendChild(el("path", { d: pts.map((p, i) => (i ? "L" : "M") + p[0] + " " + p[1]).join(" "),
+      fill: "none", stroke: s.c, "stroke-width": 2, "stroke-linejoin": "round" }));
+    pts.forEach(p => {
+      const dot = el("circle", { cx: p[0], cy: p[1], r: 4, fill: s.c,
+        stroke: "var(--surface)", "stroke-width": 2 });
+      hover(dot, `<span class="t">${lbl(p[3])} · ${s.t}</span>
+        <span class="r"><span>median CER</span><span>${fmt(p[2].median)}</span></span>
+        <span class="r"><span>mean CER</span><span>${fmt(p[2].mean)}</span></span>
+        <span class="r"><span>pages &gt; 0.3</span><span>${pct(p[2].pct_fail)}</span></span>`);
+      svg.appendChild(dot);
+    });
+    const last = pts[pts.length - 1];
+    ends.push({ x: last[0], y: last[1], labY: last[1], c: s.c, t: s.t + " " + fmt(last[2].median) });
+  });
+  /* push overlapping endpoint labels apart, then draw a leader where displaced */
+  ends.sort((a, b) => a.labY - b.labY);
+  for (let i = 1; i < ends.length; i++)
+    if (ends[i].labY - ends[i - 1].labY < 13) ends[i].labY = ends[i - 1].labY + 13;
+  ends.forEach(e => {
+    if (Math.abs(e.labY - e.y) > 1.5)
+      svg.appendChild(el("path", { d: `M${e.x + 5} ${e.y} L${e.x + 10} ${e.labY}`,
+        fill: "none", stroke: e.c, "stroke-width": 1, opacity: .55 }));
+    svg.appendChild(el("text", { x: e.x + 13, y: e.labY + 3.5, "font-size": 10.5,
+      fill: e.c, "font-weight": 600 }, e.t));
+  });
+  svg.appendChild(el("text", { x: padL - 10, y: y0 - 12, "text-anchor": "end",
+    "font-size": 9.5, fill: "var(--ink-3)" }, "CER"));
+  const c = document.getElementById("arc-chart"); c.innerHTML = ""; c.appendChild(svg);
+})();
+
+/* ============================================================
+   NOTE — decomposing Kraken's reported 1.0
+   ============================================================ */
+(function () {
+  const K = DATA.kraken_decomp;
+  const SEC = [{ k: "gemara", t: "Gemara", c: "var(--s1)" },
+               { k: "rashi", t: "Rashi", c: "var(--s2)" },
+               { k: "tosafot", t: "Tosafot", c: "var(--s3)" }];
+  legend("kd-legend", SEC);
+
+  const ROWS = [
+    { t: "As reported in the benchmark", sub: "OCR → LLM segmenter → per-section CER",
+      vals: K.reported, tone: "var(--critical)" },
+    { t: "Only pages processed before the cap", sub: "13 per section; the other 52 hit a 429 and scored 1.000",
+      vals: K.conditional, tone: "var(--serious)" },
+    { t: "Layout-free reading (upper bound)", sub: "pooled over all sections · 105 lines, 2 pages",
+      vals: { gemara: K.layoutfree.pooled }, tone: "var(--frozen)", single: true },
+    { t: "Re-run with the quota clear", sub: "2026-08-21 · 65/65 pages, zero failures",
+      vals: K.rerun, tone: "var(--good)" },
+    { t: "Fine-tuned VLM v1.7, for reference", sub: "end-to-end, no segmentation stage",
+      vals: K.v17, tone: "var(--accent)", ref: true },
+  ];
+
+  const W = 1040, padL = 336, padR = 60, rowH = 58, top = 40;
+  const H = top + ROWS.length * rowH + 34;
+  const x0 = padL, x1 = W - padR, LO = 0.003, HI = 2, X = mkLog(LO, HI, x0, x1);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+    "aria-label": "The same Kraken output scored four ways: as reported it is 1.0; conditional on segmentation it is 0.041 to 0.400; with layout removed it is 0.014, the same range as the fine-tuned VLM." });
+
+  logTicks(LO, HI).forEach(v => {
+    const x = X(v);
+    svg.appendChild(el("line", { x1: x, x2: x, y1: top - 10, y2: H - 30,
+      stroke: "var(--grid)", "stroke-width": 1 }));
+    svg.appendChild(el("text", { x, y: top - 16, "text-anchor": "middle",
+      "font-size": 10, fill: "var(--ink-3)" }, v < 1 ? String(v) : v.toFixed(0)));
+  });
+
+  ROWS.forEach((r, i) => {
+    const y = top + i * rowH, cy = y + rowH / 2 - 6;
+    if (r.ref) svg.appendChild(el("rect", { x: 8, y: y + 2, width: x1 - 8, height: rowH - 12,
+      fill: "var(--accent-soft)", rx: 2 }));
+    svg.appendChild(el("text", { x: padL - 16, y: cy - 2, "text-anchor": "end",
+      "font-size": 11.5, "font-weight": 600, fill: "var(--ink)" }, r.t));
+    svg.appendChild(el("text", { x: padL - 16, y: cy + 12, "text-anchor": "end",
+      "font-size": 9, fill: "var(--ink-3)" }, r.sub));
+    svg.appendChild(el("line", { x1: padL - 8, x2: x1, y1: y + rowH - 8, y2: y + rowH - 8,
+      stroke: "var(--rule)", "stroke-width": 1 }));
+
+    (r.single ? [SEC[0]] : SEC).forEach((sc, j) => {
+      const v = r.vals[sc.k]; if (v == null) return;
+      const yy = cy + (r.single ? 0 : (j - 1) * 8);
+      const dot = el("circle", { cx: X(v), cy: yy, r: r.single ? 6 : 5,
+        fill: r.single ? r.tone : sc.c, stroke: "var(--surface)", "stroke-width": 2 });
+      hover(dot, `<span class="t">${r.t}${r.single ? "" : " · " + sc.t}</span>
+        <span class="r"><span>median CER</span><span>${fmt(v)}</span></span>
+        <span class="r"><span>what it measures</span><span></span></span>
+        <span style="opacity:.85">${r.vals.note || r.sub}</span>`);
+      svg.appendChild(dot);
+      if (r.single || j === 0)
+        svg.appendChild(el("text", { x: X(v), y: yy - 12, "text-anchor": "middle",
+          "font-size": 10.5, "font-weight": 600, fill: r.single ? r.tone : sc.c }, fmt(v)));
+    });
+  });
+
+  /* the span between pure reading and real end-to-end: what layout costs */
+  const a = X(K.layoutfree.pooled), b = X(K.rerun.rashi);
+  svg.appendChild(el("line", { x1: a, x2: b, y1: H - 22, y2: H - 22,
+    stroke: "var(--critical)", "stroke-width": 1.2, opacity: .6 }));
+  [a, b].forEach(x => svg.appendChild(el("line", { x1: x, x2: x, y1: H - 26, y2: H - 18,
+    stroke: "var(--critical)", "stroke-width": 1.2, opacity: .6 })));
+  svg.appendChild(el("text", { x: (a + b) / 2, y: H - 8, "text-anchor": "middle",
+    "font-size": 10, fill: "var(--critical)" },
+    "20× — what document structure costs Kraken, once the billing artefact is removed"));
+  const c = document.getElementById("kd-chart"); c.innerHTML = ""; c.appendChild(svg);
+})();
+
+/* ============================================================
+   RESULTS — final Talmud leaderboard
+   ============================================================ */
+(function () {
+  const SEC = [{ k: "gemara", t: "Gemara", c: "var(--s1)" },
+               { k: "rashi", t: "Rashi", c: "var(--s2)" },
+               { k: "tosafot", t: "Tosafot", c: "var(--s3)" }];
+  legend("final-legend", SEC.concat([
+    { c: "transparent", t: "hollow marker = coverage below 50%" }]));
+
+  const FAM = [
+    { t: "Fine-tuned Qwen3-VL-8B  ·  ours", ms: ["qwen3_vl_8b_heb_v17_step800",
+      "qwen3_vl_8b_heb_v16_step1100", "qwen3_vl_8b_heb_v16_step600",
+      "qwen3_vl_8b_heb_v16_step1000", "qwen3_vl_8b_heb_rashi_v15"] },
+    { t: "Frontier APIs", ms: ["gemini_pro", "gemini_flash", "gpt_5_6_sol",
+      "claude_opus_4_8", "claude_sonnet_5", "gpt_5_2"] },
+    { t: "OCR / HTR engines", ms: ["kraken_seg", "vision_ocr_seg"] },
+    { t: "Untrained baseline", ms: ["qwen3_vl_8b"] },
+  ];
+  const by = {};
+  DATA.talmud.forEach(r => (by[r.model] = by[r.model] || {})[r.section] = r);
+  const overall = m => {
+    const r = by[m]; if (!r) return 9;
+    const v = ["gemara", "rashi", "tosafot"].map(k => r[k]?.median).filter(x => x != null);
+    return v.reduce((a, b) => a + b, 0) / v.length;
+  };
+  FAM.forEach(f => f.ms.sort((a, b) => overall(a) - overall(b)));
+
+  const W = 1040, padL = 224, padR = 96, rowH = 30, headH = 26, top = 40;
+  const nRows = FAM.reduce((n, f) => n + f.ms.length, 0);
+  const H = top + nRows * rowH + FAM.length * headH + 40;
+  const x0 = padL, x1 = W - padR, LO = 0.003, HI = 10, X = mkLog(LO, HI, x0, x1);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+    "aria-label": "Final Talmud benchmark: median character error rate by system and section, grouped by family." });
+
+  /* usable band */
+  svg.appendChild(el("rect", { x: x0, y: top - 10, width: X(0.05) - x0, height: H - top - 26,
+    fill: "var(--s1)", opacity: .05 }));
+  svg.appendChild(el("line", { x1: X(0.05), x2: X(0.05), y1: top - 10, y2: H - 36,
+    stroke: "var(--accent)", "stroke-width": 1, opacity: .45 }));
+  svg.appendChild(el("text", { x: X(0.05) - 6, y: top - 16, "text-anchor": "end",
+    "font-size": 9.5, fill: "var(--accent)" }, "usable  CER < 0.05"));
+
+  logTicks(LO, HI).forEach(v => {
+    const x = X(v);
+    svg.appendChild(el("line", { x1: x, x2: x, y1: top - 10, y2: H - 36,
+      stroke: "var(--grid)", "stroke-width": 1 }));
+    svg.appendChild(el("text", { x, y: top - 16, "text-anchor": "middle",
+      "font-size": 10, fill: "var(--ink-3)" }, v < 1 ? String(v) : v.toFixed(0)));
+  });
+  svg.appendChild(el("text", { x: x1 + 10, y: top - 16, "font-size": 8.5,
+    fill: "var(--ink-3)", "letter-spacing": ".08em" }, "LOWEST"));
+  svg.appendChild(el("text", { x: x1 + 10, y: top - 6, "font-size": 8.5,
+    fill: "var(--ink-3)", "letter-spacing": ".08em" }, "COVERAGE"));
+
+  let y = top;
+  FAM.forEach(f => {
+    svg.appendChild(el("text", { x: 8, y: y + 14, "font-size": 9.5, "font-weight": 600,
+      fill: "var(--ink-3)", "letter-spacing": "1.1" }, f.t.toUpperCase()));
+    svg.appendChild(el("line", { x1: 8, x2: x1, y1: y + 20, y2: y + 20,
+      stroke: "var(--rule)", "stroke-width": 1 }));
+    y += headH;
+    f.ms.forEach(m => {
+      const rows = by[m]; if (!rows) return;
+      const shipped = m === "qwen3_vl_8b_heb_v17_step800";
+      /* OCR engines are scored through a text-LLM segmenter; when it returns
+         nothing the section scores exactly 1.0, which is not a reading result. */
+      const segLimited = false;   /* both OCR rows are real measurements now */
+      const cy = y + rowH / 2;
+      if (shipped) svg.appendChild(el("rect", { x: 8, y: y + 2, width: x1 - 8, height: rowH - 4,
+        fill: "var(--accent-soft)", rx: 2 }));
+      svg.appendChild(el("text", { x: padL - 14, y: cy + 4, "text-anchor": "end",
+        "font-size": 11, "font-weight": shipped ? 600 : 400, fill: "var(--ink)" },
+        lbl(m) + (segLimited ? " †" : "")));
+      if (shipped) svg.appendChild(el("text", { x: 14, y: cy + 4, "font-size": 8.5,
+        "font-weight": 600, fill: "var(--accent)", "letter-spacing": ".08em" }, "SHIPPED"));
+      SEC.forEach((sc, si) => {
+        const r = rows[sc.k]; if (!r) return;
+        const low = r.coverage < 0.5;
+        const yy = cy + (si - 1) * 6.5;
+        const dot = el("circle", { cx: X(r.median), cy: yy, r: 4.5,
+          fill: low ? "var(--surface)" : sc.c, stroke: sc.c, "stroke-width": 1.6,
+          "stroke-dasharray": low ? "2 1.6" : null });
+        hover(dot, `<span class="t">${lbl(m)} · ${sc.t}</span>
+          <span class="r"><span>median CER</span><span>${fmt(r.median)}</span></span>
+          <span class="r"><span>mean CER</span><span>${fmt(r.mean)}</span></span>
+          <span class="r"><span>pages &gt; 0.3</span><span>${pct(r.pct_fail)}</span></span>
+          <span class="r"><span>coverage</span><span>${pct(r.coverage)} (${r.n} pages)</span></span>`);
+        svg.appendChild(dot);
+      });
+      const cov = Math.min(...SEC.map(sc => rows[sc.k] ? rows[sc.k].coverage : 1));
+      svg.appendChild(el("text", { x: x1 + 10, y: cy + 4, "font-size": 9.5,
+        fill: cov < 0.5 ? "var(--critical)" : "var(--ink-3)" }, pct(cov) + " cov"));
+      y += rowH;
+    });
+  });
+  svg.appendChild(el("text", { x: (x0 + x1) / 2, y: H - 22, "text-anchor": "middle",
+    "font-size": 10, fill: "var(--ink-3)" }, "Median character error rate (log scale) — lower is better"));
+  svg.appendChild(el("text", { x: 8, y: H - 6, "font-size": 9.5, fill: "var(--critical)" },
+    "OCR rows re-run with the quota clear: Kraken 2026-08-21, Cloud Vision 2026-08-24 — the original 1.0s were billing artefacts, not measurements."));
+  const c = document.getElementById("final-chart"); c.innerHTML = ""; c.appendChild(svg);
+})();
+
+/* ============================================================
+   EXHIBIT 5 — cross-corpus slope
+   ============================================================ */
+(function () {
+  legend("cliff-legend", [
+    { c: "var(--s1)", t: "Fine-tuned Hebrew models" },
+    { c: "var(--s2)", t: "Frontier / general models" },
+    { c: "var(--s3)", t: "Kraken HTR" },
+    { c: "transparent", t: "dot size = share of the corpus the system actually attempted" }]);
+  const gz = {}; DATA.genizah.forEach(r => gz[r.model] = r);
+  const tl = {}; DATA.talmud.forEach(r => { if (r.section === "gemara") tl[r.model] = r; });
+  const KRAKEN = ["kraken_seg"];
+  const FT = ["qwen3_vl_8b_heb_v17_step800", "qwen3_vl_8b_heb_v16_step1100", "qwen3_vl_8b"];
+  /* A conditional CER over a handful of attempts is not comparable to one over
+     a hundred, so systems below 25 substantive attempts are held out. */
+  const MIN_SUB = 25;
+  const rows = Object.keys(tl)
+    .filter(m => gz[m] && gz[m].cer_sub != null && gz[m].n_sub >= MIN_SUB)
+    .map(m => ({ m, a: tl[m].median, b: gz[m].cer_sub, read: gz[m].substantive,
+      c: KRAKEN.includes(m) ? "var(--s3)" : FT.includes(m) ? "var(--s1)" : "var(--s2)" }));
+
+  const W = 1040, top = 42, H = 400, y1 = H - 52;
+  const xA = 300, xB = W - 300;
+  const LO = 0.001, HI = 10;
+  const Y = v => y1 - (Math.log10(Math.max(v, LO)) - Math.log10(LO)) /
+    (Math.log10(HI) - Math.log10(LO)) * (y1 - top);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+    "aria-label": "Character error rate from printed Talmud to Genizah manuscript" });
+
+  logTicks(LO, HI).forEach(v => {
+    const y = Y(v);
+    svg.appendChild(el("line", { x1: xA, x2: xB, y1: y, y2: y, stroke: "var(--grid)", "stroke-width": 1 }));
+    svg.appendChild(el("text", { x: xA - 14, y: y + 3.5, "text-anchor": "end",
+      "font-size": 10, fill: "var(--ink-3)" }, v < 1 ? v.toString() : v.toFixed(0)));
+  });
+  [[xA, "Printed Talmud", "median CER, gemara"], [xB, "Genizah manuscript", "median CER, substantive only"]]
+    .forEach(([x, t, s]) => {
+      svg.appendChild(el("line", { x1: x, x2: x, y1: top - 10, y2: y1,
+        stroke: "var(--rule-strong)", "stroke-width": 1 }));
+      svg.appendChild(el("text", { x, y: top - 22, "text-anchor": "middle",
+        "font-size": 11.5, "font-weight": 600, fill: "var(--ink)" }, t));
+      svg.appendChild(el("text", { x, y: top - 10, "text-anchor": "middle",
+        "font-size": 9.5, fill: "var(--ink-3)" }, s));
+    });
+
+  /* place right-hand labels without collisions: push apart, then draw leaders */
+  rows.forEach(r => { r.ya = Y(r.a); r.yb = Y(r.b); r.labY = r.yb; });
+  rows.sort((a, b) => a.yb - b.yb);
+  const GAP = 14;
+  for (let i = 1; i < rows.length; i++)
+    if (rows[i].labY - rows[i - 1].labY < GAP) rows[i].labY = rows[i - 1].labY + GAP;
+  const over = rows[rows.length - 1].labY - (y1 - 4);
+  if (over > 0) rows.forEach(r => r.labY -= over);
+
+  rows.forEach(r => {
+    const g = el("g", {});
+    g.appendChild(el("line", { x1: xA, x2: xB, y1: r.ya, y2: r.yb, stroke: r.c,
+      "stroke-width": 1.8, opacity: .85 }));
+    g.appendChild(el("circle", { cx: xA, cy: r.ya, r: 4, fill: r.c, stroke: "var(--surface)", "stroke-width": 2 }));
+    g.appendChild(el("circle", { cx: xB, cy: r.yb, r: 2.5 + 5.5 * Math.sqrt(r.read),
+      fill: r.c, stroke: "var(--surface)", "stroke-width": 2 }));
+    if (Math.abs(r.labY - r.yb) > 1.5)
+      g.appendChild(el("path", { d: `M${xB + 6} ${r.yb} L${xB + 14} ${r.labY}`, fill: "none",
+        stroke: r.c, "stroke-width": 1, opacity: .5 }));
+    g.appendChild(el("text", { x: xB + 18, y: r.labY + 3.5, "font-size": 10.5,
+      fill: "var(--ink)" }, lbl(r.m)));
+    hover(g, `<span class="t">${lbl(r.m)}</span>
+      <span class="r"><span>Talmud median CER</span><span>${fmt(r.a)}</span></span>
+      <span class="r"><span>Genizah CER (substantive)</span><span>${fmt(r.b)}</span></span>
+      <span class="r"><span>Genizah read rate</span><span>${pct(gz[r.m].substantive)}</span></span>
+      <span class="r"><span>factor</span><span>×${(r.b / Math.max(r.a, 1e-6)).toFixed(0)}</span></span>`);
+    svg.appendChild(g);
+  });
+  const c = document.getElementById("cliff-chart"); c.innerHTML = ""; c.appendChild(svg);
+})();
+
+/* ============================================================
+   EXHIBIT 6 — script heatmap
+   ============================================================ */
+(function () {
+  const COLS = ["hebrew", "aramaic", "judaeo_arabic", "untagged"];
+  const ramp = ["var(--q1)", "var(--q2)", "var(--q3)", "var(--q4)", "var(--q5)", "var(--q6)"];
+  const BINS = ["none", "under 10%", "10–25%", "25–45%", "45–65%", "65% and over"];
+  legend("script-legend", ramp.map((c, i) => ({ c, t: BINS[i] })));
+  document.getElementById("script-legend").insertAdjacentHTML("afterbegin",
+    '<span style="color:var(--ink-2)">Hallucination rate&nbsp;&nbsp;</span>');
+
+  const wanted = ["qwen3_vl_8b_heb_v20a_step1800", "kraken_raw", "qwen3_vl_8b_heb_v18b_step700", "qwen3_vl_8b_heb_v18a_step700",
+    "qwen3_vl_8b_heb_v17_step800", "gemini_pro", "gemini_flash", "claude_opus_4_8",
+    "claude_sonnet_5", "gpt_5_6_sol", "vision_ocr_raw", "qwen3_vl_8b_heb_v16_step1100"];
+  const idx = {};
+  DATA.genizah_script.forEach(r => { (idx[r.model] = idx[r.model] || {})[r.bucket] = r; });
+  const rows = wanted.filter(m => idx[m]);
+
+  const W = 1040, padL = 220, cw = 150, rh = 34, top = 54;
+  const H = top + rows.length * rh + 22;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+    "aria-label": "Hallucination rate by model and script bucket" });
+
+  COLS.forEach((b, j) => {
+    svg.appendChild(el("text", { x: padL + j * cw + cw / 2, y: top - 26, "text-anchor": "middle",
+      "font-size": 11, "font-weight": 600, fill: "var(--ink)" }, BUCKETS[b]));
+    const tot = DATA.genizah_script.filter(r => r.bucket === b && r.model === "kraken_raw")[0];
+    svg.appendChild(el("text", { x: padL + j * cw + cw / 2, y: top - 13, "text-anchor": "middle",
+      "font-size": 9.5, fill: "var(--ink-3)" }, tot ? "n=" + tot.n : ""));
+  });
+
+  const step = v => v <= 0 ? 0 : v < .1 ? 1 : v < .25 ? 2 : v < .45 ? 3 : v < .65 ? 4 : 5;
+  rows.forEach((m, i) => {
+    const y = top + i * rh;
+    svg.appendChild(el("text", { x: padL - 14, y: y + rh / 2 + 4, "text-anchor": "end",
+      "font-size": 11, fill: "var(--ink)" }, lbl(m)));
+    COLS.forEach((b, j) => {
+      const r = idx[m][b];
+      const x = padL + j * cw;
+      if (!r) {
+        svg.appendChild(el("text", { x: x + cw / 2, y: y + rh / 2 + 4, "text-anchor": "middle",
+          "font-size": 10, fill: "var(--ink-3)" }, "—"));
+        return;
+      }
+      const s = step(r.hallucinated);
+      const cell = el("rect", { x: x + 1, y: y + 2, width: cw - 4, height: rh - 5,
+        fill: ramp[s], rx: 2 });
+      hover(cell, `<span class="t">${lbl(m)} · ${BUCKETS[b]}</span>
+        <span class="r"><span>hallucinated</span><span>${pct(r.hallucinated)}</span></span>
+        <span class="r"><span>read substantively</span><span>${pct(r.substantive)}</span></span>
+        <span class="r"><span>abstained</span><span>${pct(r.abstained)}</span></span>
+        <span class="r"><span>n-gram precision</span><span>${r.ngramP.toFixed(3)}</span></span>
+        <span class="r"><span>fragments</span><span>${r.n}</span></span>`);
+      svg.appendChild(cell);
+      svg.appendChild(el("text", { x: x + cw / 2, y: y + rh / 2 + 4, "text-anchor": "middle",
+        "font-size": 11, "font-weight": 600, "pointer-events": "none",
+        fill: s >= 3 ? "#fff" : "var(--ink)" }, Math.round(r.hallucinated * 100) + "%"));
+    });
+  });
+  const c = document.getElementById("script-chart"); c.innerHTML = ""; c.appendChild(svg);
+})();
+
+/* ============================================================
+   RESULTS — Genizah leaderboard (aligned F1 by script bucket)
+   ============================================================ */
+(function () {
+  const BK = [{ k: "hebrew", t: "Hebrew (n=20)", c: "var(--s1)" },
+              { k: "judaeo_arabic", t: "Judaeo-Arabic (n=82)", c: "var(--s2)" },
+              { k: "untagged", t: "Untagged (n=22)", c: "var(--s3)" }];
+  legend("gzf-legend", BK.concat([
+    { c: "transparent", t: "hollow marker = under half the bucket read substantively" }]));
+
+  const sum = {}; DATA.genizah.forEach(r => sum[r.model] = r);
+  const bucket = {};
+  DATA.genizah_script.forEach(r => (bucket[r.model] = bucket[r.model] || {})[r.bucket] = r);
+
+  const FAM = [
+    { t: "Fine-tuned Qwen3-VL-8B  ·  ours", ms: ["qwen3_vl_8b_heb_v20a_step1800",
+      "qwen3_vl_8b_heb_v19a_step1300",
+      "qwen3_vl_8b_heb_v19a_step700", "qwen3_vl_8b_heb_v18b_step700",
+      "qwen3_vl_8b_heb_v18b_step400", "qwen3_vl_8b_heb_v18b_sections",
+      "qwen3_vl_8b_heb_v18a_step700", "qwen3_vl_8b_heb_v17_step800",
+      "qwen3_vl_8b_heb_v16_step1100"] },
+    { t: "Frontier APIs", ms: ["gemini_pro", "claude_opus_4_8", "claude_sonnet_5",
+      "gemini_flash", "gpt_5_6_sol"] },
+    { t: "OCR / HTR engines", ms: ["kraken_raw", "kraken_seg", "vision_ocr_raw", "vision_ocr_seg"] },
+    { t: "Untrained baseline", ms: ["qwen3_vl_8b"] },
+  ];
+  FAM.forEach(f => f.ms.sort((a, b) => (sum[b]?.f1 ?? 0) - (sum[a]?.f1 ?? 0)));
+
+  const W = 1040, padL = 232, padR = 96, rowH = 30, headH = 26, top = 40;
+  const nRows = FAM.reduce((n, f) => n + f.ms.filter(m => sum[m]).length, 0);
+  const H = top + nRows * rowH + FAM.length * headH + 34;
+  const x0 = padL, x1 = W - padR;
+  const X = v => x0 + v * (x1 - x0);
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+    "aria-label": "Genizah benchmark: median aligned F1 by system and script bucket, grouped by family." });
+
+  [0, .25, .5, .75, 1].forEach(v => {
+    const x = X(v);
+    svg.appendChild(el("line", { x1: x, x2: x, y1: top - 10, y2: H - 24,
+      stroke: "var(--grid)", "stroke-width": 1 }));
+    if (v < 1) svg.appendChild(el("text", { x, y: top - 16, "text-anchor": "middle",
+      "font-size": 10, fill: "var(--ink-3)" }, v.toFixed(2)));
+  });
+  svg.appendChild(el("text", { x: x1 + 10, y: top - 16, "font-size": 8.5,
+    fill: "var(--ink-3)", "letter-spacing": ".08em" }, "READ"));
+  svg.appendChild(el("text", { x: x1 + 10, y: top - 6, "font-size": 8.5,
+    fill: "var(--ink-3)", "letter-spacing": ".08em" }, "RATE"));
+
+  let y = top;
+  FAM.forEach(f => {
+    svg.appendChild(el("text", { x: 8, y: y + 14, "font-size": 9.5, "font-weight": 600,
+      fill: "var(--ink-3)", "letter-spacing": "1.1" }, f.t.toUpperCase()));
+    svg.appendChild(el("line", { x1: 8, x2: x1, y1: y + 20, y2: y + 20,
+      stroke: "var(--rule)", "stroke-width": 1 }));
+    y += headH;
+    f.ms.forEach(m => {
+      const s = sum[m]; if (!s) return;
+      const isNew = m.includes("v20a");
+      const cy = y + rowH / 2;
+      if (isNew) svg.appendChild(el("rect", { x: 8, y: y + 2, width: x1 - 8, height: rowH - 4,
+        fill: "var(--accent-soft)", rx: 2 }));
+      svg.appendChild(el("text", { x: padL - 14, y: cy + 4, "text-anchor": "end",
+        "font-size": 11, "font-weight": isNew ? 600 : 400, fill: "var(--ink)" }, lbl(m)));
+      if (isNew) svg.appendChild(el("text", { x: 14, y: cy + 4, "font-size": 8.5,
+        "font-weight": 600, fill: "var(--accent)", "letter-spacing": ".08em" }, "NEW"));
+      BK.forEach((bk, bi) => {
+        const r = (bucket[m] || {})[bk.k]; if (!r) return;
+        const low = r.substantive < 0.5;
+        const yy = cy + (bi - 1) * 6.5;
+        const dot = el("circle", { cx: X(r.f1), cy: yy, r: 4.5,
+          fill: low ? "var(--surface)" : bk.c, stroke: bk.c, "stroke-width": 1.6,
+          "stroke-dasharray": low ? "2 1.6" : null });
+        hover(dot, `<span class="t">${lbl(m)} · ${bk.t}</span>
+          <span class="r"><span>aligned F1 (median)</span><span>${r.f1.toFixed(3)}</span></span>
+          <span class="r"><span>n-gram precision</span><span>${r.ngramP.toFixed(3)}</span></span>
+          <span class="r"><span>read substantively</span><span>${pct(r.substantive)}</span></span>
+          <span class="r"><span>hallucinated</span><span>${pct(r.hallucinated)}</span></span>`);
+        svg.appendChild(dot);
+      });
+      svg.appendChild(el("text", { x: x1 + 10, y: cy + 4, "font-size": 9.5,
+        fill: s.substantive < 0.5 ? "var(--critical)" : "var(--ink-3)" }, pct(s.substantive)));
+      y += rowH;
+    });
+  });
+  svg.appendChild(el("text", { x: (x0 + x1) / 2, y: H - 4, "text-anchor": "middle",
+    "font-size": 10, fill: "var(--ink-3)" }, "Median aligned F1 against ground truth — higher is better"));
+  const c = document.getElementById("gzf-chart"); c.innerHTML = ""; c.appendChild(svg);
+})();
+
+/* ============================================================
+   EXHIBIT 7 — vision LoRA A/B
+   ============================================================ */
+(function () {
+  const gz = {}; DATA.genizah.forEach(r => gz[r.model] = r);
+  const A = gz["qwen3_vl_8b_heb_v18a_step700"], B = gz["qwen3_vl_8b_heb_v18b_step700"];
+  document.getElementById("lora-stats").innerHTML = `
+    <div class="stat"><div class="v crit num">108 / 108</div>
+      <div class="k">vision-tower <span class="mono">lora_B</span> tensors that were exactly zero in every adapter through v1.7</div></div>
+    <div class="stat"><div class="v num">2.6×</div>
+      <div class="k">n-gram precision once gradient reached the vision tower (${A.ngramP.toFixed(3)} → ${B.ngramP.toFixed(3)})</div></div>
+    <div class="stat"><div class="v num">−58%</div>
+      <div class="k">relative fall in hallucinated fragments (${pct(A.hallucinated)} → ${pct(B.hallucinated)})</div></div>`;
+
+  legend("lora-legend", [{ c: "var(--s1)", t: "v1.8a — vision frozen" },
+                         { c: "var(--s2)", t: "v1.8b — vision trained" }]);
+  const M = [
+    { k: "ngramP", t: "n-gram precision (median)", hi: 1 },
+    { k: "f1", t: "aligned F1 (median)", hi: 1 },
+    { k: "substantive", t: "fragments read substantively", hi: 1 },
+    { k: "hallucinated", t: "fragments hallucinated", hi: 1 }
+  ];
+  const W = 1040, padL = 250, padR = 76, top = 20, gh = 62;
+  const H = top + M.length * gh + 12, x0 = padL, x1 = W - padR;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+    "aria-label": "v1.8a versus v1.8b on four measures" });
+
+  M.forEach((m, i) => {
+    const y = top + i * gh;
+    svg.appendChild(el("text", { x: padL - 14, y: y + 26, "text-anchor": "end",
+      "font-size": 11, fill: "var(--ink)" }, m.t));
+    [[A, "var(--s1)", 0], [B, "var(--s2)", 1]].forEach(([r, c, k]) => {
+      const v = r[m.k], w = v * (x1 - x0);
+      const yy = y + 8 + k * 21;
+      const bar = el("rect", { x: x0, y: yy, width: Math.max(w, 1), height: 17, fill: c, rx: 2 });
+      hover(bar, `<span class="t">${lbl(r.model)}</span>
+        <span class="r"><span>${m.t}</span><span>${m.k === "ngramP" || m.k === "f1" ? v.toFixed(3) : pct(v)}</span></span>`);
+      svg.appendChild(bar);
+      svg.appendChild(el("text", { x: x0 + w + 8, y: yy + 12.5, "font-size": 10.5,
+        fill: "var(--ink-2)" }, m.k === "ngramP" || m.k === "f1" ? v.toFixed(3) : pct(v)));
+    });
+    if (i < M.length - 1) svg.appendChild(el("line", { x1: padL - 4, x2: x1, y1: y + gh - 8,
+      y2: y + gh - 8, stroke: "var(--grid)", "stroke-width": 1 }));
+  });
+  const c = document.getElementById("lora-chart"); c.innerHTML = ""; c.appendChild(svg);
+})();
+
+/* ============================================================
+   EXHIBIT 8 — confusable pairs
+   ============================================================ */
+(function () {
+  const ENG = [
+    { m: "kraken_raw", t: "Kraken HTR", c: "var(--s3)" },
+    { m: "qwen3_vl_8b_heb_v17_step800", t: "Hebrew v1.7", c: "var(--s2)" },
+    { m: "qwen3_vl_8b_heb_v18b_step700", t: "Hebrew v1.8b", c: "var(--s1)" }
+  ];
+  legend("conf-legend", ENG.map(e => ({ c: e.c, t: e.t })));
+  let corpus = "genizah";
+
+  function draw() {
+    const D = DATA.confusions[corpus];
+    const ref = D["qwen3_vl_8b_heb_v18b_step700"] || {};
+    const pairs = Object.keys(ref).sort((a, b) => ref[b].swaps - ref[a].swaps).slice(0, 10);
+    const maxRate = Math.max(...pairs.flatMap(p =>
+      ENG.map(e => D[e.m]?.[p]?.rate || 0))) * 1.08 || 0.01;
+
+    const W = 1040, padL = 116, padR = 150, top = 30, rowH = 46;
+    const H = top + pairs.length * rowH + 34, x0 = padL, x1 = W - padR;
+    const X = v => x0 + v / maxRate * (x1 - x0);
+    const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+      "aria-label": "Letter-pair swap rates" });
+
+    const nt = 5;
+    for (let i = 0; i <= nt; i++) {
+      const v = maxRate * i / nt, x = X(v);
+      svg.appendChild(el("line", { x1: x, x2: x, y1: top - 8, y2: H - 34,
+        stroke: "var(--grid)", "stroke-width": 1 }));
+      svg.appendChild(el("text", { x, y: top - 14, "text-anchor": "middle",
+        "font-size": 10, fill: "var(--ink-3)" }, (v * 100).toFixed(v * 100 < 1 ? 2 : 1) + "%"));
+    }
+
+    pairs.forEach((p, i) => {
+      const y = top + i * rowH;
+      const t = el("text", { x: padL - 18, y: y + 29, "text-anchor": "end",
+        "font-size": 22, fill: "var(--ink)" }, p);
+      t.setAttribute("font-family", '"Frank Ruhl Libre", serif');
+      svg.appendChild(t);
+      ENG.forEach((e, k) => {
+        const d = D[e.m]?.[p];
+        const yy = y + 6 + k * 12;
+        if (!d) {
+          svg.appendChild(el("text", { x: x0 + 6, y: yy + 9, "font-size": 9.5,
+            fill: "var(--ink-3)" }, e.t + " — not run on this corpus"));
+          return;
+        }
+        const w = X(d.rate) - x0;
+        const bar = el("rect", { x: x0, y: yy, width: Math.max(w, 1), height: 10, fill: e.c, rx: 1.5 });
+        hover(bar, `<span class="t">${p} · ${e.t}</span>
+          <span class="r"><span>swap rate</span><span>${(d.rate * 100).toFixed(2)}%</span></span>
+          <span class="r"><span>swaps</span><span>${d.swaps}</span></span>
+          <span class="r"><span>occurrences</span><span>${d.gt.toLocaleString()}</span></span>`);
+        svg.appendChild(bar);
+        if (k === 2 || !D["qwen3_vl_8b_heb_v18b_step700"]?.[p])
+          svg.appendChild(el("text", { x: X(d.rate) + 8, y: yy + 9, "font-size": 10,
+            fill: "var(--ink-2)" }, (d.rate * 100).toFixed(2) + "%"));
+      });
+      if (i < pairs.length - 1) svg.appendChild(el("line", { x1: padL - 8, x2: x1,
+        y1: y + rowH - 4, y2: y + rowH - 4, stroke: "var(--grid)", "stroke-width": 1 }));
+    });
+    svg.appendChild(el("text", { x: (x0 + x1) / 2, y: H - 4, "text-anchor": "middle",
+      "font-size": 10, fill: "var(--ink-3)" },
+      "Share of occurrences transcribed as the confusable partner"));
+    const c = document.getElementById("conf-chart"); c.innerHTML = ""; c.appendChild(svg);
+  }
+  document.querySelectorAll("#conf-corpus button").forEach(b =>
+    b.addEventListener("click", () => {
+      document.querySelectorAll("#conf-corpus button").forEach(o =>
+        o.setAttribute("aria-pressed", o === b));
+      corpus = b.dataset.k; draw();
+    }));
+  draw();
+})();
+
+/* ============================================================
+   EXHIBIT 9 — benchmark funnel
+   ============================================================ */
+(function () {
+  const b = DATA.benchmark;
+  document.getElementById("bench-stats").innerHTML = `
+    <div class="stat"><div class="v num">${b.n}</div><div class="k">fragments in the frozen benchmark</div></div>
+    <div class="stat"><div class="v num">${b.visible_chars_total.toLocaleString()}</div><div class="k">letters of visible ground truth</div></div>
+    <div class="stat"><div class="v num">${b.n_dup_repaired}</div><div class="k">fragments whose ground truth was duplicated by a scraping fault, then repaired</div></div>
+    <div class="stat"><div class="v num">${b.n_excluded_misaligned}</div><div class="k">excluded — no system's reading overlapped the transcription enough to confirm the same leaf</div></div>`;
+
+  const rows = b.script_buckets;
+  const tot = rows.reduce((s, r) => s + r[1], 0);
+  const W = 1040, H = 108, padL = 4, x1 = W - 4, top = 26;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, width: "100%", role: "img",
+    "aria-label": "Benchmark composition by script bucket" });
+  svg.appendChild(el("text", { x: padL, y: 14, "font-size": 10.5, fill: "var(--ink-3)" },
+    "Composition by language of the text"));
+  const ramp = ["var(--q5)", "var(--q4)", "var(--q3)", "var(--q2)", "var(--q1)"];
+  let acc = 0;
+  rows.forEach(([name, n], i) => {
+    const w = n / tot * (x1 - padL);
+    const x = padL + acc;
+    const rect = el("rect", { x, y: top, width: Math.max(w - 2, 1), height: 34, fill: ramp[i % 5], rx: 2 });
+    hover(rect, `<span class="t">${BUCKETS[name] || name}</span>
+      <span class="r"><span>fragments</span><span>${n}</span></span>
+      <span class="r"><span>share</span><span>${pct(n / tot)}</span></span>`);
+    svg.appendChild(rect);
+    if (w > 90) {
+      svg.appendChild(el("text", { x: x + w / 2 - 1, y: top + 21, "text-anchor": "middle",
+        "font-size": 11, "font-weight": 600, fill: i < 2 ? "#fff" : "var(--ink)",
+        "pointer-events": "none" }, BUCKETS[name] || name));
+      svg.appendChild(el("text", { x: x + w / 2 - 1, y: top + 50, "text-anchor": "middle",
+        "font-size": 10, fill: "var(--ink-3)" }, n + " · " + pct(n / tot)));
+    }
+    acc += w;
+  });
+  svg.appendChild(el("text", { x: padL, y: H - 6, "font-size": 10, fill: "var(--ink-3)" },
+    "Judaeo-Arabic — Arabic language in Hebrew letters — is 63% of the benchmark and the bucket every language model fails hardest on"));
+  const c = document.getElementById("bench-chart"); c.innerHTML = ""; c.appendChild(svg);
+})();
+
+/* ============================================================
+   TABLES
+   ============================================================ */
+function table(mount, caption, cols, rows, highlight) {
+  /* HTML element, not el() — el() builds in the SVG namespace */
+  const t = document.createElement("table");
+  const cap = document.createElement("caption"); cap.textContent = caption;
+  const thead = document.createElement("thead"), tr = document.createElement("tr");
+  cols.forEach((c, i) => {
+    const th = document.createElement("th");
+    th.textContent = c.t; th.tabIndex = 0; th.setAttribute("scope", "col");
+    const sort = () => {
+      const cur = th.getAttribute("aria-sort");
+      const dir = cur === "descending" ? 1 : -1;
+      tr.querySelectorAll("th").forEach(o => o.removeAttribute("aria-sort"));
+      th.setAttribute("aria-sort", dir === -1 ? "descending" : "ascending");
+      rows.sort((a, b) => {
+        const x = a[c.k], y = b[c.k];
+        return typeof x === "number" ? (y - x) * dir : String(x).localeCompare(String(y)) * -dir;
+      });
+      body();
+    };
+    th.addEventListener("click", sort);
+    th.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); sort(); } });
+    tr.appendChild(th);
+  });
+  thead.appendChild(tr);
+  const tb = document.createElement("tbody");
+  function body() {
+    tb.innerHTML = rows.map(r => `<tr${highlight && highlight(r) ? ' class="hl"' : ""}>` +
+      cols.map(c => `<td>${c.f ? c.f(r[c.k], r) : r[c.k]}</td>`).join("") + "</tr>").join("");
+  }
+  body();
+  const wrap = document.getElementById(mount);
+  t.appendChild(cap); t.appendChild(thead); t.appendChild(tb);
+  wrap.innerHTML = ""; wrap.appendChild(t);
+}
+
+table("tbl-genizah",
+  "Behaviour of every system on the 131-fragment verified benchmark. CER is reported only over substantive attempts; n is that subset.",
+  [{ t: "System", k: "model", f: v => lbl(v) },
+   { t: "Read", k: "substantive", f: pct },
+   { t: "Hallucinated", k: "hallucinated", f: pct },
+   { t: "Abstained", k: "abstained", f: pct },
+   { t: "Looped", k: "loop", f: pct },
+   { t: "n-gram prec.", k: "ngramP", f: v => v.toFixed(3) },
+   { t: "Aligned F1", k: "f1", f: v => v.toFixed(3) },
+   { t: "CER (subst.)", k: "cer_sub", f: v => v == null ? "—" : v.toFixed(3) },
+   { t: "n subst.", k: "n_sub" }],
+  DATA.genizah.slice().sort((a, b) => b.substantive - a.substantive),
+  r => r.model === "qwen3_vl_8b_heb_v18b_step700");
+
+table("tbl-talmud",
+  "Per-section results on the 65-page Talmud benchmark. Coverage below 100% means the system refused or failed on the remainder.",
+  [{ t: "System", k: "model", f: v => lbl(v) },
+   { t: "Section", k: "section" },
+   { t: "Pages", k: "n" },
+   { t: "Coverage", k: "coverage", f: pct },
+   { t: "Median CER", k: "median", f: fmt },
+   { t: "Mean CER", k: "mean", f: fmt },
+   { t: "Pages > 0.3", k: "pct_fail", f: pct },
+   { t: "Pages > 1.0", k: "pct_collapse", f: pct }],
+  DATA.talmud.slice().sort((a, b) => a.median - b.median),
+  r => r.model === "qwen3_vl_8b_heb_v17_step800");
+
+table("tbl-forget",
+  "A seeded control sample re-run through every local generation. Same models, three task framings.",
+  [{ t: "Model", k: "model", f: v => lbl(v) },
+   { t: "Task", k: "domain" },
+   { t: "n", k: "n" },
+   { t: "Median CER", k: "median", f: fmt },
+   { t: "Mean CER", k: "mean", f: fmt },
+   { t: "Share > 0.3", k: "pct_fail", f: pct }],
+  DATA.forgetting.slice());
+
+/* ---------- export mode: #export=<exhibit-id> ---------- */
+(function () {
+  const m = /export=([\w-]+)/.exec(location.hash);
+  if (!m) return;
+  const src = document.getElementById(m[1]);
+  if (!src) return;
+  const stage = document.createElement("div");
+  stage.className = "export-stage";
+  stage.appendChild(src);
+  document.body.appendChild(stage);
+  document.body.classList.add("export");
+  document.body.style.zoom = "2";
+})();
+</script>

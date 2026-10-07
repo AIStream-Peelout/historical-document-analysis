@@ -1,0 +1,379 @@
+<title>Can Two Readers Agree?</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Frank+Ruhl+Libre:wght@400;500&display=swap">
+<style>
+  :root {
+    --paper: #EEF1F5;
+    --paper-2: #E3E8EE;
+    --ink: #1B2431;
+    --ink-2: #4A5665;
+    --ink-3: #7B8794;
+    --rule: #C9D1DA;
+    --hit: #1F7A8C;
+    --hit-bg: #D6ECEF;
+    --miss: #B23A48;
+    --miss-bg: #F3DCDF;
+    --gold: #8A6D2F;
+    --chip-bg: #FFFFFF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #151A21;
+      --paper-2: #1D242D;
+      --ink: #E6EAEF;
+      --ink-2: #AEB7C2;
+      --ink-3: #7D8894;
+      --rule: #333C47;
+      --hit: #5FC1D0;
+      --hit-bg: #17353B;
+      --miss: #E4778A;
+      --miss-bg: #3D1F26;
+      --gold: #D2B26A;
+      --chip-bg: #232B35;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #151A21;
+    --paper-2: #1D242D;
+    --ink: #E6EAEF;
+    --ink-2: #AEB7C2;
+    --ink-3: #7D8894;
+    --rule: #333C47;
+    --hit: #5FC1D0;
+    --hit-bg: #17353B;
+    --miss: #E4778A;
+    --miss-bg: #3D1F26;
+    --gold: #D2B26A;
+    --chip-bg: #232B35;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    padding-block: 40px 64px;
+    padding-inline: 20px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  .heb { font-family: "Frank Ruhl Libre", "Noto Serif Hebrew", "Times New Roman", serif; direction: rtl; unicode-bidi: isolate; }
+  .mono { font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  h1, h2, h3 { font-family: "Newsreader", Georgia, "Times New Roman", serif; font-weight: 500; text-wrap: balance; margin: 0; }
+  h1 { font-size: 44px; line-height: 1.05; letter-spacing: -0.01em; }
+  h2 { font-size: 26px; line-height: 1.15; }
+  h3 { font-size: 19px; line-height: 1.2; }
+  p { margin: 0; max-width: 62ch; }
+  .eyebrow { font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .lede { font-size: 17px; color: var(--ink-2); max-width: 60ch; }
+  em { font-family: "Newsreader", Georgia, serif; font-style: italic; font-size: 1.06em; }
+
+  header { display: grid; gap: 14px; padding-bottom: 28px; border-bottom: 1px solid var(--rule); }
+  .question { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; }
+  .question .heb { font-size: 30px; color: var(--ink-2); }
+
+  /* pipeline */
+  .pipeline { display: grid; gap: 0; margin-top: 8px; }
+  .step {
+    display: grid; grid-template-columns: 64px 1fr; gap: 0 22px;
+    padding-block: 26px; border-bottom: 1px solid var(--rule);
+  }
+  .step:last-child { border-bottom: 0; }
+  .num { font-family: "Newsreader", Georgia, serif; font-size: 40px; line-height: 1; color: var(--ink-3); font-weight: 400; padding-top: 2px; }
+  .step-body { display: grid; gap: 12px; min-width: 0; }
+  .step-body p { color: var(--ink-2); }
+  .code-ref { font-size: 12px; color: var(--ink-3); }
+
+  .sample {
+    display: grid; gap: 6px; padding: 14px 16px; background: var(--paper-2);
+    border-left: 3px solid var(--rule);
+  }
+  .sample .label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .sample .heb { font-size: 22px; line-height: 1.5; }
+  .sample.ref { border-left-color: var(--gold); }
+  .strike { color: var(--miss); text-decoration: line-through; text-decoration-thickness: 1.5px; }
+  .dim { color: var(--ink-3); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .two { grid-template-columns: 1fr; } .step { grid-template-columns: 44px 1fr; gap: 0 14px; } .num { font-size: 30px; } h1 { font-size: 34px; } }
+
+  .letters { font-size: 22px; letter-spacing: 0.04em; word-break: break-all; }
+  .count { font-size: 12px; color: var(--ink-3); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; direction: rtl; }
+  .chip {
+    font-family: "Frank Ruhl Libre", "Noto Serif Hebrew", serif; font-size: 18px; line-height: 1;
+    padding: 7px 9px 6px; border: 1px solid var(--rule); background: var(--chip-bg); border-radius: 3px;
+    unicode-bidi: isolate;
+  }
+  .chip.hit { border-color: var(--hit); background: var(--hit-bg); color: var(--hit); }
+  .chip.miss { border-color: var(--miss); background: var(--miss-bg); color: var(--miss); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px; vertical-align: -1px; }
+  .legend .l-hit::before { background: var(--hit); }
+  .legend .l-miss::before { background: var(--miss); }
+
+  .score { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 18px; }
+  .score .big { font-family: "Newsreader", Georgia, serif; font-size: 54px; line-height: 1; }
+  .score .frac { font-size: 15px; color: var(--ink-2); }
+  .bar { height: 10px; background: var(--miss-bg); border-radius: 2px; overflow: hidden; max-width: 420px; }
+  .bar i { display: block; height: 100%; width: 53.3%; background: var(--hit); }
+
+  .gates { display: grid; gap: 0; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+  .gate { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--rule); align-items: baseline; }
+  .gate:last-child { border-bottom: 0; }
+  .gate .name { font-weight: 600; font-size: 14px; }
+  .gate .rule { color: var(--ink-2); font-size: 14px; }
+  .gate.on { background: var(--hit-bg); }
+  .gate.on .name { color: var(--hit); }
+  @media (max-width: 640px) { .gate { grid-template-columns: 1fr; gap: 2px; } }
+
+  /* why */
+  section.why { margin-top: 44px; display: grid; gap: 22px; }
+  .why-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  @media (max-width: 720px) { .why-grid { grid-template-columns: 1fr; } }
+  .why-card { display: grid; gap: 10px; padding-top: 14px; border-top: 2px solid var(--ink); align-content: start; }
+  .why-card p { font-size: 14px; color: var(--ink-2); }
+  .stat { font-family: "Newsreader", Georgia, serif; font-size: 34px; line-height: 1; }
+  .stat small { font-family: "IBM Plex Sans", sans-serif; font-size: 12px; color: var(--ink-3); display: block; margin-top: 6px; letter-spacing: 0.02em; }
+
+  /* null distribution strip */
+  .null { display: grid; gap: 10px; padding: 18px 20px; background: var(--paper-2); }
+  .null .row { display: grid; grid-template-columns: 170px 1fr; gap: 12px; align-items: center; font-size: 13.5px; }
+  @media (max-width: 640px) { .null .row { grid-template-columns: 1fr; gap: 4px; } }
+  .track { position: relative; height: 22px; background: var(--chip-bg); border: 1px solid var(--rule); border-radius: 2px; }
+  .track b { position: absolute; top: 3px; height: 14px; border-radius: 2px; }
+  .track .own { background: var(--hit); opacity: .85; }
+  .track .wrong { background: var(--miss); opacity: .85; }
+  .track .tick { position: absolute; top: -6px; bottom: -6px; width: 1px; background: var(--ink); }
+  .track .tick::after { content: attr(data-l); position: absolute; top: -16px; left: 4px; font-size: 10.5px; color: var(--ink-3); white-space: nowrap; font-family: "IBM Plex Mono", monospace; }
+  .axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--ink-3); padding-inline: 170px 0; }
+  @media (max-width: 640px) { .axis { padding-inline: 0; } }
+
+  /* limits */
+  section.limits { margin-top: 44px; display: grid; gap: 14px; }
+  .limit-list { display: grid; gap: 10px; }
+  .limit { display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start; font-size: 14px; color: var(--ink-2); }
+  .limit .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--miss); }
+  .limit .dot.ok { background: var(--hit); }
+  .limit strong { color: var(--ink); font-weight: 600; }
+  footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--ink-3); display: grid; gap: 4px; }
+
+  /* --- page 5 additions, same token vocabulary --- */
+  a { color: var(--hit); text-underline-offset: 2px; text-decoration-thickness: 1px; }
+
+  /* score / verdict tables */
+  .tbl { display: grid; gap: 0; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+  .tbl .r { display: grid; gap: 8px 12px; padding: 10px 14px; border-bottom: 1px solid var(--rule); align-items: baseline; font-size: 14px; }
+  .tbl .r:last-child { border-bottom: 0; }
+  .tbl.t4 .r { grid-template-columns: 1.35fr 82px 82px 1.5fr; }
+  .tbl.t3 .r { grid-template-columns: 1.1fr 1fr 1fr; }
+  .tbl .h { background: var(--paper-2); font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .tbl .r.a { background: var(--hit-bg); }
+  .tbl .id { font-weight: 600; }
+  .tbl .r.a .id { color: var(--hit); }
+  .tbl .note { color: var(--ink-2); }
+  .tbl .k { display: none; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; margin-right: 7px; }
+  .tbl .lo { color: var(--miss); }
+  @media (max-width: 640px) {
+    .tbl.t4 .r, .tbl.t3 .r { grid-template-columns: 1fr; gap: 3px; }
+    .tbl .h { display: none; }
+    .tbl .k { display: inline; }
+  }
+
+  /* proportional stacked bar */
+  .stack { display: flex; height: 36px; border: 1px solid var(--rule); border-radius: 3px; overflow: hidden; }
+  .stack i {
+    display: flex; align-items: center; justify-content: center; min-width: 0;
+    font-family: "IBM Plex Mono", Menlo, monospace; font-size: 13px; color: var(--paper); font-style: normal;
+  }
+  .stack .s-a { background: var(--hit); }
+  .stack .s-k { background: var(--gold); }
+  .stack .s-v { background: var(--ink-3); }
+  .stack .s-n { background: var(--miss); }
+  .key { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); }
+  .key span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px; vertical-align: -1px; }
+  .key .k-a::before { background: var(--hit); }
+  .key .k-k::before { background: var(--gold); }
+  .key .k-v::before { background: var(--ink-3); }
+  .key .k-n::before { background: var(--miss); }
+  .key b { font-weight: 600; color: var(--ink); font-family: "IBM Plex Mono", Menlo, monospace; }
+
+  /* sensitivity strip */
+  .sweep { display: flex; flex-wrap: wrap; gap: 6px; }
+  .sweep b {
+    display: grid; gap: 3px; justify-items: center; font-weight: 400;
+    padding: 7px 12px; background: var(--chip-bg); border: 1px solid var(--rule); border-radius: 3px;
+    font-family: "IBM Plex Mono", Menlo, monospace; font-variant-numeric: tabular-nums;
+  }
+  .sweep b .x { font-size: 11px; color: var(--ink-3); }
+  .sweep b .v { font-size: 17px; }
+  .sweep b.on { border-color: var(--hit); background: var(--hit-bg); color: var(--hit); }
+  .sweep b.on .x { color: var(--hit); }
+  .sweep-row { display: grid; grid-template-columns: 170px 1fr; gap: 12px; align-items: center; font-size: 13.5px; }
+  @media (max-width: 640px) { .sweep-row { grid-template-columns: 1fr; gap: 6px; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Tier A and Tier B · when is an error rate meaningful?</div>
+    <h1>Can two readers agree?</h1>
+    <p class="lede">Many Genizah fragments carry more than one text layer: a later hand written over an earlier one, marginalia at right angles, a palimpsest under-text. Any reference for such a page is an editor's selection of one layer plus a linearisation of it. A system that faithfully reads a <em>different</em> layer scores as if it were hallucinating. So before trusting a character error rate on a page, we ask a prior question: did two unrelated systems independently find the reference on it?</p>
+  </header>
+
+  <div class="pipeline">
+
+    <div class="step">
+      <div class="num">1</div>
+      <div class="step-body">
+        <h3>Two kinds of reader</h3>
+        <p>The test only works because the two readers fail in unrelated ways. One follows the ink and nothing else; the other brings a language prior to the page. Neither can quietly borrow the other's mistakes.</p>
+        <div class="two">
+          <div class="sample"><span class="label">Order-blind line recogniser (Kraken / MiDRASH)</span><span>Run on segmented lines with no language model. It reads ink, line by line, and cannot invent fluent text: when it fails, the output is garbage, not prose.</span></div>
+          <div class="sample"><span class="label">Vision-language model</span><span>Reads the image with a strong language prior. It can reconstruct a damaged word from context — and it can hallucinate a plausible passage that is not on the page at all.</span></div>
+        </div>
+        <p>Their error modes are independent. That independence is what makes their agreement informative.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">2</div>
+      <div class="step-body">
+        <h3>Score each against the reference with the order-blind 5-gram precision</h3>
+        <p>Both readers are scored on the same question — <a href="1_ngram_precision.html">of everything written, how much occurs somewhere on this page</a> — so reading order never decides the outcome. Three real benchmark fragments show the three patterns that appear.</p>
+        <div class="tbl t4">
+          <div class="r h"><span>Fragment</span><span>Kraken</span><span>Best VLM</span><span>Verdict</span></div>
+          <div class="r a">
+            <span class="id">Cambridge T-S 10J12/9</span>
+            <span class="mono"><span class="k">Kraken</span>0.79</span>
+            <span class="mono"><span class="k">Best VLM</span>0.77</span>
+            <span class="note">Tier A — both readers find the reference</span>
+          </div>
+          <div class="r">
+            <span class="id">Cambridge T-S 13J2/9</span>
+            <span class="mono"><span class="k">Kraken</span>0.74</span>
+            <span class="mono lo"><span class="k">Best VLM</span>0.10</span>
+            <span class="note">Tier B — only the ink reader agrees; no VLM reconstructs the reference order</span>
+          </div>
+          <div class="r">
+            <span class="id">New York ENA 4007/6</span>
+            <span class="mono lo"><span class="k">Kraken</span>0.23</span>
+            <span class="mono"><span class="k">Best VLM</span>0.59</span>
+            <span class="note">Tier B — a VLM agrees but the ink reader does not; the reference may be a reconstruction the VLM shares priors with</span>
+          </div>
+        </div>
+        <span class="code-ref mono">score_genizah_offline.py · ngram_precision (n = 5)</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">3</div>
+      <div class="step-body">
+        <h3>Apply the rule</h3>
+        <p>Both conditions must hold on the same page. The seven vision-language models are Gemini Pro, Gemini Flash, Claude Opus 4.8, Claude Sonnet 5, GPT-5.6 Sol, HebVL-1.7 and HebVL-1.6; any one of them clearing the cutoff satisfies the second condition.</p>
+        <div class="gates">
+          <div class="gate"><span class="name">Ink reader</span><span class="rule">Kraken's 5-gram precision <span class="mono">&ge; 0.25</span> — mandatory, no substitute</span></div>
+          <div class="gate"><span class="name">Language reader</span><span class="rule">at least one of the seven VLMs <span class="mono">&ge; 0.25</span></span></div>
+        </div>
+        <p>Kraken is the mandatory half because it is the reader that cannot share a language prior with the reference. Two VLMs agreeing might only mean two models trained on the same canonical text; a line recogniser agreeing means the letters are there, in that shape, on that page.</p>
+        <span class="code-ref mono">score_genizah_offline.py · TIER_A_OVERLAP = 0.25</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">4</div>
+      <div class="step-body">
+        <h3>What the 131 fragments look like</h3>
+        <p>Applied to the verified benchmark, the rule admits 55 fragments. The paper reports that as a finding about the material rather than about the models: most of the corpus is structurally unsuited to error-rate evaluation.</p>
+        <div class="stack">
+          <i class="s-a" style="width:41.98%">55</i><i class="s-k" style="width:35.88%">47</i><i class="s-v" style="width:6.87%"></i><i class="s-n" style="width:15.27%">20</i>
+        </div>
+        <div class="key">
+          <span class="k-a">Tier A, both agree <b>55</b></span>
+          <span class="k-k">Kraken only <b>47</b></span>
+          <span class="k-v">VLM only <b>9</b></span>
+          <span class="k-n">neither <b>20</b></span>
+        </div>
+        <p>The largest Tier B group is the 47 pages where the ink reader found the reference and no VLM did — pages whose text is present but whose order, layer or script defeats a language prior.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">5</div>
+      <div class="step-body">
+        <h3>What changes by tier</h3>
+        <p>Median CER over substantive attempts, split by tier. Every system looks worse on Tier B, by the same kind of margin.</p>
+        <div class="tbl t3">
+          <div class="r h"><span>System</span><span>Tier A median CER</span><span>Tier B median CER</span></div>
+          <div class="r"><span class="id">Kraken &rarr; LLM</span><span class="mono"><span class="k">Tier A</span>0.351 <span class="count">(n = 55)</span></span><span class="mono"><span class="k">Tier B</span>0.490 <span class="count">(n = 64)</span></span></div>
+          <div class="r"><span class="id">HebVL-1.7</span><span class="mono"><span class="k">Tier A</span>0.351 <span class="count">(n = 51)</span></span><span class="mono"><span class="k">Tier B</span>0.423 <span class="count">(n = 36)</span></span></div>
+          <div class="r"><span class="id">Gemini 3.1 Pro</span><span class="mono"><span class="k">Tier A</span>0.365 <span class="count">(n = 28)</span></span><span class="mono"><span class="k">Tier B</span>0.553 <span class="count">(n = 12)</span></span></div>
+        </div>
+        <p>If Tier B were simply harder <em>reading</em>, the gap would vary with each system's weaknesses. That it moves together across architectures is what you expect if part of the Tier B "error" is the reference's linearisation rather than the model's reading.</p>
+      </div>
+    </div>
+  </div>
+
+  <section class="why">
+    <div>
+      <div class="eyebrow">Why a convergence rule at all</div>
+      <h2>Three numbers behind the split</h2>
+    </div>
+    <div class="why-grid">
+      <div class="why-card">
+        <span class="stat">55 / 131<small>fragments where CER is interpretable at all</small></span>
+        <p>Fewer than half the benchmark supports an error-rate headline. The paper reports this as a property of the corpus, not of the models — a Genizah benchmark that quotes CER on all 131 is quoting a number that does not mean the same thing on every page.</p>
+      </div>
+      <div class="why-card">
+        <span class="stat">0.12 %<small>wrong-page comparisons that reach the 0.25 cutoff</small></span>
+        <p>Scoring real outputs against the wrong manuscript gives 78,130 pairs; one in about eight hundred clears 0.25 by accident. Two independent systems both clearing it on the same page by chance is rarer still.</p>
+      </div>
+      <div class="why-card">
+        <span class="stat">15 of 33<small>high-window, low-alignment outputs that were Kraken reading correctly</small></span>
+        <p>Outputs with high 5-gram precision but low aligned precision are the diagnostic case: fifteen of them are the ink reader reading the right ink in a different order — exactly the situation the tier rule is designed to surface rather than punish.</p>
+      </div>
+    </div>
+
+    <div class="null">
+      <div class="eyebrow">Sensitivity: how many fragments are Tier A under other settings (the reviewers asked)</div>
+      <div class="sweep-row">
+        <span>By cutoff<br><span class="dim">window size held at n = 5</span></span>
+        <div class="sweep">
+          <b><span class="x">0.15</span><span class="v">80</span></b>
+          <b><span class="x">0.20</span><span class="v">68</span></b>
+          <b class="on"><span class="x">0.25</span><span class="v">55</span></b>
+          <b><span class="x">0.30</span><span class="v">46</span></b>
+          <b><span class="x">0.40</span><span class="v">26</span></b>
+        </div>
+      </div>
+      <div class="sweep-row">
+        <span>By window size<br><span class="dim">cutoff held at 0.25</span></span>
+        <div class="sweep">
+          <b><span class="x">n = 3</span><span class="v">120</span></b>
+          <b><span class="x">n = 4</span><span class="v">83</span></b>
+          <b class="on"><span class="x">n = 5</span><span class="v">55</span></b>
+          <b><span class="x">n = 6</span><span class="v">37</span></b>
+          <b><span class="x">n = 8</span><span class="v">24</span></b>
+        </div>
+      </div>
+      <p class="count">Paper setting highlighted. Under the resubmission's count-clipped score, at the same 0.25 and n = 5, the count is <span class="mono">50</span>.</p>
+    </div>
+  </section>
+
+  <section class="limits">
+    <div>
+      <div class="eyebrow">What it does not see</div>
+      <h2>Evidence of agreement, not proof of a reference</h2>
+    </div>
+    <div class="limit-list">
+      <div class="limit"><span class="dot"></span><span><strong>Agreement is evidence, not proof.</strong> A VLM and an editor can share the same canonical text as a prior — liturgy, Bible — so convergence on such a page is weaker evidence than convergence on a letter or a contract, where there is nothing to remember.</span></div>
+      <div class="limit"><span class="dot"></span><span><strong>Kraken is mandatory, so segmentation decides eligibility.</strong> The 9 fragments where only a VLM finds the reference stay in Tier B even if that VLM is right. A page the line recogniser segments badly cannot be Tier A, whatever else reads it.</span></div>
+      <div class="limit"><span class="dot"></span><span><strong>Short outputs can clear 0.25 by formula alone.</strong> One 27-letter output scored 0.26 on its own page. A minimum evidence length is a possible tightening of the rule.</span></div>
+      <div class="limit"><span class="dot"></span><span><strong>Four of the 55 are borderline.</strong> They qualified only because an over-long HebVL-1.7 output recycled real phrases from the page. Count clipping removes them: 55 &rarr; 50.</span></div>
+      <div class="limit"><span class="dot ok"></span><span><strong>Tier B pages are not discarded.</strong> They carry the precision-family metrics in full, and they are where the multi-layer findings come from — the pages the tier rule excludes from CER are the pages that motivated it.</span></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Tier rule from score_genizah_offline.py; counts from the verified benchmark; sensitivity from the 2026-09 metric audit (C_sweeps).</span>
+    <span>The three worked fragments are real benchmark pages: Cambridge T-S 10J12/9, Cambridge T-S 13J2/9, New York ENA 4007/6.</span>
+  </footer>
+</div>

@@ -1,0 +1,7 @@
+torch>=2.8.0
+torchvision
+transformers==4.57.6
+accelerate>=1.0.0
+pillow>=10.0
+spaces>=0.30
+gradio==5.50.0

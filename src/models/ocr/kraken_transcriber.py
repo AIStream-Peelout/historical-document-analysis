@@ -72,3 +72,56 @@ async def transcribe_with_kraken(
     except Exception as exc:
         logger.error(f"Kraken microservice request failed on {image_path}: {type(exc).__name__}: {str(exc)[:300]}")
         return None
+
+
+async def transcribe_with_kraken_lines(
+    model_path: str,
+    image_path: str,
+    timeout: Optional[float] = 180.0,
+) -> Optional[dict]:
+    """Transcribe with per-line geometry via the ``/transcribe_lines`` endpoint.
+
+    Same recognition passes as :func:`transcribe_with_kraken`, but the result
+    keeps each kept line's text and bounding box so callers can rebuild
+    reading order from geometry.
+
+    :param model_path: Kraken model path (host path; the service maps it to
+        its ``/app/models`` mount by basename).
+    :type model_path: str
+    :param image_path: Path of the image to transcribe.
+    :type image_path: str
+    :param timeout: Total request timeout in seconds.
+    :type timeout: Optional[float]
+    :return: Parsed ``LinesResponse`` dict with ``lines``
+        (``[{text, bbox, confidence}]``), ``polygon_failures``,
+        ``used_binarization`` and ``image_size``; None on failure.
+    :rtype: Optional[dict]
+    """
+    url = f"{KRAKEN_MICROSERVICE_URL}/transcribe_lines"
+    try:
+        client_timeout = aiohttp.ClientTimeout(total=timeout)
+        async with aiohttp.ClientSession(timeout=client_timeout) as session:
+            with open(image_path, "rb") as f:
+                data = aiohttp.FormData()
+                data.add_field("model_path", model_path)
+                data.add_field("image", f, filename=os.path.basename(image_path))
+
+                async with session.post(url, data=data) as response:
+                    if response.status != 200:
+                        err = await response.text()
+                        logger.error(f"Microservice error: {response.status} {err}")
+                        return None
+                    result = await response.json()
+                    logger.info(
+                        f"  Kraken lines (binarize={result.get('used_binarization', True)}): "
+                        f"{len(result.get('lines', []))} lines, "
+                        f"{result.get('polygon_failures', 0)} polygon failures"
+                    )
+                    return result
+
+    except asyncio.TimeoutError:
+        logger.error(f"Kraken /transcribe_lines timed out after {timeout}s on {image_path}")
+        return None
+    except Exception as exc:
+        logger.error(f"Kraken /transcribe_lines failed on {image_path}: {type(exc).__name__}: {str(exc)[:300]}")
+        return None

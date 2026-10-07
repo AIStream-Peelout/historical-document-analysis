@@ -1,0 +1,9 @@
+# Production kraken 7 image with the Genizah fine-tuned segmenter (e10 of runs/ktiv_seg_v1, fine-tuned from
+# blla2026 on KTIV line geometry, docs/kraken7_segmenter_ab.md) + test-time multi-scale / orientation reading.
+# Build context = the directory holding the converted weights:
+#   docker build -f src/services/kraken_microservice/k7/Dockerfile.ktivseg -t kraken-service:k7-ktivseg-e10 \
+#     /Volumes/home/studio_offload/datasets/kraken_segmenter/runs/ktiv_seg_v1/eval
+ARG BASE=kraken-service:k7-mv2
+FROM ${BASE}
+COPY ktiv_seg_e10.safetensors /app/segmodels/ktivseg_e10.safetensors
+ENV KRAKEN_SEGMENTER=/app/segmodels/ktivseg_e10.safetensors KRAKEN_SEG_INPUT=rgb KRAKEN_MULTISCALE=1 KRAKEN_ORIENT=1 KRAKEN_THREADS=6

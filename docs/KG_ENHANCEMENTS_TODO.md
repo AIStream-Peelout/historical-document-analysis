@@ -167,6 +167,25 @@ content; the serving repo only reads.
    holiday queries graph-first (currently deliberately deprioritized because
    the graph has nothing to offer them).
 
+14. **Automate the PGP-website person–document relation import.**
+   `src/datasets/indexing/neo4j/pgp_person_relations_import.py` loads the role
+   relationships (Scribe, Recipient, Mentioned, …) scraped from the PGP website
+   (`ktiv-scraper/princeton/scrape_pgp_relations.py` →
+   `pgp_person_document_relations.csv`) — data missing from the pgp-metadata
+   GitHub export. First prod load 2026-08-12: 9,726 edges from 10,406 rows;
+   Person nodes with no Fragment edge fell 5,396 → 4,258. Idempotent
+   (MERGE-keyed on person/fragment/type/pgpid/relation; edges tagged
+   `source: "pgp-website"`, `data_sources: ["pgp_website"]`). Fold into the
+   main KG import pipeline so a re-scrape auto-loads after person/fragment
+   import. Remaining gap, reported in
+   `artifacts/pgp_person_relations_unmatched.csv` (590 rows): 247 of 2,016
+   people are absent from the graph — they postdate the people.csv export the
+   Person nodes were built from (plus some diacritic drift, e.g. "Abu ʾl-" vs
+   "Abū l-"). The auto-import should first upsert Person nodes from a fresh
+   people scrape (url-keyed) rather than fuzzy-match names — homonyms make
+   name-level fuzzy matching unsafe. 86 rows reference documents absent from
+   the graph (mostly excavation objects with no shelfmark).
+
 ## Notes
 
 - Embedding contract for any re-index: `Qwen/Qwen3-Embedding-0.6B` @

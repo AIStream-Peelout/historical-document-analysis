@@ -1,0 +1,340 @@
+<title>How Many Edits Away?</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Frank+Ruhl+Libre:wght@400;500&display=swap">
+<style>
+  :root {
+    --paper: #EEF1F5;
+    --paper-2: #E3E8EE;
+    --ink: #1B2431;
+    --ink-2: #4A5665;
+    --ink-3: #7B8794;
+    --rule: #C9D1DA;
+    --hit: #1F7A8C;
+    --hit-bg: #D6ECEF;
+    --miss: #B23A48;
+    --miss-bg: #F3DCDF;
+    --gold: #8A6D2F;
+    --chip-bg: #FFFFFF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #151A21;
+      --paper-2: #1D242D;
+      --ink: #E6EAEF;
+      --ink-2: #AEB7C2;
+      --ink-3: #7D8894;
+      --rule: #333C47;
+      --hit: #5FC1D0;
+      --hit-bg: #17353B;
+      --miss: #E4778A;
+      --miss-bg: #3D1F26;
+      --gold: #D2B26A;
+      --chip-bg: #232B35;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #151A21;
+    --paper-2: #1D242D;
+    --ink: #E6EAEF;
+    --ink-2: #AEB7C2;
+    --ink-3: #7D8894;
+    --rule: #333C47;
+    --hit: #5FC1D0;
+    --hit-bg: #17353B;
+    --miss: #E4778A;
+    --miss-bg: #3D1F26;
+    --gold: #D2B26A;
+    --chip-bg: #232B35;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    padding-block: 40px 64px;
+    padding-inline: 20px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  .heb { font-family: "Frank Ruhl Libre", "Noto Serif Hebrew", "Times New Roman", serif; direction: rtl; unicode-bidi: isolate; }
+  .mono { font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  h1, h2, h3 { font-family: "Newsreader", Georgia, "Times New Roman", serif; font-weight: 500; text-wrap: balance; margin: 0; }
+  h1 { font-size: 44px; line-height: 1.05; letter-spacing: -0.01em; }
+  h2 { font-size: 26px; line-height: 1.15; }
+  h3 { font-size: 19px; line-height: 1.2; }
+  p { margin: 0; max-width: 62ch; }
+  .eyebrow { font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .lede { font-size: 17px; color: var(--ink-2); max-width: 60ch; }
+  em { font-family: "Newsreader", Georgia, serif; font-style: italic; font-size: 1.06em; }
+
+  header { display: grid; gap: 14px; padding-bottom: 28px; border-bottom: 1px solid var(--rule); }
+  .question { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; }
+  .question .heb { font-size: 30px; color: var(--ink-2); }
+
+  /* pipeline */
+  .pipeline { display: grid; gap: 0; margin-top: 8px; }
+  .step {
+    display: grid; grid-template-columns: 64px 1fr; gap: 0 22px;
+    padding-block: 26px; border-bottom: 1px solid var(--rule);
+  }
+  .step:last-child { border-bottom: 0; }
+  .num { font-family: "Newsreader", Georgia, serif; font-size: 40px; line-height: 1; color: var(--ink-3); font-weight: 400; padding-top: 2px; }
+  .step-body { display: grid; gap: 12px; min-width: 0; }
+  .step-body p { color: var(--ink-2); }
+  .code-ref { font-size: 12px; color: var(--ink-3); }
+
+  .sample {
+    display: grid; gap: 6px; padding: 14px 16px; background: var(--paper-2);
+    border-left: 3px solid var(--rule);
+  }
+  .sample .label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .sample .heb { font-size: 22px; line-height: 1.5; }
+  .sample.ref { border-left-color: var(--gold); }
+  .strike { color: var(--miss); text-decoration: line-through; text-decoration-thickness: 1.5px; }
+  .sub { color: var(--miss); background: var(--miss-bg); border-radius: 2px; padding: 0 2px; }
+  .dim { color: var(--ink-3); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .two { grid-template-columns: 1fr; } .step { grid-template-columns: 44px 1fr; gap: 0 14px; } .num { font-size: 30px; } h1 { font-size: 34px; } }
+
+  .letters { font-size: 22px; letter-spacing: 0.04em; word-break: break-all; }
+  .count { font-size: 12px; color: var(--ink-3); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; direction: rtl; }
+  .chip {
+    font-family: "Frank Ruhl Libre", "Noto Serif Hebrew", serif; font-size: 18px; line-height: 1;
+    padding: 7px 9px 6px; border: 1px solid var(--rule); background: var(--chip-bg); border-radius: 3px;
+    unicode-bidi: isolate;
+  }
+  .chip.hit { border-color: var(--hit); background: var(--hit-bg); color: var(--hit); }
+  .chip.miss { border-color: var(--miss); background: var(--miss-bg); color: var(--miss); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px; vertical-align: -1px; }
+  .legend .l-hit::before { background: var(--hit); }
+  .legend .l-miss::before { background: var(--miss); }
+
+  .score { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 18px; }
+  .score .big { font-family: "Newsreader", Georgia, serif; font-size: 54px; line-height: 1; }
+  .score .frac { font-size: 15px; color: var(--ink-2); }
+  .bar { height: 10px; background: var(--miss-bg); border-radius: 2px; overflow: hidden; max-width: 420px; }
+  .bar i { display: block; height: 100%; width: 53.3%; background: var(--hit); }
+  .bar i.err { background: var(--miss); }
+
+  .gates { display: grid; gap: 0; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+  .gate { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--rule); align-items: baseline; }
+  .gate:last-child { border-bottom: 0; }
+  .gate .name { font-weight: 600; font-size: 14px; }
+  .gate .rule { color: var(--ink-2); font-size: 14px; }
+  .gate.on { background: var(--hit-bg); }
+  .gate.on .name { color: var(--hit); }
+  @media (max-width: 640px) { .gate { grid-template-columns: 1fr; gap: 2px; } }
+
+  /* per-tier table */
+  .tiers { width: 100%; border-collapse: collapse; font-size: 14px; }
+  .tiers th, .tiers td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); }
+  .tiers tr:last-child td { border-bottom: 0; }
+  .tiers thead th { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .tiers tbody th { font-weight: 500; color: var(--ink); }
+  .tiers td small { display: block; font-size: 11.5px; color: var(--ink-3); margin-top: 2px; }
+  .tiers .tierA { background: var(--paper-2); }
+  @media (max-width: 640px) { .tiers th, .tiers td { padding: 8px 8px; font-size: 13px; } }
+
+  /* why */
+  section.why { margin-top: 44px; display: grid; gap: 22px; }
+  .why-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  @media (max-width: 720px) { .why-grid { grid-template-columns: 1fr; } }
+  .why-card { display: grid; gap: 10px; padding-top: 14px; border-top: 2px solid var(--ink); align-content: start; }
+  .why-card p { font-size: 14px; color: var(--ink-2); }
+  .stat { font-family: "Newsreader", Georgia, serif; font-size: 34px; line-height: 1; }
+  .stat small { font-family: "IBM Plex Sans", sans-serif; font-size: 12px; color: var(--ink-3); display: block; margin-top: 6px; letter-spacing: 0.02em; }
+
+  /* null distribution strip */
+  .null { display: grid; gap: 10px; padding: 18px 20px; background: var(--paper-2); }
+  .null .row { display: grid; grid-template-columns: 170px 1fr; gap: 12px; align-items: center; font-size: 13.5px; }
+  @media (max-width: 640px) { .null .row { grid-template-columns: 1fr; gap: 4px; } }
+  .track { position: relative; height: 22px; background: var(--chip-bg); border: 1px solid var(--rule); border-radius: 2px; }
+  .track b { position: absolute; top: 3px; height: 14px; border-radius: 2px; }
+  .track .own { background: var(--hit); opacity: .85; }
+  .track .wrong { background: var(--miss); opacity: .85; }
+  .track .tick { position: absolute; top: -6px; bottom: -6px; width: 1px; background: var(--ink); }
+  .track .tick::after { content: attr(data-l); position: absolute; top: -16px; left: 4px; font-size: 10.5px; color: var(--ink-3); white-space: nowrap; font-family: "IBM Plex Mono", monospace; }
+  .axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--ink-3); padding-inline: 170px 0; }
+  @media (max-width: 640px) { .axis { padding-inline: 0; } }
+
+  /* limits */
+  section.limits { margin-top: 44px; display: grid; gap: 14px; }
+  .limit-list { display: grid; gap: 10px; }
+  .limit { display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start; font-size: 14px; color: var(--ink-2); }
+  .limit .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--miss); }
+  .limit .dot.ok { background: var(--hit); }
+  .limit strong { color: var(--ink); font-weight: 600; }
+  footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--ink-3); display: grid; gap: 4px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Character and word error rate · strict, lenient, unclamped, conditional</div>
+    <h1>How many edits away?</h1>
+    <p class="lede">Character error rate is the HTR community's standard number, and we keep it so our results can be read against everyone else's. But never as a bare mean: <em>an edit count only means something once you know the output was an attempt at this page, in this order.</em> Everything below is about what has to be true before the number is worth quoting.</p>
+  </header>
+
+  <div class="pipeline">
+
+    <div class="step">
+      <div class="num">1</div>
+      <div class="step-body">
+        <h3>Normalise both sides</h3>
+        <p>All whitespace collapses to single spaces, both strings are put into Unicode NFC, and that is the whole of it — no case folding, no punctuation stripping, nothing that would make one system's conventions cheaper than another's. Same fragment as page 1: a line from a Judaeo-Aramaic marriage contract (Oxford, Bodleian MS heb. a 2/4), where the model has misread one letter and closed with a stock blessing that is not on the page.</p>
+        <div class="two">
+          <div class="sample ref"><span class="label">Reference, normalised</span><span class="heb">בנחשא טבא מעליא ויבנו ויצליחו</span><span class="count mono">29 characters · 5 words</span></div>
+          <div class="sample"><span class="label">Output, normalised</span><span class="heb">בנחשא טבא מעליא ויכנו ויצליחו שלום וברכה</span><span class="count mono">40 characters · 7 words</span></div>
+        </div>
+        <span class="code-ref mono">metrics.py · normalize_whitespace, unicodedata.normalize("NFC")</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">2</div>
+      <div class="step-body">
+        <h3>Count the cheapest edit path</h3>
+        <p>Levenshtein distance: the smallest number of single-character insertions, deletions and substitutions that turns the output into the reference. Here the cheapest path is one substitution and one long deletion.</p>
+        <div class="two">
+          <div class="sample ref"><span class="label">Reference (editor)</span><span class="heb">בנחשא טבא מעליא ויבנו ויצליחו</span></div>
+          <div class="sample"><span class="label">Output, edits marked</span><span class="heb">בנחשא טבא מעליא וי<span class="sub">כ</span>נו ויצליחו<span class="strike"> שלום וברכה</span></span></div>
+        </div>
+        <div class="legend"><span class="l-miss">1 substitution: the model's <span class="heb">כ</span> where the page has <span class="heb">ב</span></span><span class="l-miss">11 deletions: the invented <span class="heb">שלום וברכה</span>, with its space</span></div>
+        <p><strong>12 edits.</strong> Insertions would count the same way — the model dropped nothing here, so there are none.</p>
+        <span class="code-ref mono">metrics.py · _levenshtein (python-Levenshtein, rapidfuzz-backed)</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">3</div>
+      <div class="step-body">
+        <h3>Divide by the reference length</h3>
+        <div class="score"><span class="big mono">0.41</span><span class="frac mono">12 edits ÷ 29 reference characters</span></div>
+        <div class="bar"><i class="err" style="width:41%"></i></div>
+        <p>The denominator is the <em>page</em>, not the output. Eleven of these twelve edits are text the model added, and the page it was added to is what they are divided by — so writing extra raises CER without any ceiling. That asymmetry is not a defect to be patched out; it is the property that makes step 6 readable.</p>
+        <span class="code-ref mono">metrics.py · cer_levenshtein, cer_pair</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">4</div>
+      <div class="step-body">
+        <h3>Words instead of characters</h3>
+        <p>The identical computation with whitespace-delimited words as the units. Three of the output's seven words are edits against the reference's five.</p>
+        <div class="legend"><span class="l-hit">word found in the reference</span><span class="l-miss">word counts as an edit</span></div>
+        <div class="chips">
+          <span class="chip hit">בנחשא</span><span class="chip hit">טבא</span><span class="chip hit">מעליא</span><span class="chip miss">ויכנו</span><span class="chip hit">ויצליחו</span><span class="chip miss">שלום</span><span class="chip miss">וברכה</span>
+        </div>
+        <div class="score"><span class="big mono">0.60</span><span class="frac mono">3 word edits ÷ 5 reference words — one substituted, two inserted</span></div>
+        <div class="bar"><i class="err" style="width:60%"></i></div>
+        <p>WER is harsher on Hebrew than on Latin-script transcription, because one wrong letter is a whole wrong word: the single <span class="heb">כ</span> for <span class="heb">ב</span> that cost 1 of 29 characters costs 1 of 5 words. We report WER alongside CER, but read CER first.</p>
+        <span class="code-ref mono">metrics.py · wer_levenshtein, wer_pair</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">5</div>
+      <div class="step-body">
+        <h3>Strict versus lenient</h3>
+        <p>Some references carry vowel points and cantillation; most model outputs do not. Strict CER scores the text as written. Lenient CER decomposes both sides with NFKD and drops every combining mark, keeping the base letters, then scores that. On a pointed reference the difference is the whole score.</p>
+        <div class="two">
+          <div class="sample ref"><span class="label">Reference, pointed</span><span class="heb">בְּנַחְשָׁא טָבָא</span><span class="count mono">17 code points</span></div>
+          <div class="sample"><span class="label">Output, unpointed</span><span class="heb">בנחשא טבא</span><span class="count mono">9 code points</span></div>
+        </div>
+        <div class="two">
+          <div class="score"><span class="big mono">0.47</span><span class="frac mono">strict — 8 deletions ÷ 17, although every letter is right</span></div>
+          <div class="score"><span class="big mono">0.00</span><span class="frac mono">lenient — marks stripped from both sides</span></div>
+        </div>
+        <p>The benchmark reports both for every output. They mostly agree: on this benchmark <strong>151 of 1,352</strong> paper-system outputs differ by more than 0.01 between the two, and those are exactly the pointed-reference pages where the choice matters.</p>
+        <span class="code-ref mono">metrics.py · strip_nikud (NFKD, drop U+0591–U+05C7 combining marks)</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">6</div>
+      <div class="step-body">
+        <h3>Not clamped</h3>
+        <p>An output can be arbitrarily longer than the page, so CER can exceed 1. We do not cap it. When a decoder falls into a loop and runs to the token limit, the size of the overshoot <em>is</em> the finding — capping it at 1.00 would file that run next to a polite refusal.</p>
+        <div class="sample"><span class="label">Loop output, same page</span><span class="heb letters">ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו</span><span class="count mono">ויצליחו twelve times · 84 letters</span></div>
+        <div class="score"><span class="big mono">2.69</span><span class="frac mono">against this 29-character page</span></div>
+        <p>The largest CER on the benchmark is <strong>30.15</strong> (HebVL-1.7 on T-S 6J6/11), and <strong>235 of 1,352</strong> paper-system outputs exceed 1.0. Every one of them is reported at its true value. This is also why the mean is useless here and the median is what gets quoted.</p>
+        <span class="code-ref mono">metrics.py · module docstring — "CER is NOT clamped at 1.0"</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">7</div>
+      <div class="step-body">
+        <h3>Conditional, never bare</h3>
+        <p>What the paper actually prints is CER*: the <em>median</em> CER over substantive attempts only — outputs that got past the abstention, loop and hallucination gates of page 2 — and read only on Tier A fragments, where two independent readers agreed the editor transcribed the right layer in the right order (page 5). Both conditions are part of the number.</p>
+        <table class="tiers">
+          <thead>
+            <tr><th>System</th><th class="tierA">Tier A — order confirmed</th><th>Tier B — order unconfirmed</th></tr>
+          </thead>
+          <tbody>
+            <tr><th scope="row">Kraken→LLM</th><td class="tierA mono">0.351<small>n = 55</small></td><td class="mono">0.490<small>n = 64</small></td></tr>
+            <tr><th scope="row">HebVL-1.7</th><td class="tierA mono">0.351<small>n = 51</small></td><td class="mono">0.423<small>n = 36</small></td></tr>
+            <tr><th scope="row">Gemini 3.1 Pro</th><td class="tierA mono">0.365<small>n = 28</small></td><td class="mono">0.553<small>n = 12</small></td></tr>
+            <tr><th scope="row">HebVL-2.1 (ours) †</th><td class="tierA mono">0.125<small>n = 55</small></td><td class="mono">0.199<small>n = 75</small></td></tr>
+            <tr><th scope="row">HebVL-1.9 (ours) †</th><td class="tierA mono">0.147<small>n = 55</small></td><td class="mono">0.219<small>n = 73</small></td></tr>
+            <tr><th scope="row">Kraken/MiDRASH raw, KTIV fine-tune †</th><td class="tierA mono">0.293<small>n = 55</small></td><td class="mono">0.475<small>n = 74</small></td></tr>
+          </tbody>
+        </table>
+        <p class="count">† Added after the paper submission (August–September 2026 checkpoints); same 131 fragments, same scorer.</p>
+        <p class="count">Median CER over substantive attempts, by tier. On Tier B the reference order is unconfirmed, so part of that CER is the editor's linearisation, not the model's reading — which is why the Tier B column is diagnostic and the Tier A column is the headline.</p>
+      </div>
+    </div>
+  </div>
+
+  <section class="why">
+    <div>
+      <div class="eyebrow">Why it is never quoted bare</div>
+      <h2>Three things an edit count will not tell you on its own</h2>
+    </div>
+    <div class="why-grid">
+      <div class="why-card">
+        <span class="stat">1.00 = 2.69 = 0.69?<small>a refusal, a loop, and an accurate reading of a third of the page</small></span>
+        <p>CER ranks the loop as the worst of the three and the refusal as better than the partial read. Only the partial read touched the ink. An error rate orders outputs by distance, not by whether anything was read.</p>
+      </div>
+      <div class="why-card">
+        <span class="stat">0.344 → 0.179<small>best conditional CER median, at submission and now</small></span>
+        <p>Median conditional CER of raw Kraken lines at submission, the best figure in the paper, and of HebVL-2.1 a month later, the current best. Both are the standard HTR definition, so they compare directly with published MiDRASH numbers.</p>
+      </div>
+      <div class="why-card">
+        <span class="stat">0.516 → 0.249<small>Gemini Pro's conditional median as the admission cutoff moves 0.05 → 0.30</small></span>
+        <p>A stricter filter admits fewer pages and better ones, and the median falls by half without the model changing. CER* must always be quoted with the filter that produced it.</p>
+      </div>
+    </div>
+
+    <div class="null">
+      <div class="eyebrow">Three outputs on the same 29-character page, unclamped</div>
+      <div class="row"><span>Read a third of the page<br><span class="dim">accurate as far as it goes</span></span>
+        <div class="track"><b class="own" style="left:0.5%;width:22.5%"></b><span class="tick" style="left:33.3%" data-l="1.0 — where a clamp would cap"></span></div></div>
+      <div class="row"><span>Refused, wrote nothing<br><span class="dim">29 deletions ÷ 29</span></span>
+        <div class="track"><b class="wrong" style="left:0.5%;width:32.8%"></b><span class="tick" style="left:33.3%"></span></div></div>
+      <div class="row"><span>Looped to the token limit<br><span class="dim">one word, twelve times</span></span>
+        <div class="track"><b class="wrong" style="left:0.5%;width:89.2%"></b><span class="tick" style="left:33.3%"></span></div></div>
+      <div class="axis"><span>0</span><span>1.0</span><span>2.0</span><span>3.0</span></div>
+    </div>
+  </section>
+
+  <section class="limits">
+    <div>
+      <div class="eyebrow">What it does not see</div>
+      <h2>A distance to one transcription, and only that</h2>
+    </div>
+    <div class="limit-list">
+      <div class="limit"><span class="dot"></span><span><strong>It depends on a single linearisation of the page.</strong> On multi-layer fragments — marginalia, over-writing, a palimpsest under-text — there is no one correct order for the editor to have chosen, so a correct reading in a different order pays for the difference. That is why Tier B CER is never reported as a headline.</span></div>
+      <div class="limit"><span class="dot"></span><span><strong>It conflates completeness and accuracy.</strong> Reading half the page perfectly and reading all of it badly can land on the same number. Page 3 of this series separates the two, which is the only way to tell those two systems apart.</span></div>
+      <div class="limit"><span class="dot"></span><span><strong>One letter wrong is one edit, whatever kind of wrong it is.</strong> A plausible palaeographic confusion (<span class="heb">ב</span> for <span class="heb">כ</span>) and an invented character cost exactly the same. Error <em>types</em> are counted by the judge taxonomy, not here.</span></div>
+      <div class="limit"><span class="dot ok"></span><span><strong>Lenient CER is the fairer comparison, and strict is kept anyway.</strong> For models that add or drop pointing, lenient is the number to read. Strict stays because some references are pointed, and a model that hallucinates nikud onto an unpointed page should pay for it.</span></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Definitions from metrics.py (python-Levenshtein): cer_pair, wer_pair, strip_nikud, on whitespace-normalised NFC text, unclamped. Worked example: Oxford, Bodleian MS heb. a 2/4, Judaeo-Aramaic ketubba formula; the model output is constructed to show both failure types.</span>
+    <span>Per-tier medians from the verified benchmark long table; filter sensitivity from the 2026-09 metric audit. Page 4 of the metric series — page 2 defines the substantive-attempt gates, page 3 separates coverage from accuracy, page 5 defines the tiers.</span>
+  </footer>
+</div>

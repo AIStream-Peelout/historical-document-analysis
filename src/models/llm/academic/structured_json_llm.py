@@ -25,8 +25,10 @@ from PIL import Image
 import dotenv
 from pydantic import BaseModel, Field, ValidationError
 from pydantic_ai import Agent, RunContext
+from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
+from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.providers.ollama import OllamaProvider
 
 # Load environment variables from project root
@@ -161,24 +163,31 @@ class StructuredJSONLLM:
                 "Set GEMINI_API_KEY environment variable or pass gemini_api_key parameter."
             )
 
-        # Set up safety settings for Hebrew text processing
+        # Safety settings are relaxed because the corpus is medieval Hebrew and
+        # Judaeo-Arabic legal and documentary material — divorce deeds, slave
+        # sales, polemic — which the default filters intermittently block.
         if gemini_safety_settings is None:
-            self.gemini_safety_settings = {
-                "HARM_CATEGORY_HARASSMENT": "BLOCK_NONE",
-                "HARM_CATEGORY_HATE_SPEECH": "BLOCK_NONE",
-                "HARM_CATEGORY_SEXUALLY_EXPLICIT": "BLOCK_NONE",
-                "HARM_CATEGORY_DANGEROUS_CONTENT": "BLOCK_NONE"
-            }
+            categories = (
+                "HARM_CATEGORY_HARASSMENT",
+                "HARM_CATEGORY_HATE_SPEECH",
+                "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+                "HARM_CATEGORY_DANGEROUS_CONTENT",
+            )
+            self.gemini_safety_settings = [
+                {"category": category, "threshold": "BLOCK_NONE"} for category in categories
+            ]
         else:
-            # Convert list format to dict format if needed
-            self.gemini_safety_settings = {}
-            for setting in gemini_safety_settings:
-                self.gemini_safety_settings[setting['category']] = setting['threshold']
+            self.gemini_safety_settings = list(gemini_safety_settings)
 
+        # pydantic-ai >=1.x takes the credential on the provider and the safety
+        # settings on the model settings; passing either directly to
+        # GoogleModel raises TypeError.
         self.model = GoogleModel(
             gemini_model,
-            api_key=self.gemini_api_key,
-            safety_settings=self.gemini_safety_settings
+            provider=GoogleProvider(api_key=self.gemini_api_key),
+            settings=GoogleModelSettings(
+                google_safety_settings=self.gemini_safety_settings
+            ),
         )
         self.model_name = gemini_model
 
@@ -632,7 +641,14 @@ Extract the structured data according to the schema. Return ONLY valid JSON, no 
                 self._save_failed_output(page_number, pdf_name, raw_response, ocr_text, validation_error)
 
                 # Try to extract and fix JSON
-                extracted_json = self._extract_json_from_response(raw_response)
+                # A provider-side refusal (Gemini content filter: RECITATION, SAFETY,
+                # PROHIBITED_CONTENT, ...) carries the raw API response as .body; the
+                # "JSON" in it is not page output, and rescuing it would save an empty
+                # page that passes validation and is never retried.
+                if isinstance(validation_error, UnexpectedModelBehavior) and validation_error.body:
+                    extracted_json = None
+                else:
+                    extracted_json = self._extract_json_from_response(raw_response)
 
                 if extracted_json:
                     logger.info(f"Extracted JSON from failed response, attempting to fix...")
@@ -772,7 +788,14 @@ Extract the structured data according to the schema. Return ONLY valid JSON, no 
                 self._save_failed_output(page_number, pdf_name, raw_response, ocr_text, validation_error)
 
                 # Try to extract and fix JSON
-                extracted_json = self._extract_json_from_response(raw_response)
+                # A provider-side refusal (Gemini content filter: RECITATION, SAFETY,
+                # PROHIBITED_CONTENT, ...) carries the raw API response as .body; the
+                # "JSON" in it is not page output, and rescuing it would save an empty
+                # page that passes validation and is never retried.
+                if isinstance(validation_error, UnexpectedModelBehavior) and validation_error.body:
+                    extracted_json = None
+                else:
+                    extracted_json = self._extract_json_from_response(raw_response)
 
                 if extracted_json:
                     logger.info(f"Extracted JSON from failed response, attempting to fix...")
