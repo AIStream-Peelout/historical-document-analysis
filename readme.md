@@ -1,8 +1,5 @@
 # Multi-Modal Deep Learning for Historical Document Analysis
 
-> 📄 **[Cairo Genizah AI Transcription — formal analysis and write-up of the project](https://medium.com/deep-data-science/transcribing-the-cairo-genizah-with-multi-modal-ai-ad4cd9cbe980)**
-> The full account of the methods, training data, benchmarks and error analysis behind the Cairo Genizah AI transcription models ([models on Hugging Face](https://huggingface.co/isaacmg/qwen3-vl-8b-hebrew-v21b-ckpt), [segmenter](https://huggingface.co/isaacmg/kraken-genizah-segmenter)). Search the transcribed corpus at **[Cairo Genizah AI](https://cairogenizah.ai)**.
-
 This code contains the repository for analyzing historical documents and parsing historical manuscripts into usable JSON formatting.
 It goes in conjunction with the Medium article series on the Cairo Genizah Analysis but should work with other document
 collections as well.
@@ -165,4 +162,8 @@ Additionally, we thank the following institutions:
 [Cambridge University](https://cudl.lib.cam.ac.uk/collections/genizah/1)
 
 [Oxford University](https://genizah.bodleian.ox.ac.uk)
+
+> 📄 **[Cairo Genizah AI Transcription — formal analysis and write-up of the project](https://medium.com/deep-data-science/transcribing-the-cairo-genizah-with-multi-modal-ai-ad4cd9cbe980)**
+> The full account of the methods, training data, benchmarks and error analysis behind the Cairo Genizah AI transcription models ([models on Hugging Face](https://huggingface.co/isaacmg/qwen3-vl-8b-hebrew-v21b-ckpt), [segmenter](https://huggingface.co/isaacmg/kraken-genizah-segmenter)). Search the transcribed corpus at **[Cairo Genizah AI](https://cairogenizah.ai)**.
+
 
