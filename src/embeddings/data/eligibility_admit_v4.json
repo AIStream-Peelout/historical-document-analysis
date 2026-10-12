@@ -1,0 +1,42 @@
+{
+ "festival_terms": {
+  "fast_days": "\\btish[ʿ'’`]?a?h? b[e'’]?[-' ]?[ʿ'’`]?av\\b|\\b(?:ninth|9th) of av\\b|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}תשעה באב(?![\\u05D0-\\u05EA])",
+  "hanukkah": "\\b[hḥc]h?anuk+ah?\\b|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}חנוכה(?![\\u05D0-\\u05EA])",
+  "pesach": "\\bpesa[hḥc]h?\\b(?! (?:al-?)?mas[iī][hḥ])|\\bpessach\\b|\\bpeysa[kc]h\\b|(?<!christian )passover|\\bhagg?add?ah?\\b|\\bmatz(?:ah|ot|os)\\b|\\bmatsot\\b|seder[- ]night|night of the seder|\\b(?:[hḥ]|ch)a?metz\\b|afikoman|unleavened bread|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:פסח(?! ה?(?:אל)?מ[סש]יח)|חמץ|אפיקומן)(?![\\u05D0-\\u05EA])|הגדה (?:של|ל)פסח|חג המצות|ליל הסדר",
+  "purim": "\\bpurim\\b|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?<!כ)פורים(?![\\u05D0-\\u05EA])",
+  "rosh_hashanah": "rosh ha-?sh?anah?|ro(?:sh|s) ha-?s(?:h)?ana\\b|jewish new year|(?<!muslim )(?<!islamic )(?<!coptic )(?<!hijri )\\bnew year\\b|\\bs(?:h)?ofar\\b|high holy ?days|days of awe|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:ראש השנה|שופר|ר[\\\"״']ה|ימים ה?נוראים)(?![\\u05D0-\\u05EA])",
+  "rosh_hodesh": "\\brosh (?:[hḥ]|ch)odesh\\b|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}ראש חו?דש(?![\\u05D0-\\u05EA])",
+  "shavuot": "\\bshavu[ʿ'’`]?(?:ot|os)\\b|\\bshavous\\b|pentecost|feast of weeks|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}חג ה?שבועות(?![\\u05D0-\\u05EA])|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}ל(?:חג )?שבועות(?![\\u05D0-\\u05EA])|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:מוסף|יוצר|תפילת) ?ל?שבועות(?![\\u05D0-\\u05EA])",
+  "simhat_torah": "\\bsim(?:[hḥ]|ch)at torah|simchas torah|shemini [ʿ'’`]?a(?:tz|ts|ṣ|z|c)eret|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:שמחת תורה|שמיני עצרת)(?![\\u05D0-\\u05EA])",
+  "sukkot": "\\bsukk(?:ot|os|ah?)\\b|\\bsukot\\b|\\bsucc(?:ot|os|ah?)\\b|tabernacles|feast of booths|\\bhosha[ʿ'’`]?n(?:ot|os)\\b|\\bhosha[ʿ'’`]?nah? rabb|\\blulav|\\be?th?rog\\b|four species|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:סוכות|סכות|סוכה|לולב|אתרוג)(?![\\u05D0-\\u05EA])|(?<!בן )(?<!בר )(?<!ב\\\"ר )(?<!ב״ר )(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}הושענ(?:ות|א|ה)(?![\\u05D0-\\u05EA])",
+  "yom_kippur": "kipp?ur(?!\\w* katan)|day of atonement|\\bne[ʿ'’`]?ilah?\\b|high holy ?days|days of awe|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:יום[- ]ה?כי?פורי?ם?|כי?פור|נעילה|יוה?[\\\"״]כ|ימים ה?נוראים)(?![\\u05D0-\\u05EA])(?! קטן)"
+ },
+ "flags": {
+  "festival_terms": "i",
+  "topic_rules": ""
+ },
+ "source": "genizah_search evals/embedding_audit/build_subjects.py: FESTIVAL_TERMS (re.I) + TOPIC_RULES_V2 (case-sensitive), verbatim; TOPIC_RULES_LITURGY excluded",
+ "text_version": "semantic_v4",
+ "topic_rules": {
+  "divorce": "\\]:\\s*Gittin\\b|\\]:\\s*Gerushin\\b|Get Halitzah|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:גיטין|גטין|גירושין|גרושין)(?![\\u05D0-\\u05EA])",
+  "fast_days": "Ta'aniyyot|Tish'?a be-?Av|\\]:\\s*Ta'anit\\b|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:תשעה באב|הלכות תעני)",
+  "grace_after_meals": "Grace after [Mm]eals|Birkat ha-?Mazon|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}ברכת המזון",
+  "hanukkah": "Megillah va-Hanukkah|\\(Hanukkah\\)|Hanuk+ah|Chanuk+ah|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}חנוכה",
+  "kashrut": "\\]:\\s*Hullin\\b|\\]:\\s*Shehitah\\b|Ma'akhalot Asurot|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:חולין(?![\\u05D0-\\u05EA])|שחיטה(?![\\u05D0-\\u05EA])|מאכלות אסורות|טרפות(?![\\u05D0-\\u05EA])|טריפות(?![\\u05D0-\\u05EA]))",
+  "marriage": "\\]:\\s*Ketubbot\\b|\\]:\\s*Qiddushin\\b|\\]:\\s*Ishut\\b|Shidduchin|engagement and marriage|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:כתובות|קי?דושין|אישות|שידוכין|אירוסין|נישואין)(?![\\u05D0-\\u05EA])",
+  "mourning": "\\]:\\s*Mo'ed Qatan\\b|\\]:\\s*Evel\\b|Semahot|מועד קטן|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:אבלות|אבלים)(?![\\u05D0-\\u05EA])|ברכת אבלים|הלכות אבל|מסכת שמחות|\\]:\\s*שמחות",
+  "niddah": "\\]:\\s*Niddah\\b|Mikva'ot|Issurei Bi'ah|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:ני?דה(?![\\u05D0-\\u05EA])|מקו?ואות(?![\\u05D0-\\u05EA])|איסורי ביאה)",
+  "pesach": "\\]:\\s*Pesahim\\b|Hametz u-Mat|Haggadah|\\(Pesach\\)|\\(Passover\\)|\\bPesa[hc]h?\\b|Passover|Qorban Pesah|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:פסח(?:ים)?(?![\\u05D0-\\u05EA])|חמץ(?![\\u05D0-\\u05EA]))",
+  "purim": "\\]:\\s*Megillah\\b|Megillah va-Hanukkah|\\[Bible\\]:\\s*Esther|\\(Purim\\)|\\bPurim\\b|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?<!כ)פורים(?![\\u05D0-\\u05EA])|\\]:\\s*מגילה|הלכות מגילה|\\[מקרא\\]:\\s*אסתר|מגילת אסתר",
+  "rosh_hashanah": "\\]:\\s*Rosh ha-Shanah|Shofar ve-Sukkah|Rosh ha-?Shanah|Rosh Hashanah|\\bShofar\\b|High Holy Days|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:ראש השנה|ר['\\\"]+ה(?![\\u05D0-\\u05EA])|שופר(?![\\u05D0-\\u05EA])|ימים נוראים)",
+  "rosh_hodesh": "Rosh Hodesh|Qiddush ha-Hodesh|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}ראש חודש",
+  "selihot": "Selih?c?hot|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}סליחות(?![\\u05D0-\\u05EA])",
+  "shabbat": "\\]:\\s*Shabbat\\b|\\]:\\s*Eruvin\\b|\\bShabbat\\b|\\bSabbath\\b|\\bEruvin\\b|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:שבת(?:ות)?(?![\\u05D0-\\u05EA])|עי?רובין|עירוב(?![\\u05D0-\\u05EA])|במה מדליקין)",
+  "shavuot": "Shavu'?ot\\b|Pentecost|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:מוסף שבועות|יוצר לשבועות|תפילת שבועות|חג השבועות)",
+  "simhat_torah": "Simh?c?hat Torah|Shemini Atzeret|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:שמחת תורה|שמיני עצרת)",
+  "sukkot": "\\]:\\s*Sukkah\\b|Hoshanot|Shofar ve-Sukkah|\\(Sukkot\\)|Lulav|\\bSukk(?:ah|ot)\\b|Hoshana Rabbah|\\bEtrog\\b|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:סוכה|סוכות|סכות|הושענ|לולב|אתרוג)",
+  "tefillin_mezuzah": "Tefillin Mezuzah|\\]:\\s*Tefillin\\b|\\bTefillin\\b|\\bMezuz|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:תפילין|מזוז)",
+  "yom_kippur": "\\]:\\s*Yoma\\b|Shevitat Asor|Avodat Yom|Kippur(?! Katan)|Ne'?ilah|High Holy Days|(?<![\\u05D0-\\u05EA])[בהוכלמשד]{0,2}(?:יום[- ]ה?כי?פור(?!\\S* קטן)|יוה?['\\\"״]+כ(?![\\u05D0-\\u05EA])|יומא(?![\\u05D0-\\u05EA])|נעילה(?![\\u05D0-\\u05EA])|ימים ה?נוראים)"
+ },
+ "version": 1
+}

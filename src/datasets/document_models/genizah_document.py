@@ -5,7 +5,8 @@ import logging
 import re
 import hashlib
 from datetime import datetime
-from typing import Dict, List, Optional, Any, Tuple, Union
+from types import MappingProxyType
+from typing import ClassVar, Dict, Iterable, List, Mapping, Optional, Any, Tuple, Union
 import numpy as np
 from pydantic import BaseModel, Field, validator
 from enum import Enum
@@ -71,16 +72,264 @@ def _merged_image_urls(images: Dict[str, Any]) -> List[str]:
 
 
 _KTIV_TITLE_LABEL_RE = re.compile(r"^\s*Title in English\s*:\s*", re.IGNORECASE)
+# KTIV scholarly entries (``scholarly_entries[].subsections.writing_characteristics``): ``frame`` is the canonical
+# identification of the text ("[Talmud Yerushalmi]: Sanhedrin 10:2 – 3", "(Hoshanot): ''למען אב ידעך''@"),
+# ``title`` the work ("Leqakh Tov", "Talmud Bavli [Text]") and ``domain`` its genre path
+# ("Rabbinic Literature # Talmud Bavli # Talmud Bavli: Texts and Anthologies"). The catalogue writes incipits in
+# doubled single quotes and ends many frames with "@"; list values are one entry's continuation parts.
+_KTIV_WORK_TEXT_RE = re.compile(r"\s*\[Text\]\s*$", re.IGNORECASE)
+#: A KTIV ``basic_catalog.title`` that is one subject heading rather than a title: no Latin letters, digits or
+#: sentence punctuation, at most 40 characters ("קטע גניזה", "מקרא [טקסט", "משנה תורה").
+_LABEL_TITLE_RE = re.compile(r"^[^A-Za-z0-9.!?:–—]{1,40}$")
+#: The ``[טקסט`` / ``[Text]`` suffix NLI appends to a heading (the closing bracket is often cut off).
+_KTIV_HEADING_TEXT_RE = re.compile(r"\s*\[(?:טקסט|text)\]?\s*$", re.IGNORECASE)
+_LATIN_RE = re.compile(r"[A-Za-z]")
+_KTIV_BRACKETED_RE = re.compile(r"^\[([^\[\]]+)\]$")
+#: Work titles so generic that as a scholarly identification they only restate a catalogue label (hundreds or
+#: thousands of records would share one vector; "Leqakh Tov" is one manuscript in 150+ fragments whose label the frozen
+#: boilerplate list already holds); they are subject keywords instead. Lower-cased, ``[Text]`` removed.
+KTIV_GENERIC_WORK_TITLES = frozenset({
+    "not define", "talmud bavli", "talmud yerushalmi", "bible", "mishnah", "mishneh torah", "hilkhot ha-rif",
+    "halakhot gedolot", "leqakh tov", "לקח טוב",
+})
+#: Catalogue subjects / domain levels that say nothing about one record (lower-cased).
+KTIV_GENERIC_SUBJECTS = frozenset({
+    "cairo genizah fragments", "cairo genizah fragments (possible)", "unidentified", "unspecified domain",
+    "not define",
+    # The same headings in NLI's Hebrew title labels (:func:`ktiv_heading_parts`).
+    "קטע גניזה", "קטעי גניזה", "תחום לא מזוהה", "לא מזוהה", "לא ניתן להכרעה מתוך הקטלוג",
+})
+#: PGP tags that record editorial workflow, not content (lower-cased); ``ib-*`` tags are workflow too.
+PGP_WORKFLOW_TAGS = frozenset({"dimme", "fgp stub", "cmp", "to edit", "ib4"})
+_PGP_TAG_SPLIT_RE = re.compile(r"[;,]")
+_DIGITS_RE = re.compile(r"^\d+$")
+_ALT_TITLE_KEY_RE = re.compile(r"[\[\]\"'’‘`]+")
+#: Keywords naming the legacy catalogue store never reach an index field (project attribution rule; the same
+#: pattern the publishing checks grep for).
+_LEGACY_STORE_RE = re.compile(r"friedberg|fjms|\bfjp\b|\bfgp\b|genizah\.org", re.IGNORECASE)
+
+# KTIV ``basic_catalog.language`` (every KTIV record has one) lists English language names separated by single
+# spaces ("Hebrew Judeo-Arabic"). A comma keeps a two-word name together ("Greek, ancient"); "Modern Greek" is the
+# one two-word name written without a comma (4 records on 2026-10-08), so a space after "Modern" does not split either.
+_KTIV_LANGUAGE_SPLIT_RE = re.compile(r"(?<!,)(?<!Modern)\s+")
+#: FROZEN 2026-10-09 (index v10): the ``Language:`` line is embedded, so changing any entry here, or
+#: :data:`KTIV_LANGUAGE_SPELLING`, or the split rule above changes embedded text and means re-embedding.
+#: Whole parts the catalogue leaves as MARC codes; ``None`` drops the part ("mul", multiple languages, names none).
+KTIV_LANGUAGE_MAP: Mapping[str, Optional[str]] = MappingProxyType({"pol": "Polish", "mul": None})
+#: FROZEN with :data:`KTIV_LANGUAGE_MAP`: replaced in every part, giving PGP's (and the index's) spelling.
+KTIV_LANGUAGE_SPELLING: Tuple[str, str] = ("Judeo-", "Judaeo-")
+#: The ``language`` value meaning "no language known" (the model default; FJP also writes it literally).
+UNKNOWN_LANGUAGE = "Unknown"
+
+
+def ktiv_language(value: Optional[str]) -> Optional[str]:
+    """Normalise a KTIV ``basic_catalog.language`` value to the form of the ``language`` field.
+
+    Whitespace is collapsed and the value split on spaces that do not follow a comma or "Modern"
+    (``"Hebrew Judeo-Arabic"`` is two languages, ``"Greek, ancient"`` and ``"Modern Greek"`` one each). Every part is
+    mapped by :data:`KTIV_LANGUAGE_MAP` (``"pol"`` -> ``"Polish"``, ``"mul"`` dropped) and given the ``Judaeo-``
+    spelling (:data:`KTIV_LANGUAGE_SPELLING`); the parts left are joined with ``", "``, the separator of PGP's
+    ``languages_primary`` (``"Hebrew, Judaeo-Arabic"``).
+
+    :param value: Raw catalogue value, or ``None``.
+    :returns: The language string, or ``None`` when no part is left.
+    :rtype: Optional[str]
+    """
+    if not value or not value.strip():
+        return None
+    parts: List[str] = []
+    for part in _KTIV_LANGUAGE_SPLIT_RE.split(" ".join(value.split())):
+        mapped = KTIV_LANGUAGE_MAP.get(part, part)
+        if mapped:
+            parts.append(mapped.replace(*KTIV_LANGUAGE_SPELLING))
+    return ", ".join(parts) or None
+
+
+def _transcription_lines(text: str) -> Dict[str, str]:
+    """Number the non-empty lines of a transcription stored as one string.
+
+    :param text: The transcription text.
+    :returns: ``{"1": first line, "2": second line, ...}``, one entry per non-empty line, stripped (empty when the
+        text has no content).
+    :rtype: Dict[str, str]
+    """
+    stripped = [line.strip() for line in text.split("\n")]
+    return {str(i): line for i, line in enumerate((line for line in stripped if line), 1)}
+
+
+def _line_order(item: Tuple[str, Any]) -> Tuple[int, Any]:
+    """Sort key for ``(line_number, text)`` pairs: numeric keys in numeric order, then the rest alphabetically.
+
+    Line numbers are stored as strings, so a plain sort put "10" before "2" and scrambled every excerpt of ten
+    lines or more (6,975 records in the 2026-10-08 merged file).
+
+    :param item: A ``lines`` dict item.
+    :returns: ``(0, int)`` for digit keys, ``(1, key)`` otherwise.
+    """
+    key = str(item[0])
+    return (0, int(key)) if key.isdigit() else (1, key)
+
+
+def _ktiv_identification(value: Any) -> str:
+    """Clean one scholarly-entry string (``frame`` or ``title``) for use as a scholarly identification.
+
+    List values (a frame with continuation parts, ``["[Talmud Yerushalmi]: Yoma 41 b – c", "42 d"]``) are joined
+    with ``"; "``; the cataloguing label ``Title in English:``, the trailing ``@`` marker and a leading ``:`` of a
+    frame with an empty work slot are stripped; doubled single quotes around incipits become one double quote; a
+    frame that is only a bracketed genre (``[Piyyut]``) is unwrapped so the boilerplate rule still recognises it.
+
+    :param value: Raw catalogue value (string, list or ``None``).
+    :returns: The cleaned string (empty when nothing is left).
+    """
+    if isinstance(value, list):
+        value = "; ".join(str(v).strip() for v in value if v and str(v).strip())
+    text = _KTIV_TITLE_LABEL_RE.sub("", str(value or ""))
+    text = text.replace("''", '"').strip().rstrip("@").strip().lstrip(":").strip()
+    bracketed = _KTIV_BRACKETED_RE.match(text)
+    return bracketed.group(1).strip() if bracketed else text
+
+
+def _alt_title_key(value: str) -> str:
+    """Comparison key of an alternate title: brackets and quote marks removed, whitespace collapsed, case-folded.
+
+    KTIV's varying titles and scholarly frames often restate one identification in two spellings
+    (``"Bible: Numbers Bemidbar 2:12 – 3:29"`` and ``"[Bible]: Numbers Bemidbar 2:12 – 3:29"``); one is enough.
+
+    :param value: Cleaned alternate title.
+    :returns: The key.
+    """
+    return " ".join(_ALT_TITLE_KEY_RE.sub("", value).split()).casefold()
+
+
+def _dedupe_titles(titles: Iterable[str], taken: Iterable[str] = ()) -> List[str]:
+    """Keep the first spelling of every title, comparing titles by :func:`_alt_title_key`.
+
+    :param titles: Cleaned titles, in order.
+    :param taken: Titles listed elsewhere; a title with one of their keys is dropped.
+    :returns: Order-preserving titles, none empty, one per key.
+    :rtype: List[str]
+    """
+    seen = {_alt_title_key(title) for title in taken}
+    out: List[str] = []
+    for title in titles:
+        key = _alt_title_key(title)
+        if key and key not in seen:
+            seen.add(key)
+            out.append(title)
+    return out
+
+
+def _ktiv_writing_characteristics(ktiv: Optional[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """The ``writing_characteristics`` block of every scholarly entry of a merged record's KTIV source.
+
+    :param ktiv: The ``sources.ktiv`` block of a merged record, or ``None``.
+    :returns: One dict per entry that has the block (possibly empty).
+    """
+    out: List[Dict[str, Any]] = []
+    for entry in (ktiv or {}).get("scholarly_entries") or []:
+        if not isinstance(entry, dict):
+            continue
+        block = (entry.get("subsections") or {}).get("writing_characteristics")
+        if isinstance(block, dict):
+            out.append(block)
+    return out
+
+
+def _is_generic_work_title(title: str) -> bool:
+    """Whether a scholarly work title is one of :data:`KTIV_GENERIC_WORK_TITLES`.
+
+    :param title: Cleaned title (``[Text]`` suffix allowed).
+    :returns: True for a generic work.
+    """
+    return _KTIV_WORK_TEXT_RE.sub("", title).strip().lower() in KTIV_GENERIC_WORK_TITLES
+
+
+def _clean_keywords(candidates: Iterable[str]) -> List[str]:
+    """Trim keywords, drop the empty, collection-wide (:data:`KTIV_GENERIC_SUBJECTS`), numeric-id and
+    legacy-store-naming ones, and de-duplicate case-insensitively (the first spelling wins).
+
+    :param candidates: Raw keyword strings.
+    :returns: Ordered, de-duplicated keywords.
+    """
+    out: List[str] = []
+    seen = set()
+    for candidate in candidates:
+        text = str(candidate).strip()
+        key = text.lower()
+        if (not text or key in seen or key in KTIV_GENERIC_SUBJECTS or _DIGITS_RE.match(text)
+                or _LEGACY_STORE_RE.search(text)):
+            continue
+        seen.add(key)
+        out.append(text)
+    return out
+
+
+def _merged_subjects(ktiv: Optional[Dict[str, Any]], pgp_docs: List[Dict[str, Any]]) -> List[str]:
+    """Subject keywords of a merged record: KTIV catalogue subjects, the headings of a KTIV label title, the generic
+    work titles, and PGP tags.
+
+    These name what one record is about ("Karaites-Sermons", "Mishneh Torah", "India", "trade",
+    "Halfon b. Menashshe"), so they join the embedding text as its ``Subjects:`` line and the index field
+    ``subjects``. The generic works (:data:`KTIV_GENERIC_WORK_TITLES`, ``[Text]`` removed) are subjects rather than
+    scholarly identifications because thousands of records share each; the 2026-10-09 frozen-eval re-score showed that
+    queries naming a work lose ground when the work's name leaves the text, while taxonomy paths only pull records
+    towards a genre centroid (those are :func:`_merged_genres`). A KTIV title that is a list of headings
+    ("פיוט;תפילה וברכות;תפילות קבע", :func:`ktiv_heading_parts`) contributes each heading. Every ``;`` / ``,`` part
+    of a PGP tag string is one keyword; PGP workflow tags (:data:`PGP_WORKFLOW_TAGS`, ``ib-*``) are dropped, then
+    :func:`_clean_keywords`.
+
+    :param ktiv: The ``sources.ktiv`` block of a merged record, or ``None``.
+    :param pgp_docs: The PGP ``documents`` of the record.
+    :returns: Ordered, de-duplicated keywords.
+    """
+    candidates: List[str] = [str(s) for s in ((ktiv or {}).get("full_catalog") or {}).get("subjects") or []]
+    candidates.extend(ktiv_heading_parts(((ktiv or {}).get("basic_catalog") or {}).get("title")))
+    for block in _ktiv_writing_characteristics(ktiv):
+        title = _ktiv_identification(block.get("title"))
+        if title and _is_generic_work_title(title) and title.lower() != "not define":
+            candidates.append(_KTIV_WORK_TEXT_RE.sub("", title))
+    for doc in pgp_docs:
+        tags = doc.get("tags")
+        for tag in (tags if isinstance(tags, list) else _PGP_TAG_SPLIT_RE.split(str(tags or ""))):
+            text = str(tag).strip()
+            if text.lower() in PGP_WORKFLOW_TAGS or text.lower().startswith("ib-"):
+                continue
+            candidates.append(text)
+    return _clean_keywords(candidates)
+
+
+def _merged_genres(ktiv: Optional[Dict[str, Any]], subjects: Optional[List[str]] = None) -> List[str]:
+    """Genre taxonomy terms of a merged record: every level of the KTIV scholarly ``domain`` paths.
+
+    Under two hundred terms cover the whole corpus ("Rabbinic Literature", "Talmud Bavli: Texts and Anthologies",
+    "Piyyut", "Letters # Documentary"), so they are facets and lexical hooks (index field ``genres``,
+    ``full_text_content``) but stay out of the embedding text: embedded, they pull a record towards its genre's
+    centroid without saying anything the description does not (2026-10-09 frozen-eval re-score). A level that is
+    already one of the record's ``subjects`` (a generic work title) is not repeated.
+
+    :param ktiv: The ``sources.ktiv`` block of a merged record, or ``None``.
+    :param subjects: The record's :func:`_merged_subjects`, to avoid repeating them.
+    :returns: Ordered, de-duplicated terms (:func:`_clean_keywords`).
+    """
+    candidates: List[str] = []
+    for block in _ktiv_writing_characteristics(ktiv):
+        domains = block.get("domain")
+        for domain in (domains if isinstance(domains, list) else [domains]):
+            candidates.extend(str(domain or "").split("#"))
+    taken = {s.lower() for s in subjects or []}
+    return [term for term in _clean_keywords(candidates) if term.lower() not in taken]
 
 
 def _ktiv_alt_titles(ktiv: Optional[Dict[str, Any]]) -> List[str]:
-    """Return the KTIV "Varying form of title" strings for a merged record.
+    """Return the alternate titles of a merged record: the KTIV "Varying form of title" values.
 
     NLI catalogues the searchable, human-readable title (e.g.
     ``"Talmud Bavli: Megillah 2 a – b"`` plus its Hebrew form) under
     ``basic_catalog.varying_form_of_title``, while ``basic_catalog.title`` is
     the Hebrew subject heading. The cataloguing label ``"Title in English:"``
-    is stripped; everything else is kept verbatim.
+    is stripped; everything else is kept verbatim. Spellings that differ only in
+    brackets, quote marks, spacing or case are one title (:func:`_alt_title_key`).
+    The scholarly identifications are a separate attribute (:func:`_ktiv_scholarly_frames`).
 
     :param ktiv: The ``sources.ktiv`` block of a merged record, or ``None``.
     :returns: De-duplicated, order-preserving list of alternate titles.
@@ -88,12 +337,111 @@ def _ktiv_alt_titles(ktiv: Optional[Dict[str, Any]]) -> List[str]:
     raw = ((ktiv or {}).get("basic_catalog") or {}).get("varying_form_of_title") or []
     if isinstance(raw, str):
         raw = [raw]
-    out: List[str] = []
-    for value in raw:
-        title = _KTIV_TITLE_LABEL_RE.sub("", str(value)).strip()
-        if title and title not in out:
-            out.append(title)
-    return out
+    return _dedupe_titles(_KTIV_TITLE_LABEL_RE.sub("", str(value)).strip() for value in raw)
+
+
+def is_ktiv_label_title(title: Optional[str]) -> bool:
+    """Whether a KTIV ``basic_catalog.title`` is a subject-heading label rather than a title.
+
+    NLI titles most Genizah fragments with the catalogue's subject headings: several joined by ``;``
+    ("פיוט;תפילה וברכות;תפילות קבע") or one bare heading ("קטע גניזה", "מקרא [טקסט", "משנה תורה"). Such a
+    title says what shelf the fragment sits on, not what it is; the identification proper is the varying title
+    (:func:`ktiv_varying_title`). Any ``;`` makes a label string; a single heading has no Latin letters, digits or
+    sentence punctuation and at most 40 characters (:data:`_LABEL_TITLE_RE`).
+
+    :param title: The catalogue title, or ``None``.
+    :returns: True for a label.
+    """
+    text = (title or "").strip()
+    return bool(text) and (";" in text or bool(_LABEL_TITLE_RE.match(text)))
+
+
+def ktiv_heading_parts(title: Optional[str]) -> List[str]:
+    """The subject headings of a KTIV label title (:func:`is_ktiv_label_title`), ``[טקסט`` suffixes removed.
+
+    :param title: The catalogue title, or ``None``.
+    :returns: Headings in catalogue order, none empty; ``[]`` for a title that is not a label.
+    """
+    if not is_ktiv_label_title(title):
+        return []
+    parts = (_KTIV_HEADING_TEXT_RE.sub("", part).strip() for part in str(title).split(";"))
+    return [part for part in parts if part]
+
+
+def _is_generic_title_candidate(title: str) -> bool:
+    """Whether a varying title is itself only a label ("Piyyut", "Mishneh Torah", "Unidentified").
+
+    :param title: A cleaned varying title.
+    :returns: True when it should not replace the catalogue title.
+    """
+    key = _KTIV_WORK_TEXT_RE.sub("", title).strip().lower()
+    return (not key or key in KTIV_GENERIC_SUBJECTS or key in KTIV_GENERIC_WORK_TITLES
+            or (len(key.split()) < 2 and ":" not in key))
+
+
+def ktiv_varying_title(ktiv: Optional[Dict[str, Any]]) -> Optional[str]:
+    """The catalogued title proper of a KTIV record: its first usable varying title, English before Hebrew.
+
+    "Common Prayers: Sukkot Amidah", "Bible: Genesis 12:3 – 14:2", "Talmud Bavli: Shabbat 56 b – 57 b" are what a
+    reader needs on a card and what the embedding text should open with; the Hebrew form ("תפילות קבע: סוכות
+    עמידה") serves when no English one exists. A candidate that is only a label (:func:`is_ktiv_label_title`,
+    :func:`_is_generic_title_candidate`) is skipped.
+
+    :param ktiv: The ``sources.ktiv`` block of a merged record, or ``None``.
+    :returns: The title, or ``None`` when the record has no usable varying title.
+    """
+    titles = _ktiv_alt_titles(ktiv)
+    ordered = [t for t in titles if _LATIN_RE.search(t)] + [t for t in titles if not _LATIN_RE.search(t)]
+    for candidate in ordered:
+        if is_ktiv_label_title(candidate) or _is_generic_title_candidate(candidate):
+            continue
+        return candidate
+    return None
+
+
+def merged_description(merged: Mapping[str, Any]) -> str:
+    """The description of a merged record as displayed and embedded.
+
+    The merge's ``description`` stands, except when it is the record's KTIV catalogue title and that title is a
+    subject-heading label (:func:`is_ktiv_label_title`): then the catalogued varying title replaces it
+    (:func:`ktiv_varying_title`), and the headings become the record's subjects (:func:`_merged_subjects`).
+    On 2026-10-11 the merge carried such labels as the description of 16,894 records ("פיוט;תפילה וברכות;תפילות קבע"
+    for a leaf identified as "Common Prayers: Sukkot Amidah"), so result cards showed headings and the embedded
+    text opened with them; merges from the same day on apply the rule themselves (``merge_shelfmarks``), which
+    makes this a no-op for them. A record without a usable varying title keeps its label.
+
+    :param merged: One merged record.
+    :returns: The description (possibly empty).
+    """
+    description = merged.get("description") or ""
+    ktiv = (merged.get("sources") or {}).get("ktiv") or {}
+    title = ((ktiv.get("basic_catalog") or {}).get("title") or "")
+    if ktiv and description.strip() and description.strip() == title.strip() and is_ktiv_label_title(title):
+        return ktiv_varying_title(ktiv) or description
+    return description
+
+
+def _ktiv_scholarly_frames(ktiv: Optional[Dict[str, Any]]) -> List[str]:
+    """Return the KTIV scholarly identifications of a merged record: each entry's ``frame`` and specific work ``title``.
+
+    In entry order, every scholarly entry gives its ``frame`` (the identified passage,
+    ``"[Bible]: Numbers Bemidbar 2:12 – 3:29"``) and then its work ``title`` (``"Sefer ha-Arukh"``) unless the work is
+    generic (:data:`KTIV_GENERIC_WORK_TITLES`, which are :func:`_merged_subjects`), both cleaned by
+    :func:`_ktiv_identification`. Spellings that differ only in brackets, quote marks, spacing or case are one
+    identification, and one that restates a varying title (:func:`_ktiv_alt_titles`) is left out
+    (:func:`_alt_title_key`). They are kept apart from the alternate titles so the embedding text can leave them out
+    (:meth:`GenizahDocument.create_text_representation` with ``include_scholarly_frames=False``).
+
+    :param ktiv: The ``sources.ktiv`` block of a merged record, or ``None``.
+    :returns: De-duplicated, order-preserving list of identifications.
+    """
+    candidates: List[str] = []
+    for block in _ktiv_writing_characteristics(ktiv):
+        candidates.append(_ktiv_identification(block.get("frame")))
+        title = _ktiv_identification(block.get("title"))
+        if title and not _is_generic_work_title(title):
+            candidates.append(title)
+    return _dedupe_titles(candidates, taken=_ktiv_alt_titles(ktiv))
 
 
 class ContentQuality(str, Enum):
@@ -243,7 +591,21 @@ class GenizahDocument(BaseModel):
     description: str = Field(description="Description of the document")
     alt_titles: List[str] = Field(
         default_factory=list,
-        description="Alternate / varying titles (e.g. KTIV 'Varying form of title')",
+        description="Alternate / varying titles (KTIV 'Varying form of title')",
+    )
+    scholarly_frames: List[str] = Field(
+        default_factory=list,
+        description="KTIV scholarly identifications (each entry's frame and specific work title); listed after the "
+                    "alternate titles in the embedding text unless include_scholarly_frames=False, always in the "
+                    "full text",
+    )
+    subjects: List[str] = Field(
+        default_factory=list,
+        description="Subject keywords (KTIV catalogue subjects, PGP tags); also the Subjects: line of the embedding text",
+    )
+    genres: List[str] = Field(
+        default_factory=list,
+        description="Genre taxonomy terms (KTIV scholarly domain levels): facets and lexical search, never embedding text",
     )
     transcriptions: List[TranscriptionSection] = Field(default_factory=list, description="Document transcriptions")
     translations: List[str] = Field(default_factory=list, description="Document translations")
@@ -282,6 +644,9 @@ class GenizahDocument(BaseModel):
     
     # Attribution
     attribution_url: Optional[str] = Field(default=None, description="URL to the original collection/database where the document is hosted")
+
+    # Which versioned embedding text applies (src.embeddings.text_representation); not a field.
+    embedding_text_kind: ClassVar[str] = "fragment"
 
     class Config:
         """Pydantic configuration."""
@@ -330,6 +695,11 @@ class GenizahDocument(BaseModel):
     def validate_transcriptions(cls, v: List) -> List[TranscriptionSection]:
         """Convert transcription data to TranscriptionSection objects.
 
+        A plain string item (FJP stores some transcriptions as one text) becomes a section with one numbered entry
+        per non-empty line (:func:`_transcription_lines`) and no name: a section name reaches the index as
+        ``transcriptions.editor``, and index fields never name the legacy store (:data:`_LEGACY_STORE_RE`). An empty
+        string is dropped.
+
         :param v: Raw transcription data
         :type v: List
         :return: List of TranscriptionSection objects
@@ -344,6 +714,10 @@ class GenizahDocument(BaseModel):
                 result.append(item)
             elif isinstance(item, dict):
                 result.append(TranscriptionSection(**item))
+            elif isinstance(item, str):
+                lines = _transcription_lines(item)
+                if lines:
+                    result.append(TranscriptionSection(lines=lines))
             elif hasattr(item, 'name') and hasattr(item, 'lines'):
                 result.append(TranscriptionSection(name=item.name, lines=item.lines))
             else:
@@ -469,6 +843,8 @@ class GenizahDocument(BaseModel):
         if self.description:
             content_parts.append(str(self.description))
         content_parts.extend(self.alt_titles)
+        content_parts.extend(self.scholarly_frames)
+        content_parts.extend(self.subjects)
 
         # Transcriptions
         for trans in self.transcriptions:
@@ -967,8 +1343,12 @@ class GenizahDocument(BaseModel):
             text_parts.append(self.description)
 
         # Alternate titles (KTIV "Varying form of title": the English tractate /
-        # folio string and its Hebrew form) so lexical search reaches them.
+        # folio string and its Hebrew form) and the KTIV scholarly identifications,
+        # always (whatever the embedding text holds), so lexical search reaches them.
         text_parts.extend(self.alt_titles)
+        text_parts.extend(self.scholarly_frames)
+        text_parts.extend(self.subjects)
+        text_parts.extend(self.genres)
 
         # Add title from metadata if available
         if self.full_metadata:
@@ -1049,6 +1429,9 @@ class GenizahDocument(BaseModel):
             # Content fields
             "description": self.description,
             "alt_titles": self.alt_titles,
+            "scholarly_frames": self.scholarly_frames,
+            "subjects": self.subjects,
+            "genres": self.genres,
             "full_text_content": self.create_full_text_content(),
 
             # Temporal information
@@ -1372,12 +1755,18 @@ class GenizahDocument(BaseModel):
         instance._apply_shelfmark_mapping()
         return instance
 
-    def create_text_representation(self) -> str:
+    def create_text_representation(self, include_scholarly_frames: bool = True) -> str:
         """Create a structured textual representation for embedding generation.
 
         This method creates a formatted text representation that's optimized for
         embedding models, with clear field labels and proper content prioritization.
+        The ``Alternate titles:`` line lists ``alt_titles`` and then ``scholarly_frames``
+        (one spelling per :func:`_alt_title_key`); ``include_scholarly_frames=False``
+        leaves the frames out and changes nothing else (the scholarly-frames ablation).
 
+        :param include_scholarly_frames: Whether the ``Alternate titles:`` line lists the
+            KTIV scholarly identifications (``scholarly_frames``).
+        :type include_scholarly_frames: bool
         :return: Structured text representation for embedding
         :rtype: str
 
@@ -1408,10 +1797,21 @@ class GenizahDocument(BaseModel):
         if self.description:
             text_parts.append(f"Description: {self.description}")
 
-        # Alternate titles (KTIV varying form of title) — often the only
-        # English statement of what the fragment is.
-        if self.alt_titles:
-            text_parts.append(f"Alternate titles: {'; '.join(self.alt_titles)}")
+        # Alternate titles (KTIV varying form of title) and, unless left out, the
+        # KTIV scholarly identifications — often the only English statement of
+        # what the fragment is.
+        frames = self.scholarly_frames if include_scholarly_frames else []
+        alternate_titles = _dedupe_titles([*self.alt_titles, *frames])
+        if alternate_titles:
+            text_parts.append(f"Alternate titles: {'; '.join(alternate_titles)}")
+
+        # Subject keywords (KTIV catalogue subjects, PGP tags): context for the
+        # vector and lexical hooks. The semantic text never lets this line make a
+        # record eligible under semantic_v4 (semantic_text.v4_measured_text /
+        # content_lines_v4; the frozen v3 rule still counts it). Genres stay out: they
+        # are taxonomy, not content.
+        if self.subjects:
+            text_parts.append(f"Subjects: {'; '.join(self.subjects)}")
 
         # Add title from metadata if available
         if self.full_metadata:
@@ -1458,7 +1858,7 @@ class GenizahDocument(BaseModel):
 
                 # Add transcription lines
                 if isinstance(transcription.lines, dict):
-                    for line_num, line_text in sorted(transcription.lines.items()):
+                    for line_num, line_text in sorted(transcription.lines.items(), key=_line_order):
                         if line_text:
                             combined_transcription += f"{line_text} "
                 elif isinstance(transcription.lines, list):
@@ -1564,8 +1964,10 @@ class GenizahDocument(BaseModel):
                                  for i, ln in enumerate(str(text).split("\n")) if ln.strip()}
                         if lines:
                             transcriptions.append(TranscriptionSection(
-                                name=f"FJP {key}", lines=lines))
+                                name=f"Transcription {key}", lines=lines))
             elif isinstance(tr, list):
+                # Editor sections (dicts) and plain-string transcriptions; validate_transcriptions
+                # converts both, so a string here ends as it would anywhere else.
                 transcriptions.extend(tr)
             tl = rec.get("translations") or {}
             translations.extend(tl.values() if isinstance(tl, dict) else tl)
@@ -1578,7 +1980,8 @@ class GenizahDocument(BaseModel):
         # KTIV "Academic transcription" (viewer word annotations, flattened to
         # per-page line text by the merge). Same unified list as FJP entries so
         # they are searched identically; the section name carries the lineage,
-        # mirroring the "FJP <key>" convention above.
+        # mirroring the "Transcription <key>" convention above (section names reach
+        # the index as ``transcriptions[].editor``, so they never name the legacy store).
         ktiv_transcription = sources.get("ktiv_transcription") or {}
         for page_no, page in enumerate(ktiv_transcription.get("pages") or [], 1):
             page_text = (page.get("text") or "").strip()
@@ -1632,7 +2035,13 @@ class GenizahDocument(BaseModel):
         if not (isinstance(date, dict) and any(date.values())):
             date = {"standard_date": merged["date"]} if merged.get("date") else None
         bodleian_images = images.get("bodleian") or {}
-        language = (pgp0.get("languages_primary") or fjp0.get("language") or "Unknown")
+        # Language: PGP, else FJP, else the KTIV catalogue language (ktiv_language), else "Unknown".
+        # FJP writes a literal "Unknown" when it has none; that must not hide the KTIV language.
+        fjp_language = fjp0.get("language")
+        language = (pgp0.get("languages_primary")
+                    or (fjp_language if fjp_language != UNKNOWN_LANGUAGE else None)
+                    or ktiv_language((ktiv.get("basic_catalog") or {}).get("language"))
+                    or UNKNOWN_LANGUAGE)
         joins = fjp0.get("joins_data") or (
             {"part_of_join": ktiv.get("full_catalog", {}).get("part_of_join")}
             if (ktiv.get("full_catalog") or {}).get("part_of_join") else None
@@ -1641,8 +2050,11 @@ class GenizahDocument(BaseModel):
         instance = cls(
             doc_id=merged.get("canonical_id"),
             shelf_mark=merged.get("shelfmark_display") or merged.get("canonical_id"),
-            description=merged.get("description") or "",
+            description=merged_description(merged),
             alt_titles=_ktiv_alt_titles(ktiv),
+            scholarly_frames=_ktiv_scholarly_frames(ktiv),
+            subjects=(subjects := _merged_subjects(ktiv, pgp_docs)),
+            genres=_merged_genres(ktiv, subjects),
             transcriptions=transcriptions,
             translations=[t for t in translations if t and str(t).strip()],
             related_people=related_people,
