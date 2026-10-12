@@ -27,6 +27,8 @@ from google.cloud import vision
 from google.cloud.vision_v1 import types
 from google.api_core import exceptions as gcp_exceptions
 
+from src.models.ocr.script_routing import HybridThresholds, letter_agreement, semitic_share, suspect_glyphs
+
 # Load environment variables from project root
 # Get the path to the project root (5 levels up from this file)
 project_root = Path(__file__).parent.parent.parent.parent.parent.parent
@@ -64,6 +66,41 @@ def _atomic_write_json(path: Path, data: Dict[str, Any]) -> None:
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def _load_done_pages(cp_path: Path) -> Dict[int, Any]:
+    """Return the pages of a results checkpoint that hold OCR and no error.
+
+    :param cp_path: Results JSON (may be missing).
+    :returns: ``{page_number: page_result}``; empty when there is no readable file.
+    """
+    import json as _json
+
+    if not cp_path.exists():
+        return {}
+    try:
+        existing = _json.loads(cp_path.read_text(encoding='utf-8'))
+    except ValueError as err:
+        logger.warning(f"Could not load checkpoint {cp_path}: {err} — starting fresh")
+        return {}
+    done = {p['page_number']: p for p in existing.get('pages', []) if p.get('ocr_result') and not p.get('error')}
+    logger.info(f"Checkpoint loaded — {len(done)} pages already done, resuming…")
+    return done
+
+
+def _text_layer_result(page_text: str) -> Dict[str, Any]:
+    """Wrap text-layer text in the ``ocr_result`` shape Vision pages use.
+
+    :param page_text: Text extracted from the PDF text layer.
+    :returns: ``ocr_result`` dict.
+    """
+    return {
+        'full_text': page_text,
+        'text_blocks': [],
+        'page_text': page_text,
+        'confidence_score': 1.0,
+        'language_hints': [],
+    }
 
 
 class BookOCRService:
@@ -675,6 +712,115 @@ class BookOCRService:
             'images_dir': results.get('images_dir')
         }
     
+    def process_pdf_hybrid(self, pdf_path: str, output_dir: str, checkpoint_path: str,
+                           thresholds: HybridThresholds = HybridThresholds()) -> Dict[str, Any]:
+        """Read each page of a born-digital PDF from its text layer or from Cloud Vision.
+
+        A page goes to Vision when most of its letters are Hebrew/Arabic script
+        (the text layer scrambles right-to-left lines), and Vision's text is kept
+        only when it reproduces the text layer's Hebrew/Arabic letters; otherwise
+        the page keeps its text layer (see :mod:`src.models.ocr.script_routing`).
+        Every page records ``ocr_source`` and a ``routing`` block with the scores.
+        A Vision failure leaves an error stub, so a re-run retries that page.
+        Pages already in the checkpoint are skipped, as in :meth:`process_pdf`.
+
+        :param pdf_path: Path to the PDF file.
+        :param output_dir: Directory for ``<stem>_images/``.
+        :param checkpoint_path: JSON results file, rewritten after every page.
+        :param thresholds: Routing cut-offs.
+        :returns: Results dict in the shape of :meth:`process_pdf`.
+        """
+        pdf_path = Path(pdf_path)
+        cp_path = Path(checkpoint_path)
+        done = _load_done_pages(cp_path)
+        images_dir = Path(output_dir) / f"{pdf_path.stem}_images"
+        images_dir.mkdir(parents=True, exist_ok=True)
+        doc = self.load_pdf(str(pdf_path))
+        results: Dict[str, Any] = {
+            'pdf_path': str(pdf_path),
+            'total_pages': len(doc),
+            'processed_pages': len(doc),
+            'images_dir': str(images_dir),
+            'pages': list(done.values()),
+        }
+        for page_num in range(len(doc)):
+            page_number = page_num + 1
+            if page_number in done:
+                continue
+            page = doc[page_num]
+            layer_text = page.get_text("text") or ""
+            # Routing and scoring count letters on the style-collected extraction, where MuPDF drops glyphs
+            # overprinted for fake bold or shadow; counted twice they would make a correct Vision read look lossy.
+            count_text = page.get_text("text", flags=fitz.TEXTFLAGS_TEXT | fitz.TEXT_COLLECT_STYLES) or ""
+            image_bytes = self.pdf_page_to_image(page)
+            image_path = images_dir / f"page_{page_number:03d}.png"
+            image_path.write_bytes(image_bytes)
+            share = semitic_share(count_text)
+            # Each page records the cut-offs it was routed with, so a resumed run with other values stays auditable.
+            routing: Dict[str, Any] = {'semitic_share': round(share, 4),
+                                       'layer_suspect_glyphs': suspect_glyphs(count_text),
+                                       'min_share': thresholds.min_share, 'min_recall': thresholds.min_recall}
+            page_result: Dict[str, Any] = {
+                'page_number': page_number,
+                'image_path': str(image_path),
+                'image_size': {'width': page.rect.width, 'height': page.rect.height},
+            }
+            ocr_result, source = _text_layer_result(layer_text), 'text_layer'
+            if share >= thresholds.min_share:
+                try:
+                    vision_result = self.extract_text_from_image(image_bytes)
+                except Exception as e:
+                    logger.error(f"Vision failed on page {page_number}: {e}")
+                    results['pages'].append({**page_result, 'ocr_result': None, 'error': str(e), 'routing': routing})
+                    _atomic_write_json(cp_path, results)
+                    continue
+                recall, precision = letter_agreement(vision_result.get('full_text', ''), count_text)
+                routing.update(vision_letter_recall=round(recall, 4), vision_letter_precision=round(precision, 4),
+                               vision_rejected=recall < thresholds.min_recall)
+                if routing['vision_rejected']:
+                    logger.warning(f"Page {page_number}: Vision kept {recall:.1%} of the text layer's Hebrew/Arabic "
+                                   f"letters (< {thresholds.min_recall:.0%}); keeping the text layer")
+                else:
+                    ocr_result, source = vision_result, 'vision'
+            logger.info(f"Page {page_number}/{len(doc)}: {source} (Hebrew/Arabic share {share:.2f})")
+            results['pages'].append({**page_result, 'ocr_result': ocr_result, 'ocr_source': source, 'routing': routing})
+            _atomic_write_json(cp_path, results)
+        results['pages'].sort(key=lambda p: p['page_number'])
+        doc.close()
+        return results
+
+    def process_pdf_hybrid_to_file(self, pdf_path: str, output_path: str,
+                                   thresholds: HybridThresholds = HybridThresholds()) -> Dict[str, str]:
+        """Run :meth:`process_pdf_hybrid` into ``<output_path>/<stem>_ocr_results.json``.
+
+        :param pdf_path: Path to the PDF file.
+        :param output_path: Book directory (or an explicit ``.json`` path).
+        :param thresholds: Routing cut-offs.
+        :returns: Dict with keys ``ocr_results_path`` and ``images_dir``.
+        """
+        pdf_path_obj = Path(pdf_path)
+        out = Path(output_path)
+        if out.suffix != '.json':
+            out.mkdir(parents=True, exist_ok=True)
+            out = out / f"{pdf_path_obj.stem}_ocr_results.json"
+        results = self.process_pdf_hybrid(str(pdf_path_obj), str(out.parent), str(out), thresholds)
+        sources = [p.get('ocr_source') for p in results['pages']]
+        results['processing_info'] = {
+            'processed_at': str(Path().cwd()),
+            'service_version': '1.0.0',
+            'save_images': True,
+            'mode': 'hybrid',
+            'hybrid_min_share': thresholds.min_share,
+            'hybrid_min_recall': thresholds.min_recall,
+            'vision_pages': sources.count('vision'),
+            'text_layer_pages': sources.count('text_layer'),
+            'vision_rejected_pages': [p['page_number'] for p in results['pages']
+                                      if p.get('routing', {}).get('vision_rejected')],
+        }
+        _atomic_write_json(out, results)
+        logger.info(f"Hybrid OCR results saved to: {out} ({sources.count('vision')} Vision pages)")
+        return {'ocr_results_path': str(out), 'images_dir': results.get('images_dir')}
+
     def list_pdf_files(self) -> List[Path]:
         """
         List all PDF files in the raw data directory.

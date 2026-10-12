@@ -94,7 +94,7 @@ class PdfStatus:
     :param metadata_es: Metadata file Elasticsearch's resolver picks for the book dir, when it differs.
     :param images: Number of rendered page images.
     :param ocr_pages: Pages recorded in the OCR JSON (None when no OCR JSON).
-    :param ocr_mode: ``vision``, ``text_only`` or ``unreadable``.
+    :param ocr_mode: ``vision``, ``text_only``, ``hybrid`` or ``unreadable``.
     :param ocr_missing: PDF pages absent from the OCR JSON or recorded as errors.
     :param text_pages: OCR pages with at least ``MIN_PAGE_CHARS`` characters.
     :param pass1_variants: Structured-dir variant -> page-file count.
