@@ -130,3 +130,39 @@ def test_image_folders_lists_only_directories(tmp_path):
     folder = _make_folder(tmp_path, f"ktiv_PNX_MANUSCRIPTS{SYS_A}-1_images", [])
     assert image_folders(str(tmp_path)) == [folder]
     assert image_folders(str(tmp_path / "does-not-exist")) == []
+
+
+# --- persistent zip-member cache (2026-10-10) -------------------------------------------------------------------
+
+from src.datasets.merging.ktiv_images import ZipMemberCache  # noqa: E402
+
+
+def test_zip_member_cache_opens_an_archive_once_and_relists_it_when_its_size_changes(tmp_path):
+    zp = tmp_path / f"ktiv_PNX_MANUSCRIPTS{SYS_A}-1_images.zip"
+    _make_zip(zp, ["b.jpg", "notes.txt", "a.jpg"])
+    cache_path = str(tmp_path / "cache.json")
+    first = ZipMemberCache.load(cache_path)
+    sources = ktiv_image_sources([str(zp)], cache=first)
+    assert [m for _, m in sources[SYS_A].entries] == ["a.jpg", "b.jpg"]
+    assert (first.hits, first.misses, first.unreadable) == (0, 1, 0)
+    first.save()
+    second = ZipMemberCache.load(cache_path)
+    again = ktiv_image_sources([str(zp)], cache=second)
+    assert again[SYS_A].entries == sources[SYS_A].entries
+    assert (second.hits, second.misses) == (1, 0) and second.stats()["entries"] == 1
+    _make_zip(zp, ["a.jpg", "b.jpg", "c.jpg"])          # re-downloaded with one more page: another size
+    third = ZipMemberCache.load(cache_path)
+    assert [m for _, m in ktiv_image_sources([str(zp)], cache=third)[SYS_A].entries] == ["a.jpg", "b.jpg", "c.jpg"]
+    assert (third.hits, third.misses) == (0, 1)
+    assert ktiv_image_sources([str(zp)]) == ktiv_image_sources([str(zp)], cache=ZipMemberCache())   # same answer without a file
+
+
+def test_zip_member_cache_records_unreadable_and_missing_archives(tmp_path):
+    bad = tmp_path / f"ktiv_PNX_MANUSCRIPTS{SYS_B}-1_images.zip"
+    bad.write_bytes(b"not a zip")
+    cache = ZipMemberCache()
+    assert ktiv_image_sources([str(bad)], cache=cache) == {}
+    assert cache.unreadable == 1 and cache.entries[ZipMemberCache.key(str(bad))] == []
+    assert cache.image_members(str(tmp_path / "gone.zip")) == [] and cache.unreadable == 2
+    cache.save()                                           # in-memory cache: no file written
+    assert not list(tmp_path.glob("*.json*"))
