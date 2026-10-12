@@ -1,4 +1,6 @@
+import argparse
 import logging
+import re
 from collections import Counter
 from pathlib import Path
 from typing import List, Optional, Dict, Any
@@ -8,6 +10,8 @@ dotenv.load_dotenv()
 from src.datasets.indexing.bibliography.index_bibliography import (
     index_bibliography_to_elasticsearch,
 )
+from src.datasets.indexing.elastic_index_genizah import IndexMetaMismatchError
+from src.embeddings.text_representation import DEFAULT_TEXT_VERSION, TEXT_VERSIONS, check_text_version
 # Reuse the KG's book-dir discovery so ES indexes exactly the same set of books,
 # keyed the same way (book dir stem == KG source_book == book_uuid stem).
 from src.models.llm.academic.entity_tagger import (
@@ -25,6 +29,11 @@ logging.basicConfig(
     force=True
 )
 logger = logging.getLogger(__name__)
+
+
+#: Destination of a build when ``--index`` is not given: bump it here for each new bibliography index
+#: (the live index, bibliography_text_only_0.7 at the time of writing, is never upserted into).
+DEFAULT_BIBLIOGRAPHY_INDEX = "bibliography_text_only_0.8"
 
 
 def find_metadata_files(root_dir: str) -> List[Path]:
@@ -171,17 +180,63 @@ def find_image_directory(structured_dir: Path) -> Optional[Path]:
     return None
 
 
+_METADATA_SUFFIX_RE = re.compile(r"(_metadata|_meta)?\.json$")
+
+
+def _name_key(text: str) -> str:
+    """Case-folded alphanumeric key of a book or metadata-file name, for matching one to the other.
+
+    :param text: Directory name or metadata stem.
+    :returns: Lower-case letters and digits only.
+    """
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def pick_book_metadata(candidates: List[Path], book_name: str) -> Optional[Path]:
+    """Choose the metadata file that belongs to *book_name* among the files found in one directory.
+
+    A single candidate is the book's (parts of one volume share the collection-level file). Among several,
+    the file whose stem equals the book name wins (``barley_av_metadata.json`` for ``barley_av``); then the longest
+    stem that opens the book name (``searching-for_metadata.json`` for ``searching-for-the-last-genizah-fragment-…``);
+    then, only when exactly one fits, a stem that the book name opens. Anything else is ambiguous and returns
+    ``None``: before this rule the alphabetically first sibling was taken, which attributed two Cambridge articles
+    to a third one's author and title.
+
+    :param candidates: Metadata files found in one directory (template excluded).
+    :param book_name: The book directory name.
+    :returns: The chosen file, or ``None`` when no candidate can be tied to the book.
+    """
+    if len(candidates) == 1:
+        return candidates[0]
+    book_key = _name_key(book_name)
+    stems = {p: _name_key(_METADATA_SUFFIX_RE.sub("", p.name)) for p in candidates}
+    exact = [p for p in sorted(candidates) if stems[p] == book_key]
+    if exact:
+        return exact[0]
+    # an abbreviated metadata name (its stem opens the book name): the longest such stem is the most specific
+    abbreviated = [p for p in sorted(candidates) if stems[p] and book_key.startswith(stems[p])]
+    if abbreviated:
+        longest = max(len(stems[p]) for p in abbreviated)
+        best = [p for p in abbreviated if len(stems[p]) == longest]
+        return best[0] if len(best) == 1 else None
+    # a book directory named by an abbreviation of the metadata stem: only when exactly one stem fits
+    extended = [p for p in sorted(candidates) if stems[p] and stems[p].startswith(book_key)]
+    return extended[0] if len(extended) == 1 else None
+
+
 def find_book_metadata(book_dir: Path, root: Path) -> Optional[Path]:
     """Find a book's real metadata file by walking up from its directory.
 
     Looks for ``*_metadata.json`` / ``*_meta.json`` / ``meta.json`` in the book
     dir and each ancestor up to (and including) *root*, skipping the template
-    :data:`_TEMPLATE_METADATA`. The nearest match wins, so a per-book metadata
-    file beats a shared collection-level one.
+    :data:`_TEMPLATE_METADATA`. The nearest directory with candidates decides, so
+    a per-book metadata file beats a shared collection-level one; among several
+    candidates in that directory :func:`pick_book_metadata` ties one to the book
+    and an ambiguous set skips the book with a warning instead of guessing.
 
     :param book_dir: The book directory (parent of its ``*_structured*`` dir).
     :param root: The academic_literature root (search stops here).
-    :returns: Path to the metadata file, or ``None`` if none found.
+    :returns: Path to the metadata file, or ``None`` if none found or ambiguous.
     """
     d = book_dir
     while True:
@@ -189,7 +244,11 @@ def find_book_metadata(book_dir: Path, root: Path) -> Optional[Path]:
         for pattern in ("*_metadata.json", "*_meta.json", "meta.json"):
             cands += [p for p in d.glob(pattern) if p.name != _TEMPLATE_METADATA]
         if cands:
-            return sorted(cands)[0]
+            chosen = pick_book_metadata(sorted(set(cands)), book_dir.name)
+            if chosen is None:
+                logger.warning(f"Ambiguous metadata for book '{book_dir.name}' in {d}: "
+                               f"{sorted(p.name for p in set(cands))} — add '{book_dir.name}_metadata.json'; skipping")
+            return chosen
         if d == root or root not in d.parents:
             return None
         d = d.parent
@@ -260,6 +319,7 @@ def index_all_bibliography(
     embedding_mode: str = "text_only",
     suffix: str = "*_gemini_gemini_2.5_flash",
     dry_run: bool = False,
+    text_version: str = DEFAULT_TEXT_VERSION,
 ) -> None:
     """Index all bibliography entries found in the directory tree.
 
@@ -280,8 +340,12 @@ def index_all_bibliography(
     :param dry_run: If True, only discover and log tasks without indexing.
                     Defaults to False.
     :type dry_run: bool
+    :param text_version: Embedding text version (``src.embeddings.text_representation``).
+    :type text_version: str
     :return: None
     :rtype: None
+    :raises IndexMetaMismatchError: When the target index exists with another model or text version (raised on
+        the first book instead of failing every book the same way).
 
     Example::
 
@@ -293,10 +357,12 @@ def index_all_bibliography(
             dry_run=False,
         )
     """
+    check_text_version(text_version)
     logger.info(f"Starting automatic bibliography indexing in {root_dir}")
     logger.info(f"Searching for structured directories with suffix: {suffix}")
     logger.info(f"Embedding mode: {embedding_mode}")
     logger.info(f"Index name: {index_name}")
+    logger.info(f"Text version: {text_version}")
     
     tasks = discover_indexing_tasks(root_dir=root_dir, suffix=suffix)
     
@@ -342,9 +408,12 @@ def index_all_bibliography(
                 embedding_mode=embedding_mode,
                 image_dir=str(task['image_dir']) if task['image_dir'] else None,
                 embeddings_model=embeddings_model,
+                text_version=text_version,
             )
             successful += 1
             logger.info(f"Successfully indexed task {i}/{len(tasks)}")
+        except IndexMetaMismatchError:
+            raise  # writer guard: every later book would be refused the same way
         except Exception as e:
             failed += 1
             logger.error(
@@ -363,6 +432,24 @@ def index_all_bibliography(
     )
 
 
+def build_parser() -> argparse.ArgumentParser:
+    """Command-line parser; the index default is the code-level ``DEFAULT_BIBLIOGRAPHY_INDEX``.
+
+    :return: The parser, so tests can check the defaults without indexing.
+    :rtype: argparse.ArgumentParser
+    """
+    parser = argparse.ArgumentParser(description="Index every bibliography book into one Elasticsearch index.")
+    parser.add_argument(
+        "--root",
+        default="/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/academic_literature",
+        help="academic_literature root.")
+    parser.add_argument("--index", default=DEFAULT_BIBLIOGRAPHY_INDEX,
+                        help="Destination index (default: %(default)s, set in the code; never the live index).")
+    parser.add_argument("--text-version", default=DEFAULT_TEXT_VERSION, choices=TEXT_VERSIONS)
+    parser.add_argument("--dry-run", action="store_true", help="Only discover and log the books.")
+    return parser
+
+
 def main() -> None:
     """CLI entrypoint for indexing all bibliography pages.
 
@@ -373,20 +460,18 @@ def main() -> None:
 
     Example::
 
-        python -m src.datasets.cairo_genizah.indexing.biblio.index_all_bibliography \
-            --root /Users/isaac1/.../academic_literature \
-            --index genizah_bibliography_v1.0.0 \
-            --suffix "*_gemini_gemini_2.5_flash" \
-            --mode hybrid \
-            --dry-run
+        python -m src.datasets.indexing.bibliography.index_all_bibliography \
+            --index <new bibliography index name> --dry-run
     """
     # Discovery is now book-dir based (one task per book, best structured-dir
     # variant), so a single pass indexes the whole corpus — no suffix loop.
+    args = build_parser().parse_args()
     index_all_bibliography(
-        root_dir="/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/academic_literature",
-        index_name="bibliography_text_only_0.7",
+        root_dir=args.root,
+        index_name=args.index,
         embedding_mode="text_only",
-        dry_run=False,
+        dry_run=args.dry_run,
+        text_version=args.text_version,
     )
 
 
