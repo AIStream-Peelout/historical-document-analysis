@@ -27,6 +27,7 @@ from src.datasets.evaluations.metrics import (
     flag_failure_modes,
     normalize_whitespace,
 )
+from src.models.ocr import lms_yield_gate
 
 _REPO = Path(__file__).resolve().parents[3]
 DEFAULT_DATASET_DIR = _REPO / "src/datasets/processed/qwen_hebrew_talmud"
@@ -141,6 +142,7 @@ def evaluate_samples(
         scratch = Path(tmp)
         n = len(samples)
         for i, row in enumerate(samples):
+            lms_yield_gate.wait_for_chat_idle(site="quick_eval")  # yield to prod chat; fails open
             image_row = samples[(i + shift_images) % n]["image"]
             image_path = resolve_image_path(image_row, scratch)
             hyp = transcribe(model, processor, config, image_path, row["question"],
