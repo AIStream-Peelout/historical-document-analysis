@@ -291,6 +291,14 @@ PYTHONPATH=. .venv/bin/python src/datasets/indexing/neo4j/academic_kg_import.py 
 passed, so it is naturally incremental. Use `--institutions-only` /
 `--places-only` to scope it.
 
+Wrong pins are fixed in `src/datasets/indexing/neo4j/geocode_corrections.py`,
+not by editing the graph: corrections win over Princeton coordinates and both
+geocoders on every run (including `--all` and a rebuild), and an entry without
+coordinates keeps a junk node off the map. Write them to an existing graph
+without geocoding anything with `geocode_places.py --corrections-only`
+(`--dry-run` first). The audit behind the current entries is
+`docs/geocode_audit_2026-10-18.tsv`.
+
 ---
 
 ## 3. Adding a new book/article  ← the common case

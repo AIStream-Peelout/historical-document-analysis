@@ -116,6 +116,25 @@ structured pages) or retire — see `docs/secondary_source_pipeline.md` legacy t
 
 ---
 
+## 7. Geocode audit leftovers (2026-10-18)
+
+An audit of every pinned Place (496) and Institution (225) found 128 problems
+(`docs/geocode_audit_2026-10-18.tsv`). Wrong and junk pins are fixed in
+`geocode_corrections.py`. Duplicate Institution nodes, the non-holding edges
+(the `XVII. PENITENTIAL HYMN` chapter heading's biblical `MENTIONS_PLACE` edges,
+captions and provenance recorded as `HELD_AT`), Raḥba and Turūja are handled by
+`consolidate_institutions.py` (`in_corrections = merged` in the audit). Still open:
+- **Places to review**: Nuqayṭa (pin in empty desert; possibly a Delta village),
+  al-Shām (Damascus vs Levant centroid).
+- **Upstream PGP data errors** worth reporting to Princeton: London and Valencia carry
+  E for W, Darmus is 1° too far north, Dongola and Kalabshā use the modern sites,
+  al-Qulzum points at a homonymous Qalyubiyya village.
+- **Institution extraction**: offices, regiments and dynasties are being minted as
+  Institution nodes ("Cairo's Janissary corps", "Qāḍī al-Qudāt"); the excluded list in
+  `geocode_corrections.py` is a backstop, the fix belongs in the relationship extractor.
+
+---
+
 ## Suggested PR slicing
 
 - **PR A — Place consolidation + region geocoding** (#1): biggest visible win (lights up

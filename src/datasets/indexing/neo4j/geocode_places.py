@@ -20,6 +20,11 @@ python geocode_places.py              # geocode all un-geocoded places
 python geocode_places.py --dry-run    # show what would be geocoded
 python geocode_places.py --all        # re-geocode everything (overwrite)
 python geocode_places.py --limit 50   # process at most 50 places
+python geocode_places.py --corrections-only [--dry-run]
+                                      # write geocode_corrections.py, no geocoding
+
+Curated corrections in geocode_corrections.py are applied before Princeton
+coordinates or any geocoder, so they also hold under --all.
 
 Requirements
 ------------
@@ -32,7 +37,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import dotenv
 
@@ -43,6 +48,11 @@ dotenv.load_dotenv(project_root / ".env")
 from src.datasets.document_models.place_normalizer import PlaceNormalizer  # noqa: E402
 from src.datasets.document_models.institution_normalizer import InstitutionNormalizer  # noqa: E402
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+from src.datasets.indexing.neo4j.geocode_corrections import (  # noqa: E402
+    INSTITUTION_CORRECTIONS,
+    PLACE_CORRECTIONS,
+    GeocodeCorrection,
+)
 
 from neo4j import GraphDatabase
 
@@ -142,6 +152,13 @@ COUNTRY_TO_REGION: dict[str, str] = {
     "Afghanistan": "South Asia",
     "Pakistan": "South Asia",
     "China": "East Asia",
+    # Seats of Genizah collections and scholarship (Institution pins).
+    "Russia": "Europe",
+    "Austria": "Europe",
+    "Denmark": "Europe",
+    "Romania": "Europe",
+    "United States": "North America",
+    "Canada": "North America",
 }
 
 
@@ -169,6 +186,121 @@ _SUSPECT_COUNTRIES = {
     "New Zealand", "Colombia", "Peru", "Chile", "Venezuela", "Cuba",
     "Guatemala", "Honduras", "Nicaragua", "Costa Rica", "Panama",
 }
+
+# Bounds every geocoder hit for a historical Place must fall inside, whatever
+# the name looks like: Iberia/Morocco in the west to China/Java in the east
+# (the Indian Ocean trade), so Kolkata, Sumatra and Java stay valid. A plain
+# English-looking biblical name is the most likely to match a town in the
+# Americas (Goshen → Goshen, Indiana), so this is not limited to Arabic/Hebrew
+# names. Princeton's own coordinates and curated corrections bypass it.
+_GEOCODER_PLACE_LAT_MIN = -15
+_GEOCODER_PLACE_LAT_MAX = 62
+_GEOCODER_PLACE_LNG_MIN = -20
+_GEOCODER_PLACE_LNG_MAX = 125
+
+
+def _in_genizah_world(lat: float, lng: float) -> bool:
+    """Return True if a geocoder hit lies where a Genizah place can be.
+
+    :param lat: Latitude of the geocoder result.
+    :param lng: Longitude of the geocoder result.
+    :return: False for hits in the Americas, Oceania, or the far north/south.
+    """
+    return (_GEOCODER_PLACE_LAT_MIN <= lat <= _GEOCODER_PLACE_LAT_MAX
+            and _GEOCODER_PLACE_LNG_MIN <= lng <= _GEOCODER_PLACE_LNG_MAX)
+
+
+def _has_curated_query(name: str) -> bool:
+    """Return True if the place has a hand-written geocoder query.
+
+    Only HISTORICAL_OVERRIDES counts: it is the query the Google step actually
+    sends. A PlaceNormalizer mapping alone would let the bare name through.
+
+    :param name: Place.name as stored in Neo4j.
+    :return: True when HISTORICAL_OVERRIDES maps the name (or its
+             parenthetical-stripped form) to a modern query string.
+    """
+    clean, _ = _clean_place_name(name)
+    return name in HISTORICAL_OVERRIDES or clean in HISTORICAL_OVERRIDES
+
+
+def _pgp_left_unlocated(data_sources: list[str], has_curated_query: bool) -> bool:
+    """Return True if a place without Princeton coordinates must not be geocoded.
+
+    Princeton deliberately omits coordinates for places it cannot locate
+    ("Unidentified locality near Fāqūs"). A node keeps PGP's verdict even after
+    another source (book enrichment, a merge) is added to it: those sources
+    link documents to the place but do not locate it. Only a curated query
+    may place it.
+
+    :param data_sources: The node's ``data_sources`` list.
+    :param has_curated_query: Whether :func:`_has_curated_query` is True for the node.
+    :return: True when the node is from PGP and has no curated query.
+    """
+    return "pgp" in (data_sources or []) and not has_curated_query
+
+
+def _apply_correction(session, label: str, name: str, correction: GeocodeCorrection) -> None:
+    """Write a curated correction to one Place or Institution node.
+
+    Replaces every geocoder-derived location field, so a stale value from an
+    earlier wrong match (country 'United States' on Goshen) cannot survive.
+
+    :param session: Open Neo4j session.
+    :param label: Node label, ``'Place'`` or ``'Institution'``.
+    :param name: The node's ``name`` (merge key).
+    :param correction: The curated correction to write.
+    """
+    region = correction.region or COUNTRY_TO_REGION.get(correction.country, "")
+    session.run(f"""
+        MATCH (n:{label} {{name: $name}})
+        SET n.lat              = $lat,
+            n.lng              = $lng,
+            n.country          = $country,
+            n.city             = $city,
+            n.region           = $region,
+            n.osm_display_name = null,
+            n.geocode_source   = $source,
+            n.geocode_suspect  = $excluded,
+            n.geocode_note     = $note
+    """, name=name, lat=correction.lat, lng=correction.lng,
+         country=correction.country or None, city=correction.city or None,
+         region=region or None, source="excluded" if correction.is_excluded else "manual",
+         excluded=correction.is_excluded, note=correction.note)
+
+
+def _apply_all_corrections(session, labels: list[str], dry_run: bool, verbose: bool) -> None:
+    """Write every curated correction, without calling any geocoder.
+
+    Runs at the start of every geocoding run, so a correction also reaches a
+    node that already has a (wrong) pin, which the incremental
+    ``lat IS NULL`` queries never return.
+
+    :param session: Open Neo4j session.
+    :param labels: Which node labels to correct (``'Place'``, ``'Institution'``).
+    :param dry_run: Print what would change instead of writing.
+    :param verbose: Print one line per corrected node.
+    """
+    all_corrections = {"Place": PLACE_CORRECTIONS, "Institution": INSTITUTION_CORRECTIONS}
+    for label in labels:
+        corrections = all_corrections[label]
+        rows = session.run(f"MATCH (n:{label}) WHERE n.name IN $names "
+                           "RETURN n.name AS name, n.lat AS lat, n.lng AS lng",
+                           names=list(corrections)).data()
+        found = {r["name"]: r for r in rows}
+        for name, correction in corrections.items():
+            if name not in found:
+                logger.warning(f"  ⚠️  {label} '{name}' not in the graph — correction skipped")
+                continue
+            if verbose:
+                old = found[name]
+                new = "no pin" if correction.is_excluded else f"({correction.lat}, {correction.lng})"
+                print(f"  {label} {name}: ({old['lat']}, {old['lng']}) → {new}")
+            if not dry_run:
+                _apply_correction(session, label, name, correction)
+        verb = "Would apply" if dry_run else "Applied"
+        print(f"{verb} {len(found)}/{len(corrections)} curated {label} correction(s)\n")
+
 
 def _looks_arabic_or_hebrew(name: str) -> bool:
     """True if the name looks like a transliterated Arabic/Hebrew place name.
@@ -553,7 +685,8 @@ def _extract_institution_location(name: str) -> list[str]:
 
 
 def _geocode_google(queries: list[str], gmaps_client,
-                    suspect_types: set = None) -> Optional[dict]:
+                    suspect_types: set = None,
+                    accept: Optional[Callable[[float, float], bool]] = None) -> Optional[dict]:
     """Geocode using the Google Geocoding API.
 
     Tries every query in order and keeps the first *non-suspect* result;
@@ -568,6 +701,9 @@ def _geocode_google(queries: list[str], gmaps_client,
 
     `suspect_types` — additional Google result types to flag (e.g. for
     historical places we flag 'neighborhood', 'sublocality').
+
+    `accept` — optional (lat, lng) predicate; a hit failing it is discarded
+    and the next query is tried (e.g. :func:`_in_genizah_world` for places).
     """
     if suspect_types is None:
         suspect_types = {"neighborhood", "sublocality", "sublocality_level_1",
@@ -584,6 +720,10 @@ def _geocode_google(queries: list[str], gmaps_client,
             r        = results[0]
             loc      = r["geometry"]["location"]
             lat, lng = loc["lat"], loc["lng"]
+            if accept and not accept(lat, lng):
+                logger.info(f"  🚫 Google hit for '{query}' rejected "
+                            f"({r.get('formatted_address', '')})")
+                continue
             types    = set(r.get("types", []))
 
             components = {c["types"][0]: c["long_name"]
@@ -850,6 +990,9 @@ def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
 
     if args.dry_run:
         for name in institutions:
+            if name in INSTITUTION_CORRECTIONS:
+                print(f"  {name}  →  curated correction")
+                continue
             queries = _extract_institution_location(name)
             print(f"  {name}  →  would try: {queries}")
         for name in shelfmark_skipped:
@@ -859,8 +1002,15 @@ def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
     backend = "Google" if gmaps_client else "Nominatim"
     logger.info(f"Institution geocoding backend: {backend}")
 
-    ok, failed = 0, []
+    ok, corrected, failed = 0, 0, []
     for name in institutions:
+        # Curated correction (geocode_corrections.py), already written by
+        # _apply_all_corrections: it wins over the registry and both
+        # geocoders, and keeps junk nodes from being re-pinned.
+        if name in INSTITUTION_CORRECTIONS:
+            corrected += 1
+            continue
+
         # Pre-seed city/country/region from InstitutionNormalizer metadata.
         # This ensures well-known institutions get correct location metadata
         # even when the geocoder would return a wrong campus or no result.
@@ -998,7 +1148,8 @@ def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
             failed.append(name)
             logger.warning(f"  ❌ {name} — no result")
 
-    print(f"\n✅ Geocoded {ok}/{len(institutions)} institutions")
+    print(f"\n✅ Geocoded {ok}/{len(institutions) - corrected} institutions; "
+          f"{corrected} more set by curated corrections")
     if failed:
         print(f"❌ Failed ({len(failed)}):")
         for f in failed:
@@ -1024,6 +1175,9 @@ def main():
                         help="Geocode historical Place nodes only (skip institutions).")
     parser.add_argument("--institutions-only", action="store_true",
                         help="Geocode Institution nodes only (skip historical places).")
+    parser.add_argument("--corrections-only", action="store_true",
+                        help="Write the curated corrections in geocode_corrections.py to "
+                             "every matching node and exit (no geocoder calls).")
     # Legacy alias so existing scripts/docs still work
     parser.add_argument("--institutions", "-i", action="store_true",
                         help=argparse.SUPPRESS)
@@ -1065,7 +1219,7 @@ def main():
     # Google Geocoding API — primary geocoder when key is available
     gmaps_client = None
     google_key   = os.getenv("GOOGLE_MAPS_API_KEY")
-    if google_key:
+    if google_key and not args.corrections_only:
         try:
             import googlemaps
         except ImportError:
@@ -1085,7 +1239,7 @@ def main():
             logger.error("Check your GOOGLE_MAPS_API_KEY and that the Geocoding API "
                          "is enabled in Google Cloud Console.")
             sys.exit(1)
-    else:
+    elif not args.corrections_only:
         logger.info("No GOOGLE_MAPS_API_KEY in .env — using Nominatim only")
 
     run_places       = not args.institutions_only
@@ -1093,6 +1247,14 @@ def main():
 
     try:
         with driver.session(database=neo4j_database) as session:
+
+            # Curated corrections first, on every run: they also reach nodes that
+            # already have a (wrong) pin, which the incremental queries skip.
+            labels = (["Place"] if run_places else []) + (["Institution"] if run_institutions else [])
+            _apply_all_corrections(session, labels, dry_run=args.dry_run,
+                                   verbose=args.corrections_only or args.dry_run)
+            if args.corrections_only:
+                return
 
             # ── Historical places ────────────────────────────────────────────
             if run_places:
@@ -1119,20 +1281,27 @@ def main():
 
                 if args.dry_run:
                     for name, coords, _, data_sources in rows:
-                        pgp_only = "pgp" in (data_sources or []) and len(set(data_sources or [])) == 1
-                        if pgp_only and not coords:
-                            src = "skip (PGP, no Princeton coords)"
+                        if name in PLACE_CORRECTIONS:
+                            src = "curated correction"
                         elif coords:
                             src = "princeton coords"
+                        elif _pgp_left_unlocated(data_sources, _has_curated_query(name)):
+                            src = "skip (PGP, no Princeton coords)"
                         else:
                             src = "geocoder"
                         print(f"  [{src}] {name}")
                 else:
                     ok = 0
                     ok_princeton = 0
+                    corrected = 0
                     skipped_pgp = 0
                     failed = []
                     for name, princeton_coords, name_variants_str, data_sources in rows:
+
+                        # ── Priority 0: curated correction, already written above ──
+                        if name in PLACE_CORRECTIONS:
+                            corrected += 1
+                            continue
 
                         # ── Priority 1: parse Princeton's existing coordinates string ──
                         parsed = _parse_princeton_coords(princeton_coords) if princeton_coords else None
@@ -1150,14 +1319,13 @@ def main():
                             logger.info(f"  📍 {name} → ({lat:.4f}, {lng:.4f}) [Princeton coords]")
                             continue
 
-                        # ── Skip PGP-only places without Princeton coordinates ──
+                        # ── Skip PGP places without Princeton coordinates ──
                         # Princeton deliberately omits coordinates for places they cannot
-                        # reliably locate. Geocoding them produces false positives.
+                        # reliably locate, and that holds even after enrichment or a merge
+                        # adds another source (Goshen was geocoded to Indiana that way).
                         # Non-PGP places (extracted by LLM) are tried normally since they
                         # tend to use more recognisable modern names.
-                        pgp_only = "pgp" in (data_sources or []) and \
-                                   all(s == "pgp" for s in (data_sources or ["pgp"]))
-                        if pgp_only:
+                        if _pgp_left_unlocated(data_sources, _has_curated_query(name)):
                             skipped_pgp += 1
                             logger.debug(f"  ⏭ {name} — PGP place without Princeton coords, "
                                          f"skipping (likely unlocatable)")
@@ -1204,7 +1372,8 @@ def main():
                             display = (f"'{HISTORICAL_OVERRIDES[override_key]}' [override for '{name}']"
                                        if override_key else f"'{clean_name}'")
                             logger.info(f"  🌍 Trying Google: {display}")
-                            result = _geocode_google(google_queries, gmaps_client)
+                            result = _geocode_google(google_queries, gmaps_client,
+                                                     accept=_in_genizah_world)
                             if result:
                                 suspect_flag = "⚠️ suspect" if result.get("geocode_suspect") else "✅"
                                 logger.info(f"  {suspect_flag} {name} → "
@@ -1225,14 +1394,20 @@ def main():
                             # since Nominatim's Hebrew support is weaker than Google's
                             nom_queries = hebrew_nominatim_queries or [name]
                             logger.info(f"  📡 Trying Nominatim: '{nom_queries[0]}'")
-                            nom_result = _geocode_one_compat(geolocator, nom_queries[0])
-                            if not nom_result:
-                                for variant in (nom_queries[1:] + variants):
-                                    nom_result = _geocode_one_compat(geolocator, variant)
+                            nom_result = None
+                            for i, query in enumerate(nom_queries + variants):
+                                if i:
                                     time.sleep(args.delay)
-                                    if nom_result:
-                                        logger.info(f"  📡 Nominatim resolved via '{variant}'")
-                                        break
+                                candidate = _geocode_one_compat(geolocator, query)
+                                if candidate and not _in_genizah_world(candidate["lat"], candidate["lng"]):
+                                    logger.info(f"  🚫 Nominatim hit for '{query}' is outside the Genizah "
+                                                f"world ({candidate['osm_display_name'][:60]}) — rejected")
+                                    candidate = None
+                                if candidate:
+                                    if i:
+                                        logger.info(f"  📡 Nominatim resolved via '{query}'")
+                                    nom_result = candidate
+                                    break
                             time.sleep(args.delay)
 
                             if nom_result and not nom_result.get("geocode_suspect", False):
@@ -1267,10 +1442,11 @@ def main():
                             failed.append(name)
                             logger.warning(f"  ❌ {name} — no result from Google or Nominatim")
 
-                    print(f"\n✅ Places: geocoded {ok}/{len(rows)} "
+                    print(f"\n✅ Places: geocoded {ok}/{len(rows) - corrected} "
                           f"({ok_princeton} from Princeton coords, "
                           f"{ok - ok_princeton} via geocoder, "
-                          f"{skipped_pgp} PGP-only skipped as unlocatable)")
+                          f"{skipped_pgp} PGP places skipped as unlocatable); "
+                          f"{corrected} more set by curated corrections")
                     if failed:
                         print(f"❌ Failed ({len(failed)}):")
                         for f in failed:
