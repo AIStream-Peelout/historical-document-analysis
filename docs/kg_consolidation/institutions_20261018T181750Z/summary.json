@@ -1,0 +1,31 @@
+{
+  "operations": {
+    "remove": 20,
+    "merge": 62,
+    "move": 1,
+    "delete_orphan": 10
+  },
+  "actions": {
+    "delete_edge": 180,
+    "create_edge": 103,
+    "set_edge": 21,
+    "set_node": 62,
+    "delete_node": 72
+  },
+  "edges": {
+    "remove": 56,
+    "fold": 21,
+    "move": 103
+  },
+  "nodes_deleted": 72,
+  "relationship_delta": -77,
+  "review": 0,
+  "rules_without_nodes": 0,
+  "plan_sha256": "0022ad98505863df1d0110b563c2a374b6af65a12f43fe262f5645f5458e563a",
+  "target": {
+    "uri": "bolt://127.0.0.1:7681",
+    "database": "neo4j",
+    "store": "650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0"
+  },
+  "generated": "20261018T181750Z"
+}

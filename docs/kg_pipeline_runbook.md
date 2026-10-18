@@ -258,11 +258,27 @@ academic books — they load PGP / bibliography / FJP+KTIV data.
 | 2 | `biblio_import.py` | `biblio.json` citations | **No** |
 | 3 | `academic_kg_import.py` | **Pass-4 relations** | **Yes** |
 | 4 | `merged_shelfmarks_import.py` | merged FJP/KTIV shelfmarks | **No** |
+| 4b | `consolidate_institutions.py` | duplicate Institution/Place merges, non-holding edges | Yes (dry run, review, `--apply`) |
 | 5 | `geocode_places.py` | Place + Institution coordinates | Yes (cheap, incremental) |
 | 6 | `enrich_fragment_people.py` | Fragment↔Person links | ⚠️ **NOT YET PORTED — see §4** |
 
 All importers use `MERGE`, so they are **idempotent** — re-running does not
 duplicate nodes or edges.
+
+Step 4b applies the curated rules in `src/datasets/indexing/neo4j/institution_merges.py`:
+it merges duplicate Institution nodes into one canonical node ("Cambridge, University
+Library" → "Cambridge University Library"), deletes edges that are not holdings or
+geography (provenance "from the Cairo Genizah", figure captions), and fixes a few Place
+duplicates. A rebuild re-creates the duplicates, and the pass cleans them again; on a clean
+graph it plans nothing. It writes nothing without `--apply`:
+```bash
+PYTHONPATH=. .venv/bin/python src/datasets/indexing/neo4j/consolidate_institutions.py          # dry run → docs/kg_consolidation/institutions_<UTC>/
+PYTHONPATH=. .venv/bin/python src/datasets/indexing/neo4j/consolidate_institutions.py --apply --plan docs/kg_consolidation/institutions_<UTC>
+PYTHONPATH=. .venv/bin/python src/datasets/indexing/neo4j/consolidate_institutions.py --revert docs/kg_consolidation/institutions_<UTC>/changelog_<UTC>.jsonl
+```
+Keep the dry-run directory: its change log is the only way to revert. New name variants go
+into `institution_merges.py`, and (unless the name needs the pass, see `normalize=False`)
+into `InstitutionNormalizer._EXACT_ALIASES`, so the importers stop creating them.
 
 `academic_kg_import.py` defaults to the **current version's** relations root
 (`relations_v3`). To import a previous generation for comparison:

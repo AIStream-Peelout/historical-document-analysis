@@ -1,0 +1,253 @@
+op	kind	action	rel_type	start_label	start_key	from	to	data_sources	source_books	evidence
+0	remove	remove	HELD_AT	Fragment	T_S_Ar_38_85	Cairo Genizah		"[""enriched""]"	"[""Geoffrey_Khan_Arabic_Legal_and_Administr""]"	The document is a legal text from the Cairo Genizah, specifically T-S Ar. 38.85, which is an acknowledgement of a debt.
+0	remove	remove	HELD_AT	Fragment	T_S_K6_162	Cairo Genizah		"[""enriched""]"	"[""Geoffrey_Khan_Arabic_Legal_and_Administr""]"	The text is a legal document (endowment of a house) from the Cairo Genizah, specifically T-S K6.162
+0	remove	remove	HELD_AT	Fragment	T_S_Misc_29_21	Cairo Genizah		"[""enriched""]"	"[""Geoffrey_Khan_Arabic_Legal_and_Administr""]"	The document is a legal and administrative text from the Cairo Genizah, specifically a deed of sale for two houses in Fustat, Egypt.
+0	remove	remove	HELD_AT	Fragment	T_S_B11_10	Cairo Genizah		"[""enriched""]"	"[""geniza_targum""]"	The corpus of 23 fragments was sourced from the Taylor-Schechter Cairo Genizah collections and catalogued by Klein (1992).
+0	remove	remove	HELD_AT	Fragment	T_S_B11_37	Cairo Genizah		"[""enriched""]"	"[""geniza_targum""]"	The corpus of 23 fragments was sourced from the Taylor-Schechter Cairo Genizah collections and catalogued by Klein (1992).
+0	remove	remove	HELD_AT	Fragment	T_S_B11_83	Cairo Genizah		"[""enriched""]"	"[""geniza_targum""]"	The corpus of 23 fragments was sourced from the Taylor-Schechter Cairo Genizah collections and catalogued by Klein (1992).
+0	remove	remove	HELD_AT	Fragment	T_S_B12_34	Cairo Genizah		"[""enriched""]"	"[""geniza_targum""]"	The corpus of 23 fragments was sourced from the Taylor-Schechter Cairo Genizah collections and catalogued by Klein (1992).
+0	remove	remove	HELD_AT	Fragment	Mosseri_II_188	Cairo Genizah		"[""enriched""]"	"[""india_trader_1_50""]"	The entity 'Mosseri II, 188' is listed under 'Known shelf marks' and the text passages are from 'Page 44' where this entity appears.
+0	remove	remove	HELD_AT	Fragment	T_S_16_31	Cairo Genizah		"[""enriched""]"	"[""india_trader_1_50""]"	TS 16.31 is listed under Known shelf marks
+0	remove	remove	HELD_AT	Fragment	ENA_4100_21b	Cairo Genizah		"[""enriched""]"	"[""obed""]"	All cases are from Egypt with Fustat, the contemporary centre of Jewish life and where the Geniza was located, being the most common location.
+0	remove	remove	HELD_AT	Fragment	Bodl_MS_Heb_a_2_3_a_c	Cairo Genizah		"[""enriched""]"	"[""oldest_dated""]"	The partnership contract of 875 or 876 CE (T-S C 2.17), mentioned above, is thus dated according to the era of Creation; it appears in a manuscript of the Cairo
+0	remove	remove	HELD_AT	Fragment	T_S_12_154	Cairo Genizah		"[""enriched""]"	"[""oldest_dated""]"	The partnership contract of 875 or 876 CE (T-S C 2.17), mentioned above, is thus dated according to the era of Creation; it appears in a manuscript of the Cairo
+0	remove	remove	HELD_AT	Fragment	T_S_16_175	Cairo Genizah		"[""enriched""]"	"[""oldest_dated""]"	The partnership contract of 875 or 876 CE (T-S C 2.17), mentioned above, is thus dated according to the era of Creation; it appears in a manuscript of the Cairo
+0	remove	remove	HELD_AT	Fragment	T_S_20_85	Cairo Genizah		"[""enriched""]"	"[""oldest_dated""]"	The earliest examples we know are a text on the Coptic calendar (thus clearly of Egyptian provenance) dated 1241 of the Seleucid Era (= 929/30CE), probably writ
+0	remove	remove	HELD_AT	Fragment	T_S_NS_323_34	Cairo Genizah		"[""enriched""]"	"[""oldest_dated""]"	The partnership contract of 875 or 876 CE (T-S C 2.17), mentioned above, is thus dated according to the era of Creation; it appears in a manuscript of the Cairo
+1	remove	remove	HELD_AT	Fragment	Judeo_Arabic_documents	Cairo Geniza		"[""enriched""]"	"[""india_trader_1_50""]"	They had been originally preserved in the so-called Cairo Geniza
+2	remove	remove	HELD_AT	Fragment	ENA_4020	Geniza		"[""enriched""]"	"[""friedman_108_201_vol_1""]"	fragments from the eleventh century and later that were preserved in the Geniza
+2	remove	remove	HELD_AT	Fragment	T_S_10J6	Geniza		"[""enriched""]"	"[""friedman_108_201_vol_1""]"	fragments from the eleventh century and later that were preserved in the Geniza
+3	remove	remove	HELD_AT	Fragment	ENA_3616_7	קהיר		"[""enriched""]"	"[""6david""]"	טיוטת מעשה בית דין שהועתקה בפנקס בית הדין בקהיר
+3	remove	remove	HELD_AT	Fragment	ENA_NS_31_26	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+3	remove	remove	HELD_AT	Fragment	ENA_NS_35_15	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+3	remove	remove	HELD_AT	Fragment	ENA_NS_35_9	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+3	remove	remove	HELD_AT	Fragment	ENA_NS_41_5_ENA_NS_37_21	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+3	remove	remove	HELD_AT	Fragment	ENA_NS_47_22	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+3	remove	remove	HELD_AT	Fragment	ENA_NS_49_31	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+3	remove	remove	HELD_AT	Fragment	ENA_NS_52_21	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+3	remove	remove	HELD_AT	Fragment	Halper_420	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+3	remove	remove	HELD_AT	Fragment	T_S_10J_16_25	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+3	remove	remove	HELD_AT	Fragment	T_S_13J_24_25	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+3	remove	remove	HELD_AT	Fragment	T_S_13J_4_18	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+3	remove	remove	HELD_AT	Fragment	T_S_6J_4_31	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+3	remove	remove	HELD_AT	Fragment	T_S_8J_6_21	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+3	remove	remove	HELD_AT	Fragment	T_S_AS_146_30	קהיר		"[""enriched""]"	"[""6david""]"	המתדיינים בבית הדין בקהיר הם שלמה נגרין ובכור רפאל חיים
+4	remove	remove	HELD_AT	Fragment	Maestà_altarpiece	Cathedral of Siena		"[""enriched""]"	"[""oimp38""]"	figure c2. Deposition from the Cross, detail of tile from Episodes from Christ's Passion and Resurrection, reverse surface of the Maestà altarpiece in the Cathe
+5	remove	remove	HELD_AT	Fragment	VI_C_6	Palestinian synagogue		"[""enriched""]"	"[""zinger_princet""]"	eight elders, together with a large number of onlookers, gathered in the Palestinian synagogue
+6	remove	remove	HELD_AT	Fragment	parallel_manuscript_of_the_siddur	Leningrad		"[""enriched""]"	"[""fridman_100_198_vol_2""]"	a parallel manuscript of the siddur, a copy of which is found in Leningrad.
+7	remove	remove	HELD_AT	Fragment	ENA_3012	Paris Nat. Bibl.		"[""enriched""]"	"[""friedman_vol_intro""]"	The manuscript is held at the Paris National Library.
+8	remove	remove	HELD_AT	Fragment	Mosseri_Ia_26_2	Institute of Microfilmed Hebrew Manuscripts, Jewish National and University Library, Jerusalem		"[""enriched""]"	"[""india_trader_350_424""]"	I have checked and corrected the transcription by comparing the photograph of the manuscript in the Institute of Microfilmed Hebrew Manuscripts, Jewish National
+9	remove	remove	HELD_AT	Fragment	105_TS_Loan	אוסף Dropsie		"[""enriched""]"	"[""malk-ish-1-155""]"	The text mentions the Dropsie collection where a copy of the deed is found.
+9	remove	remove	HELD_AT	Fragment	28_1_TS	אוסף Dropsie		"[""enriched""]"	"[""malk-ish-1-155""]"	The text mentions the Dropsie collection where a copy of the deed is found.
+9	remove	remove	HELD_AT	Fragment	Bodl_e_98	אוסף Dropsie		"[""enriched""]"	"[""malk-ish-1-155""]"	The text mentions the Dropsie collection where a copy of the deed is found.
+9	remove	remove	HELD_AT	Fragment	ENA_NS_19	אוסף Dropsie		"[""enriched""]"	"[""malk-ish-1-155""]"	The text mentions the Dropsie collection where a copy of the deed is found.
+9	remove	remove	HELD_AT	Fragment	T_S_Ar_116	אוסף Dropsie		"[""enriched""]"	"[""malk-ish-1-155""]"	The text mentions the Dropsie collection where a copy of the deed is found.
+9	remove	remove	HELD_AT	Fragment	T_S_10G5	אוסף Dropsie		"[""enriched""]"	"[""malk-ish-1-155""]"	The text mentions the Dropsie collection where a copy of the deed is found.
+9	remove	remove	HELD_AT	Fragment	T_S_12_193	אוסף Dropsie		"[""enriched""]"	"[""malk-ish-1-155""]"	The text mentions the Dropsie collection where a copy of the deed is found.
+9	remove	remove	HELD_AT	Fragment	T_S_16_134	אוסף Dropsie		"[""enriched""]"	"[""malk-ish-1-155""]"	The text mentions the Dropsie collection where a copy of the deed is found.
+10	remove	remove	MENTIONS_PLACE	Fragment	XVII_PENITENTIAL_HYMN	Goshen		"[""enriched""]"	"[""fragmentsfromcai00gott""]"	Redeem it a second time as Thou didst from Goshen
+11	remove	remove	MENTIONS_PLACE	Fragment	XVII_PENITENTIAL_HYMN	Edom		"[""enriched""]"	"[""fragmentsfromcai00gott""]"	Make an end, now, in Edom of host and legion
+12	remove	remove	MENTIONS_PLACE	Fragment	XVII_PENITENTIAL_HYMN	Old Gate		"[""enriched""]"	"[""fragmentsfromcai00gott""]"	That it may return, as in days of yore, to the Old Gate
+13	remove	remove	AFFILIATED_WITH	Scholar	Elkan Adler	Elkan Adler collection		"[""enriched""]"	"[""fragmentsfromcai00gott""]"	two facsimiles are given there from the Elkan Adler collection
+14	remove	remove	AFFILIATED_WITH	Scholar	Elkan Nathan Adler	Elkan Nathan Adler Genizah collection		"[""enriched""]"	"[""ottomon_era""]"	The machine-made perforations on the left-hand side of the recto, in contrast, were presumably added by a curator connected with the Elkan Nathan Adler Genizah 
+15	remove	remove	AFFILIATED_WITH	Scholar	Solomon Schechter	Cambridge Genizah collection		"[""enriched""]"	"[""jewish_proselytism""]"	discovered by Solomon Schechter in the Cambridge Genizah collection
+16	remove	remove	AFFILIATED_WITH	Scholar	Isaacs	Cambridge, University Library		"[""enriched""]"	"[""cairo_to_manchester_2""]"	Isaacs (1994) identified sixty-three fragments of it in the T-S Genizah collection of the Cambridge University Library alone
+17	remove	remove	AFFILIATED_WITH	Scholar	Isaacs	T-S Genizah collection		"[""enriched""]"	"[""cairo_to_manchester_2""]"	Isaacs (1994) identified sixty-three fragments of it in the T-S Genizah collection of the Cambridge University Library alone
+18	remove	remove	MENTIONS_PLACE	Fragment	T_S_8_61	Raḥba		null	null	
+19	remove	remove	ORIGINATED_FROM	Person	Faraḥ b. Joseph	Raḥba		"[""enriched""]"	"[""zinger_princet""]"	Sittūna bt. Ḥayyīm b. Solomon, known as Ben al-Raḥbī, came to court to nominate a representative to sue her husband, Faraḥ b. Joseph, known as Ben Bānūqa, who h
+20	merge	fold	HELD_AT	Fragment	T_S_AS_153_214	Cambridge	Cambridge University Library	"[""enriched""]"	"[""6david""]"	מונח זה מופיע גם במסמך אחר מגניזת קהיר בספריית אוניברסיטת קיימברידג.TS AS 153. 214
+20	merge	move	AFFILIATED_WITH	Scholar	Jenkinson	Cambridge	University of Cambridge	"[""enriched""]"	"[""cairo_to_manchester""]"	Cambridge librarian Jenkinson
+20	merge	fold	AFFILIATED_WITH	Scholar	Solomon Schechter	Cambridge	University of Cambridge	"[""enriched""]"	"[""cairo_to_manchester""]"	Schechter in Cambridge
+20	merge	fold	HELD_AT	Fragment	T_S_Misc_25_29v	Cambridge	Cambridge University Library	"[""enriched""]"	"[""calendars_247""]"	Cambridge University Library, T-S Misc.25.29v
+20	merge	move	HELD_AT	Fragment	ms_Camb_d_e	Cambridge	Cambridge University Library	"[""enriched""]"	"[""dsd-article-p75_5""]"	cf. ms. Camb. d–e and Bodleian.
+20	merge	move	HELD_AT	Fragment	Camb_a	Cambridge	Cambridge University Library	"[""enriched""]"	"[""dsd-article-p75_5""]"	G. Bohak located the Manchester manuscript between Camb. a and Camb. b, two very fragmentary columns that apparently are related to Genesis 34.
+20	merge	move	HELD_AT	Fragment	Camb_b	Cambridge	Cambridge University Library	"[""enriched""]"	"[""dsd-article-p75_5""]"	G. Bohak located the Manchester manuscript between Camb. a and Camb. b, two very fragmentary columns that apparently are related to Genesis 34.
+20	merge	move	HELD_AT	Fragment	T_S_K5	Cambridge	Cambridge University Library	"[""enriched""]"	"[""jewish_proselytism""]"	Cambridge T-S K5
+20	merge	fold	HELD_AT	Fragment	T_S_12_732	Cambridge	Cambridge University Library	"[""enriched""]"	"[""jewish_proselytism""]"	the fragmentary letter (Cambridge, T-S 12.732) of a proselyte who, as those described above, had been a monk or cleric prior to his conversion
+20	merge	fold	HELD_AT	Fragment	T_S_12_244	Cambridge	Cambridge University Library	"[""enriched""]"	"[""jewish_proselytism""]"	fragments of at least two other letters written by this same person (MSS Cambridge, T-S N.S. 325.7 and T-S 12.244) have also been found in the Genizah
+20	merge	move	HELD_AT	Fragment	T_S_N_S325	Cambridge	Cambridge University Library	"[""enriched""]"	"[""jewish_proselytism""]"	fragments of at least two other letters written by this same person (MSS Cambridge, T-S N.S. 325.7 and T-S 12.244) have also been found in the Genizah
+20	merge	delete_node		Institution	Cambridge	Cambridge	Cambridge University Library			
+21	merge	fold	HELD_AT	Fragment	T_S_K10_4	Cambridge Genizah	Cambridge University Library	"[""enriched""]"	"[""jewish_proselytism""]"	perhaps the two most beautifully illuminated engagement contracts in the Genizah
+21	merge	delete_node		Institution	Cambridge Genizah	Cambridge Genizah	Cambridge University Library			
+22	merge	move	HELD_AT	Fragment	T_S_A45	Cambridge Genizah Collections	Cambridge University Library	"[""enriched""]"	"[""friedman_0_100_vol2""]"	Referenced as 'Cambridge Genizah Collections ... Box A45' in relation to the spelling of the name 'יהדה'.
+22	merge	delete_node		Institution	Cambridge Genizah Collections	Cambridge Genizah Collections	Cambridge University Library			
+23	merge	fold	HELD_AT	Fragment	T_S_Ar_1a_54	Cambridge Genizah collection	Cambridge University Library	"[""enriched""]"	"[""oimp38""]"	Reference to Cambridge Genizah collection's Arabic Old Series (as cited in Baker & Polliack 2001)
+23	merge	delete_node		Institution	Cambridge Genizah collection	Cambridge Genizah collection	Cambridge University Library			
+24	merge	move	HELD_AT	Fragment	Or_10794_8	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Or. 10794.8 8, 92/nt 205 Cambridge, University Library
+24	merge	move	HELD_AT	Fragment	T_S_10K8_1	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Cambridge, University Library T-S 10K8.1 117
+24	merge	fold	HELD_AT	Fragment	T_S_12_871	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Mentioned in list of shelf marks.
+24	merge	fold	HELD_AT	Fragment	T_S_8K13_8	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Cambridge, University Library T-S 8K13.8 117
+24	merge	move	HELD_AT	Fragment	T_S_Ar_11_32	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Cambridge, University Library T-S Ar. 11.32 288-9
+24	merge	move	HELD_AT	Fragment	T_S_Ar_29_187b	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Cambridge, University Library T-S Ar.29.187b
+24	merge	move	HELD_AT	Fragment	T_S_Ar_44_20	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Cambridge, University Library, T-S Ar. 44.20
+24	merge	move	HELD_AT	Fragment	T_S_Ar_52_219	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Cambridge, University Library T-S Ar.52.219
+24	merge	move	HELD_AT	Fragment	T_S_Ar_52_220	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Cambridge, University Library T-S Ar. 52.220
+24	merge	move	HELD_AT	Fragment	T_S_Ar_52_221	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Cambridge, University Library T-S Ar. 52.221
+24	merge	move	HELD_AT	Fragment	T_S_Ar_52_222	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Cambridge, University Library, T-S Ar. 52.222
+24	merge	move	HELD_AT	Fragment	T_S_Ar_52_223	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Cambridge, University Library, T-S Ar. 52.223
+24	merge	move	HELD_AT	Fragment	T_S_Ar_52_224	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Cambridge, University Library, T-S Ar. 52.224
+24	merge	move	HELD_AT	Fragment	T_S_Ar_52_225	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Cambridge, University Library, T-S Ar. 52.225
+24	merge	move	HELD_AT	Fragment	T_S_Ar_52_227	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	T-S Ar.52.227
+24	merge	move	HELD_AT	Fragment	T_S_Ar_8_3	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	Cambridge, University Library T-S Ar.8.3
+24	merge	move	HELD_AT	Fragment	T_S_NS_172_75	Cambridge, University Library	Cambridge University Library	"[""enriched""]"	"[""cairo_to_manchester_2""]"	T-S NS 172.75
+24	merge	delete_node		Institution	Cambridge, University Library	Cambridge, University Library	Cambridge University Library			
+25	merge	fold	AFFILIATED_WITH	Scholar	Solomon Schechter	University Library, Cambridge	Cambridge University Library	"[""enriched""]"	"[""traders_1""]"	Solomon Schechter, then Lecturer of Rabbinics at the University of Cambridge, England, with the assistance of Dr. Charles Taylor of St. John's College, succeede
+25	merge	fold	HELD_AT	Fragment	T_S_13J25	University Library, Cambridge	Cambridge University Library	"[""enriched""]"	"[""traders_1""]"	University Library, Cambridge, Taylor-Schechter Collection, TS 13 J 25 f. 18.
+25	merge	delete_node		Institution	University Library, Cambridge	University Library, Cambridge	Cambridge University Library			
+26	merge	move	HELD_AT	Fragment	Collections_of_Geniza_material_in_the_library_other_than_the_Taylor_Schechter_Collection	University Library, Cambridge, England	Cambridge University Library	"[""enriched""]"	"[""traders_1""]"	University Library, Cambridge, England. Collections of Geniza material in the library other than the Taylor-Schechter Collection.
+26	merge	delete_node		Institution	University Library, Cambridge, England	University Library, Cambridge, England	Cambridge University Library			
+27	merge	move	HELD_AT	Fragment	MSS	University Library in Cambridge	Cambridge University Library	"[""enriched""]"	"[""ej_arrant""]"	The codicological data (specified in Table I.1) were collected through consulting the MSS physically in the Manuscript Reading Room in the University Library in
+27	merge	delete_node		Institution	University Library in Cambridge	University Library in Cambridge	Cambridge University Library			
+28	merge	fold	AFFILIATED_WITH	Scholar	Benjamin M. Outhwaite	Cambridge University Libraries	Cambridge University Library	"[""enriched""]"	"[""ottomon_era""]"	Dr Ben Outhwaite of Cambridge University Libraries
+28	merge	delete_node		Institution	Cambridge University Libraries	Cambridge University Libraries	Cambridge University Library			
+29	merge	move	HELD_AT	Fragment	T_S_16_94	T-S	Cambridge University Library	"[""enriched""]"	"[""dsd-article-p75_5""]"	The library holding the T-S 16.94 manuscript.
+29	merge	delete_node		Institution	T-S	T-S	Cambridge University Library			
+30	merge	delete_node		Institution	T-S Genizah collection	T-S Genizah collection	Cambridge University Library			
+31	merge	move	HELD_AT	Fragment	T_S_8_J1	אוסף TS	Cambridge University Library	"[""enriched""]"	"[""malk-ish-1-188""]"	קטע מתשובה זו נמצא בגניזה באוסף TS, ושם אמנם נאמר 'נשלח מלפני הרב יוסף רכב ישר'
+31	merge	delete_node		Institution	אוסף TS	אוסף TS	Cambridge University Library			
+32	merge	move	HELD_AT	Fragment	ENA_4096d	Adler collection	Jewish Theological Seminary	"[""enriched""]"	"[""fridman_100_198_vol_2""]"	Assaf connected this with a fragment in the Adler collection, ENA 4096d.
+32	merge	delete_node		Institution	Adler collection	Adler collection	Jewish Theological Seminary			
+33	merge	delete_node		Institution	Elkan Adler collection	Elkan Adler collection	Jewish Theological Seminary			
+34	merge	move	HELD_AT	Fragment	ENA_3925_6_ENA_3936_1_ENA_3936_3	Elkan Nathan Adler Genizah collection	Jewish Theological Seminary	"[""enriched""]"	"[""ottomon_era""]"	The machine-made perforations on the left-hand side of the recto, in contrast, were presumably added by a curator connected with the Elkan Nathan Adler Genizah 
+34	merge	delete_node		Institution	Elkan Nathan Adler Genizah collection	Elkan Nathan Adler Genizah collection	Jewish Theological Seminary			
+35	merge	move	HELD_AT	Fragment	T_S_10K20_9	אוסף אדלר	Jewish Theological Seminary	"[""enriched""]"	"[""malk-ish-1-188""]"	קטע אחר מאותה תשובה נמצא בקבוצת תשובות שבאוסף אדלר
+35	merge	delete_node		Institution	אוסף אדלר	אוסף אדלר	Jewish Theological Seminary			
+36	merge	move	HELD_AT	Fragment	קטע_מן_החיבור	אוסף שכטר	Jewish Theological Seminary	"[""enriched""]"	"[""malk-ish-1-400""]"	קטע מן החיבור שנמצא בין כתבי הגניזה באוסף שכטר בבית המדרש לרבנים בניו יורק פרסם פרידלנדר.
+36	merge	delete_node		Institution	אוסף שכטר	אוסף שכטר	Jewish Theological Seminary			
+37	merge	move	HELD_AT	Fragment	זכ	הסימנר בנוירק	Jewish Theological Seminary	"[""enriched""]"	"[""genizah_kedem_3vol""]"	זכ
+37	merge	delete_node		Institution	הסימנר בנוירק	הסימנר בנוירק	Jewish Theological Seminary			
+38	merge	fold	HELD_AT	Fragment	ENA_NS_35_15	בית המדרש לרבנים בניו יורק	Jewish Theological Seminary	"[""enriched""]"	"[""6david""]"	נשתמרה בספריית בית המדרש לרבנים בניו יורק ENA NS 35. 15
+38	merge	delete_node		Institution	בית המדרש לרבנים בניו יורק	בית המדרש לרבנים בניו יורק	Jewish Theological Seminary			
+39	merge	move	HELD_AT	Fragment	Bodl_Marsh_114	Oxford	Bodleian Library, Oxford	"[""enriched""]"	"[""calendars_247""]"	Oxford, Bodl., Marsh 114 (Abraham Bar Hayya, Luḥot ha-Nasi), 14th c., Sefardi/ Provençal, fol. 22r
+39	merge	move	HELD_AT	Fragment	Bodl_Opp_332	Oxford	Bodleian Library, Oxford	"[""enriched""]"	"[""calendars_247""]"	Oxford, Bodl., Opp. 332, 16th c., Ashkenazi, fol. 162v
+39	merge	move	HELD_AT	Fragment	Bodl_Opp_614	Oxford	Bodleian Library, Oxford	"[""enriched""]"	"[""calendars_247""]"	Oxford, Bodl., Opp. 614, 14th c., Ashkenazi, fols 50v-55r
+39	merge	move	HELD_AT	Fragment	Bodl_Opp_701	Oxford	Bodleian Library, Oxford	"[""enriched""]"	"[""calendars_247""]"	Oxford, Bodl., Opp. 701, 1586, Ashkenazi, fol. 33r
+39	merge	delete_node		Institution	Oxford	Oxford	Bodleian Library, Oxford			
+40	merge	move	HELD_AT	Fragment	Poc_368	Oxford, Bodl.	Bodleian Library, Oxford	"[""enriched""]"	"[""calendars_247""]"	Oxford, Bodl., Poc. 368 (Isaac Israeli, Yesod 'Olam), 14th–15th c., Byzantine, fol. 206r
+40	merge	move	HELD_AT	Fragment	Bodl_Mich_328	Oxford, Bodl.	Bodleian Library, Oxford	"[""enriched""]"	"[""calendars_247""]"	Oxford, Bodl., Mich. 328, 14th c., Ashkenazi, fol. 294r
+40	merge	move	HELD_AT	Fragment	Bodl_Mich_74	Oxford, Bodl.	Bodleian Library, Oxford	"[""enriched""]"	"[""calendars_247""]"	Oxford, Bodl., Mich. 74, 14th c., Ashkenazi, fols 3r, 12v
+40	merge	move	HELD_AT	Fragment	Bodl_Opp_712	Oxford, Bodl.	Bodleian Library, Oxford	"[""enriched""]"	"[""calendars_247""]"	Oxford, Bodl., Opp. 712, 16th c., Ashkenazi, fol. 295r
+40	merge	move	HELD_AT	Fragment	Bodl_Opp_Add_Qu_157	Oxford, Bodl.	Bodleian Library, Oxford	"[""enriched""]"	"[""calendars_247""]"	Oxford, Bodl., Opp. Add. Qu. 157
+40	merge	delete_node		Institution	Oxford, Bodl.	Oxford, Bodl.	Bodleian Library, Oxford			
+41	merge	fold	HELD_AT	Fragment	Bodl_MS_heb_b_11_16	Bodl.	Bodleian Library, Oxford	"[""enriched""]"	"[""ottomon_era""]"	A library holding the manuscript Bodl. MS heb. b 11/16
+41	merge	delete_node		Institution	Bodl.	Bodl.	Bodleian Library, Oxford			
+42	merge	move	HELD_AT	Fragment	J_3_47v	ספרייה הבריטית	British Library, London	"[""enriched""]"	"[""malk-ish-1-270""]"	כתב יד בספרייה הבריטית מכיל קטעים נבחרים מספר השופך אור על עניין הייחוד והצדק', ומ'ספר הטענות בדבר ספרו של אריסטו על דברים שמעבר לטבע'.
+42	merge	delete_node		Institution	ספרייה הבריטית	ספרייה הבריטית	British Library, London			
+43	merge	move	HELD_AT	Fragment	London_BL_Add_15977	BL	British Library, London	"[""enriched""]"	"[""calendars_247""]"	Known shelf marks: ... London, BL Add 15977 ...
+43	merge	move	HELD_AT	Fragment	London_BL_Or_2674	BL	British Library, London	"[""enriched""]"	"[""calendars_247""]"	Known shelf marks: ... London, BL Or 2674 ...
+43	merge	delete_node		Institution	BL	BL	British Library, London			
+44	merge	move	HELD_AT	Fragment	Berlin_SBB_Or_1198	Berlin	Staatsbibliothek zu Berlin	"[""enriched""]"	"[""calendars_247""]"	Berlin, SBB, Or. Fol. 1198, 14th-15th c., Ashkenazi, fol. 42r
+44	merge	move	HELD_AT	Fragment	Berlin_SBB_Or_Oct_352	Berlin	Staatsbibliothek zu Berlin	"[""enriched""]"	"[""calendars_247""]"	Berlin, SBB, Or. Oct. 352, ca. 1300, Ashkenazi, fols 13r, 171–17v, 20r
+44	merge	delete_node		Institution	Berlin	Berlin	Staatsbibliothek zu Berlin			
+45	merge	move	HELD_AT	Fragment	Berlin_SBB_Or_Oct_3150	Berlin, SBB	Staatsbibliothek zu Berlin	"[""enriched""]"	"[""calendars_247""]"	Berlin, SBB, Or. Oct. 3150, 1649, Ashkenazi, fols 44V-45V
+45	merge	delete_node		Institution	Berlin, SBB	Berlin, SBB	Staatsbibliothek zu Berlin			
+46	merge	fold	HELD_AT	Fragment	Ms_or_1233	Königliche Bibliothek in Berlin	Staatsbibliothek zu Berlin	"[""enriched""]"	"[""zuto-article-p21_3""]"	purchased by the Königliche Bibliothek in Berlin from Moses Wilhelm Shapira in 1881
+46	merge	delete_node		Institution	Königliche Bibliothek in Berlin	Königliche Bibliothek in Berlin	Staatsbibliothek zu Berlin			
+47	merge	move	HELD_AT	Fragment	II_Firk_Arab_1	National Library of Russia	Russian National Library, St. Petersburg	"[""pgp""]"	null	
+47	merge	move	HELD_AT	Fragment	II_Firk_Arab_3	National Library of Russia	Russian National Library, St. Petersburg	"[""pgp""]"	null	
+47	merge	move	HELD_AT	Fragment	Unidentified_Firkovitch_MS	National Library of Russia	Russian National Library, St. Petersburg	"[""pgp""]"	null	
+47	merge	delete_node		Institution	National Library of Russia	National Library of Russia	Russian National Library, St. Petersburg			
+48	merge	move	HELD_AT	Fragment	ENA_1731_5_13	St. Petersburg, Firkovich collections	Russian National Library, St. Petersburg	"[""enriched""]"	"[""cairo_to_manchester_2""]"	ENA 1731.5-13 St. Petersburg, Firkovich collections
+48	merge	delete_node		Institution	St. Petersburg, Firkovich collections	St. Petersburg, Firkovich collections	Russian National Library, St. Petersburg			
+49	merge	move	HELD_AT	Fragment	Firkovitch_II_A_333_1	Firkovitch collection	Russian National Library, St. Petersburg	"[""enriched""]"	"[""cairo_to_manchester_1""]"	The first manuscripts of the Dīwān to be discovered belong to the Firkovitch collection
+49	merge	move	HELD_AT	Fragment	Firkovitch_II_A_333_2	Firkovitch collection	Russian National Library, St. Petersburg	"[""enriched""]"	"[""cairo_to_manchester_1""]"	The first manuscripts of the Dīwān to be discovered belong to the Firkovitch collection
+49	merge	delete_node		Institution	Firkovitch collection	Firkovitch collection	Russian National Library, St. Petersburg			
+50	merge	move	AFFILIATED_WITH	Scholar	Dr Chwat	Jewish National and University Library	National Library of Israel	"[""enriched""]"	"[""cairo_to_manchester""]"	His catalogue descriptions were made in Hebrew in the 'Aleph' catalogue of the JNUL
+50	merge	delete_node		Institution	Jewish National and University Library	Jewish National and University Library	National Library of Israel			
+51	merge	move	HELD_AT	Fragment	מפה_של_הדלתא_במצרים	הספרייה הלאומית	National Library of Israel	"[""enriched""]"	"[""6david""]"	מפה של הדלתא במצרים יצירת הכרטוגרף אורטליוס אברהם (Ortelius Abraham.) מתוך אטלס אורטליוס, אנטוורפן משנת 1588. בערך מקור: אוסף המפות ע
+51	merge	delete_node		Institution	הספרייה הלאומית	הספרייה הלאומית	National Library of Israel			
+52	merge	move	HELD_AT	Fragment	UPenn_GF_60	Katz Center for Advanced Judaic Studies, University of Pennsylvania	University of Pennsylvania, Katz Center	"[""pgp""]"	null	
+52	merge	move	HELD_AT	Fragment	UPenn_RAR_MS_82_313_1_17	Katz Center for Advanced Judaic Studies, University of Pennsylvania	University of Pennsylvania, Katz Center	"[""pgp""]"	null	
+52	merge	move	HELD_AT	Fragment	UPenn_RAR_MS_82_313_1_2	Katz Center for Advanced Judaic Studies, University of Pennsylvania	University of Pennsylvania, Katz Center	"[""pgp""]"	null	
+52	merge	move	HELD_AT	Fragment	UPenn_RAR_MS_82_313_1_5	Katz Center for Advanced Judaic Studies, University of Pennsylvania	University of Pennsylvania, Katz Center	"[""pgp""]"	null	
+52	merge	move	HELD_AT	Fragment	UPenn_RAR_MS_85_126_13a	Katz Center for Advanced Judaic Studies, University of Pennsylvania	University of Pennsylvania, Katz Center	"[""pgp""]"	null	
+52	merge	move	HELD_AT	Fragment	UPenn_RAR_MS_85_126_21a	Katz Center for Advanced Judaic Studies, University of Pennsylvania	University of Pennsylvania, Katz Center	"[""pgp""]"	null	
+52	merge	move	HELD_AT	Fragment	UPenn_RAR_MS_85_126_28	Katz Center for Advanced Judaic Studies, University of Pennsylvania	University of Pennsylvania, Katz Center	"[""pgp""]"	null	
+52	merge	move	HELD_AT	Fragment	UPenn_RAR_MS_85_126_38	Katz Center for Advanced Judaic Studies, University of Pennsylvania	University of Pennsylvania, Katz Center	"[""pgp""]"	null	
+52	merge	delete_node		Institution	Katz Center for Advanced Judaic Studies, University of Pennsylvania	Katz Center for Advanced Judaic Studies, University of Pennsylvania	University of Pennsylvania, Katz Center			
+53	merge	fold	HELD_AT	Fragment	Halper_331	Herbert D. Katz Center for Advanced Judaic Studies	University of Pennsylvania, Katz Center	"[""enriched""]"	"[""oldest_dated""]"	The fragment is held in the library of the Herbert D. Katz Center for Advanced Judaic Studies, Philadelphia
+53	merge	delete_node		Institution	Herbert D. Katz Center for Advanced Judaic Studies	Herbert D. Katz Center for Advanced Judaic Studies	University of Pennsylvania, Katz Center			
+54	merge	move	HELD_AT	Fragment	Halper_33	University of Pennsylvania Library	University of Pennsylvania, Katz Center	"[""enriched""]"	"[""oldest_dated""]"	The date of the fragment, according to the University of Pennsylvania Library catalogue (based on the entry in Halper’s catalogue), is ‘17Tishre 1183’, but this
+54	merge	move	HELD_AT	Fragment	Halper_39	University of Pennsylvania Library	University of Pennsylvania, Katz Center	"[""enriched""]"	"[""oldest_dated""]"	The date of the fragment, according to the University of Pennsylvania Library catalogue (based on the entry in Halper’s catalogue), is ‘17Tishre 1183’, but this
+54	merge	move	HELD_AT	Fragment	Halper_46	University of Pennsylvania Library	University of Pennsylvania, Katz Center	"[""enriched""]"	"[""oldest_dated""]"	The date of the fragment, according to the University of Pennsylvania Library catalogue (based on the entry in Halper’s catalogue), is ‘17Tishre 1183’, but this
+54	merge	delete_node		Institution	University of Pennsylvania Library	University of Pennsylvania Library	University of Pennsylvania, Katz Center			
+55	merge	move	HELD_AT	Fragment	Jer_Ben_Zvi_3436_88	Ben Zvi Institute	Yad Izhak Ben-Zvi Institute	"[""pgp""]"	null	
+55	merge	move	HELD_AT	Fragment	Jer_Ben_Zvi_3436_97	Ben Zvi Institute	Yad Izhak Ben-Zvi Institute	"[""pgp""]"	null	
+55	merge	move	HELD_AT	Fragment	MS_Meunier	Ben Zvi Institute	Yad Izhak Ben-Zvi Institute	"[""pgp""]"	null	
+55	merge	delete_node		Institution	Ben Zvi Institute	Ben Zvi Institute	Yad Izhak Ben-Zvi Institute			
+56	merge	fold	AFFILIATED_WITH	Scholar	Stella Butler	University of Manchester Library	John Rylands Library, University of Manchester	"[""enriched""]"	"[""cairo_to_manchester_intro""]"	joined as co-applicant by Dr Stella Butler, then Head of Special Collections at the University of Manchester Library, to the Arts and Humanities Research Counci
+56	merge	fold	HELD_AT	Fragment	JRL_Library_fragment	University of Manchester Library	John Rylands Library, University of Manchester	"[""enriched""]"	"[""dsd-article-p75_5""]"	keptintheJohnRylandsLibrarythatmakes part of the University of Manchester Library;12 purchased from the estate of Dr. Moses Gaster in 1954.
+56	merge	move	HELD_AT	Fragment	P_1185	University of Manchester Library	John Rylands Library, University of Manchester	"[""enriched""]"	"[""dsd-article-p75_5""]"	The Cairo Genizah Fragment of the Visions of Levi from the University of Manchester Library
+56	merge	delete_node		Institution	University of Manchester Library	University of Manchester Library	John Rylands Library, University of Manchester			
+57	merge	move	HELD_AT	Fragment	Fr_5_14	Toronto, University of Toronto Libraries	Thomas Fisher Rare Book Library, University of Toronto	"[""enriched""]"	"[""calendars_247""]"	Toronto, University of Toronto Libraries, Fr 5-014 (Jacob ben Asher, Arba'ah Țurim), 14th c.?, Sefardi, fol. 46v
+57	merge	delete_node		Institution	Toronto, University of Toronto Libraries	Toronto, University of Toronto Libraries	Thomas Fisher Rare Book Library, University of Toronto			
+58	merge	move	HELD_AT	Fragment	N_44651	OIM	Oriental Institute Museum	"[""enriched""]"	"[""oimp38""]"	OIM E8349 (P. 65877/N. 44651)
+58	merge	move	HELD_AT	Fragment	P_65877	OIM	Oriental Institute Museum	"[""enriched""]"	"[""oimp38""]"	OIM E8349 (P. 65877/N. 44651)
+58	merge	delete_node		Institution	OIM	OIM	Oriental Institute Museum			
+59	merge	move	HELD_AT	Fragment	OIM_E8349	Oxford Institute for Papyrology	Oriental Institute Museum	"[""enriched""]"	"[""oimp38""]"	OIM E8349 (P. 65877/N. 44651)
+59	merge	delete_node		Institution	Oxford Institute for Papyrology	Oxford Institute for Papyrology	Oriental Institute Museum			
+60	merge	move	HELD_AT	Fragment	poetischen_Genizafragmente	Jüdischen Gemeindebibliothek Berlin	Jüdische Gemeindebibliothek (Berlin)	"[""enriched""]"	"[""Schirmann-DiepoetischenGenizafragmente-1932""]"	Die poetischen Genizafragmente in der Jüdischen Gemeindebibliothek Berlin
+60	merge	move	HELD_AT	Fragment	Genizafragmente	Jüdischen Gemeindebibliothek Berlin	Jüdische Gemeindebibliothek (Berlin)	"[""enriched""]"	"[""Schirmann-DiepoetischenGenizafragmente-1932""]"	Die poetischen Genizafragmente in der Jüdischen Gemeindebibliothek Berlin
+60	merge	delete_node		Institution	Jüdischen Gemeindebibliothek Berlin	Jüdischen Gemeindebibliothek Berlin	Jüdische Gemeindebibliothek (Berlin)			
+61	merge	move	HELD_AT	Fragment	bracelets_with_stamped_decoration	L. A. Mayer Museum of Islamic Art	L. A. Mayer Museum for Islamic Art	"[""enriched""]"	"[""oimp38""]"	A similar pair of bracelets is in the collection of the L. A. Mayer Museum of Islamic Art in Jerusalem.
+61	merge	delete_node		Institution	L. A. Mayer Museum of Islamic Art	L. A. Mayer Museum of Islamic Art	L. A. Mayer Museum for Islamic Art			
+62	merge	move	AFFILIATED_WITH	Scholar	Aly Bey Bahgat	Musée de l'Art Arabe	Museum of Islamic Art in Cairo	"[""enriched""]"	"[""oimp38""]"	Author of several articles on the Musée de l'Art Arabe and excavations at Fustat mentioned in the bibliography.
+62	merge	delete_node		Institution	Musée de l'Art Arabe	Musée de l'Art Arabe	Museum of Islamic Art in Cairo			
+63	merge	move	AFFILIATED_WITH	Scholar	Simon Hopkins	The Hebrew University	Hebrew University of Jerusalem	"[""enriched""]"	"[""bjrl-article-p710""]"	THE HEBREW UNIVERSITY, JERUSALEM
+63	merge	delete_node		Institution	The Hebrew University	The Hebrew University	Hebrew University of Jerusalem			
+64	merge	fold	AFFILIATED_WITH	Scholar	Simon Hopkins	The Hebrew University, Jerusalem	Hebrew University of Jerusalem	"[""enriched""]"	"[""bjrl-article-p710""]"	By SIMON HOPKINS THE HEBREW UNIVERSITY, JERUSALEM
+64	merge	delete_node		Institution	The Hebrew University, Jerusalem	The Hebrew University, Jerusalem	Hebrew University of Jerusalem			
+65	merge	move	AFFILIATED_WITH	Scholar	רועי ונעמה דר-עמיר	האוניברסיטה העברית	Hebrew University of Jerusalem	"[""enriched""]"	"[""religious_moshe""]"	את כל מסלולי האקדמי עשיתי באוניברסיטה העברית
+65	merge	delete_node		Institution	האוניברסיטה העברית	האוניברסיטה העברית	Hebrew University of Jerusalem			
+66	merge	move	AFFILIATED_WITH	Scholar	משה יגור	האוניברסיטה העברית בירושלים	Hebrew University of Jerusalem	"[""enriched""]"	"[""religious_moshe""]"	הוגש לסנט האוניברסיטה העברית בירושלים
+66	merge	delete_node		Institution	האוניברסיטה העברית בירושלים	האוניברסיטה העברית בירושלים	Hebrew University of Jerusalem			
+67	merge	move	AFFILIATED_WITH	Scholar	Ceil Mazer	Tel-Aviv University	Tel Aviv University	"[""enriched""]"	"[""india_trader_1_50""]"	Joseph and Ceil Mazer Chair in Jewish Culture in Muslim Lands and Cairo Geniza Studies, Tel-Aviv University.
+67	merge	move	AFFILIATED_WITH	Scholar	Joseph Mazer	Tel-Aviv University	Tel Aviv University	"[""enriched""]"	"[""india_trader_1_50""]"	Joseph and Ceil Mazer Chair in Jewish Culture in Muslim Lands and Cairo Geniza Studies, Tel-Aviv University.
+67	merge	move	AFFILIATED_WITH	Scholar	Joseph and Ceil Mazer Chair in Jewish Culture in Muslim Lands and Cairo Geniza Studies	Tel-Aviv University	Tel Aviv University	"[""enriched""]"	"[""india_trader_1_50""]"	Joseph and Ceil Mazer Chair in Jewish Culture in Muslim Lands and Cairo Geniza Studies, Tel-Aviv University.
+67	merge	delete_node		Institution	Tel-Aviv University	Tel-Aviv University	Tel Aviv University			
+68	merge	move	AFFILIATED_WITH	Scholar	בנימין ארבל	University of Tel Aviv	Tel Aviv University	"[""enriched""]"	"[""6david""]"	A professor from the University of Tel Aviv who clarified terminology.
+68	merge	delete_node		Institution	University of Tel Aviv	University of Tel Aviv	Tel Aviv University			
+69	merge	move	AFFILIATED_WITH	Scholar	Nadia Vidro	UNIVERSITY COLLEGE LONDON	University College London	"[""enriched""]"	"[""barley_av""]"	NADIA VIDRO UNIVERSITY COLLEGE LONDON, UK
+69	merge	delete_node		Institution	UNIVERSITY COLLEGE LONDON	UNIVERSITY COLLEGE LONDON	University College London			
+70	merge	move	AFFILIATED_WITH	Scholar	Brad Sabin Hill	UCL	University College London	"[""enriched""]"	"[""cairo_to_manchester"", ""cairo_to_manchester_intro""]"	spotted by Brad Sabin Hill among the Gaster papers at the UCL
+70	merge	delete_node		Institution	UCL	UCL	University College London			
+71	merge	move	AFFILIATED_WITH	Scholar	פרופ' אפרים לב	אוניברסיטת חיפה	University of Haifa	"[""enriched""]"	"[""religious_moshe""]"	המרכז לחקר בין-תחומי של הגניזה הקהירית באוניברסיטת חיפה סיפק מסגרת חשובה נוספת ללימוד ולליבון של סוגיות שונות
+71	merge	move	AFFILIATED_WITH	Scholar	ד	אוניברסיטת חיפה	University of Haifa	"[""enriched""]"	"[""religious_moshe""]"	המרכז לחקר בין-תחומי של הגניזה הקהירית באוניברסיטת חיפה סיפק מסגרת חשובה נוספת ללימוד ולליבון של סוגיות שונות, ותודתי נתונה לראשיו, פרופ' אפרים לב וד
+71	merge	delete_node		Institution	אוניברסיטת חיפה	אוניברסיטת חיפה	University of Haifa			
+72	merge	move	AFFILIATED_WITH	Scholar	Shalom Albeck	Bar Ilan	Bar-Ilan University	"[""enriched""]"	"[""zinger_princet""]"	Albeck, Shalom. Law Courts in Talmudic Times (Hebrew). Bar Ilan, 1980.
+72	merge	delete_node		Institution	Bar Ilan	Bar Ilan	Bar-Ilan University			
+73	merge	fold	AFFILIATED_WITH	Scholar	H. Atay	Ankara Üniversitesi Ilahiyat Fakültesi Yayınları	Ankara Üniversitesi Ilahiyat Fakültesi	"[""enriched""]"	"[""bjrl-article-p710""]"	Prof. Dr. Hüseyin Atay, Ankara Üniversitesi Ilahiyat Fakültesi Yayınları 93, Ankara, 1974.
+73	merge	delete_node		Institution	Ankara Üniversitesi Ilahiyat Fakültesi Yayınları	Ankara Üniversitesi Ilahiyat Fakültesi Yayınları	Ankara Üniversitesi Ilahiyat Fakültesi			
+74	merge	move	AFFILIATED_WITH	Scholar	Yusuf Umrethwala	Princeton Geniza Project database	Princeton Geniza Project	"[""enriched""]"	"[""ottomon_era""]"	Yusuf Umrethwala has posted a transcription of the verso of this document in the Princeton Geniza Project database.
+74	merge	delete_node		Institution	Princeton Geniza Project database	Princeton Geniza Project database	Princeton Geniza Project			
+75	merge	move	AFFILIATED_WITH	Scholar	Author	Faculty of Asian and Middle Eastern Studies Degree Committee	Faculty of Asian and Middle Eastern Studies	"[""enriched""]"	"[""ej_arrant""]"	The thesis does not exceed the prescribed word limit for the Faculty of Asian and Middle Eastern Studies Degree Committee.
+75	merge	delete_node		Institution	Faculty of Asian and Middle Eastern Studies Degree Committee	Faculty of Asian and Middle Eastern Studies Degree Committee	Faculty of Asian and Middle Eastern Studies			
+76	merge	fold	AFFILIATED_WITH	Scholar	Scholar	Harvard University Center for Jewish S	Harvard University Center for Jewish Studies	"[""enriched""]"	"[""india_trader_1_50""]"	I had the pleasure of working on this project at the Harvard University Center for Jewish S
+76	merge	delete_node		Institution	Harvard University Center for Jewish S	Harvard University Center for Jewish S	Harvard University Center for Jewish Studies			
+77	merge	move	AFFILIATED_WITH	Person	Nathan, son of Abraham	Palestinian Academy	Palestinian Yeshiva	"[""enriched""]"	"[""fragmentsfromcai00gott""]"	usurper of power in the Palestinian Academy, becoming 'Father of the Law Court,' or 'Second,'
+77	merge	move	AFFILIATED_WITH	Person	Solomon, son of Judah	Palestinian Academy	Palestinian Yeshiva	"[""enriched""]"	"[""fragmentsfromcai00gott""]"	son of Judah, the Ga'ōn, or 'First,' in the Palestinian Academy.
+77	merge	move	AFFILIATED_WITH	Person	Daniel b. Azariah	Palestinian Academy	Palestinian Yeshiva	"[""enriched""]"	"[""friedman_vol_intro""]"	A native Babylonian, the Nasi Daniel b. Azariah, became the-Palestinian Gaon after Solomon b. Judah (1051–1062).
+77	merge	delete_node		Institution	Palestinian Academy	Palestinian Academy	Palestinian Yeshiva			
+78	merge	move	AFFILIATED_WITH	Person	Nathan b. Abraham	Yeshiva of Eretz Israel	Palestinian Yeshiva	"[""enriched""]"	"[""friedman_vol_intro""]"	the struggles over the Gaonate connected with Nathan b. Abraham, during 1038-1042
+78	merge	delete_node		Institution	Yeshiva of Eretz Israel	Yeshiva of Eretz Israel	Palestinian Yeshiva			
+79	merge	move	AFFILIATED_WITH	Person	אלחנן בן שמריה	ישיבת ארץ ישראל	Palestinian Yeshiva	"[""enriched""]"	"[""malk-ish-1-155""]"	הקשרים שבין שמריה, ואלחנן בנו, ובין ישיבת ארץ ישראל
+79	merge	move	AFFILIATED_WITH	Person	ישראל הכהן גאון בן שמואל	ישיבת ארץ ישראל	Palestinian Yeshiva	"[""enriched""]"	"[""malk-ish-1-155""]"	הקשרים שבין שמריה, ואלחנן בנו, ובין ישיבת ארץ ישראל
+79	merge	move	AFFILIATED_WITH	Person	יעקב הארץ ישראלית	ישיבת ארץ ישראל	Palestinian Yeshiva	"[""enriched""]"	"[""malk-ish-1-188""]"	הגאון מאיים בנידוי על מי 'אשר יקל בכבודם'
+79	merge	move	AFFILIATED_WITH	Scholar	נתן בן אברהם	ישיבת ארץ ישראל	Palestinian Yeshiva	"[""enriched""]"	"[""malk-ish-1-307""]"	נתן בן אברהם, מי שהיה אב בית דין בישיבת ארץ ישראל בסוף החצי הראשון של המאה האחת עשרה
+79	merge	move	AFFILIATED_WITH	Scholar	ישראל הכהן גאון	ישיבת ארץ ישראל	Palestinian Yeshiva	"[""enriched""]"	"[""malk-ish-1-400""]"	כנראה גם לעמוד בהתחרות עם ישיבת ארץ ישראל.
+79	merge	delete_node		Institution	ישיבת ארץ ישראל	ישיבת ארץ ישראל	Palestinian Yeshiva			
+80	merge	move	AFFILIATED_WITH	Person	נתן אב	אב בית דין בישיבת ארץ ישראל	Palestinian Yeshiva	"[""enriched""]"	"[""malk-ish-1-307""]"	המקור הנראה קדום יותר כלול בפירוש המשנה המיוחס לנתן אב (הוא נתן בן אברהם, מי שהיה אב בית דין בישיבת ארץ ישראל בסוף החצי הראשון של המאה האחת עשרה)
+80	merge	delete_node		Institution	אב בית דין בישיבת ארץ ישראל	אב בית דין בישיבת ארץ ישראל	Palestinian Yeshiva			
+81	merge	move	MENTIONS_PLACE	Fragment	V_A_69	Turūja	Tarūja	null	null	
+81	merge	delete_node		Place	Turūja	Turūja	Tarūja			
+82	move	move	ORIGINATED_FROM	Person	Sittūna bt. Ḥayyīm b. Solomon	Raḥba	al-Raḥba	"[""enriched""]"	"[""zinger_princet""]"	Sittūna bt. Ḥayyīm b. Solomon, known as Ben al-Raḥbī, came to court to nominate a representative to sue her husband, Faraḥ b. Joseph, known as Ben Bānūqa, who h
+83	delete_orphan	delete_node		Institution	Cairo Genizah	Cairo Genizah				
+84	delete_orphan	delete_node		Institution	Cairo Geniza	Cairo Geniza				
+85	delete_orphan	delete_node		Institution	Geniza	Geniza				
+86	delete_orphan	delete_node		Institution	קהיר	קהיר				
+87	delete_orphan	delete_node		Institution	Cathedral of Siena	Cathedral of Siena				
+88	delete_orphan	delete_node		Institution	Palestinian synagogue	Palestinian synagogue				
+89	delete_orphan	delete_node		Institution	Leningrad	Leningrad				
+90	delete_orphan	delete_node		Institution	Paris Nat. Bibl.	Paris Nat. Bibl.				
+91	delete_orphan	delete_node		Institution	Institute of Microfilmed Hebrew Manuscripts, Jewish National and University Library, Jerusalem	Institute of Microfilmed Hebrew Manuscripts, Jewish National and University Library, Jerusalem				
+92	delete_orphan	delete_node		Institution	אוסף Dropsie	אוסף Dropsie				

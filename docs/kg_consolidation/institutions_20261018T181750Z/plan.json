@@ -1,0 +1,5577 @@
+{
+ "format": 1,
+ "target": {
+  "uri": "bolt://127.0.0.1:7681",
+  "database": "neo4j",
+  "store": "650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0"
+ },
+ "ops": [
+  {
+   "index": 0,
+   "kind": "remove",
+   "title": "remove HELD_AT * -> Cairo Genizah",
+   "note": "Provenance ('from the Cairo Genizah'), not the current holder.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:146154"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:146178"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:146181"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149325"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149326"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149327"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149328"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149973"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149981"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:153863"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154660"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154676"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154683"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154692"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154700"
+    }
+   ]
+  },
+  {
+   "index": 1,
+   "kind": "remove",
+   "title": "remove HELD_AT * -> Cairo Geniza",
+   "note": "Provenance ('from the Cairo Genizah'), not the current holder.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149941"
+    }
+   ]
+  },
+  {
+   "index": 2,
+   "kind": "remove",
+   "title": "remove HELD_AT * -> Geniza",
+   "note": "Provenance ('from the Cairo Genizah'), not the current holder.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149071"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149077"
+    }
+   ]
+  },
+  {
+   "index": 3,
+   "kind": "remove",
+   "title": "remove HELD_AT * -> קהיר",
+   "note": "'Cairo' as a holder: 14 of its 15 edges come from one sentence about a court in Cairo (6david).",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145135"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145136"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145137"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145138"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145139"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145140"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145141"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145142"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145143"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145144"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145145"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145146"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145147"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145148"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145149"
+    }
+   ]
+  },
+  {
+   "index": 4,
+   "kind": "remove",
+   "title": "remove HELD_AT Maestà_altarpiece -> Cathedral of Siena",
+   "note": "Art-history figure caption (Duccio's Maestà).",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154590"
+    }
+   ]
+  },
+  {
+   "index": 5,
+   "kind": "remove",
+   "title": "remove HELD_AT VI_C_6 -> Palestinian synagogue",
+   "note": "Where the elders met (event location), not a holding.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:156702"
+    }
+   ]
+  },
+  {
+   "index": 6,
+   "kind": "remove",
+   "title": "remove HELD_AT parallel_manuscript_of_the_siddur -> Leningrad",
+   "note": "'A copy of which is found in Leningrad': not a fragment, a mention of another manuscript.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:148646"
+    }
+   ]
+  },
+  {
+   "index": 7,
+   "kind": "remove",
+   "title": "remove HELD_AT ENA_3012 -> Paris Nat. Bibl.",
+   "note": "ENA is a JTS shelfmark; the sentence is about another manuscript.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149228"
+    }
+   ]
+  },
+  {
+   "index": 8,
+   "kind": "remove",
+   "title": "remove HELD_AT Mosseri_Ia_26_2 -> Institute of Microfilmed Hebrew Manuscripts, Jewish National and University Library, Jerusalem",
+   "note": "A microfilm the author consulted; the fragment is at CUL.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:150133"
+    }
+   ]
+  },
+  {
+   "index": 9,
+   "kind": "remove",
+   "title": "remove HELD_AT * -> אוסף Dropsie",
+   "note": "One sentence ('the Dropsie collection where a copy of the deed is found') attached to every shelfmark on the page; T-S, ENA and Bodl. fragments are not at Dropsie.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151277"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151278"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151279"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151280"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151281"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151282"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151283"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151284"
+    }
+   ]
+  },
+  {
+   "index": 10,
+   "kind": "remove",
+   "title": "remove MENTIONS_PLACE XVII_PENITENTIAL_HYMN -> Goshen",
+   "note": "Liturgical allusion in a penitential hymn (Gottheil & Worrell no. XVII), not a geographic link.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:148379"
+    }
+   ]
+  },
+  {
+   "index": 11,
+   "kind": "remove",
+   "title": "remove MENTIONS_PLACE XVII_PENITENTIAL_HYMN -> Edom",
+   "note": "Liturgical allusion in a penitential hymn (Gottheil & Worrell no. XVII), not a geographic link.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:148374"
+    }
+   ]
+  },
+  {
+   "index": 12,
+   "kind": "remove",
+   "title": "remove MENTIONS_PLACE XVII_PENITENTIAL_HYMN -> Old Gate",
+   "note": "Liturgical allusion in a penitential hymn (Gottheil & Worrell no. XVII), not a geographic link.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:148400"
+    }
+   ]
+  },
+  {
+   "index": 13,
+   "kind": "remove",
+   "title": "remove AFFILIATED_WITH Elkan Adler -> Elkan Adler collection",
+   "note": "Collector of the collection or found fragments in it; not an affiliation.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:148080"
+    }
+   ]
+  },
+  {
+   "index": 14,
+   "kind": "remove",
+   "title": "remove AFFILIATED_WITH Elkan Nathan Adler -> Elkan Nathan Adler Genizah collection",
+   "note": "Collector of the collection or found fragments in it; not an affiliation.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154868"
+    }
+   ]
+  },
+  {
+   "index": 15,
+   "kind": "remove",
+   "title": "remove AFFILIATED_WITH Solomon Schechter -> Cambridge Genizah collection",
+   "note": "Collector of the collection or found fragments in it; not an affiliation.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:150674"
+    }
+   ]
+  },
+  {
+   "index": 16,
+   "kind": "remove",
+   "title": "remove AFFILIATED_WITH Isaacs -> Cambridge, University Library",
+   "note": "Collector of the collection or found fragments in it; not an affiliation.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147407"
+    }
+   ]
+  },
+  {
+   "index": 17,
+   "kind": "remove",
+   "title": "remove AFFILIATED_WITH Isaacs -> T-S Genizah collection",
+   "note": "Collector of the collection or found fragments in it; not an affiliation.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147408"
+    }
+   ]
+  },
+  {
+   "index": 18,
+   "kind": "remove",
+   "title": "remove MENTIONS_PLACE T_S_8_61 -> Raḥba",
+   "note": "PGP tags T-S 8.61 to both Raḥbas; a journey from Aleppo to Raḥba is al-Raḥba on the Euphrates, which keeps its edge.",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:20142"
+    }
+   ]
+  },
+  {
+   "index": 19,
+   "kind": "remove",
+   "title": "remove ORIGINATED_FROM Faraḥ b. Joseph -> Raḥba",
+   "note": "The nisba 'Ben al-Raḥbī' belongs to his wife Sittūna; he is 'Ben Bānūqa' (zinger_princet p. 421).",
+   "actions": [
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:156644"
+    }
+   ]
+  },
+  {
+   "index": 20,
+   "kind": "merge",
+   "title": "merge Institution 'Cambridge' -> 'Cambridge University Library'",
+   "note": "Bare city name. Its HELD_AT edges are T-S and 'Camb.' shelfmarks; its affiliations (Schechter, the librarian Jenkinson) are to the university.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:20:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58934",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58650",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "3b77eafc-bc03-590c-b46a-7ef461b761fb",
+      "page_uuid": "e8d749cf-3a7b-5925-b9fe-910c5c13b580",
+      "evidence": "Cambridge librarian Jenkinson",
+      "evidence_page": 10,
+      "source_books": [
+       "cairo_to_manchester"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147189"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:20:1",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59509",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2a86647f-077b-58b4-a9da-14b16400e18e",
+      "evidence": "cf. ms. Camb. d–e and Bodleian.",
+      "source_books": [
+       "dsd-article-p75_5"
+      ],
+      "confidence": "high",
+      "source": "dsd-article-p75_5",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147852"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:20:2",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59470",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2a86647f-077b-58b4-a9da-14b16400e18e",
+      "evidence": "G. Bohak located the Manchester manuscript between Camb. a and Camb. b, two very fragmentary columns that apparently are related to Genesis 34.",
+      "source_books": [
+       "dsd-article-p75_5"
+      ],
+      "confidence": "high",
+      "source": "dsd-article-p75_5",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147853"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:20:3",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59510",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2a86647f-077b-58b4-a9da-14b16400e18e",
+      "evidence": "G. Bohak located the Manchester manuscript between Camb. a and Camb. b, two very fragmentary columns that apparently are related to Genesis 34.",
+      "source_books": [
+       "dsd-article-p75_5"
+      ],
+      "confidence": "high",
+      "source": "dsd-article-p75_5",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147854"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:20:4",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59614",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "bc82e352-a9d7-5a8f-a9f8-e4007a5923ef",
+      "page_uuid": "65098503-4752-56a0-bc7b-adf74bc69228",
+      "evidence": "Cambridge T-S K5",
+      "evidence_page": 34,
+      "source_books": [
+       "jewish_proselytism"
+      ],
+      "confidence": "high",
+      "source": "jewish_proselytism",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:150712"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:20:5",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61858",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "bc82e352-a9d7-5a8f-a9f8-e4007a5923ef",
+      "page_uuid": "7022d858-9467-5476-b28b-4999bdd6a605",
+      "evidence": "fragments of at least two other letters written by this same person (MSS Cambridge, T-S N.S. 325.7 and T-S 12.244) have also been found in the Genizah",
+      "evidence_page": 12,
+      "source_books": [
+       "jewish_proselytism"
+      ],
+      "confidence": "high",
+      "source": "jewish_proselytism",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:150770"
+     ]
+    },
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:90016",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "e5953a50-db2d-5975-9593-745b6e7b1a46",
+      "page_uuid": "eb11a08f-784b-5615-8597-3a1fe79fce03",
+      "evidence": "מונח זה מופיע גם במסמך אחר מגניזת קהיר בספריית אוניברסיטת קיימברידג.TS AS 153. 214",
+      "evidence_page": 19,
+      "source_books": [
+       "6david"
+      ],
+      "confidence": "high",
+      "source": "6david",
+      "data_sources": [
+       "enriched",
+       "pgp",
+       "merged"
+      ],
+      "sub_collection": "Additional Series"
+     }
+    },
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155629",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "97ea2ca3-68dc-5610-ac50-12eabb7a9b9d",
+      "page_uuid": "a4f3b36c-e9bb-5a19-a548-afa4a34a7995",
+      "evidence": "Solomon Schechter, then Lecturer of Rabbinics at the University of Cambridge, England, with the assistance of Dr. Charles Taylor of St. John's College, succeeded in removing the total remaining content of the Geniza chamber to the University Library, Cambridge.",
+      "evidence_page": 12,
+      "source_books": [
+       "traders_1",
+       "cairo_to_manchester"
+      ],
+      "confidence": "high",
+      "source": "traders_1",
+      "data_sources": [
+       "enriched"
+      ],
+      "book_uuids": [
+       "97ea2ca3-68dc-5610-ac50-12eabb7a9b9d",
+       "3b77eafc-bc03-590c-b46a-7ef461b761fb"
+      ],
+      "page_uuids": [
+       "a4f3b36c-e9bb-5a19-a548-afa4a34a7995",
+       "52f1fbdd-857a-5182-bfaa-9bd38b60a353"
+      ],
+      "evidence_alt": [
+       "Schechter in Cambridge"
+      ]
+     }
+    },
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147779",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "e6b1e6c1-029d-5b18-94e3-6a792432c676",
+      "evidence": "A page from an Oriental 247-year cycle of remainders, listing remainders assigned to the year type (second half of the twelfth century – first half of the thirteenth century)",
+      "evidence_page": 29,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ],
+      "evidence_alt": [
+       "Cambridge University Library, T-S Misc.25.29v"
+      ]
+     }
+    },
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:81442",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "bc82e352-a9d7-5a8f-a9f8-e4007a5923ef",
+      "evidence": "the fragmentary letter (Cambridge, T-S 12.732) of a proselyte who, as those described above, had been a monk or cleric prior to his conversion",
+      "source_books": [
+       "jewish_proselytism"
+      ],
+      "confidence": "high",
+      "source": "jewish_proselytism",
+      "data_sources": [
+       "enriched",
+       "pgp",
+       "merged"
+      ]
+     }
+    },
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:80880",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "bc82e352-a9d7-5a8f-a9f8-e4007a5923ef",
+      "page_uuid": "7022d858-9467-5476-b28b-4999bdd6a605",
+      "evidence": "fragments of at least two other letters written by this same person (MSS Cambridge, T-S N.S. 325.7 and T-S 12.244) have also been found in the Genizah",
+      "evidence_page": 12,
+      "source_books": [
+       "jewish_proselytism"
+      ],
+      "confidence": "high",
+      "source": "jewish_proselytism",
+      "data_sources": [
+       "enriched",
+       "pgp",
+       "biblio",
+       "merged"
+      ]
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145206"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147189"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147234"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147778"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147852"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147853"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147854"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:150712"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:150717"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:150737"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:150770"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "source_books": [
+       "6david",
+       "Geoffrey_Khan_Arabic_Legal_and_Administr",
+       "cairo_to_manchester",
+       "cairo_to_manchester_1",
+       "calendars_247",
+       "ej_arrant",
+       "fragmentsfromcai00gott",
+       "geniza_targum",
+       "genizah_poems",
+       "india_trader_1_50",
+       "judeo-spanish",
+       "obed",
+       "oimp38",
+       "ottomon_era",
+       "traders_1",
+       "zinger_princet",
+       "dsd-article-p75_5",
+       "jewish_proselytism"
+      ],
+      "aliases": [
+       "Cambridge"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:57181"
+    }
+   ]
+  },
+  {
+   "index": 21,
+   "kind": "merge",
+   "title": "merge Institution 'Cambridge Genizah' -> 'Cambridge University Library'",
+   "note": "Only holding is T-S K10.4, a Taylor-Schechter shelfmark.",
+   "actions": [
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:95215",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "bc82e352-a9d7-5a8f-a9f8-e4007a5923ef",
+      "page_uuid": "b7bea549-cba2-564c-9ffc-a0e51e571d00",
+      "evidence": "perhaps the two most beautifully illuminated engagement contracts in the Genizah",
+      "evidence_page": 35,
+      "source_books": [
+       "jewish_proselytism"
+      ],
+      "confidence": "high",
+      "source": "jewish_proselytism",
+      "data_sources": [
+       "enriched",
+       "pgp",
+       "merged"
+      ],
+      "sub_collection": "Miscellaneous"
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:150707"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "aliases": [
+       "Cambridge",
+       "Cambridge Genizah"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61841"
+    }
+   ]
+  },
+  {
+   "index": 22,
+   "kind": "merge",
+   "title": "merge Institution 'Cambridge Genizah Collections' -> 'Cambridge University Library'",
+   "note": "Only holding is the Taylor-Schechter box T-S A45.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:22:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60495",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "e8f9f142-ab19-557d-9f27-db173b6e2a37",
+      "page_uuid": "c5efe18d-c9ae-5890-b8c2-f949c9b05b13",
+      "evidence": "Referenced as 'Cambridge Genizah Collections ... Box A45' in relation to the spelling of the name 'יהדה'.",
+      "evidence_page": 40,
+      "source_books": [
+       "friedman_0_100_vol2"
+      ],
+      "confidence": "medium",
+      "source": "friedman_0_100_vol2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:148895"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:148895"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "source_books": [
+       "6david",
+       "Geoffrey_Khan_Arabic_Legal_and_Administr",
+       "cairo_to_manchester",
+       "cairo_to_manchester_1",
+       "calendars_247",
+       "ej_arrant",
+       "fragmentsfromcai00gott",
+       "geniza_targum",
+       "genizah_poems",
+       "india_trader_1_50",
+       "judeo-spanish",
+       "obed",
+       "oimp38",
+       "ottomon_era",
+       "traders_1",
+       "zinger_princet",
+       "dsd-article-p75_5",
+       "jewish_proselytism",
+       "friedman_0_100_vol2"
+      ],
+      "aliases": [
+       "Cambridge",
+       "Cambridge Genizah",
+       "Cambridge Genizah Collections"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60496"
+    }
+   ]
+  },
+  {
+   "index": 23,
+   "kind": "merge",
+   "title": "merge Institution 'Cambridge Genizah collection' -> 'Cambridge University Library'",
+   "note": "Holds T-S Ar. 1a.54; the edge records a collector or a find in the collection, not an affiliation (see EDGE_REMOVALS).",
+   "actions": [
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:119215",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "29bdb044-f338-5451-82d2-5763e89076a0",
+      "page_uuid": "a9ad9209-238f-512b-83d7-37181ca915be",
+      "evidence": "Reference to Cambridge Genizah collection's Arabic Old Series (as cited in Baker & Polliack 2001)",
+      "evidence_page": 214,
+      "source_books": [
+       "oimp38",
+       "ej_arrant"
+      ],
+      "confidence": "high",
+      "source": "oimp38",
+      "data_sources": [
+       "enriched",
+       "biblio"
+      ],
+      "sub_collection": "Arabic",
+      "book_uuids": [
+       "29bdb044-f338-5451-82d2-5763e89076a0",
+       "75a9f48b-f548-5225-b198-9fc40260493c"
+      ],
+      "page_uuids": [
+       "a9ad9209-238f-512b-83d7-37181ca915be",
+       "dc6a6efc-cae0-57c5-b42f-a6d3407cb061"
+      ]
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154624"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "aliases": [
+       "Cambridge",
+       "Cambridge Genizah",
+       "Cambridge Genizah Collections",
+       "Cambridge Genizah collection"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61826"
+    }
+   ]
+  },
+  {
+   "index": 24,
+   "kind": "merge",
+   "title": "merge Institution 'Cambridge, University Library' -> 'Cambridge University Library'",
+   "note": "Punctuation variant; 17 T-S shelfmarks. the edge records a collector or a find in the collection, not an affiliation (see EDGE_REMOVALS).",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:24:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59165",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Or. 10794.8\n8, 92/nt 205\nCambridge, University Library",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147459"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:1",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59167",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Cambridge, University Library\nT-S 10K8.1\n117",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147466"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:2",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59176",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Cambridge, University Library T-S Ar. 11.32 288-9",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147483"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:3",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59177",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Cambridge, University Library\nT-S Ar.29.187b",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147484"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:4",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59178",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Cambridge, University Library, T-S Ar. 44.20",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147487"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:5",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59180",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Cambridge, University Library\nT-S Ar.52.219",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147490"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:6",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59181",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Cambridge, University Library\nT-S Ar. 52.220",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147492"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:7",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59182",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Cambridge, University Library\nT-S Ar. 52.221",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147494"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:8",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59183",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Cambridge, University Library, T-S Ar. 52.222",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147496"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:9",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59184",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Cambridge, University Library, T-S Ar. 52.223",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147498"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:10",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59185",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Cambridge, University Library, T-S Ar. 52.224",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147499"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:11",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59186",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Cambridge, University Library, T-S Ar. 52.225",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147501"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:12",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59188",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "T-S Ar.52.227",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147504"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:13",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59189",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Cambridge, University Library\nT-S Ar.8.3",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147506"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:24:14",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59190",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "T-S NS 172.75",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147507"
+     ]
+    },
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:123294",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Mentioned in list of shelf marks.",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched",
+       "biblio"
+      ]
+     }
+    },
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:84688",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "342925d2-24c1-5fd8-ad5b-abad40c91c31",
+      "evidence": "Cambridge, University Library T-S 8K13.8 117",
+      "evidence_page": 31,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched",
+       "pgp",
+       "merged"
+      ]
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147459"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147466"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147469"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147474"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147483"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147484"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147487"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147490"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147492"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147494"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147496"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147498"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147499"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147501"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147504"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147506"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147507"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "source_books": [
+       "6david",
+       "Geoffrey_Khan_Arabic_Legal_and_Administr",
+       "cairo_to_manchester",
+       "cairo_to_manchester_1",
+       "calendars_247",
+       "ej_arrant",
+       "fragmentsfromcai00gott",
+       "geniza_targum",
+       "genizah_poems",
+       "india_trader_1_50",
+       "judeo-spanish",
+       "obed",
+       "oimp38",
+       "ottomon_era",
+       "traders_1",
+       "zinger_princet",
+       "dsd-article-p75_5",
+       "jewish_proselytism",
+       "friedman_0_100_vol2",
+       "cairo_to_manchester_2"
+      ],
+      "aliases": [
+       "Cambridge",
+       "Cambridge Genizah",
+       "Cambridge Genizah Collections",
+       "Cambridge Genizah collection",
+       "Cambridge, University Library"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59107"
+    }
+   ]
+  },
+  {
+   "index": 25,
+   "kind": "merge",
+   "title": "merge Institution 'University Library, Cambridge' -> 'Cambridge University Library'",
+   "note": "Name variant with the same West Road pin; holds T-S 13J25.",
+   "actions": [
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147236",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "3b77eafc-bc03-590c-b46a-7ef461b761fb",
+      "page_uuid": "52f1fbdd-857a-5182-bfaa-9bd38b60a353",
+      "evidence_page": 7,
+      "evidence": "Cambridge University Library managed to acquire the largest Genizah collection in the world",
+      "source_books": [
+       "cairo_to_manchester",
+       "fragmentsfromcai00gott",
+       "oimp38",
+       "zinger_princet",
+       "traders_1"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester",
+      "data_sources": [
+       "enriched"
+      ],
+      "book_uuids": [
+       "3b77eafc-bc03-590c-b46a-7ef461b761fb",
+       "97ea2ca3-68dc-5610-ac50-12eabb7a9b9d"
+      ],
+      "page_uuids": [
+       "52f1fbdd-857a-5182-bfaa-9bd38b60a353",
+       "a4f3b36c-e9bb-5a19-a548-afa4a34a7995"
+      ],
+      "evidence_alt": [
+       "Solomon Schechter, then Lecturer of Rabbinics at the University of Cambridge, England, with the assistance of Dr. Charles Taylor of St. John's College, succeeded in removing the total remaining content of the Geniza chamber to the University Library, Cambridge."
+      ]
+     }
+    },
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155760",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "97ea2ca3-68dc-5610-ac50-12eabb7a9b9d",
+      "page_uuid": "d4c7ad25-9da1-57e9-ac10-480f65505173",
+      "evidence": "University Library, Cambridge, Taylor-Schechter Collection, TS 13 J 25 f. 18.",
+      "evidence_page": 27,
+      "source_books": [
+       "traders_1"
+      ],
+      "confidence": "high",
+      "source": "traders_1",
+      "data_sources": [
+       "enriched"
+      ]
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155631"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155759"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "aliases": [
+       "Cambridge",
+       "Cambridge Genizah",
+       "Cambridge Genizah Collections",
+       "Cambridge Genizah collection",
+       "Cambridge, University Library",
+       "University Library, Cambridge"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65789"
+    }
+   ]
+  },
+  {
+   "index": 26,
+   "kind": "merge",
+   "title": "merge Institution 'University Library, Cambridge, England' -> 'Cambridge University Library'",
+   "note": "Name variant (Goitein: 'Collections of Geniza material in the library other than the Taylor-Schechter Collection'); pinned 280 m off.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:26:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65810",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "97ea2ca3-68dc-5610-ac50-12eabb7a9b9d",
+      "page_uuid": "5182fe2b-1070-5f29-a183-c5d8239d5f69",
+      "evidence": "University Library, Cambridge, England. Collections of Geniza material in the library other than the Taylor-Schechter Collection.",
+      "evidence_page": 9,
+      "source_books": [
+       "traders_1"
+      ],
+      "confidence": "high",
+      "source": "traders_1",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155666"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155666"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "aliases": [
+       "Cambridge",
+       "Cambridge Genizah",
+       "Cambridge Genizah Collections",
+       "Cambridge Genizah collection",
+       "Cambridge, University Library",
+       "University Library, Cambridge",
+       "University Library, Cambridge, England"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65811"
+    }
+   ]
+  },
+  {
+   "index": 27,
+   "kind": "merge",
+   "title": "merge Institution 'University Library in Cambridge' -> 'Cambridge University Library'",
+   "note": "The Manuscript Reading Room of the University Library.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:27:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59598",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "75a9f48b-f548-5225-b198-9fc40260493c",
+      "page_uuid": "b75387c2-782c-5bc2-88b9-13eb4ebeef38",
+      "evidence": "The codicological data (specified in Table I.1) were collected through consulting the MSS physically in the Manuscript Reading Room in the University Library in Cambridge",
+      "evidence_page": 72,
+      "source_books": [
+       "ej_arrant"
+      ],
+      "confidence": "high",
+      "source": "ej_arrant",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147970"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147970"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "aliases": [
+       "Cambridge",
+       "Cambridge Genizah",
+       "Cambridge Genizah Collections",
+       "Cambridge Genizah collection",
+       "Cambridge, University Library",
+       "University Library, Cambridge",
+       "University Library, Cambridge, England",
+       "University Library in Cambridge"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59599"
+    }
+   ]
+  },
+  {
+   "index": 28,
+   "kind": "merge",
+   "title": "merge Institution 'Cambridge University Libraries' -> 'Cambridge University Library'",
+   "note": "Plural form (Ben Outhwaite of Cambridge University Libraries).",
+   "actions": [
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154007",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "29bdb044-f338-5451-82d2-5763e89076a0",
+      "page_uuid": "8528bf9f-b04f-5a76-8c94-3337570b1bf9",
+      "evidence": "scholar thanked for confirming the absence of Chinese texts in the Cambridge University Library collection.",
+      "evidence_page": 59,
+      "source_books": [
+       "oimp38",
+       "ottomon_era"
+      ],
+      "confidence": "high",
+      "source": "oimp38",
+      "data_sources": [
+       "enriched"
+      ],
+      "book_uuids": [
+       "29bdb044-f338-5451-82d2-5763e89076a0",
+       "6abd7697-e472-5cf3-bd5d-63f1c873f7b7"
+      ],
+      "page_uuids": [
+       "8528bf9f-b04f-5a76-8c94-3337570b1bf9",
+       "212c5043-51f3-565d-8fd3-12819f20e1e0"
+      ],
+      "evidence_alt": [
+       "Dr Ben Outhwaite of Cambridge University Libraries"
+      ]
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154791"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "aliases": [
+       "Cambridge",
+       "Cambridge Genizah",
+       "Cambridge Genizah Collections",
+       "Cambridge Genizah collection",
+       "Cambridge, University Library",
+       "University Library, Cambridge",
+       "University Library, Cambridge, England",
+       "University Library in Cambridge",
+       "Cambridge University Libraries"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65037"
+    }
+   ]
+  },
+  {
+   "index": 29,
+   "kind": "merge",
+   "title": "merge Institution 'T-S' -> 'Cambridge University Library'",
+   "note": "Taylor-Schechter abbreviation used as a library name (T-S 16.94).",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:29:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59079",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2a86647f-077b-58b4-a9da-14b16400e18e",
+      "page_uuid": "5d5d3f54-0ba3-52df-94f9-7c9376b09441",
+      "evidence": "The library holding the T-S 16.94 manuscript.",
+      "evidence_page": 6,
+      "source_books": [
+       "dsd-article-p75_5"
+      ],
+      "confidence": "high",
+      "source": "dsd-article-p75_5",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147856"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147856"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "aliases": [
+       "Cambridge",
+       "Cambridge Genizah",
+       "Cambridge Genizah Collections",
+       "Cambridge Genizah collection",
+       "Cambridge, University Library",
+       "University Library, Cambridge",
+       "University Library, Cambridge, England",
+       "University Library in Cambridge",
+       "Cambridge University Libraries",
+       "T-S"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59511"
+    }
+   ]
+  },
+  {
+   "index": 30,
+   "kind": "merge",
+   "title": "merge Institution 'T-S Genizah collection' -> 'Cambridge University Library'",
+   "note": "Taylor-Schechter collection; the edge records a collector or a find in the collection, not an affiliation (see EDGE_REMOVALS).",
+   "actions": [
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "aliases": [
+       "Cambridge",
+       "Cambridge Genizah",
+       "Cambridge Genizah Collections",
+       "Cambridge Genizah collection",
+       "Cambridge, University Library",
+       "University Library, Cambridge",
+       "University Library, Cambridge, England",
+       "University Library in Cambridge",
+       "Cambridge University Libraries",
+       "T-S",
+       "T-S Genizah collection"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59108"
+    }
+   ]
+  },
+  {
+   "index": 31,
+   "kind": "merge",
+   "title": "merge Institution 'אוסף TS' -> 'Cambridge University Library'",
+   "note": "'The TS collection' (T-S 8J1).",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:31:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:62271",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "d616f389-af74-52d4-8fde-c04e99c9eca5",
+      "evidence": "קטע מתשובה זו נמצא בגניזה באוסף TS, ושם אמנם נאמר 'נשלח מלפני הרב יוסף רכב ישר'",
+      "source_books": [
+       "malk-ish-1-188"
+      ],
+      "confidence": "high",
+      "source": "malk-ish-1-188",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151388"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151388"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37926",
+     "props": {
+      "source_books": [
+       "6david",
+       "Geoffrey_Khan_Arabic_Legal_and_Administr",
+       "cairo_to_manchester",
+       "cairo_to_manchester_1",
+       "calendars_247",
+       "ej_arrant",
+       "fragmentsfromcai00gott",
+       "geniza_targum",
+       "genizah_poems",
+       "india_trader_1_50",
+       "judeo-spanish",
+       "obed",
+       "oimp38",
+       "ottomon_era",
+       "traders_1",
+       "zinger_princet",
+       "dsd-article-p75_5",
+       "jewish_proselytism",
+       "friedman_0_100_vol2",
+       "cairo_to_manchester_2",
+       "malk-ish-1-188"
+      ],
+      "aliases": [
+       "Cambridge",
+       "Cambridge Genizah",
+       "Cambridge Genizah Collections",
+       "Cambridge Genizah collection",
+       "Cambridge, University Library",
+       "University Library, Cambridge",
+       "University Library, Cambridge, England",
+       "University Library in Cambridge",
+       "Cambridge University Libraries",
+       "T-S",
+       "T-S Genizah collection",
+       "אוסף TS"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:62313"
+    }
+   ]
+  },
+  {
+   "index": 32,
+   "kind": "merge",
+   "title": "merge Institution 'Adler collection' -> 'Jewish Theological Seminary'",
+   "note": "E. N. Adler collection (ENA 4096d); was pinned at Adler, Russia.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:32:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60319",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38001",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "1ab6e61e-43d1-5d6c-b2c5-fb56dbbdccce",
+      "page_uuid": "4ff387ad-6e07-5c75-b77e-609652303483",
+      "evidence": "Assaf connected this with a fragment in the Adler collection, ENA 4096d.",
+      "evidence_page": 9,
+      "source_books": [
+       "fridman_100_198_vol_2"
+      ],
+      "confidence": "high",
+      "source": "fridman_100_198_vol_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:148671"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:148671"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38001",
+     "props": {
+      "source_books": [
+       "Geoffrey_Khan_Arabic_Legal_and_Administr",
+       "Goldstein-TableNewMoons-2013-A414",
+       "cairo_to_manchester",
+       "cairo_to_manchester_1",
+       "fragmentsfromcai00gott",
+       "zinger_princet",
+       "fridman_100_198_vol_2"
+      ],
+      "aliases": [
+       "Adler collection"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60320"
+    }
+   ]
+  },
+  {
+   "index": 33,
+   "kind": "merge",
+   "title": "merge Institution 'Elkan Adler collection' -> 'Jewish Theological Seminary'",
+   "note": "E. N. Adler collection; the edge records a collector or a find in the collection, not an affiliation (see EDGE_REMOVALS).",
+   "actions": [
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38001",
+     "props": {
+      "aliases": [
+       "Adler collection",
+       "Elkan Adler collection"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59734"
+    }
+   ]
+  },
+  {
+   "index": 34,
+   "kind": "merge",
+   "title": "merge Institution 'Elkan Nathan Adler Genizah collection' -> 'Jewish Theological Seminary'",
+   "note": "E. N. Adler collection; the edge records a collector or a find in the collection, not an affiliation (see EDGE_REMOVALS).",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:34:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65613",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38001",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "6abd7697-e472-5cf3-bd5d-63f1c873f7b7",
+      "evidence": "The machine-made perforations on the left-hand side of the recto, in contrast, were presumably added by a curator connected with the Elkan Nathan Adler Genizah collection for the purpose of binding this document with others.",
+      "source_books": [
+       "ottomon_era"
+      ],
+      "confidence": "high",
+      "source": "ottomon_era",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155378"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155378"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38001",
+     "props": {
+      "source_books": [
+       "Geoffrey_Khan_Arabic_Legal_and_Administr",
+       "Goldstein-TableNewMoons-2013-A414",
+       "cairo_to_manchester",
+       "cairo_to_manchester_1",
+       "fragmentsfromcai00gott",
+       "zinger_princet",
+       "fridman_100_198_vol_2",
+       "ottomon_era"
+      ],
+      "aliases": [
+       "Adler collection",
+       "Elkan Adler collection",
+       "Elkan Nathan Adler Genizah collection"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65118"
+    }
+   ]
+  },
+  {
+   "index": 35,
+   "kind": "merge",
+   "title": "merge Institution 'אוסף אדלר' -> 'Jewish Theological Seminary'",
+   "note": "'The Adler collection'.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:35:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39191",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38001",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "d616f389-af74-52d4-8fde-c04e99c9eca5",
+      "evidence": "קטע אחר מאותה תשובה נמצא בקבוצת תשובות שבאוסף אדלר",
+      "source_books": [
+       "malk-ish-1-188"
+      ],
+      "confidence": "high",
+      "source": "malk-ish-1-188",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151386"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151386"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38001",
+     "props": {
+      "source_books": [
+       "Geoffrey_Khan_Arabic_Legal_and_Administr",
+       "Goldstein-TableNewMoons-2013-A414",
+       "cairo_to_manchester",
+       "cairo_to_manchester_1",
+       "fragmentsfromcai00gott",
+       "zinger_princet",
+       "fridman_100_198_vol_2",
+       "ottomon_era",
+       "malk-ish-1-188"
+      ],
+      "aliases": [
+       "Adler collection",
+       "Elkan Adler collection",
+       "Elkan Nathan Adler Genizah collection",
+       "אוסף אדלר"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:62312"
+    }
+   ]
+  },
+  {
+   "index": 36,
+   "kind": "merge",
+   "title": "merge Institution 'אוסף שכטר' -> 'Jewish Theological Seminary'",
+   "note": "'The Schechter collection at the rabbinical seminary in New York' (malk-ish-1-400).",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:36:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:63644",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38001",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "6d87dfe8-6320-5023-a642-8c73c269974f",
+      "page_uuid": "fb69d3a8-b0fb-5806-9029-ab8c44191aaa",
+      "evidence": "קטע מן החיבור שנמצא בין כתבי הגניזה באוסף שכטר בבית המדרש לרבנים בניו יורק פרסם פרידלנדר.",
+      "evidence_page": 26,
+      "source_books": [
+       "malk-ish-1-400"
+      ],
+      "confidence": "high",
+      "source": "malk-ish-1-400",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:153262"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:153262"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38001",
+     "props": {
+      "source_books": [
+       "Geoffrey_Khan_Arabic_Legal_and_Administr",
+       "Goldstein-TableNewMoons-2013-A414",
+       "cairo_to_manchester",
+       "cairo_to_manchester_1",
+       "fragmentsfromcai00gott",
+       "zinger_princet",
+       "fridman_100_198_vol_2",
+       "ottomon_era",
+       "malk-ish-1-188",
+       "malk-ish-1-400"
+      ],
+      "aliases": [
+       "Adler collection",
+       "Elkan Adler collection",
+       "Elkan Nathan Adler Genizah collection",
+       "אוסף אדלר",
+       "אוסף שכטר"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:63645"
+    }
+   ]
+  },
+  {
+   "index": 37,
+   "kind": "merge",
+   "title": "merge Institution 'הסימנר בנוירק' -> 'Jewish Theological Seminary'",
+   "note": "'The seminary in New York'.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:37:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61100",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38001",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "54e45758-6b74-52ba-8721-a6f69e43e28d",
+      "page_uuid": "a51741d0-18dc-5df8-bb15-bcbac511ae36",
+      "evidence_page": 72,
+      "evidence": "זכ",
+      "source_books": [
+       "genizah_kedem_3vol"
+      ],
+      "confidence": "high",
+      "source": "genizah_kedem_3vol",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149604"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149604"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38001",
+     "props": {
+      "source_books": [
+       "Geoffrey_Khan_Arabic_Legal_and_Administr",
+       "Goldstein-TableNewMoons-2013-A414",
+       "cairo_to_manchester",
+       "cairo_to_manchester_1",
+       "fragmentsfromcai00gott",
+       "zinger_princet",
+       "fridman_100_198_vol_2",
+       "ottomon_era",
+       "malk-ish-1-188",
+       "malk-ish-1-400",
+       "genizah_kedem_3vol"
+      ],
+      "aliases": [
+       "Adler collection",
+       "Elkan Adler collection",
+       "Elkan Nathan Adler Genizah collection",
+       "אוסף אדלר",
+       "אוסף שכטר",
+       "הסימנר בנוירק"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61101"
+    }
+   ]
+  },
+  {
+   "index": 38,
+   "kind": "merge",
+   "title": "merge Institution 'בית המדרש לרבנים בניו יורק' -> 'Jewish Theological Seminary'",
+   "note": "Hebrew name of JTS (ENA NS 35.15).",
+   "actions": [
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:70495",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "e5953a50-db2d-5975-9593-745b6e7b1a46",
+      "page_uuid": "f51ea4f9-c245-59bd-bb32-feebf719f52c",
+      "evidence": "נשתמרה בספריית בית המדרש לרבנים בניו יורק ENA NS 35. 15",
+      "evidence_page": 15,
+      "source_books": [
+       "6david"
+      ],
+      "confidence": "high",
+      "source": "6david",
+      "data_sources": [
+       "enriched",
+       "pgp",
+       "merged"
+      ],
+      "sub_collection": "New Series"
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:144904"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38001",
+     "props": {
+      "source_books": [
+       "Geoffrey_Khan_Arabic_Legal_and_Administr",
+       "Goldstein-TableNewMoons-2013-A414",
+       "cairo_to_manchester",
+       "cairo_to_manchester_1",
+       "fragmentsfromcai00gott",
+       "zinger_princet",
+       "fridman_100_198_vol_2",
+       "ottomon_era",
+       "malk-ish-1-188",
+       "malk-ish-1-400",
+       "genizah_kedem_3vol",
+       "6david"
+      ],
+      "aliases": [
+       "Adler collection",
+       "Elkan Adler collection",
+       "Elkan Nathan Adler Genizah collection",
+       "אוסף אדלר",
+       "אוסף שכטר",
+       "הסימנר בנוירק",
+       "בית המדרש לרבנים בניו יורק"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:56995"
+    }
+   ]
+  },
+  {
+   "index": 39,
+   "kind": "merge",
+   "title": "merge Institution 'Oxford' -> 'Bodleian Library, Oxford'",
+   "note": "Bare city name; all four holdings are 'Oxford, Bodl.' shelfmarks.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:39:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59407",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37644",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "2c1346ea-445d-55f2-b444-6580d329da1a",
+      "evidence": "Oxford, Bodl., Marsh 114 (Abraham Bar Hayya, Luḥot ha-Nasi), 14th c., Sefardi/ Provençal, fol. 22r",
+      "evidence_page": 41,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147758"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:39:1",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59421",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37644",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "2c1346ea-445d-55f2-b444-6580d329da1a",
+      "evidence": "Oxford, Bodl., Opp. 332, 16th c., Ashkenazi, fol. 162v",
+      "evidence_page": 41,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147770"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:39:2",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59422",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37644",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "2c1346ea-445d-55f2-b444-6580d329da1a",
+      "evidence": "Oxford, Bodl., Opp. 614, 14th c., Ashkenazi, fols 50v-55r",
+      "evidence_page": 41,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147771"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:39:3",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59423",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37644",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "2c1346ea-445d-55f2-b444-6580d329da1a",
+      "evidence": "Oxford, Bodl., Opp. 701, 1586, Ashkenazi, fol. 33r",
+      "evidence_page": 41,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147772"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147758"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147770"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147771"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147772"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37644",
+     "props": {
+      "aliases": [
+       "Oxford"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59409"
+    }
+   ]
+  },
+  {
+   "index": 40,
+   "kind": "merge",
+   "title": "merge Institution 'Oxford, Bodl.' -> 'Bodleian Library, Oxford'",
+   "note": "Citation abbreviation for the Bodleian (Opp., Mich., Poc. shelfmarks).",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:40:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59365",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37644",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "9dfb2043-6004-5b23-9251-06a66c9ad8a1",
+      "evidence": "Oxford, Bodl., Poc. 368 (Isaac Israeli, Yesod 'Olam), 14th–15th c., Byzantine, fol. 206r",
+      "evidence_page": 45,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147717"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:40:1",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59413",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37644",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "2c1346ea-445d-55f2-b444-6580d329da1a",
+      "evidence": "Oxford, Bodl., Mich. 328, 14th c., Ashkenazi, fol. 294r",
+      "evidence_page": 41,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147763"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:40:2",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59420",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37644",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "2c1346ea-445d-55f2-b444-6580d329da1a",
+      "evidence": "Oxford, Bodl., Mich. 74, 14th c., Ashkenazi, fols 3r, 12v",
+      "evidence_page": 41,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147769"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:40:3",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59424",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37644",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "2c1346ea-445d-55f2-b444-6580d329da1a",
+      "evidence": "Oxford, Bodl., Opp. 712, 16th c., Ashkenazi, fol. 295r",
+      "evidence_page": 41,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147773"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:40:4",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59427",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37644",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "2c1346ea-445d-55f2-b444-6580d329da1a",
+      "evidence": "Oxford, Bodl., Opp. Add. Qu. 157",
+      "evidence_page": 41,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147775"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147717"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147763"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147769"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147773"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147775"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37644",
+     "props": {
+      "aliases": [
+       "Oxford",
+       "Oxford, Bodl."
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59366"
+    }
+   ]
+  },
+  {
+   "index": 41,
+   "kind": "merge",
+   "title": "merge Institution 'Bodl.' -> 'Bodleian Library, Oxford'",
+   "note": "Abbreviation (Bodl. MS heb. b 11/16).",
+   "actions": [
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:63611",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "6abd7697-e472-5cf3-bd5d-63f1c873f7b7",
+      "evidence": "A library holding the manuscript Bodl. MS heb. b 11/16",
+      "source_books": [
+       "ottomon_era"
+      ],
+      "confidence": "high",
+      "source": "ottomon_era",
+      "data_sources": [
+       "enriched",
+       "pgp",
+       "merged"
+      ]
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155330"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37644",
+     "props": {
+      "aliases": [
+       "Oxford",
+       "Oxford, Bodl.",
+       "Bodl."
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65593"
+    }
+   ]
+  },
+  {
+   "index": 42,
+   "kind": "merge",
+   "title": "merge Institution 'ספרייה הבריטית' -> 'British Library, London'",
+   "note": "Hebrew name of the British Library.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:42:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:62601",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37534",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "5b83d94f-bc2b-50d2-9573-4eb46747e65d",
+      "page_uuid": "3ae11478-5022-56ef-9be8-48e8c59786bc",
+      "evidence": "כתב יד בספרייה הבריטית מכיל קטעים נבחרים מספר השופך אור על עניין הייחוד והצדק', ומ'ספר הטענות בדבר ספרו של אריסטו על דברים שמעבר לטבע'.",
+      "evidence_page": 31,
+      "source_books": [
+       "malk-ish-1-270"
+      ],
+      "confidence": "high",
+      "source": "malk-ish-1-270",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:152135"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:152135"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37534",
+     "props": {
+      "source_books": [
+       "Geoffrey_Khan_Arabic_Legal_and_Administr",
+       "cairo_to_manchester_intro",
+       "oimp38",
+       "malk-ish-1-270"
+      ],
+      "aliases": [
+       "ספרייה הבריטית"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:62829"
+    }
+   ]
+  },
+  {
+   "index": 43,
+   "kind": "merge",
+   "title": "merge Institution 'BL' -> 'British Library, London'",
+   "note": "Abbreviation (London, BL Or 2674 and Add 15977).",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:43:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59398",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37534",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "bede5e99-a108-5600-8dd1-78822fdafef8",
+      "evidence": "Known shelf marks: ... London, BL Add 15977 ...",
+      "evidence_page": 17,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147746"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:43:1",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59400",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37534",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "bede5e99-a108-5600-8dd1-78822fdafef8",
+      "evidence": "Known shelf marks: ... London, BL Or 2674 ...",
+      "evidence_page": 17,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147747"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147746"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147747"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:37534",
+     "props": {
+      "source_books": [
+       "Geoffrey_Khan_Arabic_Legal_and_Administr",
+       "cairo_to_manchester_intro",
+       "oimp38",
+       "malk-ish-1-270",
+       "calendars_247"
+      ],
+      "aliases": [
+       "ספרייה הבריטית",
+       "BL"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59399"
+    }
+   ]
+  },
+  {
+   "index": 44,
+   "kind": "merge",
+   "title": "merge Institution 'Berlin' -> 'Staatsbibliothek zu Berlin'",
+   "note": "Bare city name; both holdings are 'Berlin, SBB, Or.' shelfmarks.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:44:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59351",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:67028",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "ec7624f9-daf1-55af-8030-c570cfe0acd7",
+      "evidence": "Berlin, SBB, Or. Fol. 1198, 14th-15th c., Ashkenazi, fol. 42r",
+      "evidence_page": 37,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147701"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:44:1",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59356",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:67028",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "ec7624f9-daf1-55af-8030-c570cfe0acd7",
+      "evidence": "Berlin, SBB, Or. Oct. 352, ca. 1300, Ashkenazi, fols 13r, 171–17v, 20r",
+      "evidence_page": 37,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147705"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147701"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147705"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:67028",
+     "props": {
+      "source_books": [
+       "zuto-article-p21_3",
+       "calendars_247"
+      ],
+      "aliases": [
+       "Berlin"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59353"
+    }
+   ]
+  },
+  {
+   "index": 45,
+   "kind": "merge",
+   "title": "merge Institution 'Berlin, SBB' -> 'Staatsbibliothek zu Berlin'",
+   "note": "Citation abbreviation for the Staatsbibliothek (Or. Oct. 3150).",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:45:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59354",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:67028",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "ec7624f9-daf1-55af-8030-c570cfe0acd7",
+      "evidence": "Berlin, SBB, Or. Oct. 3150, 1649, Ashkenazi, fols 44V-45V",
+      "evidence_page": 37,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147703"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147703"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:67028",
+     "props": {
+      "aliases": [
+       "Berlin",
+       "Berlin, SBB"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59355"
+    }
+   ]
+  },
+  {
+   "index": 46,
+   "kind": "merge",
+   "title": "merge Institution 'Königliche Bibliothek in Berlin' -> 'Staatsbibliothek zu Berlin'",
+   "note": "Predecessor of the Staatsbibliothek; Ms. or. fol. 1233 was bought from Shapira in 1881.",
+   "actions": [
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:157301",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "4440d2d7-d8e5-5dde-a5e1-8ba7740d4a9f",
+      "page_uuid": "24e95205-b76f-58b0-a7a2-213b254208e1",
+      "evidence": "Berlin, Staatsbibliothek zu Berlin, Ms. or. fol. 1233, fol. 39a: a Yemenite Siddur manuscript",
+      "evidence_page": 7,
+      "source_books": [
+       "zuto-article-p21_3"
+      ],
+      "confidence": "high",
+      "source": "zuto-article-p21_3",
+      "data_sources": [
+       "enriched"
+      ],
+      "evidence_alt": [
+       "purchased by the Königliche Bibliothek in Berlin from Moses Wilhelm Shapira in 1881"
+      ]
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:157303"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:67028",
+     "props": {
+      "aliases": [
+       "Berlin",
+       "Berlin, SBB",
+       "Königliche Bibliothek in Berlin"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:67029"
+    }
+   ]
+  },
+  {
+   "index": 47,
+   "kind": "merge",
+   "title": "merge Institution 'National Library of Russia' -> 'Russian National Library, St. Petersburg'",
+   "note": "PGP's other name for the same library (Firkovich manuscripts).",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:47:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:36299",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39100",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:74790"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:47:1",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:36300",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39100",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:74791"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:47:2",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:617",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39100",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101221"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:74790"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:74791"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101221"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39100",
+     "props": {
+      "aliases": [
+       "National Library of Russia"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38808"
+    }
+   ]
+  },
+  {
+   "index": 48,
+   "kind": "merge",
+   "title": "merge Institution 'St. Petersburg, Firkovich collections' -> 'Russian National Library, St. Petersburg'",
+   "note": "Firkovich collections of the National Library of Russia.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:48:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58986",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39100",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a28ea0e8-bb10-5f1e-97f8-d1fbc3bacbfe",
+      "page_uuid": "4c28f22b-10d1-5f4a-9c77-bf8539faf86e",
+      "evidence": "ENA 1731.5-13\nSt. Petersburg, Firkovich collections",
+      "evidence_page": 33,
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_2",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147445"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147445"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39100",
+     "props": {
+      "data_sources": [
+       "pgp",
+       "enriched"
+      ],
+      "source_books": [
+       "cairo_to_manchester_2"
+      ],
+      "aliases": [
+       "National Library of Russia",
+       "St. Petersburg, Firkovich collections"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59153"
+    }
+   ]
+  },
+  {
+   "index": 49,
+   "kind": "merge",
+   "title": "merge Institution 'Firkovitch collection' -> 'Russian National Library, St. Petersburg'",
+   "note": "Firkovich collection (II A 333).",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:49:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58928",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39100",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "fb701c69-517c-5b14-8878-1c569a098ec8",
+      "page_uuid": "4b128965-2f5b-5f42-98bb-7e91d2390557",
+      "evidence": "The first manuscripts of the Dīwān to be discovered belong to the Firkovitch collection",
+      "evidence_page": 40,
+      "source_books": [
+       "cairo_to_manchester_1"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_1",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147343"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:49:1",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58929",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39100",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "fb701c69-517c-5b14-8878-1c569a098ec8",
+      "page_uuid": "4b128965-2f5b-5f42-98bb-7e91d2390557",
+      "evidence": "The first manuscripts of the Dīwān to be discovered belong to the Firkovitch collection",
+      "evidence_page": 40,
+      "source_books": [
+       "cairo_to_manchester_1"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_1",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147344"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147343"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147344"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39100",
+     "props": {
+      "source_books": [
+       "cairo_to_manchester_2",
+       "cairo_to_manchester_1"
+      ],
+      "aliases": [
+       "National Library of Russia",
+       "St. Petersburg, Firkovich collections",
+       "Firkovitch collection"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59061"
+    }
+   ]
+  },
+  {
+   "index": 50,
+   "kind": "merge",
+   "title": "merge Institution 'Jewish National and University Library' -> 'National Library of Israel'",
+   "note": "Pre-2008 name of the NLI.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:50:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58897",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39086",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "3b77eafc-bc03-590c-b46a-7ef461b761fb",
+      "evidence": "His catalogue descriptions were made in Hebrew in the 'Aleph' catalogue of the JNUL",
+      "source_books": [
+       "cairo_to_manchester"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147282"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147282"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39086",
+     "props": {
+      "data_sources": [
+       "pgp",
+       "enriched"
+      ],
+      "source_books": [
+       "cairo_to_manchester"
+      ],
+      "aliases": [
+       "Jewish National and University Library"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58999"
+    }
+   ]
+  },
+  {
+   "index": 51,
+   "kind": "merge",
+   "title": "merge Institution 'הספרייה הלאומית' -> 'National Library of Israel'",
+   "note": "Hebrew name of the NLI.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:51:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:57153",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39086",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "e5953a50-db2d-5975-9593-745b6e7b1a46",
+      "page_uuid": "89677c33-c88b-52eb-afd1-371eb29ac1a3",
+      "evidence": "מפה של הדלתא במצרים יצירת הכרטוגרף אורטליוס אברהם (Ortelius Abraham.) מתוך אטלס אורטליוס, אנטוורפן משנת 1588. בערך מקור: אוסף המפות ע",
+      "evidence_page": 28,
+      "source_books": [
+       "6david"
+      ],
+      "confidence": "high",
+      "source": "6david",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145133"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:145133"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:39086",
+     "props": {
+      "source_books": [
+       "cairo_to_manchester",
+       "6david"
+      ],
+      "aliases": [
+       "Jewish National and University Library",
+       "הספרייה הלאומית"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:57154"
+    }
+   ]
+  },
+  {
+   "index": 52,
+   "kind": "merge",
+   "title": "merge Institution 'Katz Center for Advanced Judaic Studies, University of Pennsylvania' -> 'University of Pennsylvania, Katz Center'",
+   "note": "PGP's name for the Katz Center.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:52:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:41150",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101229"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:52:1",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:18408",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101231"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:52:2",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:34112",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101233"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:52:3",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:34111",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101234"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:52:4",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:29751",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101238"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:52:5",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:41153",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101241"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:52:6",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:32708",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101244"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:52:7",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:29752",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101246"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101229"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101231"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101233"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101234"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101238"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101241"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101244"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:101246"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "aliases": [
+       "Katz Center for Advanced Judaic Studies, University of Pennsylvania"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:41151"
+    }
+   ]
+  },
+  {
+   "index": 53,
+   "kind": "merge",
+   "title": "merge Institution 'Herbert D. Katz Center for Advanced Judaic Studies' -> 'University of Pennsylvania, Katz Center'",
+   "note": "Full name of the Katz Center (Halper 331).",
+   "actions": [
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:74584",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "d3e7e656-fbed-5470-aa22-05aa2c1b578e",
+      "page_uuid": "076779f8-1d07-573c-b8cf-1318fc59d477",
+      "evidence": "The fragment is held in the library of the Herbert D. Katz Center for Advanced Judaic Studies, Philadelphia",
+      "evidence_page": 2,
+      "source_books": [
+       "oldest_dated"
+      ],
+      "confidence": "high",
+      "source": "oldest_dated",
+      "data_sources": [
+       "enriched",
+       "pgp",
+       "biblio",
+       "merged"
+      ]
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154653"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "source_books": [
+       "fragmentsfromcai00gott",
+       "india_trader_350_424",
+       "oldest_dated"
+      ],
+      "aliases": [
+       "Katz Center for Advanced Judaic Studies, University of Pennsylvania",
+       "Herbert D. Katz Center for Advanced Judaic Studies"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64918"
+    }
+   ]
+  },
+  {
+   "index": 54,
+   "kind": "merge",
+   "title": "merge Institution 'University of Pennsylvania Library' -> 'University of Pennsylvania, Katz Center'",
+   "note": "Its holdings are Halper fragments, kept at the Katz Center.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:54:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64926",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "d3e7e656-fbed-5470-aa22-05aa2c1b578e",
+      "page_uuid": "60fc31cf-2b79-5959-9aef-e92e80e599ae",
+      "evidence": "The date of the fragment, according to the University of Pennsylvania Library catalogue (based on the entry in Halper’s catalogue), is ‘17Tishre 1183’, but this is incorrect. The text actually reads 1182. As a Seleucid year, it is equivalent, therefore, to 870/1CE. According to the catalogue, this makes it the ‘oldest dated Genizah document’.",
+      "evidence_page": 3,
+      "source_books": [
+       "oldest_dated"
+      ],
+      "confidence": "high",
+      "source": "oldest_dated",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154663"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:54:1",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64931",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "d3e7e656-fbed-5470-aa22-05aa2c1b578e",
+      "page_uuid": "60fc31cf-2b79-5959-9aef-e92e80e599ae",
+      "evidence": "The date of the fragment, according to the University of Pennsylvania Library catalogue (based on the entry in Halper’s catalogue), is ‘17Tishre 1183’, but this is incorrect. The text actually reads 1182. As a Seleucid year, it is equivalent, therefore, to 870/1CE. According to the catalogue, this makes it the ‘oldest dated Genizah document’.",
+      "evidence_page": 3,
+      "source_books": [
+       "oldest_dated"
+      ],
+      "confidence": "high",
+      "source": "oldest_dated",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154667"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:54:2",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64932",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "d3e7e656-fbed-5470-aa22-05aa2c1b578e",
+      "page_uuid": "60fc31cf-2b79-5959-9aef-e92e80e599ae",
+      "evidence": "The date of the fragment, according to the University of Pennsylvania Library catalogue (based on the entry in Halper’s catalogue), is ‘17Tishre 1183’, but this is incorrect. The text actually reads 1182. As a Seleucid year, it is equivalent, therefore, to 870/1CE.",
+      "evidence_page": 3,
+      "source_books": [
+       "oldest_dated"
+      ],
+      "confidence": "high",
+      "source": "oldest_dated",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154673"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154663"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154667"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154673"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38785",
+     "props": {
+      "aliases": [
+       "Katz Center for Advanced Judaic Studies, University of Pennsylvania",
+       "Herbert D. Katz Center for Advanced Judaic Studies",
+       "University of Pennsylvania Library"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64927"
+    }
+   ]
+  },
+  {
+   "index": 55,
+   "kind": "merge",
+   "title": "merge Institution 'Ben Zvi Institute' -> 'Yad Izhak Ben-Zvi Institute'",
+   "note": "PGP's name for the Ben-Zvi Institute.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:55:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:29982",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61382",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:74812"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:55:1",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:29983",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61382",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:74813"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:55:2",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:35416",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61382",
+     "props": {
+      "data_sources": [
+       "pgp"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:79517"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:74812"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:74813"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:79517"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61382",
+     "props": {
+      "data_sources": [
+       "enriched",
+       "pgp"
+      ],
+      "aliases": [
+       "Ben Zvi Institute"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38811"
+    }
+   ]
+  },
+  {
+   "index": 56,
+   "kind": "merge",
+   "title": "merge Institution 'University of Manchester Library' -> 'John Rylands Library, University of Manchester'",
+   "note": "The Genizah holdings are in the John Rylands Library, part of the University of Manchester Library.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:56:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:55620",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38812",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2a86647f-077b-58b4-a9da-14b16400e18e",
+      "evidence": "The Cairo Genizah Fragment of the Visions of Levi from the University of Manchester Library",
+      "source_books": [
+       "dsd-article-p75_5"
+      ],
+      "confidence": "high",
+      "source": "dsd-article-p75_5",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147855"
+     ]
+    },
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147333",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "fb701c69-517c-5b14-8878-1c569a098ec8",
+      "page_uuid": "3d07f510-19fb-567b-b6c9-12a109a2e429",
+      "evidence": "Staff of The John Rylands University Library",
+      "evidence_page": 27,
+      "source_books": [
+       "cairo_to_manchester_1",
+       "cairo_to_manchester_intro"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester_1",
+      "data_sources": [
+       "enriched"
+      ],
+      "book_uuids": [
+       "fb701c69-517c-5b14-8878-1c569a098ec8",
+       "c9703d97-cbcd-5400-a050-c7637d87a2ed"
+      ],
+      "page_uuids": [
+       "3d07f510-19fb-567b-b6c9-12a109a2e429",
+       "73a4cc3b-f8f4-5ee6-b8c6-5c4f8ba1250a"
+      ],
+      "evidence_alt": [
+       "joined as co-applicant by Dr Stella Butler, then Head of Special Collections at the University of Manchester Library, to the Arts and Humanities Research Council for funding"
+      ]
+     }
+    },
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147815",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2a86647f-077b-58b4-a9da-14b16400e18e",
+      "evidence": "keptintheJohnRylandsLibrarythatmakes part of the University of Manchester Library;12 purchased from the estate of Dr. Moses Gaster in 1954.",
+      "source_books": [
+       "dsd-article-p75_5"
+      ],
+      "confidence": "high",
+      "source": "dsd-article-p75_5",
+      "data_sources": [
+       "enriched"
+      ]
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147590"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147816"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147855"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38812",
+     "props": {
+      "aliases": [
+       "University of Manchester Library"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59225"
+    }
+   ]
+  },
+  {
+   "index": 57,
+   "kind": "merge",
+   "title": "merge Institution 'Toronto, University of Toronto Libraries' -> 'Thomas Fisher Rare Book Library, University of Toronto'",
+   "note": "Friedberg fragment (Fr 5-014), kept at the Fisher library.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:57:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59386",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38781",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "2b73a954-0a0a-5a8f-89f2-5c26107e5772",
+      "page_uuid": "9dfb2043-6004-5b23-9251-06a66c9ad8a1",
+      "evidence": "Toronto, University of Toronto Libraries, Fr 5-014 (Jacob ben Asher, Arba'ah Țurim), 14th c.?, Sefardi, fol. 46v",
+      "evidence_page": 45,
+      "source_books": [
+       "calendars_247"
+      ],
+      "confidence": "high",
+      "source": "calendars_247",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147737"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147737"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38781",
+     "props": {
+      "data_sources": [
+       "pgp",
+       "enriched"
+      ],
+      "source_books": [
+       "calendars_247"
+      ],
+      "aliases": [
+       "Toronto, University of Toronto Libraries"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59387"
+    }
+   ]
+  },
+  {
+   "index": 58,
+   "kind": "merge",
+   "title": "merge Institution 'OIM' -> 'Oriental Institute Museum'",
+   "note": "Oriental Institute Museum (Chicago) registration prefix (OIM E8349).",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:58:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64879",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64366",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "29bdb044-f338-5451-82d2-5763e89076a0",
+      "page_uuid": "ad2e851d-019e-5b8b-bb55-1a2401b18b5a",
+      "evidence": "OIM E8349 (P. 65877/N. 44651)",
+      "evidence_page": 68,
+      "source_books": [
+       "oimp38"
+      ],
+      "confidence": "high",
+      "source": "oimp38",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154601"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:58:1",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64885",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64366",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "29bdb044-f338-5451-82d2-5763e89076a0",
+      "page_uuid": "ad2e851d-019e-5b8b-bb55-1a2401b18b5a",
+      "evidence": "OIM E8349 (P. 65877/N. 44651)",
+      "evidence_page": 68,
+      "source_books": [
+       "oimp38"
+      ],
+      "confidence": "high",
+      "source": "oimp38",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154607"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154601"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154607"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64366",
+     "props": {
+      "aliases": [
+       "OIM"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64880"
+    }
+   ]
+  },
+  {
+   "index": 59,
+   "kind": "merge",
+   "title": "merge Institution 'Oxford Institute for Papyrology' -> 'Oriental Institute Museum'",
+   "note": "LLM expansion of 'OIM': its one holding is OIM E8349 (P. 65877/N. 44651), an Oriental Institute Museum number.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:59:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64870",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64366",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "29bdb044-f338-5451-82d2-5763e89076a0",
+      "page_uuid": "ad2e851d-019e-5b8b-bb55-1a2401b18b5a",
+      "evidence": "OIM E8349 (P. 65877/N. 44651)",
+      "evidence_page": 68,
+      "source_books": [
+       "oimp38"
+      ],
+      "confidence": "high",
+      "source": "oimp38",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154603"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154603"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64366",
+     "props": {
+      "aliases": [
+       "OIM",
+       "Oxford Institute for Papyrology"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64882"
+    }
+   ]
+  },
+  {
+   "index": 60,
+   "kind": "merge",
+   "title": "merge Institution 'Jüdischen Gemeindebibliothek Berlin' -> 'Jüdische Gemeindebibliothek (Berlin)'",
+   "note": "Genitive form from the same Schirmann 1932 title.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:60:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58719",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58683",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "8b09d14f-b97f-51f6-897e-fecde63cd165",
+      "evidence": "Die poetischen Genizafragmente in der Jüdischen Gemeindebibliothek Berlin",
+      "source_books": [
+       "Schirmann-DiepoetischenGenizafragmente-1932"
+      ],
+      "confidence": "high",
+      "source": "Schirmann-DiepoetischenGenizafragmente-1932",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:146922"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:60:1",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58721",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58683",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "8b09d14f-b97f-51f6-897e-fecde63cd165",
+      "evidence": "Die poetischen Genizafragmente in der Jüdischen Gemeindebibliothek Berlin",
+      "source_books": [
+       "Schirmann-DiepoetischenGenizafragmente-1932"
+      ],
+      "confidence": "high",
+      "source": "Schirmann-DiepoetischenGenizafragmente-1932",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:146923"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:146922"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:146923"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58683",
+     "props": {
+      "aliases": [
+       "Jüdischen Gemeindebibliothek Berlin"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58720"
+    }
+   ]
+  },
+  {
+   "index": 61,
+   "kind": "merge",
+   "title": "merge Institution 'L. A. Mayer Museum of Islamic Art' -> 'L. A. Mayer Museum for Islamic Art'",
+   "note": "Name variant; same pin.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:61:0",
+     "type": "HELD_AT",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64875",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64874",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "29bdb044-f338-5451-82d2-5763e89076a0",
+      "page_uuid": "c23b6477-a885-5570-931e-12e273db64f3",
+      "evidence": "A similar pair of bracelets is in the collection of the L. A. Mayer Museum of Islamic Art in Jerusalem.",
+      "evidence_page": 193,
+      "source_books": [
+       "oimp38"
+      ],
+      "confidence": "high",
+      "source": "oimp38",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154599"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:154599"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64874",
+     "props": {
+      "aliases": [
+       "L. A. Mayer Museum of Islamic Art"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64876"
+    }
+   ]
+  },
+  {
+   "index": 62,
+   "kind": "merge",
+   "title": "merge Institution 'Musée de l'Art Arabe' -> 'Museum of Islamic Art in Cairo'",
+   "note": "Its name before 1952.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:62:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64061",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38950",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "29bdb044-f338-5451-82d2-5763e89076a0",
+      "page_uuid": "a9ad9209-238f-512b-83d7-37181ca915be",
+      "evidence": "Author of several articles on the Musée de l'Art Arabe and excavations at Fustat mentioned in the bibliography.",
+      "evidence_page": 214,
+      "source_books": [
+       "oimp38"
+      ],
+      "confidence": "high",
+      "source": "oimp38",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:153899"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:153899"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:38950",
+     "props": {
+      "data_sources": [
+       "pgp",
+       "enriched"
+      ],
+      "source_books": [
+       "oimp38"
+      ],
+      "aliases": [
+       "Musée de l'Art Arabe"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64062"
+    }
+   ]
+  },
+  {
+   "index": 63,
+   "kind": "merge",
+   "title": "merge Institution 'The Hebrew University' -> 'Hebrew University of Jerusalem'",
+   "note": "Name variant; same pin.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:63:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:49290",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65669",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "08d6f10d-e516-57fd-a6b2-a5ec47ccfc05",
+      "page_uuid": "7fb51312-5640-5204-ab16-e20da4e97f4b",
+      "evidence": "THE HEBREW UNIVERSITY, JERUSALEM",
+      "evidence_page": 1,
+      "source_books": [
+       "bjrl-article-p710"
+      ],
+      "confidence": "high",
+      "source": "bjrl-article-p710",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147081"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147081"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65669",
+     "props": {
+      "source_books": [
+       "religious_moshe",
+       "bjrl-article-p710"
+      ],
+      "aliases": [
+       "The Hebrew University"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58845"
+    }
+   ]
+  },
+  {
+   "index": 64,
+   "kind": "merge",
+   "title": "merge Institution 'The Hebrew University, Jerusalem' -> 'Hebrew University of Jerusalem'",
+   "note": "Name variant; same pin.",
+   "actions": [
+    {
+     "do": "set_edge",
+     "eid": "new:63:0",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "08d6f10d-e516-57fd-a6b2-a5ec47ccfc05",
+      "page_uuid": "7fb51312-5640-5204-ab16-e20da4e97f4b",
+      "evidence": "THE HEBREW UNIVERSITY, JERUSALEM",
+      "evidence_page": 1,
+      "source_books": [
+       "bjrl-article-p710"
+      ],
+      "confidence": "high",
+      "source": "bjrl-article-p710",
+      "data_sources": [
+       "enriched"
+      ],
+      "evidence_alt": [
+       "By SIMON HOPKINS THE HEBREW UNIVERSITY, JERUSALEM"
+      ]
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147113"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65669",
+     "props": {
+      "aliases": [
+       "The Hebrew University",
+       "The Hebrew University, Jerusalem"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58873"
+    }
+   ]
+  },
+  {
+   "index": 65,
+   "kind": "merge",
+   "title": "merge Institution 'האוניברסיטה העברית' -> 'Hebrew University of Jerusalem'",
+   "note": "Hebrew name.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:65:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65715",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65669",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "65896c84-7921-5d54-838c-d9a61cd63c5e",
+      "page_uuid": "aa23a37b-d593-53f4-9e51-54d7b9ac2647",
+      "evidence": "את כל מסלולי האקדמי עשיתי באוניברסיטה העברית",
+      "evidence_page": 4,
+      "source_books": [
+       "religious_moshe"
+      ],
+      "confidence": "high",
+      "source": "religious_moshe",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155519"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155519"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65669",
+     "props": {
+      "aliases": [
+       "The Hebrew University",
+       "The Hebrew University, Jerusalem",
+       "האוניברסיטה העברית"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65716"
+    }
+   ]
+  },
+  {
+   "index": 66,
+   "kind": "merge",
+   "title": "merge Institution 'האוניברסיטה העברית בירושלים' -> 'Hebrew University of Jerusalem'",
+   "note": "Hebrew name.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:66:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:45904",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65669",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "65896c84-7921-5d54-838c-d9a61cd63c5e",
+      "page_uuid": "1454e743-3d5c-5a06-b41f-e20baac7a72c",
+      "evidence": "הוגש לסנט האוניברסיטה העברית בירושלים",
+      "evidence_page": 1,
+      "source_books": [
+       "religious_moshe"
+      ],
+      "confidence": "high",
+      "source": "religious_moshe",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155479"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155479"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65669",
+     "props": {
+      "aliases": [
+       "The Hebrew University",
+       "The Hebrew University, Jerusalem",
+       "האוניברסיטה העברית",
+       "האוניברסיטה העברית בירושלים"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65691"
+    }
+   ]
+  },
+  {
+   "index": 67,
+   "kind": "merge",
+   "title": "merge Institution 'Tel-Aviv University' -> 'Tel Aviv University'",
+   "note": "Spelling variant; same pin.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:67:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61200",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58756",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "401b3b1e-7b97-5f73-868d-41e3786712f0",
+      "page_uuid": "8a427671-67a1-50ad-b46c-1301bfef1811",
+      "evidence": "Joseph and Ceil Mazer Chair in Jewish Culture in Muslim Lands and Cairo Geniza Studies, Tel-Aviv University.",
+      "evidence_page": 13,
+      "source_books": [
+       "india_trader_1_50"
+      ],
+      "confidence": "high",
+      "source": "india_trader_1_50",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149715"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:67:1",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61235",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58756",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "401b3b1e-7b97-5f73-868d-41e3786712f0",
+      "page_uuid": "8a427671-67a1-50ad-b46c-1301bfef1811",
+      "evidence": "Joseph and Ceil Mazer Chair in Jewish Culture in Muslim Lands and Cairo Geniza Studies, Tel-Aviv University.",
+      "evidence_page": 13,
+      "source_books": [
+       "india_trader_1_50"
+      ],
+      "confidence": "high",
+      "source": "india_trader_1_50",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149755"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:67:2",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61323",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58756",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "401b3b1e-7b97-5f73-868d-41e3786712f0",
+      "page_uuid": "8a427671-67a1-50ad-b46c-1301bfef1811",
+      "evidence": "Joseph and Ceil Mazer Chair in Jewish Culture in Muslim Lands and Cairo Geniza Studies, Tel-Aviv University.",
+      "evidence_page": 13,
+      "source_books": [
+       "india_trader_1_50"
+      ],
+      "confidence": "high",
+      "source": "india_trader_1_50",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149911"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149715"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149755"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149911"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58756",
+     "props": {
+      "source_books": [
+       "barley_av",
+       "india_trader_1_50"
+      ],
+      "aliases": [
+       "Tel-Aviv University"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61201"
+    }
+   ]
+  },
+  {
+   "index": 68,
+   "kind": "merge",
+   "title": "merge Institution 'University of Tel Aviv' -> 'Tel Aviv University'",
+   "note": "Name variant; same pin.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:68:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:57001",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58756",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "e5953a50-db2d-5975-9593-745b6e7b1a46",
+      "page_uuid": "67c9763a-af29-5771-a080-1d3de3cac844",
+      "evidence": "A professor from the University of Tel Aviv who clarified terminology.",
+      "evidence_page": 21,
+      "source_books": [
+       "6david"
+      ],
+      "confidence": "high",
+      "source": "6david",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:144909"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:144909"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58756",
+     "props": {
+      "source_books": [
+       "barley_av",
+       "india_trader_1_50",
+       "6david"
+      ],
+      "aliases": [
+       "Tel-Aviv University",
+       "University of Tel Aviv"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:57002"
+    }
+   ]
+  },
+  {
+   "index": 69,
+   "kind": "merge",
+   "title": "merge Institution 'UNIVERSITY COLLEGE LONDON' -> 'University College London'",
+   "note": "All-caps variant.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:69:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:44074",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58755",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "4d541ad1-5602-57c3-9ebf-a289cd292ecf",
+      "page_uuid": "ce1105c2-a88c-511a-babc-168e92d03471",
+      "evidence": "NADIA VIDRO UNIVERSITY COLLEGE LONDON, UK",
+      "evidence_page": 1,
+      "source_books": [
+       "barley_av"
+      ],
+      "confidence": "high",
+      "source": "barley_av",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:146948"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:146948"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58755",
+     "props": {
+      "aliases": [
+       "UNIVERSITY COLLEGE LONDON"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58742"
+    }
+   ]
+  },
+  {
+   "index": 70,
+   "kind": "merge",
+   "title": "merge Institution 'UCL' -> 'University College London'",
+   "note": "Abbreviation (the Gaster papers at UCL).",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:70:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58882",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58755",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "3b77eafc-bc03-590c-b46a-7ef461b761fb",
+      "evidence": "spotted by Brad Sabin Hill among the Gaster papers at the UCL",
+      "source_books": [
+       "cairo_to_manchester",
+       "cairo_to_manchester_intro"
+      ],
+      "confidence": "high",
+      "source": "cairo_to_manchester",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147129"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147129"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58755",
+     "props": {
+      "source_books": [
+       "barley_av",
+       "cairo_to_manchester",
+       "cairo_to_manchester_intro"
+      ],
+      "aliases": [
+       "UNIVERSITY COLLEGE LONDON",
+       "UCL"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58883"
+    }
+   ]
+  },
+  {
+   "index": 71,
+   "kind": "merge",
+   "title": "merge Institution 'אוניברסיטת חיפה' -> 'University of Haifa'",
+   "note": "Hebrew name.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:71:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65706",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59099",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "65896c84-7921-5d54-838c-d9a61cd63c5e",
+      "page_uuid": "9099dec4-60b4-55b6-a812-9cdcba4a3f0f",
+      "evidence": "המרכז לחקר בין-תחומי של הגניזה הקהירית באוניברסיטת חיפה סיפק מסגרת חשובה נוספת ללימוד ולליבון של סוגיות שונות",
+      "evidence_page": 5,
+      "source_books": [
+       "religious_moshe"
+      ],
+      "confidence": "high",
+      "source": "religious_moshe",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155535"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:71:1",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61097",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59099",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "65896c84-7921-5d54-838c-d9a61cd63c5e",
+      "page_uuid": "9099dec4-60b4-55b6-a812-9cdcba4a3f0f",
+      "evidence": "המרכז לחקר בין-תחומי של הגניזה הקהירית באוניברסיטת חיפה סיפק מסגרת חשובה נוספת ללימוד ולליבון של סוגיות שונות, ותודתי נתונה לראשיו, פרופ' אפרים לב וד",
+      "evidence_page": 5,
+      "source_books": [
+       "religious_moshe"
+      ],
+      "confidence": "high",
+      "source": "religious_moshe",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155536"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155535"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155536"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59099",
+     "props": {
+      "source_books": [
+       "cairo_to_manchester_2",
+       "religious_moshe"
+      ],
+      "aliases": [
+       "אוניברסיטת חיפה"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65722"
+    }
+   ]
+  },
+  {
+   "index": 72,
+   "kind": "merge",
+   "title": "merge Institution 'Bar Ilan' -> 'Bar-Ilan University'",
+   "note": "Short name; same pin.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:72:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65920",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59301",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "84bf9456-0f6c-5a8a-abf4-971b04744cfb",
+      "evidence": "Albeck, Shalom. Law Courts in Talmudic Times (Hebrew). Bar Ilan, 1980.",
+      "source_books": [
+       "zinger_princet"
+      ],
+      "confidence": "high",
+      "source": "zinger_princet",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:156674"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:156674"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59301",
+     "props": {
+      "source_books": [
+       "calendars_247",
+       "ottomon_era",
+       "zinger_princet"
+      ],
+      "aliases": [
+       "Bar Ilan"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:66732"
+    }
+   ]
+  },
+  {
+   "index": 73,
+   "kind": "merge",
+   "title": "merge Institution 'Ankara Üniversitesi Ilahiyat Fakültesi Yayınları' -> 'Ankara Üniversitesi Ilahiyat Fakültesi'",
+   "note": "'Yayınları' = the faculty's publication series.",
+   "actions": [
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147096",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "08d6f10d-e516-57fd-a6b2-a5ec47ccfc05",
+      "page_uuid": "90acdb1f-3b63-5810-a9e1-ff1a67d80e2e",
+      "evidence": "Prof. Dr. Hüseyin Atay, Ankara Üniversitesi Ilahiyat Fakültesi Yayınları 93, Ankara, 1974.",
+      "evidence_page": 8,
+      "source_books": [
+       "bjrl-article-p710"
+      ],
+      "confidence": "high",
+      "source": "bjrl-article-p710",
+      "data_sources": [
+       "enriched"
+      ]
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147102"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58824",
+     "props": {
+      "aliases": [
+       "Ankara Üniversitesi Ilahiyat Fakültesi Yayınları"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58866"
+    }
+   ]
+  },
+  {
+   "index": 74,
+   "kind": "merge",
+   "title": "merge Institution 'Princeton Geniza Project database' -> 'Princeton Geniza Project'",
+   "note": "The project's database.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:74:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65440",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64998",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "6abd7697-e472-5cf3-bd5d-63f1c873f7b7",
+      "page_uuid": "03ae66df-d591-5121-a3a8-962d17dd3b47",
+      "evidence": "Yusuf Umrethwala has posted a transcription of the verso of this document in the Princeton Geniza Project database.",
+      "evidence_page": 135,
+      "source_books": [
+       "ottomon_era"
+      ],
+      "confidence": "high",
+      "source": "ottomon_era",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155189"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:155189"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64998",
+     "props": {
+      "aliases": [
+       "Princeton Geniza Project database"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:65441"
+    }
+   ]
+  },
+  {
+   "index": 75,
+   "kind": "merge",
+   "title": "merge Institution 'Faculty of Asian and Middle Eastern Studies Degree Committee' -> 'Faculty of Asian and Middle Eastern Studies'",
+   "note": "Cambridge thesis boilerplate.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:75:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59541",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59578",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "75a9f48b-f548-5225-b198-9fc40260493c",
+      "page_uuid": "42589b9a-1598-5b5d-a1f1-dd3a48cf59ab",
+      "evidence": "The thesis does not exceed the prescribed word limit for the Faculty of Asian and Middle Eastern Studies Degree Committee.",
+      "evidence_page": 3,
+      "source_books": [
+       "ej_arrant"
+      ],
+      "confidence": "high",
+      "source": "ej_arrant",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147918"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:147918"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59578",
+     "props": {
+      "aliases": [
+       "Faculty of Asian and Middle Eastern Studies Degree Committee"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59579"
+    }
+   ]
+  },
+  {
+   "index": 76,
+   "kind": "merge",
+   "title": "merge Institution 'Harvard University Center for Jewish S' -> 'Harvard University Center for Jewish Studies'",
+   "note": "Truncated name.",
+   "actions": [
+    {
+     "do": "set_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149888",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "401b3b1e-7b97-5f73-868d-41e3786712f0",
+      "page_uuid": "8a427671-67a1-50ad-b46c-1301bfef1811",
+      "evidence": "I had the pleasure of working on this project at the Harvard University Center for Jewish S",
+      "evidence_page": 13,
+      "source_books": [
+       "india_trader_1_50"
+      ],
+      "confidence": "high",
+      "source": "india_trader_1_50",
+      "data_sources": [
+       "enriched"
+      ]
+     }
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149964"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61307",
+     "props": {
+      "aliases": [
+       "Harvard University Center for Jewish S"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61338"
+    }
+   ]
+  },
+  {
+   "index": 77,
+   "kind": "merge",
+   "title": "merge Institution 'Palestinian Academy' -> 'Palestinian Yeshiva'",
+   "note": "Gottheil & Worrell's name for the same academy.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:77:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59858",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "43a082ca-0711-54ee-a96e-22afbff5f462",
+      "page_uuid": "f165f432-9281-535b-aec2-6f6c7b5db3d6",
+      "evidence": "usurper of power in the Palestinian Academy, becoming 'Father of the Law Court,' or 'Second,'",
+      "evidence_page": 29,
+      "source_books": [
+       "fragmentsfromcai00gott"
+      ],
+      "confidence": "high",
+      "source": "fragmentsfromcai00gott",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:148179"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:77:1",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59934",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "43a082ca-0711-54ee-a96e-22afbff5f462",
+      "page_uuid": "f165f432-9281-535b-aec2-6f6c7b5db3d6",
+      "evidence": "son of Judah, the Ga'ōn, or 'First,' in the Palestinian Academy.",
+      "evidence_page": 29,
+      "source_books": [
+       "fragmentsfromcai00gott"
+      ],
+      "confidence": "high",
+      "source": "fragmentsfromcai00gott",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:148245"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:77:2",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60668",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "41b38ae3-0cad-58f3-a1d8-f867c90ac3ce",
+      "evidence": "A native Babylonian, the Nasi Daniel b. Azariah, became the-Palestinian Gaon after Solomon b. Judah (1051–1062).",
+      "source_books": [
+       "friedman_vol_intro"
+      ],
+      "confidence": "high",
+      "source": "friedman_vol_intro",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149115"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:148179"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:148245"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149115"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "source_books": [
+       "fridman_100_198_vol_2",
+       "friedman_vol_intro",
+       "india_trader_350_424",
+       "india_trader_426_500",
+       "zinger_princet",
+       "fragmentsfromcai00gott"
+      ],
+      "aliases": [
+       "Palestinian Academy"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:59860"
+    }
+   ]
+  },
+  {
+   "index": 78,
+   "kind": "merge",
+   "title": "merge Institution 'Yeshiva of Eretz Israel' -> 'Palestinian Yeshiva'",
+   "note": "Same academy.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:78:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60723",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "41b38ae3-0cad-58f3-a1d8-f867c90ac3ce",
+      "page_uuid": "02274cf8-009e-5e19-89aa-248a1f7d3211",
+      "evidence": "the struggles over the Gaonate connected with Nathan b. Abraham, during 1038-1042",
+      "evidence_page": 20,
+      "source_books": [
+       "friedman_vol_intro"
+      ],
+      "confidence": "high",
+      "source": "friedman_vol_intro",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149226"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:149226"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "aliases": [
+       "Palestinian Academy",
+       "Yeshiva of Eretz Israel"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60786"
+    }
+   ]
+  },
+  {
+   "index": 79,
+   "kind": "merge",
+   "title": "merge Institution 'ישיבת ארץ ישראל' -> 'Palestinian Yeshiva'",
+   "note": "Hebrew name of the same academy.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:79:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:62067",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a3e04df0-a5bb-533c-9270-f73c31b97b98",
+      "evidence": "הקשרים שבין שמריה, ואלחנן בנו, ובין ישיבת ארץ ישראל",
+      "source_books": [
+       "malk-ish-1-155"
+      ],
+      "confidence": "high",
+      "source": "malk-ish-1-155",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151004"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:79:1",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:62155",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "a3e04df0-a5bb-533c-9270-f73c31b97b98",
+      "page_uuid": "8697a1bf-878c-5c7d-b93b-c816c79035f0",
+      "evidence": "הקשרים שבין שמריה, ואלחנן בנו, ובין ישיבת ארץ ישראל",
+      "evidence_page": 11,
+      "source_books": [
+       "malk-ish-1-155"
+      ],
+      "confidence": "medium",
+      "source": "malk-ish-1-155",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151101"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:79:2",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:62319",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "d616f389-af74-52d4-8fde-c04e99c9eca5",
+      "page_uuid": "1a049dc7-4e85-5b1c-bbf5-695708eb0831",
+      "evidence": "הגאון מאיים בנידוי על מי 'אשר יקל בכבודם'",
+      "evidence_page": 10,
+      "source_books": [
+       "malk-ish-1-188"
+      ],
+      "confidence": "high",
+      "source": "malk-ish-1-188",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151402"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:79:3",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61994",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "19dc9cd9-ca8f-5065-977a-e5d9958c995b",
+      "page_uuid": "6dd9cce1-00c2-5626-8f97-7594b3678663",
+      "evidence": "נתן בן אברהם, מי שהיה אב בית דין בישיבת ארץ ישראל בסוף החצי הראשון של המאה האחת עשרה",
+      "evidence_page": 26,
+      "source_books": [
+       "malk-ish-1-307"
+      ],
+      "confidence": "high",
+      "source": "malk-ish-1-307",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:152601"
+     ]
+    },
+    {
+     "do": "create_edge",
+     "ref": "new:79:4",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:63660",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "6d87dfe8-6320-5023-a642-8c73c269974f",
+      "evidence": "כנראה גם לעמוד בהתחרות עם ישיבת ארץ ישראל.",
+      "source_books": [
+       "malk-ish-1-400"
+      ],
+      "confidence": "high",
+      "source": "malk-ish-1-400",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:153275"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151004"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151101"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:151402"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:152601"
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:153275"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "source_books": [
+       "fridman_100_198_vol_2",
+       "friedman_vol_intro",
+       "india_trader_350_424",
+       "india_trader_426_500",
+       "zinger_princet",
+       "fragmentsfromcai00gott",
+       "malk-ish-1-155",
+       "malk-ish-1-188",
+       "malk-ish-1-307",
+       "malk-ish-1-400"
+      ],
+      "aliases": [
+       "Palestinian Academy",
+       "Yeshiva of Eretz Israel",
+       "ישיבת ארץ ישראל"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:62078"
+    }
+   ]
+  },
+  {
+   "index": 80,
+   "kind": "merge",
+   "title": "merge Institution 'אב בית דין בישיבת ארץ ישראל' -> 'Palestinian Yeshiva'",
+   "note": "Title of Nathan b. Abraham ('av bet din of the Yeshiva of Eretz Israel'), not a separate institution.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:80:0",
+     "type": "AFFILIATED_WITH",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:63152",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "19dc9cd9-ca8f-5065-977a-e5d9958c995b",
+      "page_uuid": "6dd9cce1-00c2-5626-8f97-7594b3678663",
+      "evidence": "המקור הנראה קדום יותר כלול בפירוש המשנה המיוחס לנתן אב (הוא נתן בן אברהם, מי שהיה אב בית דין בישיבת ארץ ישראל בסוף החצי הראשון של המאה האחת עשרה)",
+      "evidence_page": 26,
+      "source_books": [
+       "malk-ish-1-307"
+      ],
+      "confidence": "high",
+      "source": "malk-ish-1-307",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:152479"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:152479"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60165",
+     "props": {
+      "aliases": [
+       "Palestinian Academy",
+       "Yeshiva of Eretz Israel",
+       "ישיבת ארץ ישראל",
+       "אב בית דין בישיבת ארץ ישראל"
+      ]
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:63153"
+    }
+   ]
+  },
+  {
+   "index": 81,
+   "kind": "merge",
+   "title": "merge Place 'Turūja' -> 'Tarūja'",
+   "note": "Same Arabic name (تروجة); PGP calls Turūja 'a town south of Alexandria', i.e. the Buḥayra town Tarūja. Turūja's 30.5, 30.1 is a rounded point in the desert.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:81:0",
+     "type": "MENTIONS_PLACE",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:25285",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:31972",
+     "props": {},
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:43774"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:43774"
+    },
+    {
+     "do": "set_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:31972",
+     "props": {
+      "name_variants": "تروجة, Turūja"
+     }
+    },
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:25286"
+    }
+   ]
+  },
+  {
+   "index": 82,
+   "kind": "move",
+   "title": "move ORIGINATED_FROM Sittūna bt. Ḥayyīm b. Solomon -> 'Raḥba' to 'al-Raḥba'",
+   "note": "Her nisba 'Ben al-Raḥbī' (zinger_princet p. 421) points to al-Raḥba on the Euphrates, the well-known town, not the Lebanese village PGP defines as Raḥba.",
+   "actions": [
+    {
+     "do": "create_edge",
+     "ref": "new:82:0",
+     "type": "ORIGINATED_FROM",
+     "start": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:66712",
+     "end": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:2207",
+     "props": {
+      "pipeline_version": "v3",
+      "book_uuid": "84bf9456-0f6c-5a8a-abf4-971b04744cfb",
+      "page_uuid": "6d707a7c-b3e1-5fd3-8fea-789ab34d58b4",
+      "evidence": "Sittūna bt. Ḥayyīm b. Solomon, known as Ben al-Raḥbī, came to court to nominate a representative to sue her husband, Faraḥ b. Joseph, known as Ben Bānūqa, who had abandoned her years ago without maintenance.",
+      "evidence_page": 421,
+      "source_books": [
+       "zinger_princet"
+      ],
+      "confidence": "high",
+      "source": "zinger_princet",
+      "data_sources": [
+       "enriched"
+      ]
+     },
+     "from_edges": [
+      "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:156643"
+     ]
+    },
+    {
+     "do": "delete_edge",
+     "eid": "5:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:156643"
+    }
+   ]
+  },
+  {
+   "index": 83,
+   "kind": "delete_orphan",
+   "title": "delete Institution 'Cairo Genizah' (no edges left)",
+   "note": "Every edge it had was removed as not a holding.",
+   "actions": [
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:58255"
+    }
+   ]
+  },
+  {
+   "index": 84,
+   "kind": "delete_orphan",
+   "title": "delete Institution 'Cairo Geniza' (no edges left)",
+   "note": "Every edge it had was removed as not a holding.",
+   "actions": [
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61334"
+    }
+   ]
+  },
+  {
+   "index": 85,
+   "kind": "delete_orphan",
+   "title": "delete Institution 'Geniza' (no edges left)",
+   "note": "Every edge it had was removed as not a holding.",
+   "actions": [
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60639"
+    }
+   ]
+  },
+  {
+   "index": 86,
+   "kind": "delete_orphan",
+   "title": "delete Institution 'קהיר' (no edges left)",
+   "note": "Every edge it had was removed as not a holding.",
+   "actions": [
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:57157"
+    }
+   ]
+  },
+  {
+   "index": 87,
+   "kind": "delete_orphan",
+   "title": "delete Institution 'Cathedral of Siena' (no edges left)",
+   "note": "Every edge it had was removed as not a holding.",
+   "actions": [
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:64866"
+    }
+   ]
+  },
+  {
+   "index": 88,
+   "kind": "delete_orphan",
+   "title": "delete Institution 'Palestinian synagogue' (no edges left)",
+   "note": "Every edge it had was removed as not a holding.",
+   "actions": [
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:66759"
+    }
+   ]
+  },
+  {
+   "index": 89,
+   "kind": "delete_orphan",
+   "title": "delete Institution 'Leningrad' (no edges left)",
+   "note": "Every edge it had was removed as not a holding.",
+   "actions": [
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60303"
+    }
+   ]
+  },
+  {
+   "index": 90,
+   "kind": "delete_orphan",
+   "title": "delete Institution 'Paris Nat. Bibl.' (no edges left)",
+   "note": "Every edge it had was removed as not a holding.",
+   "actions": [
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:60788"
+    }
+   ]
+  },
+  {
+   "index": 91,
+   "kind": "delete_orphan",
+   "title": "delete Institution 'Institute of Microfilmed Hebrew Manuscripts, Jewish National and University Library, Jerusalem' (no edges left)",
+   "note": "Every edge it had was removed as not a holding.",
+   "actions": [
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:61460"
+    }
+   ]
+  },
+  {
+   "index": 92,
+   "kind": "delete_orphan",
+   "title": "delete Institution 'אוסף Dropsie' (no edges left)",
+   "note": "Every edge it had was removed as not a holding.",
+   "actions": [
+    {
+     "do": "delete_node",
+     "eid": "4:650bedfe-9ac6-4724-9ea1-4c37ddcc6cc0:62257"
+    }
+   ]
+  }
+ ],
+ "review": []
+}

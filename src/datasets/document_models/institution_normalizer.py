@@ -227,6 +227,84 @@ _METADATA: dict[str, dict[str, str]] = {
         {"city": "Toronto", "country": "Canada", "region": "North America"},
 }
 
+# ---------------------------------------------------------------------------
+# Exact-name aliases: whole names (not substrings) that are a known duplicate of a
+# canonical node. Checked before the substring scan, and matched case- and
+# whitespace-insensitively *without* the ASCII folding, so Hebrew names work (the
+# substring scan folds "ספרייה הבריטית" to '' and can never match it).
+#
+# These are the ``normalize=True`` entries of INSTITUTION_MERGES in
+# src/datasets/indexing/neo4j/institution_merges.py (tests keep the two in step).
+# Bare city names ("Cambridge", "Oxford", "Berlin") and names with an edge-removal
+# rule are deliberately absent: the post-import pass consolidate_institutions.py
+# needs to see them under their raw name.
+# ---------------------------------------------------------------------------
+_EXACT_ALIASES: dict[str, str] = {
+    # Cambridge University Library
+    "Cambridge Genizah":                        "Cambridge University Library",
+    "Cambridge Genizah Collections":            "Cambridge University Library",
+    "University Library, Cambridge":            "Cambridge University Library",
+    "University Library, Cambridge, England":   "Cambridge University Library",
+    "University Library in Cambridge":          "Cambridge University Library",
+    "Cambridge University Libraries":           "Cambridge University Library",
+    "T-S":                                      "Cambridge University Library",
+    "אוסף TS":                                  "Cambridge University Library",
+    # Jewish Theological Seminary
+    "Adler collection":                         "Jewish Theological Seminary",
+    "אוסף אדלר":                                "Jewish Theological Seminary",
+    "אוסף שכטר":                                "Jewish Theological Seminary",
+    "הסימנר בנוירק":                            "Jewish Theological Seminary",
+    "בית המדרש לרבנים בניו יורק":               "Jewish Theological Seminary",
+    # Bodleian, British Library, Staatsbibliothek
+    "Oxford, Bodl.":                            "Bodleian Library, Oxford",
+    "Bodl.":                                    "Bodleian Library, Oxford",
+    "ספרייה הבריטית":                           "British Library, London",
+    "BL":                                       "British Library, London",
+    "Berlin, SBB":                              "Staatsbibliothek zu Berlin",
+    "Königliche Bibliothek in Berlin":          "Staatsbibliothek zu Berlin",
+    # Holding libraries with a second name (the first three also come from PGP)
+    "National Library of Russia":               "Russian National Library, St. Petersburg",
+    "Katz Center for Advanced Judaic Studies, University of Pennsylvania":
+                                                "University of Pennsylvania, Katz Center",
+    "Ben Zvi Institute":                        "Yad Izhak Ben-Zvi Institute",
+    "St. Petersburg, Firkovich collections":    "Russian National Library, St. Petersburg",
+    "Firkovitch collection":                    "Russian National Library, St. Petersburg",
+    "Jewish National and University Library":   "National Library of Israel",
+    "הספרייה הלאומית":                          "National Library of Israel",
+    "Herbert D. Katz Center for Advanced Judaic Studies":
+                                                "University of Pennsylvania, Katz Center",
+    "University of Pennsylvania Library":       "University of Pennsylvania, Katz Center",
+    "University of Manchester Library":         "John Rylands Library, University of Manchester",
+    "Toronto, University of Toronto Libraries": "Thomas Fisher Rare Book Library, University of Toronto",
+    "OIM":                                      "Oriental Institute Museum",
+    "Oxford Institute for Papyrology":          "Oriental Institute Museum",
+    "Jüdischen Gemeindebibliothek Berlin":      "Jüdische Gemeindebibliothek (Berlin)",
+    "L. A. Mayer Museum of Islamic Art":        "L. A. Mayer Museum for Islamic Art",
+    "Musée de l'Art Arabe":                     "Museum of Islamic Art in Cairo",
+    # Universities and projects
+    "The Hebrew University":                    "Hebrew University of Jerusalem",
+    "The Hebrew University, Jerusalem":         "Hebrew University of Jerusalem",
+    "האוניברסיטה העברית":                       "Hebrew University of Jerusalem",
+    "האוניברסיטה העברית בירושלים":              "Hebrew University of Jerusalem",
+    "Tel-Aviv University":                      "Tel Aviv University",
+    "University of Tel Aviv":                   "Tel Aviv University",
+    "UNIVERSITY COLLEGE LONDON":                "University College London",
+    "UCL":                                      "University College London",
+    "אוניברסיטת חיפה":                          "University of Haifa",
+    "Bar Ilan":                                 "Bar-Ilan University",
+    "Ankara Üniversitesi Ilahiyat Fakültesi Yayınları":
+                                                "Ankara Üniversitesi Ilahiyat Fakültesi",
+    "Princeton Geniza Project database":        "Princeton Geniza Project",
+    "Faculty of Asian and Middle Eastern Studies Degree Committee":
+                                                "Faculty of Asian and Middle Eastern Studies",
+    "Harvard University Center for Jewish S":   "Harvard University Center for Jewish Studies",
+    # The Palestinian Yeshiva
+    "Palestinian Academy":                      "Palestinian Yeshiva",
+    "Yeshiva of Eretz Israel":                  "Palestinian Yeshiva",
+    "ישיבת ארץ ישראל":                          "Palestinian Yeshiva",
+    "אב בית דין בישיבת ארץ ישראל":              "Palestinian Yeshiva",
+}
+
 # Pre-sorted keys by descending length for O(n) longest-match scan.
 _SORTED_KEYS: list[str] = sorted(_CANONICAL.keys(), key=len, reverse=True)
 
@@ -238,12 +316,25 @@ def _normalise_input(raw: str) -> str:
     return " ".join(ascii_str.lower().split())
 
 
+def _exact_key(raw: str) -> str:
+    """Key for :data:`_EXACT_ALIASES`: NFC, casefolded, whitespace collapsed (non-Latin script kept).
+
+    :param raw: An institution name.
+    :returns: The lookup key.
+    """
+    return " ".join(unicodedata.normalize("NFC", raw).casefold().split())
+
+
+_EXACT: dict[str, str] = {_exact_key(alias): canonical for alias, canonical in _EXACT_ALIASES.items()}
+
+
 class InstitutionNormalizer(EntityNormalizer):
     """Normalize institution name variants to a single canonical display name.
 
-    Matching is case-insensitive, diacritic-insensitive, and substring-based.
-    Longer keys take priority over shorter ones to prevent "jts" from swallowing
-    "jts library, new york" before the more specific key fires.
+    A whole name listed in ``_EXACT_ALIASES`` wins first (case-insensitive, any
+    script). Otherwise matching is case-insensitive, diacritic-insensitive, and
+    substring-based. Longer keys take priority over shorter ones to prevent "jts"
+    from swallowing "jts library, new york" before the more specific key fires.
     """
 
     @classmethod
@@ -255,6 +346,9 @@ class InstitutionNormalizer(EntityNormalizer):
         """
         if not raw or not raw.strip():
             return raw
+        exact = _EXACT.get(_exact_key(raw))
+        if exact:
+            return exact
         normalised = _normalise_input(raw)
         for key in _SORTED_KEYS:
             if key in normalised:
