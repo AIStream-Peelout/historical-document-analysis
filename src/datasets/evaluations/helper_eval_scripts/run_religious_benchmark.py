@@ -31,6 +31,9 @@ so a line-OCR model with no language prior is never labelled "hallucinated".
 Usage (from src/datasets/evaluations):
     PYTHONPATH=<repo> python helper_eval_scripts/run_religious_benchmark.py \\
         [--limit N] [--score-only]
+
+Another spec in the same format (e.g. the sealed confirmation set) is read and scored with
+``--spec <file> --outputs-dir <dir>``; the score CSVs are then written next to that spec.
 """
 
 import argparse
@@ -85,7 +88,7 @@ ORDER_SCRAMBLE_MAX_F1 = 0.5     # ... but the page sequence does not align
 
 
 async def transcribe_all(docs: list, vlm_model: str = VLM_MODEL, kraken_model: str = _KRAKEN_MODEL,
-                         kraken_tag: str = "") -> None:
+                         kraken_tag: str = "", out_dir: Path = _OUT) -> None:
     """Run all engines over every page, saving raw outputs (resumable).
 
     LM Studio is only touched when a VLM output is actually missing, so
@@ -104,17 +107,19 @@ async def transcribe_all(docs: list, vlm_model: str = VLM_MODEL, kraken_model: s
         ``kraken_seg_<tag>``, ``kraken_lines_<tag>.json``) so a fine-tuned
         model's rows sit next to the base model's instead of replacing them.
     :type kraken_tag: str
+    :param out_dir: Per-page output root (``<out_dir>/<doc_id>/``).
+    :type out_dir: Path
     """
     suffix = f"_{kraken_tag}" if kraken_tag else ""
     need_vlm = [d for d in docs
-                if not (_OUT / d["doc_id"] / f"{vlm_model.replace('-', '_')}.txt").exists()]
+                if not (out_dir / d["doc_id"] / f"{vlm_model.replace('-', '_')}.txt").exists()]
     if need_vlm:
         models = await check_lm_studio_health()
         if vlm_model not in models:
             raise RuntimeError(f"{vlm_model} not served by LM Studio: {models}")
     preload_kraken_model(kraken_model)
     for i, d in enumerate(docs, 1):
-        outdir = _OUT / d["doc_id"]
+        outdir = out_dir / d["doc_id"]
         outdir.mkdir(parents=True, exist_ok=True)
         vlm_f = outdir / f"{vlm_model.replace('-', '_')}.txt"
         krk_f = outdir / f"{KRAKEN_KEY}{suffix}.txt"
@@ -187,7 +192,7 @@ def line_ngram_precision(raw: str, gt_letters: str, n: int = 5) -> float:
     return statistics.median(vals) if vals else 0.0
 
 
-def discover_model_keys(docs: list) -> list:
+def discover_model_keys(docs: list, out_dir: Path = _OUT) -> list:
     """Find every model with saved raw outputs for these docs.
 
     VLM outputs are named after their LM Studio id (``-`` → ``_``), so any
@@ -197,13 +202,15 @@ def discover_model_keys(docs: list) -> list:
 
     :param docs: Benchmark doc entries.
     :type docs: list
+    :param out_dir: Per-page output root.
+    :type out_dir: Path
     :return: Sorted ``(file_key, label)`` pairs.
     :rtype: list
     """
     keys = set()
     kraken_keys = set()
     for d in docs:
-        outdir = _OUT / d["doc_id"]
+        outdir = out_dir / d["doc_id"]
         if not outdir.is_dir():
             continue
         for f in outdir.glob("*.txt"):
@@ -212,22 +219,24 @@ def discover_model_keys(docs: list) -> list:
     return vlm + [(k, k) for k in sorted(kraken_keys)]
 
 
-def score(docs: list) -> list:
+def score(docs: list, out_dir: Path = _OUT) -> list:
     """Score every model's saved output against each page's GT.
 
     :param docs: Benchmark doc entries.
     :type docs: list
+    :param out_dir: Per-page output root.
+    :type out_dir: Path
     :return: Per-(doc, model) score rows.
     :rtype: list
     """
-    model_keys = discover_model_keys(docs)
+    model_keys = discover_model_keys(docs, out_dir)
     rows = []
     for d in docs:
         gt_ink = genizah_visible_ink_gt(d["gt"])
         gt_letters = letters_only(gt_ink)
         if len(gt_letters) < 50:
             continue
-        outdir = _OUT / d["doc_id"]
+        outdir = out_dir / d["doc_id"]
         for key, label in model_keys:
             f = outdir / f"{key}.txt"
             if not f.exists():
@@ -278,14 +287,16 @@ def _agg(rows: list, label: str) -> dict:
     )
 
 
-def report(rows: list) -> None:
+def report(rows: list, results_dir: Path = _BENCH) -> None:
     """Print the comparison table (overall + Talmud/column slices) and save CSV.
 
     :param rows: All score rows.
     :type rows: list
+    :param results_dir: Folder of the two score CSVs.
+    :type results_dir: Path
     """
-    _OUT.parent.mkdir(parents=True, exist_ok=True)
-    with open(_BENCH / "religious_scores_long.csv", "w", newline="") as fh:
+    results_dir.mkdir(parents=True, exist_ok=True)
+    with open(results_dir / "religious_scores_long.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))
         w.writeheader()
         w.writerows(rows)
@@ -308,7 +319,7 @@ def report(rows: list) -> None:
             cer = f"{a['CERsub']:.3f}" if a["CERsub"] is not None else "  —"
             print(f"{model:16s} {label:14s} {a['n']:4d} {a['subst']:6.0%} {a['readOK']:7.3f} "
                   f"{a['orderScr']:6.0%} {a['ngramP']:7.3f} {a['F1']:6.3f} {cer:>6s}")
-    with open(_BENCH / "religious_scores_summary.csv", "w", newline="") as fh:
+    with open(results_dir / "religious_scores_summary.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=["model", "slice", "n", "subst", "readOK",
                                            "orderScr", "ngramP", "F1", "CERsub"])
         w.writeheader()
@@ -332,17 +343,21 @@ def main() -> None:
                         help="LM Studio model id to transcribe with "
                              f"(default: {VLM_MODEL}); scoring always covers "
                              "every model found in raw_outputs")
+    parser.add_argument("--spec", type=Path, default=_BENCH / "genizah_religious_v1.json",
+                        help="benchmark JSON in this format (score CSVs are written next to it)")
+    parser.add_argument("--outputs-dir", type=Path, default=_OUT,
+                        help="per-page output root (<dir>/<doc_id>/<model>.txt)")
     args = parser.parse_args()
-    docs = json.load(open(_BENCH / "genizah_religious_v1.json"))["docs"]
+    docs = json.load(open(args.spec))["docs"]
     if args.limit:
         docs = docs[:args.limit]
     if not args.score_only:
-        asyncio.run(transcribe_all(docs, args.vlm_model, args.kraken_model, args.kraken_tag))
-    rows = score(docs)
+        asyncio.run(transcribe_all(docs, args.vlm_model, args.kraken_model, args.kraken_tag, args.outputs_dir))
+    rows = score(docs, args.outputs_dir)
     if not rows:
         print("no scored rows")
         return
-    report(rows)
+    report(rows, args.spec.resolve().parent)
 
 
 if __name__ == "__main__":
