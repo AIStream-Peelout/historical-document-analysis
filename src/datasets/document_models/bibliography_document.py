@@ -1,6 +1,6 @@
 
 from pydantic import BaseModel, Field
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, ClassVar, Dict, List, Optional, Union
 import json
 import logging
 from pathlib import Path
@@ -14,6 +14,7 @@ from src.datasets.document_models.corpus_ids import (
     external_link as _external_link,
     page_seq_from_filename as _page_seq_from_filename,
 )
+from src.datasets.document_models.fjp_scrub import contains_fjp_url, scrub_fjp, strip_fjp_urls
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
 logger = logging.getLogger(__name__)
@@ -91,6 +92,9 @@ class BibliographyDocument(BaseModel):
     # Compatibility attributes expected by the processor
     image: Optional[Any] = None
 
+    # Which versioned embedding text applies (src.embeddings.text_representation); not a field.
+    embedding_text_kind: ClassVar[str] = "bibliography"
+
     def create_text_representation(self) -> str:
         """Create a comprehensive text representation for embedding generation.
 
@@ -129,7 +133,8 @@ class BibliographyDocument(BaseModel):
                 if text:
                     parts.append(f"Transcription for {sm}: {text}")
 
-        return "\n".join(parts)
+        # Served and embedded text never carries FJP-host URLs (books cite them verbatim).
+        return strip_fjp_urls("\n".join(parts))
 
     def get_embedding_cache_key(self) -> str:
         """Return a stable cache key for this document's embedding.
@@ -219,6 +224,10 @@ class BibliographyDocument(BaseModel):
             for txt in self.transcriptions.values()
             if isinstance(txt, str) and txt.strip() != ""
         ]
+
+        es_doc = scrub_fjp(es_doc)
+        if contains_fjp_url(es_doc):
+            raise ValueError(f"{self.doc_id}: FJP-host URL survived the scrub")
 
         if embedding is not None:
             # Ensure vector is a flat 1D list of numbers (ES dense_vector requirement)

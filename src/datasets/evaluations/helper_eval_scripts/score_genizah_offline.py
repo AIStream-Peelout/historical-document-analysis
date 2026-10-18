@@ -30,6 +30,9 @@ pipeline reports:
 Usage (from src/datasets/evaluations):
     PYTHONPATH=<repo> python helper_eval_scripts/score_genizah_offline.py \\
         [--benchmark verified|frozen] [--no-wandb]
+
+Another spec in the same format (e.g. the sealed confirmation set) is scored with
+``--spec <file> --outputs-dir <dir> --script-tags <sidecar> --out-dir <dir>``.
 """
 
 import argparse
@@ -41,6 +44,7 @@ import re
 import statistics
 import sys
 from pathlib import Path
+from typing import Optional
 
 import dotenv
 
@@ -189,12 +193,14 @@ def classify(raw: str, hyp_asserted: str, gt_letters: str, ngram_p: float) -> st
     return "substantive"
 
 
-def load_benchmark(which: str) -> list:
+def load_benchmark(which: str, spec_path: Optional[Path] = None) -> list:
     """Load benchmark documents with duplicated ground truths repaired.
 
     :param which: ``verified`` to use the audited subset when present,
         otherwise the frozen 150.
     :type which: str
+    :param spec_path: Another spec in the same format (``{"docs": [...]}``); overrides ``which``.
+    :type spec_path: Optional[Path]
     :return: List of document dicts with repaired ``gt``.
     :rtype: list
     """
@@ -202,6 +208,8 @@ def load_benchmark(which: str) -> list:
                          else "genizah_test_v1.json")
     if not path.exists():
         path = _BENCH_DIR / "genizah_test_v1.json"
+    if spec_path is not None:
+        path = spec_path
     spec = json.load(open(path))
     docs = []
     for d in spec["docs"]:
@@ -226,6 +234,11 @@ def main() -> None:
                         help="EVAL-ONLY language/script sidecar "
                              "(build_script_tags.py); enables the per-script "
                              "stratification table")
+    parser.add_argument("--spec", type=Path, default=None,
+                        help="score another spec in the verified-JSON format "
+                             "(overrides --benchmark)")
+    parser.add_argument("--outputs-dir", type=Path, default=_OUTPUTS,
+                        help="per-fragment output folders (<dir>/<doc_id>/<model>.txt)")
     args = parser.parse_args()
 
     script_tags = {}
@@ -233,13 +246,13 @@ def main() -> None:
         script_tags = {k: v.get("bucket", "untagged")
                        for k, v in json.load(open(args.script_tags)).items()}
 
-    docs = load_benchmark(args.benchmark)
+    docs = load_benchmark(args.benchmark, args.spec)
     rows = []
     tiers = {}
 
     for d in docs:
         doc_id = d["doc_id"]
-        outdir = _OUTPUTS / doc_id
+        outdir = args.outputs_dir / doc_id
         if not outdir.is_dir():
             continue
         gt_ink = genizah_visible_ink_gt(d["gt"])
@@ -377,7 +390,8 @@ def main() -> None:
     run = wandb.init(
         project="cairo-genizah-transcription", entity="igodfried",
         name=args.wandb_run_name, job_type="offline-scoring",
-        config=dict(benchmark=args.benchmark, fragments=n_frag, tier_a=n_a,
+        config=dict(benchmark=args.spec.stem if args.spec else args.benchmark,
+                    fragments=n_frag, tier_a=n_a,
                     abstain_min_chars=ABSTAIN_MIN_CHARS,
                     loop_repeat_ratio=LOOP_REPEAT_RATIO,
                     hallucination_ngram=HALLUCINATION_NGRAM,

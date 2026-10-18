@@ -13,7 +13,12 @@ resumable at page granularity:
    (HathiTrust, Persée, manchesterhive, Acrobat Paper Capture) and PDFs whose
    embedded Hebrew is stored in visual (reversed) order. An existing
    text-layer OCR that fails the same checks is reported and Pass 1 is not run
-   on it unless ``--accept-suspect-ocr`` is given.
+   on it unless ``--accept-suspect-ocr`` is given. ``--ocr-mode hybrid`` (opt-in,
+   born-digital PDFs with Hebrew/Arabic) reads each page from the text layer
+   unless it is mostly Hebrew/Arabic script, where the text layer scrambles the
+   right-to-left lines; those pages go to Vision, whose text is kept only when it
+   reproduces the layer's Hebrew/Arabic letters (``--hybrid-min-share``,
+   ``--hybrid-min-recall``; see :mod:`src.models.ocr.script_routing`).
 2. **Pass 1** — ``StructuredJSONLLM`` on every text-bearing page that has no
    valid file in the book's *target* structured directory (see
    :mod:`academic_pipeline_status`): missing pages and ``[VALIDATION FAILED]``
@@ -62,6 +67,7 @@ from src.datasets.indexing.bibliography.academic_pipeline_status import (
     read_pass1,
     resolve_metadata,
 )
+from src.models.ocr.script_routing import HybridThresholds
 
 _PROJECT_ROOT = Path(__file__).resolve().parents[4]
 logger = logging.getLogger("fill_initial_stages")
@@ -86,7 +92,7 @@ class BookPlan:
 
     :param pdf: Source PDF.
     :param book_dir: Output directory (may not exist yet).
-    :param ocr_mode: ``text``, ``vision`` or None when OCR is already complete.
+    :param ocr_mode: ``text``, ``vision``, ``hybrid`` or None when OCR is already complete (or blocked).
     :param ocr_reason: Why that OCR mode was chosen.
     :param suspect_ocr: Why a complete existing OCR should not be trusted (None when fine).
     :param metadata_path: Metadata file passed to Pass 1 as book context.
@@ -94,6 +100,7 @@ class BookPlan:
     :param variant_dir: Structured directory pages will be written into (None until OCR exists).
     :param todo_pages: Pages needing Pass 1 (None until OCR exists).
     :param strays: Misnamed page files in the target variant (file -> page they hold).
+    :param blocked: Why nothing may run for this PDF (None when it may).
     """
 
     pdf: Path
@@ -106,6 +113,7 @@ class BookPlan:
     variant_dir: Optional[Path] = None
     todo_pages: Optional[List[int]] = None
     strays: Optional[Dict[str, int]] = None
+    blocked: Optional[str] = None
 
 
 def hebrew_final_form_starts(text: str) -> Tuple[int, int]:
@@ -169,9 +177,37 @@ def choose_ocr_mode(pdf: Path, sample: int = 8) -> Tuple[str, str]:
         return "vision", f"{scanned}/{len(idx)} sampled pages are scans (full-page image or invisible OCR layer)"
     if median_chars < 200:
         return "vision", f"thin text layer (median {median_chars} chars/page)"
-    if heb_words >= 30 and heb_final_start / heb_words > 0.05:
+    if _reversed_hebrew(heb_words, heb_final_start):
         return "vision", f"embedded Hebrew looks reversed ({heb_final_start}/{heb_words} words start with a final form)"
     return "text", f"born-digital text layer (median {median_chars} chars/page)"
+
+
+def _reversed_hebrew(words: int, final_starts: int) -> bool:
+    """Return True when enough Hebrew words start with a final form to mean visual (reversed) order.
+
+    :param words: Hebrew words counted by :func:`hebrew_final_form_starts`.
+    :param final_starts: Those starting with a final-form letter.
+    :returns: Reversed-order verdict.
+    """
+    return words >= 30 and final_starts / words > 0.05
+
+
+def ocr_checkpoint_mode(book_dir: Path) -> Optional[str]:
+    """Return the mode that wrote the book's OCR JSON, including an unfinished hybrid run.
+
+    A killed or failed hybrid run leaves no ``processing_info``, but every page it
+    wrote (error stubs included) carries a ``routing`` block.
+
+    :param book_dir: Book directory.
+    :returns: ``text_only``, ``hybrid``, ``vision`` or None when there is no readable OCR JSON.
+    """
+    data = _read_ocr_json(book_dir)
+    if data is None:
+        return None
+    mode = data.get("processing_info", {}).get("mode")
+    if mode is None and any("routing" in p for p in data.get("pages", [])):
+        return "hybrid"
+    return mode or "vision"
 
 
 def ocr_json_path(book_dir: Path) -> Path:
@@ -216,17 +252,32 @@ def ocr_missing_pages(pdf: Path, book_dir: Path) -> List[int]:
 
 
 def existing_ocr_suspect(pdf: Path, book_dir: Path) -> Optional[str]:
-    """Return why a complete text-layer OCR should not be trusted, else None.
+    """Return why a complete text-layer or hybrid OCR should not be trusted, else None.
+
+    Hybrid output keeps the text layer on most pages, so it gets the same scan
+    and thin-layer checks; its reversed-Hebrew check looks only at the pages it
+    kept from the layer, since scrambled right-to-left lines on the Vision pages
+    are what hybrid mode is for.
 
     :param pdf: Source PDF.
     :param book_dir: Book directory.
     :returns: Reason string or None (Vision OCR is always trusted).
     """
     data = _read_ocr_json(book_dir)
-    if data is None or data.get("processing_info", {}).get("mode") != "text_only":
+    used = (data or {}).get("processing_info", {}).get("mode")
+    if used not in ("text_only", "hybrid"):
         return None
     mode, reason = choose_ocr_mode(pdf)
-    return f"existing OCR came from the PDF text layer, but {reason}" if mode == "vision" else None
+    if used == "text_only":
+        return f"existing OCR came from the PDF text layer, but {reason}" if mode == "vision" else None
+    if mode == "vision" and not reason.startswith("embedded Hebrew looks reversed"):
+        return f"hybrid OCR kept the PDF text layer on most pages, but {reason}"
+    kept = "\n".join((p.get("ocr_result") or {}).get("full_text", "")
+                     for p in data.get("pages", []) if p.get("ocr_source") != "vision")
+    words, finals = hebrew_final_form_starts(kept)
+    if _reversed_hebrew(words, finals):
+        return f"hybrid OCR kept reversed Hebrew from the text layer ({finals}/{words} words start with a final form)"
+    return None
 
 
 def load_ocr_pages(book_dir: Path) -> Dict[int, str]:
@@ -287,7 +338,7 @@ def plan_book(pdf: Path, root: Path, ocr_mode: str, metadata_override: Optional[
 
     :param pdf: Source PDF.
     :param root: Corpus root.
-    :param ocr_mode: ``auto``, ``text`` or ``vision``.
+    :param ocr_mode: ``auto``, ``text``, ``vision`` or ``hybrid``.
     :param metadata_override: Explicit metadata path, if given.
     :param variant_name: Structured directory name for a fresh book (``{stem}`` placeholder allowed).
     :param new_variant: Force a new structured directory.
@@ -298,16 +349,36 @@ def plan_book(pdf: Path, root: Path, ocr_mode: str, metadata_override: Optional[
         meta_path, meta_kind = metadata_override, "override"
     else:
         meta_path, meta_kind = resolve_metadata(pdf, book_dir if book_dir.exists() else None, root)
-    suspect = None
+    suspect = blocked = None
+    partial = ocr_checkpoint_mode(book_dir)
     if not ocr_missing_pages(pdf, book_dir):
         mode, reason = None, "OCR complete"
         suspect = existing_ocr_suspect(pdf, book_dir)
+    elif partial == "hybrid":
+        # An unfinished hybrid checkpoint is finished in hybrid mode (asked for, or chosen by auto); finishing it in
+        # another mode would mix unrouted pages into it.
+        if ocr_mode in ("auto", "hybrid"):
+            mode, reason = "hybrid", "resuming an unfinished hybrid OCR"
+        else:
+            mode, reason = None, "unfinished OCR in another mode"
+            blocked = (f"an unfinished hybrid OCR exists; re-run with --ocr-mode hybrid, or move "
+                       f"{ocr_json_path(book_dir).name} aside to start over in {ocr_mode} mode")
     elif ocr_mode == "auto":
         mode, reason = choose_ocr_mode(pdf)
+    elif ocr_mode == "hybrid" and partial is not None:
+        # Routing the rest of a text-only or Vision checkpoint would label a mixed file hybrid (a hybrid checkpoint
+        # was handled above).
+        mode, reason = None, "unfinished OCR in another mode"
+        blocked = (f"an unfinished {partial} OCR exists; finish it in that mode, or move "
+                   f"{ocr_json_path(book_dir).name} aside to start over in hybrid mode")
+    elif ocr_mode == "hybrid":
+        mode, reason = choose_ocr_mode(pdf)
+        mode, reason = ("hybrid", "forced by --ocr-mode") if mode == "text" else (
+            "vision", f"hybrid needs a born-digital text layer, but {reason}")
     else:
         mode, reason = ocr_mode, "forced by --ocr-mode"
     plan = BookPlan(pdf=pdf, book_dir=book_dir, ocr_mode=mode, ocr_reason=reason, suspect_ocr=suspect,
-                    metadata_path=meta_path, metadata_kind=meta_kind)
+                    metadata_path=meta_path, metadata_kind=meta_kind, blocked=blocked)
     if _read_ocr_json(book_dir) is not None:
         plan.variant_dir = target_variant_dir(book_dir, variant_name.format(stem=book_dir.name), new_variant)
         plan.todo_pages = pages_needing_pass1(book_dir, load_ocr_pages(book_dir), plan.variant_dir)
@@ -336,11 +407,12 @@ def estimate_ocr_gb(pdf: Path, sample: int = 3, json_mb_per_page: float = 0.1) -
     return n * (worst_mb + json_mb_per_page) / 1000
 
 
-def run_ocr(plan: BookPlan, credentials: Optional[str]) -> None:
+def run_ocr(plan: BookPlan, credentials: Optional[str], hybrid: Optional[HybridThresholds] = None) -> None:
     """Run (or resume) OCR for *plan* into its book directory.
 
     :param plan: Book plan with ``ocr_mode`` set.
-    :param credentials: Google service-account JSON path (Vision only).
+    :param credentials: Google service-account JSON path (Vision and hybrid).
+    :param hybrid: Routing cut-offs for ``hybrid`` mode (defaults when None).
     """
     from src.models.ocr.book_ocr_service import BookOCRService
 
@@ -349,6 +421,8 @@ def run_ocr(plan: BookPlan, credentials: Optional[str]) -> None:
     logger.info(f"OCR ({plan.ocr_mode}) {plan.pdf.name} -> {plan.book_dir}")
     if plan.ocr_mode == "text":
         service.process_pdf_text_only_to_file(str(plan.pdf), output_path=str(plan.book_dir), save_images=True)
+    elif plan.ocr_mode == "hybrid":
+        service.process_pdf_hybrid_to_file(str(plan.pdf), str(plan.book_dir), hybrid or HybridThresholds())
     else:
         service.process_pdf_to_file(str(plan.pdf), output_path=str(plan.book_dir))
 
@@ -510,12 +584,15 @@ def process_book(pdf: Path, root: Path, args: argparse.Namespace, variant_name: 
     plan = plan_book(pdf, root, args.ocr_mode, args.metadata, variant_name, args.new_variant)
     todo = "after OCR" if plan.todo_pages is None else len(plan.todo_pages)
     variant = _rel(plan.variant_dir, root) or variant_name.format(stem=plan.book_dir.name)
-    print(f"{pdf.relative_to(root)}\n  ocr: {plan.ocr_mode or 'done'} ({plan.ocr_reason})\n"
+    print(f"{pdf.relative_to(root)}\n  ocr: {plan.ocr_mode or ('blocked' if plan.blocked else 'done')} ({plan.ocr_reason})\n"
           f"  metadata: {_rel(plan.metadata_path, root)} [{plan.metadata_kind}]\n  pass1 -> {variant}: {todo} page(s)")
     for name, n in (plan.strays or {}).items():
         print(f"  NOTE: page {n} is held by misnamed {name}; not refilled — rename it to page_{n:03d}_structured.json")
     if plan.suspect_ocr:
         print(f"  WARNING: {plan.suspect_ocr}")
+    if plan.blocked:
+        print(f"  SKIP: {plan.blocked}")
+        return 1
     usable_meta = plan.metadata_kind in USABLE_METADATA
     if not usable_meta and not args.allow_no_metadata:
         print("  SKIP: no unambiguous metadata (create <stem>_metadata.json, pass --metadata, or --allow-no-metadata)")
@@ -529,10 +606,11 @@ def process_book(pdf: Path, root: Path, args: argparse.Namespace, variant_name: 
         if free_gb(root) - need < args.min_free_gb:
             print(f"  STOP: {free_gb(root):.1f} GB free, OCR needs ~{need:.1f} GB, floor {args.min_free_gb} GB")
             return -1
-        run_ocr(plan, args.credentials)
+        run_ocr(plan, args.credentials, HybridThresholds(args.hybrid_min_share, args.hybrid_min_recall))
         missing = ocr_missing_pages(pdf, plan.book_dir)
         if missing:
-            print(f"  OCR: {len(missing)} page(s) missing or errored ({missing[:10]}…); re-run to retry them")
+            print(f"  OCR: {len(missing)} page(s) missing or errored ({missing[:10]}…); "
+                  f"re-run with --ocr-mode {plan.ocr_mode} to retry them")
             problems += len(missing)
         plan = plan_book(pdf, root, args.ocr_mode, args.metadata, variant_name, args.new_variant)
     if args.skip_pass1 or plan.variant_dir is None:
@@ -564,7 +642,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--pdf", action="append", required=True, help="PDF path relative to the corpus root (repeatable).")
     parser.add_argument("--root", type=Path, default=DEFAULT_ROOT)
-    parser.add_argument("--ocr-mode", choices=("auto", "text", "vision"), default="auto")
+    parser.add_argument("--ocr-mode", choices=("auto", "text", "vision", "hybrid"), default="auto")
+    parser.add_argument("--hybrid-min-share", type=float, default=HybridThresholds.min_share,
+                        help="hybrid: minimum Hebrew/Arabic share of a page's letters to send it to Vision.")
+    parser.add_argument("--hybrid-min-recall", type=float, default=HybridThresholds.min_recall,
+                        help="hybrid: minimum share of the text layer's Hebrew/Arabic letters Vision must reproduce.")
     parser.add_argument("--backend", choices=("gemini", "lm_studio"), default="gemini")
     parser.add_argument("--lms-model", default=DEFAULT_LMS_MODEL)
     parser.add_argument("--gemini-model", default=DEFAULT_GEMINI_MODEL)
