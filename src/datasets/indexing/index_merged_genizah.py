@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Index the merged Cairo Genizah corpus into Elasticsearch.
 
-Streams ``merged_shelfmarks.jsonl`` (PGP + FJP + KTIV unioned by canonical id),
+Streams ``merged_shelfmarks.jsonl`` (PGP + FJP + KTIV + Bodleian unioned by canonical id),
 turns each line into a :class:`GenizahDocument` via ``from_merged_format``, and
 indexes it with :class:`ElasticsearchGenizahProcessor`. Every merged record is
 indexed (all shelfmarks), keyed on the institution-qualified ``canonical_id``.
 
-Embeddings default to text-only (no image fetching); image URLs (FJP + KTIV GCS)
+Embeddings default to text-only (no image fetching); image URLs (FJP + KTIV + Bodleian GCS)
 are still stored for display and surfaced provenance fields
 (``canonical_id``, ``sources_present``, ``image_preferred_source``,
-``has_ktiv_images``) make the index navigable by source.
+``has_ktiv_images``, ``has_bodleian_images``) make the index navigable by source.
 
 Run (needs ES creds in env: ELASTIC_SEARCH_HOST / ELASTIC_USER / ELASTIC_PASSWORD)::
 
-    python -m src.datasets.indexing.index_merged_genizah --index genizah_merged_v2
+    python -m src.datasets.indexing.index_merged_genizah --index genizah_merged_v4
     python -m src.datasets.indexing.index_merged_genizah --limit 200   # smoke test
 """
 
@@ -70,7 +70,7 @@ def iter_merged_documents(
 
 def index_merged(
     merged_path: str = DEFAULT_MERGED,
-    index_name: str = "genizah_merged_v2",
+    index_name: str = "genizah_merged_v6",
     text_only: bool = True,
     batch_size: int = 100,
     limit: Optional[int] = None,
@@ -129,7 +129,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--merged", default=DEFAULT_MERGED)
-    parser.add_argument("--index", default="genizah_merged_v2")
+    parser.add_argument("--index", default="genizah_merged_v8")
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--skip", type=int, default=0,

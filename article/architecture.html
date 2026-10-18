@@ -1,0 +1,1115 @@
+<title>Where the Gradient Went</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Spectral:ital,wght@0,300;0,400;0,600;1,400&family=IBM+Plex+Mono:wght@400;500;600&display=swap">
+
+<style>
+:root {
+  color-scheme: light;
+  --ground: #f2f3f4; --surface: #fbfbfc; --surface-2: #ebedef;
+  --ink: #0e1116; --ink-2: #4a5260; --ink-3: #656d7b;
+  --rule: #dfe1e5; --rule-strong: #c6cad1;
+  --accent: #1f3f6e; --accent-soft: #e4ebf4;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+  --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+  --grid: #e6e8ec;
+  --q1: #cde2fb; --q2: #9ec5f4; --q3: #6da7ec; --q4: #3987e5; --q5: #256abf; --q6: #104281;
+  /* diagram roles */
+  --trained: #2a78d6;        /* LoRA-wrapped and gradient arrived */
+  --trained-soft: #e2edfb;
+  --dead: #d03b3b;           /* LoRA-wrapped but lora_B stayed exactly zero */
+  --dead-soft: #fbe6e6;
+  --frozen: #98a0ad;         /* never wrapped at all */
+  --frozen-soft: #eceef1;
+  --shadow: 0 1px 2px rgba(14,17,22,.05), 0 8px 24px -16px rgba(14,17,22,.25);
+  --measure: 34rem; --wide: 76rem;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0f1115; --surface: #171a20; --surface-2: #1e222a;
+    --ink: #eceef2; --ink-2: #a8b0bd; --ink-3: #8b939f;
+    --rule: #262b33; --rule-strong: #38404b;
+    --accent: #6ea3e0; --accent-soft: #1b2735;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --grid: #21262e;
+    --q1: #104281; --q2: #184f95; --q3: #256abf; --q4: #3987e5; --q5: #6da7ec; --q6: #9ec5f4;
+    --trained: #3987e5; --trained-soft: #16283d;
+    --dead: #e05a5a; --dead-soft: #3a1e1e;
+    --frozen: #79828f; --frozen-soft: #21252c;
+    --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0f1115; --surface: #171a20; --surface-2: #1e222a;
+  --ink: #eceef2; --ink-2: #a8b0bd; --ink-3: #8b939f;
+  --rule: #262b33; --rule-strong: #38404b;
+  --accent: #6ea3e0; --accent-soft: #1b2735;
+  --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+  --grid: #21262e;
+  --q1: #104281; --q2: #184f95; --q3: #256abf; --q4: #3987e5; --q5: #6da7ec; --q6: #9ec5f4;
+  --trained: #3987e5; --trained-soft: #16283d;
+  --dead: #e05a5a; --dead-soft: #3a1e1e;
+  --frozen: #79828f; --frozen-soft: #21252c;
+  --shadow: 0 1px 2px rgba(0,0,0,.4), 0 8px 24px -16px rgba(0,0,0,.8);
+}
+
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--ground); color: var(--ink);
+  font-family: Spectral, Georgia, serif; font-size: 18px; line-height: 1.68;
+  -webkit-font-smoothing: antialiased;
+}
+.mono { font-family: "IBM Plex Mono", ui-monospace, Menlo, monospace; }
+.wrap { max-width: var(--wide); margin: 0 auto; padding: 0 1.5rem; }
+.col { max-width: var(--measure); margin-inline: auto; }
+h1, h2, h3 { font-weight: 600; text-wrap: balance; line-height: 1.18; margin: 0; }
+p { margin: 0; }
+code {
+  font-family: "IBM Plex Mono", monospace; font-size: .86em;
+  background: var(--surface-2); padding: .08em .3em; border-radius: 2px;
+}
+.eyebrow {
+  font-family: "IBM Plex Mono", monospace; font-size: .6875rem; font-weight: 600;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);
+}
+
+.masthead { padding: 5rem 0 2.5rem; }
+.masthead .col { max-width: 44rem; }
+.rule-top { height: 2px; background: var(--ink); margin-bottom: 1.5rem; }
+.masthead h1 {
+  font-size: clamp(2.4rem, 6.5vw, 4rem); font-weight: 300;
+  letter-spacing: -.022em; line-height: 1.02; margin: .5rem 0 .7rem;
+}
+.masthead h1 em { font-style: italic; color: var(--accent); font-weight: 300; }
+.standfirst { font-size: 1.2rem; color: var(--ink-2); font-weight: 300; max-width: 40rem; }
+.facts {
+  margin-top: 2rem; padding-top: 1rem; border-top: 1px solid var(--rule);
+  display: flex; flex-wrap: wrap; gap: 1.25rem 2.25rem;
+}
+.facts div { display: flex; flex-direction: column; gap: .1rem; }
+.facts .v {
+  font-family: "IBM Plex Mono", monospace; font-size: 1.05rem;
+  font-variant-numeric: tabular-nums; color: var(--ink);
+}
+.facts .v.dead { color: var(--dead); }
+
+.section { padding: 3rem 0 0; }
+.prose { max-width: var(--measure); margin-inline: auto; border-left: 1px solid var(--rule); padding-left: 1.5rem; }
+.prose > * + * { margin-top: 1.05em; }
+.lede { font-size: 1.06rem; color: var(--ink-2); }
+
+figure {
+  margin: 2.25rem auto; background: var(--surface); border: 1px solid var(--rule);
+  border-radius: 3px; box-shadow: var(--shadow); overflow: hidden;
+}
+.fig-head {
+  padding: 1.1rem 1.5rem .85rem; border-bottom: 1px solid var(--rule);
+  display: flex; flex-wrap: wrap; gap: .4rem 1.25rem; align-items: baseline;
+}
+.fig-head .n {
+  font-family: "IBM Plex Mono", monospace; font-size: .6875rem; font-weight: 600;
+  letter-spacing: .14em; text-transform: uppercase; color: var(--accent);
+}
+.fig-head h3 { font-size: 1.12rem; flex: 1 1 20rem; }
+.fig-body { padding: 1.35rem 1.5rem; overflow-x: auto; }
+figcaption {
+  padding: .9rem 1.5rem 1.15rem; border-top: 1px solid var(--rule);
+  background: var(--surface-2); font-size: .93rem; font-style: italic; color: var(--ink);
+}
+figcaption .src {
+  display: block; margin-top: .5rem; font-family: "IBM Plex Mono", monospace;
+  font-size: .65rem; font-style: normal; color: var(--ink-3); word-break: break-word;
+}
+svg { display: block; max-width: 100%; height: auto; }
+svg text { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+
+.key { display: flex; flex-wrap: wrap; gap: .45rem 1.4rem; margin-bottom: 1.1rem; }
+.key span {
+  display: inline-flex; align-items: center; gap: .45rem;
+  font-family: "IBM Plex Mono", monospace; font-size: .7rem; color: var(--ink-2);
+}
+.key i { width: 12px; height: 12px; border-radius: 2px; flex: none; border: 1.5px solid; }
+.key i.t { background: var(--trained-soft); border-color: var(--trained); }
+.key i.d { background: var(--dead-soft); border-color: var(--dead); }
+.key i.f { background: var(--frozen-soft); border-color: var(--frozen); }
+
+table { border-collapse: collapse; width: 100%; font-size: .82rem; }
+th, td { padding: .45rem .8rem; text-align: right; border-bottom: 1px solid var(--rule); white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+thead th {
+  font-family: "IBM Plex Mono", monospace; font-size: .64rem; font-weight: 600;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--ink-3);
+  border-bottom: 1px solid var(--rule-strong);
+}
+td { font-family: "IBM Plex Mono", monospace; font-variant-numeric: tabular-nums; color: var(--ink-2); }
+td:first-child { color: var(--ink); }
+tr.dead td { background: var(--dead-soft); }
+tr.tot td { font-weight: 600; color: var(--ink); border-top: 1px solid var(--rule-strong); }
+
+#tip {
+  position: fixed; z-index: 60; pointer-events: none; opacity: 0;
+  transition: opacity .09s ease; max-width: 21rem;
+  background: var(--ink); color: var(--ground); border-radius: 3px;
+  padding: .5rem .65rem; font-family: "IBM Plex Mono", monospace;
+  font-size: .7rem; line-height: 1.5; box-shadow: 0 4px 16px rgba(0,0,0,.28);
+}
+#tip .t { font-weight: 600; display: block; margin-bottom: .15rem; }
+#tip .r { display: flex; justify-content: space-between; gap: 1rem; }
+
+footer { margin-top: 3.5rem; padding: 2rem 0 3.5rem; border-top: 1px solid var(--rule); }
+footer .col { font-size: .8rem; color: var(--ink-3); }
+footer p + p { margin-top: .6rem; }
+
+@media (prefers-reduced-motion: reduce) { * { transition-duration: .01ms !important; } }
+body.export { background: var(--ground); }
+body.export > *:not(.export-stage) { display: none !important; }
+.export-stage { padding: 24px; width: 1240px; }
+.export-stage figure { margin: 0; }
+</style>
+
+<div id="tip" role="status" aria-live="polite"></div>
+
+<header class="masthead">
+  <div class="wrap"><div class="col">
+    <div class="rule-top"></div>
+    <div class="eyebrow">Companion · Qwen3-VL-8B Hebrew fine-tunes</div>
+    <h1>Where the gradient <em>went</em></h1>
+    <p class="standfirst">
+      The architecture of Qwen3-VL-8B-Instruct, annotated with exactly which
+      modules our LoRA touched — and which of them never moved, read straight
+      off the shipped adapter weights.
+    </p>
+    <div class="facts">
+      <div><span class="eyebrow">Total parameters</span><span class="v">8,767,123,696</span></div>
+      <div><span class="eyebrow">LoRA parameters</span><span class="v">51,346,944 · 0.586%</span></div>
+      <div><span class="eyebrow">Modules wrapped</span><span class="v">360</span></div>
+      <div><span class="eyebrow">Wrapped but dead through v1.8a</span><span class="v dead">108</span></div>
+    </div>
+  </div></div>
+</header>
+
+<section class="section">
+  <div class="wrap">
+    <div class="prose">
+      <p class="lede">
+        Qwen3-VL-8B is two stacks joined by a projector. A 27-block vision
+        transformer turns 16×16 image patches into 1,152-dimensional tokens; a
+        merger folds each 2×2 group of them into one 4,096-dimensional token; a
+        36-layer language model consumes those alongside the text embeddings.
+        Three extra taps — the deepstack mergers — carry features out of vision
+        blocks 8, 16 and 24 and inject them into the language stack directly.
+      </p>
+      <p>
+        Our LoRA config wrapped 360 of those projections. The interesting part is
+        not the 360; it is which of them the gradient actually reached.
+      </p>
+    </div>
+
+    <figure id="fig-arch">
+      <div class="fig-head">
+        <span class="n">Figure 1</span>
+        <h3>The full stack, marked by what our training touched</h3>
+      </div>
+      <div class="fig-body">
+        <div class="key">
+          <span><i class="t"></i>LoRA-wrapped, weights moved</span>
+          <span><i class="d"></i>LoRA-wrapped, <code>lora_B</code> stayed exactly 0 through v1.8a</span>
+          <span><i class="f"></i>never wrapped — frozen in every generation</span>
+        </div>
+        <div id="arch-svg"></div>
+      </div>
+      <figcaption>
+        Every projection inside the 27 vision blocks and the 36 language layers was
+        wrapped by the same LoRA config. Only the language half ever received
+        gradient until v1.8b. Note what is grey: the patch embedding, the merger,
+        and the three deepstack mergers — the entire vision-to-language bridge, 160
+        million parameters of it — was never adapted in any generation.
+        <span class="src">config.json (Qwen3-VL-8B-Instruct) · adapter_config.json + adapter_model.safetensors from the v1.6/v1.7/v1.8a/v1.8b checkpoint repos</span>
+      </figcaption>
+    </figure>
+
+    <div class="prose">
+      <p>
+        The LoRA itself is unremarkable, which is part of the point — nothing in
+        the configuration hints at the failure. Rank 16, alpha 16, dropout 0, no
+        bias, no modules saved in full. Alpha equal to rank means the scale factor
+        is exactly 1.0, so the adapter's contribution is <code>B·A</code> with no
+        amplification.
+      </p>
+    </div>
+
+    <figure id="fig-lora">
+      <div class="fig-head">
+        <span class="n">Figure 2</span>
+        <h3>Where a LoRA pair attaches, with the real shapes</h3>
+      </div>
+      <div class="fig-body"><div id="lora-svg"></div></div>
+      <figcaption>
+        Each wrapped projection keeps its frozen weight and gains two small
+        matrices. Because <code>lora_B</code> initialises to zero, an untrained
+        adapter is mathematically invisible — which is exactly why a vision tower
+        that never received gradient behaves identically to the base model while
+        every dashboard reports a healthy fine-tune.
+        <span class="src">r=16, alpha=16 → scale 1.0 · shapes read from adapter_model.safetensors</span>
+      </figcaption>
+    </figure>
+
+    <figure id="fig-moved">
+      <div class="fig-head">
+        <span class="n">Figure 3</span>
+        <h3>What actually moved, layer by layer</h3>
+      </div>
+      <div class="fig-body">
+        <div class="key" id="moved-key"></div>
+        <div id="moved-svg"></div>
+      </div>
+      <figcaption>
+        The magnitude of each layer's effective update, ‖B·A‖<sub>F</sub> averaged
+        over that layer's wrapped projections. The language stack trains normally
+        in all four generations. The vision stack is a flat line at exactly zero
+        for v1.6, v1.7 and v1.8a — all 27 blocks, all 108 tensors — and only lifts
+        off in v1.8b. v1.8a is the deliberate control; v1.6 and v1.7 were supposed
+        to be training vision and were not.
+        <span class="src">‖B·A‖<sub>F</sub> per module, averaged per layer · computed from the four checkpoint adapters</span>
+      </figcaption>
+    </figure>
+
+    <div class="prose">
+      <p>
+        Two details in that chart are worth pausing on. The vision updates in
+        v1.8b are an order of magnitude smaller than the language updates — 0.17
+        against 3.79 on average — which is expected: the vision tower is a
+        seventh the width and was trained at the same learning rate for the same
+        number of steps. Small is fine. Zero is not.
+      </p>
+      <p>
+        And the language curve is essentially unchanged across all four
+        generations. Whatever v1.8b gained on manuscripts, it did not come from
+        training the language half differently. It came from the 7.7 million
+        parameters in the other tower finally moving.
+      </p>
+    </div>
+
+    <figure id="fig-budget">
+      <div class="fig-head">
+        <span class="n">Figure 4</span>
+        <h3>The parameter budget</h3>
+      </div>
+      <div class="fig-body"><div id="budget-svg"></div></div>
+      <figcaption>
+        Where the 8.77 billion parameters sit, and how little of the model a LoRA
+        run actually writes to. The vision tower is 6.6% of the model; the
+        adapters covering it are 7.7 million parameters, under a tenth of one
+        percent — and for three generations, all of them were zero.
+        <span class="src">parameter counts from the base model's safetensors headers</span>
+      </figcaption>
+    </figure>
+
+    <div class="prose">
+      <h3 style="font-size:1.1rem;margin-top:2rem">How far the language half got on its own</h3>
+      <p>
+        The uncomfortable part of the vision bug is that it took so long to notice,
+        and the reason it took so long is that the language-only models were
+        <em>good</em>. v1.7 — 108 dead vision tensors and all — posted the best
+        gemara score in the whole benchmark, ahead of Gemini Pro and every frontier
+        model we tested. On printed Talmud, a frozen vision tower was not the
+        bottleneck at all.
+      </p>
+      <p>
+        Which says something about where the difficulty actually sat. Qwen3-VL's
+        stock vision tower could already resolve Vilna type perfectly well; what it
+        could not do was turn those features into Hebrew text, because the language
+        model had never been asked to. Teaching the language half to decode was
+        enough to close the entire gap on print.
+      </p>
+    </div>
+
+    <figure id="fig-lang">
+      <div class="fig-head">
+        <span class="n">Figure 5</span>
+        <h3>Inside the language model — every layer, every projection</h3>
+      </div>
+      <div class="fig-body"><div id="lang-svg"></div></div>
+      <figcaption>
+        The 252 wrapped language projections of v1.7, the language-only flagship.
+        Two patterns: the SwiGLU <code>gate_proj</code> absorbs the largest updates
+        of any projection — roughly twice the attention average — and adaptation
+        concentrates at the two ends of the stack, with the middle third changing
+        least. Fine-tuning here is mostly re-gating which existing feed-forward
+        features fire, not rebuilding attention.
+        <span class="src">per-entry RMS of B·A, so values are comparable across projections of different shape · v1.7 adapter</span>
+      </figcaption>
+    </figure>
+
+    <figure id="fig-progress">
+      <div class="fig-head">
+        <span class="n">Figure 6</span>
+        <h3>What the language half bought, and what it could not</h3>
+      </div>
+      <div class="fig-body">
+        <div class="key" id="prog-key"></div>
+        <div id="prog-svg"></div>
+      </div>
+      <figcaption>
+        Left: printed Talmud was solved outright by language-only training — CER
+        3.627 to 0.0047, a 771× improvement with the vision tower frozen throughout.
+        Right: on manuscripts the same training bought <em>coverage</em> — the model
+        went from attempting 1.5% of fragments to 74.8% — but the text it produced
+        was largely not on the page. Only when the vision tower finally trained did
+        n-gram precision jump from 0.186 to 0.475. Language training made the model
+        willing and fluent; vision training made it correct.
+        <span class="src">talmud_paper_summary.csv (gemara median CER) · genizah_offline_summary.csv · v1.5 has no Genizah row</span>
+      </figcaption>
+    </figure>
+
+    <div class="prose">
+      <p>
+        A Vilna page carries three separate text bodies, and only one of them is in
+        the square Hebrew type most people picture. The <em>gemara</em> sits in the
+        centre in square script; Rashi's commentary and the <em>tosafot</em> flank
+        it in Rashi script — a semi-cursive Sephardic face with genuinely different
+        letterforms. Since all three are on the same scan, they make an unusually
+        clean natural experiment.
+      </p>
+    </div>
+
+    <figure id="fig-sections">
+      <div class="fig-head">
+        <span class="n">Figure 7</span>
+        <h3>Three text bodies, two scripts, one frozen vision tower</h3>
+      </div>
+      <div class="fig-body"><div id="sec-svg"></div></div>
+      <figcaption>
+        The base model is equally hopeless on all three — 3.39 to 3.74 median CER,
+        every page failed — so it has no script preference to begin with.
+        Language-only training then solves <em>both</em> scripts: Rashi script lands
+        at 0.0147 and 0.0120, roughly 3× behind square script but far inside usable
+        range. The control is Rashi versus Tosafot: different position, different
+        content, same typeface — and they land within 0.003 of each other, while
+        gemara on the same image is 3× better. The typeface is what separates them,
+        and a frozen vision tower still handled it.
+        <span class="src">talmud_paper_summary.csv · 65 gemara / 65 rashi / 63 tosafot pages · page layout is schematic</span>
+      </figcaption>
+    </figure>
+
+    <figure id="fig-table">
+      <div class="fig-head">
+        <span class="n">Table</span>
+        <h3>Every wrapped module type</h3>
+      </div>
+      <div class="fig-body"><div id="mod-table"></div></div>
+      <figcaption>
+        The full inventory the LoRA config produced. 360 modules, 720 tensors —
+        one <code>lora_A</code> and one <code>lora_B</code> each.
+        <span class="src">enumerated from adapter_model.safetensors (v1.8b)</span>
+      </figcaption>
+    </figure>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap"><div class="col">
+    <p><strong>How these were produced.</strong> Architecture dimensions come from
+    the model's own <code>config.json</code>. Module inventory and parameter counts
+    come from the base checkpoint's safetensors headers. Every "trained / not
+    trained" claim is read from the shipped adapters themselves — the LoRA tensors
+    were loaded and checked element-wise, not inferred from the training config,
+    which reports vision as a target in all four generations.</p>
+    <p><strong>Caveat.</strong> The four checkpoints shown were produced by the
+    Unsloth/PEFT path on Colab, which is what shipped. The repo also carries an
+    MLX training path for local runs whose YAML uses alpha 32 rather than 16;
+    those configs did not produce these adapters.</p>
+    <p class="mono" style="margin-top:1rem">Cairo Genizah AI project · generated 2026-08-20</p>
+  </div></div>
+</footer>
+
+<script>
+const D = {"arch":{"name":"Qwen3-VL-8B-Instruct","total_params":8767123696,"text":{"layers":36,"hidden":4096,"heads":32,"kv_heads":8,"head_dim":128,"intermediate":12288,"vocab":151936,"rope_theta":5000000,"mrope_section":[24,20,20],"max_pos":262144},"vision":{"depth":27,"hidden":1152,"heads":16,"intermediate":4304,"patch":16,"temporal_patch":2,"spatial_merge":2,"out_hidden":4096,"pos_embeds":2304,"deepstack":[8,16,24]}},"lora":{"r":16,"alpha":16,"dropout":0.0,"scale":1.0,"bias":"none","modules":360,"tensors":720,"params":51346944,"peft":"LORA","task_type":"CAUSAL_LM","targets_vision_in_config":true},"params":{"language: token embeddings":622329856,"language: norms":308224,"language: 36 layers (attn+mlp)":6945767424,"language: lm_head":622329856,"vision: 27 blocks (attn+mlp)":411342192,"vision: block norms":124416,"vision: deepstack mergers (x3)":120377856,"vision: merger (projector)":40119040,"vision: patch embed":1770624,"vision: position embed":2654208},"perlayer":{"v16":{"language":[4.5969,4.85568,3.94357,3.92419,3.16312,2.91619,4.56832,3.33371,3.0568,2.74074,2.45514,2.50617,2.49972,2.4018,2.38597,2.54479,2.37726,2.60716,2.52876,2.718,2.98781,2.99916,3.58551,3.67608,4.41787,4.1321,4.32851,4.3054,4.24851,5.00648,4.60193,4.33223,4.26033,4.61027,4.08739,4.07866],"vision":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]},"v17":{"language":[4.99053,5.23606,4.36559,4.24544,3.45009,3.12399,4.77863,3.47694,3.15934,2.85436,2.57459,2.60261,2.56267,2.46041,2.46359,2.60268,2.43688,2.70186,2.60299,2.79211,3.08572,3.08191,3.69945,3.80519,4.58412,4.29367,4.55432,4.49287,4.4565,5.22914,4.83679,4.59428,4.52041,4.84947,4.31893,4.30626],"vision":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]},"v18a":{"language":[5.07849,5.42932,4.49196,4.37165,3.5555,3.21716,4.87794,3.5531,3.23247,2.92295,2.6379,2.66841,2.61686,2.50599,2.52487,2.63467,2.47521,2.74142,2.6499,2.83982,3.14671,3.13143,3.75932,3.86926,4.6536,4.37025,4.65464,4.57685,4.5435,5.32676,4.94043,4.69858,4.6164,4.96134,4.43864,4.40351],"vision":[0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]},"v18b":{"language":[4.8617,5.38341,4.4574,4.29551,3.4775,3.1526,4.84199,3.53825,3.20388,2.90903,2.62783,2.65018,2.61311,2.49757,2.51886,2.64887,2.49081,2.74723,2.64615,2.84281,3.1283,3.13173,3.75195,3.86357,4.64663,4.37717,4.6443,4.58093,4.54558,5.30865,4.93544,4.71046,4.62655,4.96605,4.4407,4.40565],"vision":[0.12108,0.11631,0.1049,0.11552,0.13876,0.15113,0.17008,0.16665,0.16689,0.1703,0.16585,0.18946,0.18911,0.18588,0.20431,0.18595,0.1974,0.21566,0.19133,0.18465,0.1564,0.16772,0.15646,0.16049,0.19029,0.2237,0.12135]}},"modules":{"vision":[{"m":"attn.qkv","n":27,"shape":[3456,1152],"p":1990656},{"m":"attn.proj","n":27,"shape":[1152,1152],"p":995328},{"m":"mlp.linear_fc1","n":27,"shape":[4304,1152],"p":2356992},{"m":"mlp.linear_fc2","n":27,"shape":[1152,4304],"p":2356992}],"language":[{"m":"self_attn.q_proj","n":36,"shape":[4096,4096],"p":4718592},{"m":"self_attn.k_proj","n":36,"shape":[1024,4096],"p":2949120},{"m":"self_attn.v_proj","n":36,"shape":[1024,4096],"p":2949120},{"m":"self_attn.o_proj","n":36,"shape":[4096,4096],"p":4718592},{"m":"mlp.gate_proj","n":36,"shape":[12288,4096],"p":9437184},{"m":"mlp.up_proj","n":36,"shape":[12288,4096],"p":9437184},{"m":"mlp.down_proj","n":36,"shape":[4096,12288],"p":9437184}]},"verify":{"v16":{"vision_nonzero":0,"vision_total":108,"lang_nonzero":252,"vmax":0.0},"v17":{"vision_nonzero":0,"vision_total":108,"lang_nonzero":252,"vmax":0.0},"v18a":{"vision_nonzero":0,"vision_total":108,"lang_nonzero":252,"vmax":0.0},"v18b":{"vision_nonzero":108,"vision_total":108,"lang_nonzero":252,"vmax":0.1989}},"langgrid":{"v16":{"vision_nonzero":0,"vision_total":108,"grid":{"0":{"mlp.down_proj":0.0005921,"mlp.gate_proj":0.00132337,"mlp.up_proj":0.00157893,"self_attn.k_proj":0.00066557,"self_attn.o_proj":0.00042683,"self_attn.q_proj":0.00074904,"self_attn.v_proj":0.0005898},"1":{"mlp.down_proj":0.00065361,"mlp.gate_proj":0.00226866,"mlp.up_proj":0.00089281,"self_attn.k_proj":0.00062394,"self_attn.o_proj":0.00044958,"self_attn.q_proj":0.00070249,"self_attn.v_proj":0.00045269},"2":{"mlp.down_proj":0.000528,"mlp.gate_proj":0.00175154,"mlp.up_proj":0.00067054,"self_attn.k_proj":0.00059531,"self_attn.o_proj":0.00053038,"self_attn.q_proj":0.00060529,"self_attn.v_proj":0.00039297},"3":{"mlp.down_proj":0.00053089,"mlp.gate_proj":0.00186264,"mlp.up_proj":0.00066009,"self_attn.k_proj":0.00047084,"self_attn.o_proj":0.00041449,"self_attn.q_proj":0.0005741,"self_attn.v_proj":0.00038667},"4":{"mlp.down_proj":0.0004277,"mlp.gate_proj":0.00130799,"mlp.up_proj":0.00053125,"self_attn.k_proj":0.00047969,"self_attn.o_proj":0.00041478,"self_attn.q_proj":0.00061271,"self_attn.v_proj":0.00042382},"5":{"mlp.down_proj":0.00049008,"mlp.gate_proj":0.00102076,"mlp.up_proj":0.00054738,"self_attn.k_proj":0.00040305,"self_attn.o_proj":0.00058178,"self_attn.q_proj":0.00043762,"self_attn.v_proj":0.00039568},"6":{"mlp.down_proj":0.00192917,"mlp.gate_proj":0.00099912,"mlp.up_proj":0.00060527,"self_attn.k_proj":0.00054576,"self_attn.o_proj":0.00051348,"self_attn.q_proj":0.00065198,"self_attn.v_proj":0.00049709},"7":{"mlp.down_proj":0.0005927,"mlp.gate_proj":0.00113045,"mlp.up_proj":0.00056943,"self_attn.k_proj":0.00051169,"self_attn.o_proj":0.00063921,"self_attn.q_proj":0.00056138,"self_attn.v_proj":0.0005399},"8":{"mlp.down_proj":0.00053424,"mlp.gate_proj":0.00108693,"mlp.up_proj":0.00055274,"self_attn.k_proj":0.0005033,"self_attn.o_proj":0.00047716,"self_attn.q_proj":0.0004866,"self_attn.v_proj":0.00048661},"9":{"mlp.down_proj":0.00039206,"mlp.gate_proj":0.00101231,"mlp.up_proj":0.00043724,"self_attn.k_proj":0.00048026,"self_attn.o_proj":0.00049267,"self_attn.q_proj":0.00054905,"self_attn.v_proj":0.00042457},"10":{"mlp.down_proj":0.0004249,"mlp.gate_proj":0.00089802,"mlp.up_proj":0.00042899,"self_attn.k_proj":0.00043417,"self_attn.o_proj":0.00035986,"self_attn.q_proj":0.00041275,"self_attn.v_proj":0.00034339},"11":{"mlp.down_proj":0.000412,"mlp.gate_proj":0.00092219,"mlp.up_proj":0.00041026,"self_attn.k_proj":0.00047924,"self_attn.o_proj":0.00040942,"self_attn.q_proj":0.00043105,"self_attn.v_proj":0.0003629},"12":{"mlp.down_proj":0.00042682,"mlp.gate_proj":0.0008537,"mlp.up_proj":0.00047468,"self_attn.k_proj":0.0004002,"self_attn.o_proj":0.00042888,"self_attn.q_proj":0.00044097,"self_attn.v_proj":0.00032386},"13":{"mlp.down_proj":0.00040915,"mlp.gate_proj":0.0008573,"mlp.up_proj":0.00045508,"self_attn.k_proj":0.00039985,"self_attn.o_proj":0.0003782,"self_attn.q_proj":0.0003808,"self_attn.v_proj":0.00032791},"14":{"mlp.down_proj":0.00040293,"mlp.gate_proj":0.00080708,"mlp.up_proj":0.00042763,"self_attn.k_proj":0.00046241,"self_attn.o_proj":0.00037692,"self_attn.q_proj":0.0004692,"self_attn.v_proj":0.00032753},"15":{"mlp.down_proj":0.00049329,"mlp.gate_proj":0.00085425,"mlp.up_proj":0.00047027,"self_attn.k_proj":0.00047224,"self_attn.o_proj":0.00034381,"self_attn.q_proj":0.00042876,"self_attn.v_proj":0.00038356},"16":{"mlp.down_proj":0.00039062,"mlp.gate_proj":0.00086361,"mlp.up_proj":0.0004143,"self_attn.k_proj":0.00039209,"self_attn.o_proj":0.00039197,"self_attn.q_proj":0.00038025,"self_attn.v_proj":0.0004089},"17":{"mlp.down_proj":0.00049041,"mlp.gate_proj":0.00078737,"mlp.up_proj":0.00052758,"self_attn.k_proj":0.0004839,"self_attn.o_proj":0.00036806,"self_attn.q_proj":0.00053572,"self_attn.v_proj":0.00036577},"18":{"mlp.down_proj":0.00051051,"mlp.gate_proj":0.00080108,"mlp.up_proj":0.00050862,"self_attn.k_proj":0.00043395,"self_attn.o_proj":0.00036109,"self_attn.q_proj":0.00043389,"self_attn.v_proj":0.00031391},"19":{"mlp.down_proj":0.00048642,"mlp.gate_proj":0.00085459,"mlp.up_proj":0.00052479,"self_attn.k_proj":0.00041412,"self_attn.o_proj":0.00046145,"self_attn.q_proj":0.00043616,"self_attn.v_proj":0.00061737},"20":{"mlp.down_proj":0.00059218,"mlp.gate_proj":0.00091566,"mlp.up_proj":0.00060867,"self_attn.k_proj":0.00047333,"self_attn.o_proj":0.00049854,"self_attn.q_proj":0.00050203,"self_attn.v_proj":0.00040597},"21":{"mlp.down_proj":0.00054037,"mlp.gate_proj":0.000944,"mlp.up_proj":0.00069779,"self_attn.k_proj":0.00045112,"self_attn.o_proj":0.00048479,"self_attn.q_proj":0.00047016,"self_attn.v_proj":0.0003308},"22":{"mlp.down_proj":0.00066422,"mlp.gate_proj":0.00108893,"mlp.up_proj":0.00072971,"self_attn.k_proj":0.00055596,"self_attn.o_proj":0.00059101,"self_attn.q_proj":0.00061133,"self_attn.v_proj":0.00069364},"23":{"mlp.down_proj":0.00061931,"mlp.gate_proj":0.00116918,"mlp.up_proj":0.00082201,"self_attn.k_proj":0.00053564,"self_attn.o_proj":0.0006666,"self_attn.q_proj":0.00059527,"self_attn.v_proj":0.00046227},"24":{"mlp.down_proj":0.00084367,"mlp.gate_proj":0.00127661,"mlp.up_proj":0.00088616,"self_attn.k_proj":0.00051603,"self_attn.o_proj":0.00098412,"self_attn.q_proj":0.00070546,"self_attn.v_proj":0.00079035},"25":{"mlp.down_proj":0.00077319,"mlp.gate_proj":0.00127609,"mlp.up_proj":0.00085182,"self_attn.k_proj":0.00059968,"self_attn.o_proj":0.00081543,"self_attn.q_proj":0.00057598,"self_attn.v_proj":0.00069121},"26":{"mlp.down_proj":0.00096111,"mlp.gate_proj":0.00125297,"mlp.up_proj":0.00085322,"self_attn.k_proj":0.00059196,"self_attn.o_proj":0.00091033,"self_attn.q_proj":0.00060076,"self_attn.v_proj":0.00055516},"27":{"mlp.down_proj":0.00074669,"mlp.gate_proj":0.00119445,"mlp.up_proj":0.00089481,"self_attn.k_proj":0.0005592,"self_attn.o_proj":0.00119745,"self_attn.q_proj":0.00066119,"self_attn.v_proj":0.00061518},"28":{"mlp.down_proj":0.00081342,"mlp.gate_proj":0.00121223,"mlp.up_proj":0.00094786,"self_attn.k_proj":0.00056195,"self_attn.o_proj":0.00091837,"self_attn.q_proj":0.00059416,"self_attn.v_proj":0.00063375},"29":{"mlp.down_proj":0.00087176,"mlp.gate_proj":0.00127911,"mlp.up_proj":0.00104929,"self_attn.k_proj":0.0006466,"self_attn.o_proj":0.00127604,"self_attn.q_proj":0.00105459,"self_attn.v_proj":0.00071848},"30":{"mlp.down_proj":0.00076474,"mlp.gate_proj":0.00120785,"mlp.up_proj":0.00107026,"self_attn.k_proj":0.00066571,"self_attn.o_proj":0.00119409,"self_attn.q_proj":0.00069295,"self_attn.v_proj":0.0007487},"31":{"mlp.down_proj":0.00076705,"mlp.gate_proj":0.0010666,"mlp.up_proj":0.00106777,"self_attn.k_proj":0.00054692,"self_attn.o_proj":0.0010307,"self_attn.q_proj":0.00066425,"self_attn.v_proj":0.00081979},"32":{"mlp.down_proj":0.00077732,"mlp.gate_proj":0.0011303,"mlp.up_proj":0.00104407,"self_attn.k_proj":0.0005037,"self_attn.o_proj":0.00089137,"self_attn.q_proj":0.00067225,"self_attn.v_proj":0.00070579},"33":{"mlp.down_proj":0.00079502,"mlp.gate_proj":0.00119414,"mlp.up_proj":0.00110657,"self_attn.k_proj":0.0006255,"self_attn.o_proj":0.0010793,"self_attn.q_proj":0.00072305,"self_attn.v_proj":0.00080364},"34":{"mlp.down_proj":0.00064064,"mlp.gate_proj":0.00113948,"mlp.up_proj":0.00100925,"self_attn.k_proj":0.00059969,"self_attn.o_proj":0.00080249,"self_attn.q_proj":0.0007156,"self_attn.v_proj":0.00067202},"35":{"mlp.down_proj":0.00076197,"mlp.gate_proj":0.00110514,"mlp.up_proj":0.00102136,"self_attn.k_proj":0.00062656,"self_attn.o_proj":0.00072697,"self_attn.q_proj":0.00060291,"self_attn.v_proj":0.00064844}}},"v17":{"vision_nonzero":0,"vision_total":108,"grid":{"0":{"mlp.down_proj":0.00064153,"mlp.gate_proj":0.00148232,"mlp.up_proj":0.00170834,"self_attn.k_proj":0.00069344,"self_attn.o_proj":0.00044821,"self_attn.q_proj":0.00078309,"self_attn.v_proj":0.00062633},"1":{"mlp.down_proj":0.00068159,"mlp.gate_proj":0.00241957,"mlp.up_proj":0.00103612,"self_attn.k_proj":0.00067697,"self_attn.o_proj":0.0004789,"self_attn.q_proj":0.00072619,"self_attn.v_proj":0.00047758},"2":{"mlp.down_proj":0.00056485,"mlp.gate_proj":0.00198444,"mlp.up_proj":0.00077039,"self_attn.k_proj":0.00062297,"self_attn.o_proj":0.00055509,"self_attn.q_proj":0.00063403,"self_attn.v_proj":0.00042055},"3":{"mlp.down_proj":0.00056291,"mlp.gate_proj":0.0020528,"mlp.up_proj":0.00070555,"self_attn.k_proj":0.00049186,"self_attn.o_proj":0.0004385,"self_attn.q_proj":0.00060688,"self_attn.v_proj":0.00042298},"4":{"mlp.down_proj":0.00045474,"mlp.gate_proj":0.00147058,"mlp.up_proj":0.00058148,"self_attn.k_proj":0.00049358,"self_attn.o_proj":0.00044436,"self_attn.q_proj":0.00064266,"self_attn.v_proj":0.00044088},"5":{"mlp.down_proj":0.00051282,"mlp.gate_proj":0.00113389,"mlp.up_proj":0.00058385,"self_attn.k_proj":0.00041187,"self_attn.o_proj":0.000598,"self_attn.q_proj":0.00045498,"self_attn.v_proj":0.00043301},"6":{"mlp.down_proj":0.0019864,"mlp.gate_proj":0.0010731,"mlp.up_proj":0.00063003,"self_attn.k_proj":0.00057464,"self_attn.o_proj":0.00053901,"self_attn.q_proj":0.00068367,"self_attn.v_proj":0.00053233},"7":{"mlp.down_proj":0.00061605,"mlp.gate_proj":0.00120386,"mlp.up_proj":0.00058859,"self_attn.k_proj":0.00053095,"self_attn.o_proj":0.00065368,"self_attn.q_proj":0.00057454,"self_attn.v_proj":0.00055341},"8":{"mlp.down_proj":0.0005552,"mlp.gate_proj":0.00112752,"mlp.up_proj":0.00057221,"self_attn.k_proj":0.00051452,"self_attn.o_proj":0.00048755,"self_attn.q_proj":0.00049509,"self_attn.v_proj":0.0005074},"9":{"mlp.down_proj":0.00040997,"mlp.gate_proj":0.0010562,"mlp.up_proj":0.00045497,"self_attn.k_proj":0.00050564,"self_attn.o_proj":0.00050407,"self_attn.q_proj":0.00057504,"self_attn.v_proj":0.00043724},"10":{"mlp.down_proj":0.00044281,"mlp.gate_proj":0.00094922,"mlp.up_proj":0.00044539,"self_attn.k_proj":0.000466,"self_attn.o_proj":0.00037332,"self_attn.q_proj":0.0004299,"self_attn.v_proj":0.00036241},"11":{"mlp.down_proj":0.00043055,"mlp.gate_proj":0.00094975,"mlp.up_proj":0.00042645,"self_attn.k_proj":0.00050811,"self_attn.o_proj":0.00042253,"self_attn.q_proj":0.0004525,"self_attn.v_proj":0.00037869},"12":{"mlp.down_proj":0.00044142,"mlp.gate_proj":0.00086425,"mlp.up_proj":0.00049003,"self_attn.k_proj":0.00041578,"self_attn.o_proj":0.00043294,"self_attn.q_proj":0.00046049,"self_attn.v_proj":0.00033603},"13":{"mlp.down_proj":0.00042354,"mlp.gate_proj":0.00087637,"mlp.up_proj":0.00046357,"self_attn.k_proj":0.00041387,"self_attn.o_proj":0.0003813,"self_attn.q_proj":0.00038902,"self_attn.v_proj":0.00034621},"14":{"mlp.down_proj":0.00041944,"mlp.gate_proj":0.00083173,"mlp.up_proj":0.00044286,"self_attn.k_proj":0.00046915,"self_attn.o_proj":0.00039115,"self_attn.q_proj":0.00048009,"self_attn.v_proj":0.00034051},"15":{"mlp.down_proj":0.00051445,"mlp.gate_proj":0.00085141,"mlp.up_proj":0.00048619,"self_attn.k_proj":0.00047501,"self_attn.o_proj":0.00034796,"self_attn.q_proj":0.00045001,"self_attn.v_proj":0.00040927},"16":{"mlp.down_proj":0.00041037,"mlp.gate_proj":0.00086924,"mlp.up_proj":0.00042337,"self_attn.k_proj":0.00041871,"self_attn.o_proj":0.00040501,"self_attn.q_proj":0.00039351,"self_attn.v_proj":0.00041416},"17":{"mlp.down_proj":0.00051104,"mlp.gate_proj":0.00081782,"mlp.up_proj":0.00055104,"self_attn.k_proj":0.00048294,"self_attn.o_proj":0.00037845,"self_attn.q_proj":0.00054994,"self_attn.v_proj":0.00038293},"18":{"mlp.down_proj":0.00052598,"mlp.gate_proj":0.00082542,"mlp.up_proj":0.000523,"self_attn.k_proj":0.00044342,"self_attn.o_proj":0.00037311,"self_attn.q_proj":0.00044064,"self_attn.v_proj":0.00033286},"19":{"mlp.down_proj":0.00050383,"mlp.gate_proj":0.00087164,"mlp.up_proj":0.00053733,"self_attn.k_proj":0.00042545,"self_attn.o_proj":0.00046489,"self_attn.q_proj":0.00046435,"self_attn.v_proj":0.00063326},"20":{"mlp.down_proj":0.00060966,"mlp.gate_proj":0.00094567,"mlp.up_proj":0.00062514,"self_attn.k_proj":0.00049874,"self_attn.o_proj":0.00051103,"self_attn.q_proj":0.0005229,"self_attn.v_proj":0.00042697},"21":{"mlp.down_proj":0.00056037,"mlp.gate_proj":0.00097544,"mlp.up_proj":0.00070422,"self_attn.k_proj":0.00046755,"self_attn.o_proj":0.00049403,"self_attn.q_proj":0.00048714,"self_attn.v_proj":0.00034429},"22":{"mlp.down_proj":0.00067861,"mlp.gate_proj":0.00113753,"mlp.up_proj":0.00076146,"self_attn.k_proj":0.00055687,"self_attn.o_proj":0.00060687,"self_attn.q_proj":0.00062539,"self_attn.v_proj":0.00069414},"23":{"mlp.down_proj":0.00063811,"mlp.gate_proj":0.00121689,"mlp.up_proj":0.00084776,"self_attn.k_proj":0.00054861,"self_attn.o_proj":0.00068576,"self_attn.q_proj":0.00062012,"self_attn.v_proj":0.00048297},"24":{"mlp.down_proj":0.00086871,"mlp.gate_proj":0.00133578,"mlp.up_proj":0.00091699,"self_attn.k_proj":0.00053327,"self_attn.o_proj":0.00100561,"self_attn.q_proj":0.00073429,"self_attn.v_proj":0.00084218},"25":{"mlp.down_proj":0.00079494,"mlp.gate_proj":0.00134417,"mlp.up_proj":0.00089953,"self_attn.k_proj":0.00061523,"self_attn.o_proj":0.00082716,"self_attn.q_proj":0.00058304,"self_attn.v_proj":0.0007138},"26":{"mlp.down_proj":0.00098042,"mlp.gate_proj":0.00133683,"mlp.up_proj":0.00092059,"self_attn.k_proj":0.00061928,"self_attn.o_proj":0.00093869,"self_attn.q_proj":0.00063354,"self_attn.v_proj":0.00058654},"27":{"mlp.down_proj":0.00077295,"mlp.gate_proj":0.00126045,"mlp.up_proj":0.00093796,"self_attn.k_proj":0.00058259,"self_attn.o_proj":0.00122935,"self_attn.q_proj":0.00069105,"self_attn.v_proj":0.00064007},"28":{"mlp.down_proj":0.00083773,"mlp.gate_proj":0.00129267,"mlp.up_proj":0.00100991,"self_attn.k_proj":0.00058364,"self_attn.o_proj":0.0009413,"self_attn.q_proj":0.00061436,"self_attn.v_proj":0.00065884},"29":{"mlp.down_proj":0.0008958,"mlp.gate_proj":0.00136516,"mlp.up_proj":0.00111015,"self_attn.k_proj":0.00067276,"self_attn.o_proj":0.00130919,"self_attn.q_proj":0.00107425,"self_attn.v_proj":0.00075551},"30":{"mlp.down_proj":0.00079029,"mlp.gate_proj":0.00128702,"mlp.up_proj":0.00115058,"self_attn.k_proj":0.00068684,"self_attn.o_proj":0.00123244,"self_attn.q_proj":0.00070395,"self_attn.v_proj":0.00079066},"31":{"mlp.down_proj":0.00079425,"mlp.gate_proj":0.001162,"mlp.up_proj":0.00115845,"self_attn.k_proj":0.00055324,"self_attn.o_proj":0.00106142,"self_attn.q_proj":0.00069537,"self_attn.v_proj":0.00084663},"32":{"mlp.down_proj":0.00079835,"mlp.gate_proj":0.00122433,"mlp.up_proj":0.00113558,"self_attn.k_proj":0.00051921,"self_attn.o_proj":0.00092261,"self_attn.q_proj":0.00069762,"self_attn.v_proj":0.00075042},"33":{"mlp.down_proj":0.00081786,"mlp.gate_proj":0.00128904,"mlp.up_proj":0.0011834,"self_attn.k_proj":0.00063488,"self_attn.o_proj":0.00110829,"self_attn.q_proj":0.00074563,"self_attn.v_proj":0.00083466},"34":{"mlp.down_proj":0.00066154,"mlp.gate_proj":0.00123144,"mlp.up_proj":0.0010783,"self_attn.k_proj":0.00061948,"self_attn.o_proj":0.0008341,"self_attn.q_proj":0.00074211,"self_attn.v_proj":0.00069725},"35":{"mlp.down_proj":0.00078938,"mlp.gate_proj":0.00119302,"mlp.up_proj":0.00108726,"self_attn.k_proj":0.00065196,"self_attn.o_proj":0.00075263,"self_attn.q_proj":0.00062488,"self_attn.v_proj":0.00067806}}},"v18a":{"vision_nonzero":0,"vision_total":108,"grid":{"0":{"mlp.down_proj":0.00065963,"mlp.gate_proj":0.00150725,"mlp.up_proj":0.00172848,"self_attn.k_proj":0.00071075,"self_attn.o_proj":0.00045908,"self_attn.q_proj":0.00079816,"self_attn.v_proj":0.00063896},"1":{"mlp.down_proj":0.00069805,"mlp.gate_proj":0.00242302,"mlp.up_proj":0.00117699,"self_attn.k_proj":0.00069768,"self_attn.o_proj":0.00049138,"self_attn.q_proj":0.00074855,"self_attn.v_proj":0.00049082},"2":{"mlp.down_proj":0.00059185,"mlp.gate_proj":0.00203902,"mlp.up_proj":0.00079382,"self_attn.k_proj":0.00063477,"self_attn.o_proj":0.00056374,"self_attn.q_proj":0.00064696,"self_attn.v_proj":0.00043372},"3":{"mlp.down_proj":0.00057778,"mlp.gate_proj":0.00212301,"mlp.up_proj":0.00072494,"self_attn.k_proj":0.00049759,"self_attn.o_proj":0.00045127,"self_attn.q_proj":0.00062179,"self_attn.v_proj":0.00043137},"4":{"mlp.down_proj":0.0004675,"mlp.gate_proj":0.00151746,"mlp.up_proj":0.00060603,"self_attn.k_proj":0.00050804,"self_attn.o_proj":0.00045429,"self_attn.q_proj":0.00065607,"self_attn.v_proj":0.00044837},"5":{"mlp.down_proj":0.00052389,"mlp.gate_proj":0.00117732,"mlp.up_proj":0.00060174,"self_attn.k_proj":0.00041754,"self_attn.o_proj":0.00060848,"self_attn.q_proj":0.00046813,"self_attn.v_proj":0.00044776},"6":{"mlp.down_proj":0.0020124,"mlp.gate_proj":0.00110616,"mlp.up_proj":0.00064397,"self_attn.k_proj":0.00058774,"self_attn.o_proj":0.00055012,"self_attn.q_proj":0.00070372,"self_attn.v_proj":0.00054345},"7":{"mlp.down_proj":0.00062693,"mlp.gate_proj":0.00124555,"mlp.up_proj":0.00059969,"self_attn.k_proj":0.00053642,"self_attn.o_proj":0.00065953,"self_attn.q_proj":0.00058095,"self_attn.v_proj":0.00056318},"8":{"mlp.down_proj":0.0005645,"mlp.gate_proj":0.00116269,"mlp.up_proj":0.00058303,"self_attn.k_proj":0.00052467,"self_attn.o_proj":0.00049651,"self_attn.q_proj":0.00050414,"self_attn.v_proj":0.00051969},"9":{"mlp.down_proj":0.00041977,"mlp.gate_proj":0.00108663,"mlp.up_proj":0.0004662,"self_attn.k_proj":0.00051697,"self_attn.o_proj":0.00050832,"self_attn.q_proj":0.00058811,"self_attn.v_proj":0.00044744},"10":{"mlp.down_proj":0.00045319,"mlp.gate_proj":0.00097528,"mlp.up_proj":0.0004551,"self_attn.k_proj":0.00047723,"self_attn.o_proj":0.00038001,"self_attn.q_proj":0.00044164,"self_attn.v_proj":0.00037083},"11":{"mlp.down_proj":0.00043885,"mlp.gate_proj":0.00098142,"mlp.up_proj":0.00043585,"self_attn.k_proj":0.00051663,"self_attn.o_proj":0.00042799,"self_attn.q_proj":0.00046557,"self_attn.v_proj":0.00038701},"12":{"mlp.down_proj":0.00044964,"mlp.gate_proj":0.00089397,"mlp.up_proj":0.00049936,"self_attn.k_proj":0.00042035,"self_attn.o_proj":0.00043695,"self_attn.q_proj":0.00046222,"self_attn.v_proj":0.00034144},"13":{"mlp.down_proj":0.00043149,"mlp.gate_proj":0.00089428,"mlp.up_proj":0.00047197,"self_attn.k_proj":0.00041859,"self_attn.o_proj":0.0003858,"self_attn.q_proj":0.0003967,"self_attn.v_proj":0.00035427},"14":{"mlp.down_proj":0.00042824,"mlp.gate_proj":0.00085729,"mlp.up_proj":0.00045264,"self_attn.k_proj":0.00048549,"self_attn.o_proj":0.00039775,"self_attn.q_proj":0.00049098,"self_attn.v_proj":0.00034582},"15":{"mlp.down_proj":0.00052121,"mlp.gate_proj":0.0008593,"mlp.up_proj":0.00049189,"self_attn.k_proj":0.00048137,"self_attn.o_proj":0.00035297,"self_attn.q_proj":0.00045644,"self_attn.v_proj":0.00041886},"16":{"mlp.down_proj":0.00041625,"mlp.gate_proj":0.0008807,"mlp.up_proj":0.00043181,"self_attn.k_proj":0.00042533,"self_attn.o_proj":0.00041106,"self_attn.q_proj":0.00040304,"self_attn.v_proj":0.00041804},"17":{"mlp.down_proj":0.00051844,"mlp.gate_proj":0.00083154,"mlp.up_proj":0.00055984,"self_attn.k_proj":0.00048399,"self_attn.o_proj":0.00038422,"self_attn.q_proj":0.00055585,"self_attn.v_proj":0.00039014},"18":{"mlp.down_proj":0.00053219,"mlp.gate_proj":0.00084033,"mlp.up_proj":0.0005325,"self_attn.k_proj":0.00045328,"self_attn.o_proj":0.00038008,"self_attn.q_proj":0.00045113,"self_attn.v_proj":0.0003424},"19":{"mlp.down_proj":0.000511,"mlp.gate_proj":0.00088948,"mlp.up_proj":0.00054829,"self_attn.k_proj":0.00043415,"self_attn.o_proj":0.00046996,"self_attn.q_proj":0.00046926,"self_attn.v_proj":0.00064312},"20":{"mlp.down_proj":0.00061949,"mlp.gate_proj":0.00097006,"mlp.up_proj":0.00063424,"self_attn.k_proj":0.00051349,"self_attn.o_proj":0.00051632,"self_attn.q_proj":0.00053535,"self_attn.v_proj":0.0004351},"21":{"mlp.down_proj":0.00056954,"mlp.gate_proj":0.00099213,"mlp.up_proj":0.00071448,"self_attn.k_proj":0.00047698,"self_attn.o_proj":0.00049984,"self_attn.q_proj":0.00049605,"self_attn.v_proj":0.00034953},"22":{"mlp.down_proj":0.00068731,"mlp.gate_proj":0.00116121,"mlp.up_proj":0.00077484,"self_attn.k_proj":0.00056295,"self_attn.o_proj":0.00061588,"self_attn.q_proj":0.00063375,"self_attn.v_proj":0.00069946},"23":{"mlp.down_proj":0.00064751,"mlp.gate_proj":0.00123992,"mlp.up_proj":0.00086328,"self_attn.k_proj":0.00055653,"self_attn.o_proj":0.0006945,"self_attn.q_proj":0.00062982,"self_attn.v_proj":0.00049111},"24":{"mlp.down_proj":0.00088008,"mlp.gate_proj":0.00136039,"mlp.up_proj":0.00093112,"self_attn.k_proj":0.00054354,"self_attn.o_proj":0.00101505,"self_attn.q_proj":0.00074527,"self_attn.v_proj":0.00085497},"25":{"mlp.down_proj":0.00080617,"mlp.gate_proj":0.00137323,"mlp.up_proj":0.00091625,"self_attn.k_proj":0.0006273,"self_attn.o_proj":0.00083393,"self_attn.q_proj":0.00059526,"self_attn.v_proj":0.00072801},"26":{"mlp.down_proj":0.00098974,"mlp.gate_proj":0.00137154,"mlp.up_proj":0.00095069,"self_attn.k_proj":0.00063759,"self_attn.o_proj":0.00094861,"self_attn.q_proj":0.00065194,"self_attn.v_proj":0.00059773},"27":{"mlp.down_proj":0.00078582,"mlp.gate_proj":0.00128378,"mlp.up_proj":0.00096183,"self_attn.k_proj":0.00059236,"self_attn.o_proj":0.00124322,"self_attn.q_proj":0.00070759,"self_attn.v_proj":0.00064838},"28":{"mlp.down_proj":0.00084887,"mlp.gate_proj":0.00132271,"mlp.up_proj":0.00103549,"self_attn.k_proj":0.00059563,"self_attn.o_proj":0.00095503,"self_attn.q_proj":0.00062227,"self_attn.v_proj":0.0006697},"29":{"mlp.down_proj":0.00090833,"mlp.gate_proj":0.00139715,"mlp.up_proj":0.00114379,"self_attn.k_proj":0.00068144,"self_attn.o_proj":0.00131981,"self_attn.q_proj":0.0010844,"self_attn.v_proj":0.00076821},"30":{"mlp.down_proj":0.0008042,"mlp.gate_proj":0.00132288,"mlp.up_proj":0.00117696,"self_attn.k_proj":0.00070045,"self_attn.o_proj":0.00124707,"self_attn.q_proj":0.00072076,"self_attn.v_proj":0.00080461},"31":{"mlp.down_proj":0.00080737,"mlp.gate_proj":0.00119808,"mlp.up_proj":0.00118909,"self_attn.k_proj":0.00056581,"self_attn.o_proj":0.00107576,"self_attn.q_proj":0.0007114,"self_attn.v_proj":0.00085326},"32":{"mlp.down_proj":0.00080947,"mlp.gate_proj":0.001255,"mlp.up_proj":0.0011697,"self_attn.k_proj":0.00052697,"self_attn.o_proj":0.00093849,"self_attn.q_proj":0.00070438,"self_attn.v_proj":0.00076251},"33":{"mlp.down_proj":0.00083113,"mlp.gate_proj":0.00132991,"mlp.up_proj":0.00121608,"self_attn.k_proj":0.0006413,"self_attn.o_proj":0.00112253,"self_attn.q_proj":0.00076408,"self_attn.v_proj":0.0008445},"34":{"mlp.down_proj":0.00067484,"mlp.gate_proj":0.00127043,"mlp.up_proj":0.00111521,"self_attn.k_proj":0.00063129,"self_attn.o_proj":0.0008518,"self_attn.q_proj":0.00076176,"self_attn.v_proj":0.00071089},"35":{"mlp.down_proj":0.00080104,"mlp.gate_proj":0.00122842,"mlp.up_proj":0.00111575,"self_attn.k_proj":0.000661,"self_attn.o_proj":0.00076851,"self_attn.q_proj":0.00063522,"self_attn.v_proj":0.00068726}}},"v18b":{"vision_nonzero":108,"vision_total":108,"grid":{"0":{"mlp.down_proj":0.00064829,"mlp.gate_proj":0.00140766,"mlp.up_proj":0.0016346,"self_attn.k_proj":0.00070285,"self_attn.o_proj":0.00045616,"self_attn.q_proj":0.00079267,"self_attn.v_proj":0.00063218},"1":{"mlp.down_proj":0.00069214,"mlp.gate_proj":0.00255435,"mlp.up_proj":0.00101751,"self_attn.k_proj":0.00068198,"self_attn.o_proj":0.00049106,"self_attn.q_proj":0.0007376,"self_attn.v_proj":0.00049005},"2":{"mlp.down_proj":0.00057554,"mlp.gate_proj":0.00205732,"mlp.up_proj":0.00075792,"self_attn.k_proj":0.00064807,"self_attn.o_proj":0.00056421,"self_attn.q_proj":0.0006384,"self_attn.v_proj":0.00043598},"3":{"mlp.down_proj":0.00057348,"mlp.gate_proj":0.00208572,"mlp.up_proj":0.00070193,"self_attn.k_proj":0.00049122,"self_attn.o_proj":0.00045119,"self_attn.q_proj":0.00060864,"self_attn.v_proj":0.00042775},"4":{"mlp.down_proj":0.00046389,"mlp.gate_proj":0.00146137,"mlp.up_proj":0.00059178,"self_attn.k_proj":0.00050671,"self_attn.o_proj":0.00045479,"self_attn.q_proj":0.00065244,"self_attn.v_proj":0.00044553},"5":{"mlp.down_proj":0.00052092,"mlp.gate_proj":0.001129,"mlp.up_proj":0.00059038,"self_attn.k_proj":0.0004215,"self_attn.o_proj":0.0006081,"self_attn.q_proj":0.00046529,"self_attn.v_proj":0.0004466},"6":{"mlp.down_proj":0.00200451,"mlp.gate_proj":0.00108327,"mlp.up_proj":0.00064059,"self_attn.k_proj":0.0005916,"self_attn.o_proj":0.00055055,"self_attn.q_proj":0.00070021,"self_attn.v_proj":0.00054116},"7":{"mlp.down_proj":0.00062424,"mlp.gate_proj":0.00123546,"mlp.up_proj":0.00059723,"self_attn.k_proj":0.00053442,"self_attn.o_proj":0.00066021,"self_attn.q_proj":0.00058212,"self_attn.v_proj":0.00056349},"8":{"mlp.down_proj":0.00056213,"mlp.gate_proj":0.00113932,"mlp.up_proj":0.00057933,"self_attn.k_proj":0.00052337,"self_attn.o_proj":0.0004949,"self_attn.q_proj":0.00050739,"self_attn.v_proj":0.00052195},"9":{"mlp.down_proj":0.00041606,"mlp.gate_proj":0.00107617,"mlp.up_proj":0.00046663,"self_attn.k_proj":0.0005103,"self_attn.o_proj":0.00050996,"self_attn.q_proj":0.00059066,"self_attn.v_proj":0.00044575},"10":{"mlp.down_proj":0.00045203,"mlp.gate_proj":0.0009678,"mlp.up_proj":0.00045503,"self_attn.k_proj":0.00047499,"self_attn.o_proj":0.00038107,"self_attn.q_proj":0.00044029,"self_attn.v_proj":0.00036942},"11":{"mlp.down_proj":0.00043778,"mlp.gate_proj":0.00096525,"mlp.up_proj":0.00043688,"self_attn.k_proj":0.00052064,"self_attn.o_proj":0.0004284,"self_attn.q_proj":0.00046117,"self_attn.v_proj":0.00038481},"12":{"mlp.down_proj":0.00044646,"mlp.gate_proj":0.00088967,"mlp.up_proj":0.00049791,"self_attn.k_proj":0.00042415,"self_attn.o_proj":0.00043753,"self_attn.q_proj":0.00046812,"self_attn.v_proj":0.00034279},"13":{"mlp.down_proj":0.00043194,"mlp.gate_proj":0.00088623,"mlp.up_proj":0.00047146,"self_attn.k_proj":0.0004232,"self_attn.o_proj":0.00038457,"self_attn.q_proj":0.00039606,"self_attn.v_proj":0.00035272},"14":{"mlp.down_proj":0.00042792,"mlp.gate_proj":0.00085454,"mlp.up_proj":0.0004531,"self_attn.k_proj":0.00047722,"self_attn.o_proj":0.00039874,"self_attn.q_proj":0.00048772,"self_attn.v_proj":0.00034708},"15":{"mlp.down_proj":0.00052383,"mlp.gate_proj":0.00086891,"mlp.up_proj":0.00049381,"self_attn.k_proj":0.00047264,"self_attn.o_proj":0.00035311,"self_attn.q_proj":0.00045878,"self_attn.v_proj":0.00042207},"16":{"mlp.down_proj":0.00041669,"mlp.gate_proj":0.00089132,"mlp.up_proj":0.00043243,"self_attn.k_proj":0.00042838,"self_attn.o_proj":0.0004118,"self_attn.q_proj":0.0004052,"self_attn.v_proj":0.0004221},"17":{"mlp.down_proj":0.00051954,"mlp.gate_proj":0.00083292,"mlp.up_proj":0.00056073,"self_attn.k_proj":0.00049079,"self_attn.o_proj":0.00038459,"self_attn.q_proj":0.00055556,"self_attn.v_proj":0.00039135},"18":{"mlp.down_proj":0.00053044,"mlp.gate_proj":0.0008394,"mlp.up_proj":0.00053168,"self_attn.k_proj":0.0004567,"self_attn.o_proj":0.00038044,"self_attn.q_proj":0.00044858,"self_attn.v_proj":0.00034263},"19":{"mlp.down_proj":0.00051137,"mlp.gate_proj":0.00089056,"mlp.up_proj":0.00054699,"self_attn.k_proj":0.00043676,"self_attn.o_proj":0.00047121,"self_attn.q_proj":0.00047191,"self_attn.v_proj":0.00064239},"20":{"mlp.down_proj":0.00061726,"mlp.gate_proj":0.00095537,"mlp.up_proj":0.00063332,"self_attn.k_proj":0.00050773,"self_attn.o_proj":0.00051733,"self_attn.q_proj":0.00053549,"self_attn.v_proj":0.00043742},"21":{"mlp.down_proj":0.0005693,"mlp.gate_proj":0.0009933,"mlp.up_proj":0.00071432,"self_attn.k_proj":0.00047849,"self_attn.o_proj":0.00049966,"self_attn.q_proj":0.00049506,"self_attn.v_proj":0.00034873},"22":{"mlp.down_proj":0.00068416,"mlp.gate_proj":0.00115682,"mlp.up_proj":0.00077545,"self_attn.k_proj":0.00056078,"self_attn.o_proj":0.00061608,"self_attn.q_proj":0.00063492,"self_attn.v_proj":0.0006977},"23":{"mlp.down_proj":0.00064612,"mlp.gate_proj":0.00124014,"mlp.up_proj":0.00085828,"self_attn.k_proj":0.00055932,"self_attn.o_proj":0.00069466,"self_attn.q_proj":0.00062973,"self_attn.v_proj":0.00049008},"24":{"mlp.down_proj":0.0008792,"mlp.gate_proj":0.00136236,"mlp.up_proj":0.00092649,"self_attn.k_proj":0.00053934,"self_attn.o_proj":0.00101244,"self_attn.q_proj":0.00074805,"self_attn.v_proj":0.00084726},"25":{"mlp.down_proj":0.0008052,"mlp.gate_proj":0.00137749,"mlp.up_proj":0.00092086,"self_attn.k_proj":0.0006248,"self_attn.o_proj":0.00083373,"self_attn.q_proj":0.00059539,"self_attn.v_proj":0.00072698},"26":{"mlp.down_proj":0.00098807,"mlp.gate_proj":0.00136422,"mlp.up_proj":0.00095277,"self_attn.k_proj":0.00062869,"self_attn.o_proj":0.00095004,"self_attn.q_proj":0.00064891,"self_attn.v_proj":0.00059843},"27":{"mlp.down_proj":0.00078561,"mlp.gate_proj":0.00128274,"mlp.up_proj":0.00096484,"self_attn.k_proj":0.00059699,"self_attn.o_proj":0.00124188,"self_attn.q_proj":0.00070905,"self_attn.v_proj":0.00065138},"28":{"mlp.down_proj":0.00084783,"mlp.gate_proj":0.00132342,"mlp.up_proj":0.00103798,"self_attn.k_proj":0.00059213,"self_attn.o_proj":0.00095521,"self_attn.q_proj":0.00062422,"self_attn.v_proj":0.00066857},"29":{"mlp.down_proj":0.00090881,"mlp.gate_proj":0.00139734,"mlp.up_proj":0.0011409,"self_attn.k_proj":0.00067772,"self_attn.o_proj":0.00131514,"self_attn.q_proj":0.00106715,"self_attn.v_proj":0.00076155},"30":{"mlp.down_proj":0.00080434,"mlp.gate_proj":0.00132564,"mlp.up_proj":0.00117504,"self_attn.k_proj":0.00070357,"self_attn.o_proj":0.00124542,"self_attn.q_proj":0.00071194,"self_attn.v_proj":0.00080195},"31":{"mlp.down_proj":0.00080841,"mlp.gate_proj":0.00120226,"mlp.up_proj":0.00119618,"self_attn.k_proj":0.00056829,"self_attn.o_proj":0.0010745,"self_attn.q_proj":0.00070796,"self_attn.v_proj":0.00085814},"32":{"mlp.down_proj":0.00081109,"mlp.gate_proj":0.00125984,"mlp.up_proj":0.00117189,"self_attn.k_proj":0.00052879,"self_attn.o_proj":0.00093888,"self_attn.q_proj":0.00070536,"self_attn.v_proj":0.00076269},"33":{"mlp.down_proj":0.00083094,"mlp.gate_proj":0.0013373,"mlp.up_proj":0.00121582,"self_attn.k_proj":0.00064069,"self_attn.o_proj":0.00111728,"self_attn.q_proj":0.00076381,"self_attn.v_proj":0.00084819},"34":{"mlp.down_proj":0.00067568,"mlp.gate_proj":0.00127679,"mlp.up_proj":0.00111372,"self_attn.k_proj":0.0006334,"self_attn.o_proj":0.00084937,"self_attn.q_proj":0.00075602,"self_attn.v_proj":0.00071242},"35":{"mlp.down_proj":0.00080178,"mlp.gate_proj":0.001229,"mlp.up_proj":0.00111593,"self_attn.k_proj":0.00066031,"self_attn.o_proj":0.00076945,"self_attn.q_proj":0.00063404,"self_attn.v_proj":0.00069059}}},"v19a":{"vision_nonzero":108,"vision_total":108,"grid":{"0":{"mlp.down_proj":0.00066941,"mlp.gate_proj":0.00133516,"mlp.up_proj":0.00157245,"self_attn.k_proj":0.00073182,"self_attn.o_proj":0.00048265,"self_attn.q_proj":0.00081394,"self_attn.v_proj":0.00065347},"1":{"mlp.down_proj":0.00070238,"mlp.gate_proj":0.00266283,"mlp.up_proj":0.00100183,"self_attn.k_proj":0.00071088,"self_attn.o_proj":0.00052792,"self_attn.q_proj":0.00076702,"self_attn.v_proj":0.00052274},"2":{"mlp.down_proj":0.00060401,"mlp.gate_proj":0.00218046,"mlp.up_proj":0.00078964,"self_attn.k_proj":0.00068276,"self_attn.o_proj":0.00058563,"self_attn.q_proj":0.00067177,"self_attn.v_proj":0.00047522},"3":{"mlp.down_proj":0.00059081,"mlp.gate_proj":0.00218207,"mlp.up_proj":0.0007221,"self_attn.k_proj":0.00052027,"self_attn.o_proj":0.00047364,"self_attn.q_proj":0.00063609,"self_attn.v_proj":0.00044941},"4":{"mlp.down_proj":0.00048191,"mlp.gate_proj":0.00150171,"mlp.up_proj":0.00061339,"self_attn.k_proj":0.00052734,"self_attn.o_proj":0.00048441,"self_attn.q_proj":0.00068014,"self_attn.v_proj":0.00047661},"5":{"mlp.down_proj":0.00053659,"mlp.gate_proj":0.00116371,"mlp.up_proj":0.00060858,"self_attn.k_proj":0.0004536,"self_attn.o_proj":0.00062932,"self_attn.q_proj":0.00050275,"self_attn.v_proj":0.00048843},"6":{"mlp.down_proj":0.0020542,"mlp.gate_proj":0.00111462,"mlp.up_proj":0.00066828,"self_attn.k_proj":0.00066251,"self_attn.o_proj":0.00057647,"self_attn.q_proj":0.00079137,"self_attn.v_proj":0.00056655},"7":{"mlp.down_proj":0.00064093,"mlp.gate_proj":0.00126725,"mlp.up_proj":0.0006221,"self_attn.k_proj":0.00055882,"self_attn.o_proj":0.00068884,"self_attn.q_proj":0.00059646,"self_attn.v_proj":0.00058998},"8":{"mlp.down_proj":0.00057689,"mlp.gate_proj":0.00118063,"mlp.up_proj":0.00059637,"self_attn.k_proj":0.00054087,"self_attn.o_proj":0.00051878,"self_attn.q_proj":0.00052433,"self_attn.v_proj":0.00055864},"9":{"mlp.down_proj":0.00043195,"mlp.gate_proj":0.00112735,"mlp.up_proj":0.00049283,"self_attn.k_proj":0.00052225,"self_attn.o_proj":0.00053007,"self_attn.q_proj":0.00061756,"self_attn.v_proj":0.00046673},"10":{"mlp.down_proj":0.00047486,"mlp.gate_proj":0.00101038,"mlp.up_proj":0.00047828,"self_attn.k_proj":0.00050287,"self_attn.o_proj":0.00040532,"self_attn.q_proj":0.00046486,"self_attn.v_proj":0.00039472},"11":{"mlp.down_proj":0.00045401,"mlp.gate_proj":0.00101129,"mlp.up_proj":0.00046371,"self_attn.k_proj":0.00053166,"self_attn.o_proj":0.00044808,"self_attn.q_proj":0.00047802,"self_attn.v_proj":0.00040365},"12":{"mlp.down_proj":0.00046453,"mlp.gate_proj":0.00093907,"mlp.up_proj":0.00052414,"self_attn.k_proj":0.00045563,"self_attn.o_proj":0.0004571,"self_attn.q_proj":0.0005033,"self_attn.v_proj":0.00036335},"13":{"mlp.down_proj":0.00045208,"mlp.gate_proj":0.00091281,"mlp.up_proj":0.00049472,"self_attn.k_proj":0.0004455,"self_attn.o_proj":0.00039996,"self_attn.q_proj":0.00041628,"self_attn.v_proj":0.00037827},"14":{"mlp.down_proj":0.00045328,"mlp.gate_proj":0.00089647,"mlp.up_proj":0.00047743,"self_attn.k_proj":0.00049613,"self_attn.o_proj":0.00042026,"self_attn.q_proj":0.00050907,"self_attn.v_proj":0.00037003},"15":{"mlp.down_proj":0.00054222,"mlp.gate_proj":0.00090249,"mlp.up_proj":0.00051448,"self_attn.k_proj":0.00049841,"self_attn.o_proj":0.00036688,"self_attn.q_proj":0.00047371,"self_attn.v_proj":0.00045149},"16":{"mlp.down_proj":0.00043384,"mlp.gate_proj":0.00091622,"mlp.up_proj":0.00045685,"self_attn.k_proj":0.00043941,"self_attn.o_proj":0.00043496,"self_attn.q_proj":0.00043013,"self_attn.v_proj":0.0004387},"17":{"mlp.down_proj":0.00054746,"mlp.gate_proj":0.00086951,"mlp.up_proj":0.00058566,"self_attn.k_proj":0.00050359,"self_attn.o_proj":0.00039789,"self_attn.q_proj":0.00057466,"self_attn.v_proj":0.00041251},"18":{"mlp.down_proj":0.0005518,"mlp.gate_proj":0.00086528,"mlp.up_proj":0.00055714,"self_attn.k_proj":0.0004738,"self_attn.o_proj":0.00039534,"self_attn.q_proj":0.00047243,"self_attn.v_proj":0.00036818},"19":{"mlp.down_proj":0.00052801,"mlp.gate_proj":0.00091479,"mlp.up_proj":0.00057452,"self_attn.k_proj":0.0004644,"self_attn.o_proj":0.00048834,"self_attn.q_proj":0.00049498,"self_attn.v_proj":0.00066575},"20":{"mlp.down_proj":0.00062899,"mlp.gate_proj":0.00100048,"mlp.up_proj":0.00065488,"self_attn.k_proj":0.00053846,"self_attn.o_proj":0.00053029,"self_attn.q_proj":0.00055658,"self_attn.v_proj":0.00045573},"21":{"mlp.down_proj":0.00058633,"mlp.gate_proj":0.001026,"mlp.up_proj":0.00073003,"self_attn.k_proj":0.00049458,"self_attn.o_proj":0.00051252,"self_attn.q_proj":0.00051629,"self_attn.v_proj":0.00035993},"22":{"mlp.down_proj":0.00069775,"mlp.gate_proj":0.00120375,"mlp.up_proj":0.00079997,"self_attn.k_proj":0.00058361,"self_attn.o_proj":0.00062846,"self_attn.q_proj":0.00065296,"self_attn.v_proj":0.00071507},"23":{"mlp.down_proj":0.00066397,"mlp.gate_proj":0.00129395,"mlp.up_proj":0.00088237,"self_attn.k_proj":0.00057625,"self_attn.o_proj":0.00071738,"self_attn.q_proj":0.00065288,"self_attn.v_proj":0.00050958},"24":{"mlp.down_proj":0.00090494,"mlp.gate_proj":0.00141593,"mlp.up_proj":0.00096263,"self_attn.k_proj":0.00055593,"self_attn.o_proj":0.0010249,"self_attn.q_proj":0.00076532,"self_attn.v_proj":0.000859},"25":{"mlp.down_proj":0.00082876,"mlp.gate_proj":0.00143833,"mlp.up_proj":0.00096741,"self_attn.k_proj":0.00063916,"self_attn.o_proj":0.00085728,"self_attn.q_proj":0.00062828,"self_attn.v_proj":0.0007488},"26":{"mlp.down_proj":0.00101222,"mlp.gate_proj":0.00141507,"mlp.up_proj":0.00100141,"self_attn.k_proj":0.00063356,"self_attn.o_proj":0.0009828,"self_attn.q_proj":0.00068063,"self_attn.v_proj":0.00062217},"27":{"mlp.down_proj":0.00081208,"mlp.gate_proj":0.00132636,"mlp.up_proj":0.00101116,"self_attn.k_proj":0.00061373,"self_attn.o_proj":0.00127897,"self_attn.q_proj":0.00074008,"self_attn.v_proj":0.00066964},"28":{"mlp.down_proj":0.00087346,"mlp.gate_proj":0.00138196,"mlp.up_proj":0.00109136,"self_attn.k_proj":0.00061519,"self_attn.o_proj":0.00098,"self_attn.q_proj":0.00064512,"self_attn.v_proj":0.00069265},"29":{"mlp.down_proj":0.00093739,"mlp.gate_proj":0.00145362,"mlp.up_proj":0.00119367,"self_attn.k_proj":0.00069543,"self_attn.o_proj":0.00132838,"self_attn.q_proj":0.00107861,"self_attn.v_proj":0.00077306},"30":{"mlp.down_proj":0.00082846,"mlp.gate_proj":0.00139202,"mlp.up_proj":0.00122797,"self_attn.k_proj":0.00072099,"self_attn.o_proj":0.00127141,"self_attn.q_proj":0.00073596,"self_attn.v_proj":0.00083407},"31":{"mlp.down_proj":0.00083676,"mlp.gate_proj":0.00127011,"mlp.up_proj":0.00124948,"self_attn.k_proj":0.00059006,"self_attn.o_proj":0.00110643,"self_attn.q_proj":0.00073371,"self_attn.v_proj":0.00088661},"32":{"mlp.down_proj":0.00084173,"mlp.gate_proj":0.0013227,"mlp.up_proj":0.00123009,"self_attn.k_proj":0.00054917,"self_attn.o_proj":0.00096688,"self_attn.q_proj":0.00072653,"self_attn.v_proj":0.00078896},"33":{"mlp.down_proj":0.00086167,"mlp.gate_proj":0.00141235,"mlp.up_proj":0.00127703,"self_attn.k_proj":0.00066101,"self_attn.o_proj":0.00113498,"self_attn.q_proj":0.00079391,"self_attn.v_proj":0.00086901},"34":{"mlp.down_proj":0.00070098,"mlp.gate_proj":0.00134201,"mlp.up_proj":0.00116059,"self_attn.k_proj":0.00064911,"self_attn.o_proj":0.00087764,"self_attn.q_proj":0.00078311,"self_attn.v_proj":0.00075624},"35":{"mlp.down_proj":0.00083506,"mlp.gate_proj":0.00128763,"mlp.up_proj":0.00115598,"self_attn.k_proj":0.00068064,"self_attn.o_proj":0.00080994,"self_attn.q_proj":0.00064521,"self_attn.v_proj":0.0007111}}}},"progress":[{"gen":"base","vision":"base","talmud_cer":3.6274,"gz_substantive":0.015,"gz_ngramP":0.0,"gz_f1":0.0098},{"gen":"v1.5","vision":"dead","talmud_cer":0.0477,"gz_substantive":null,"gz_ngramP":null,"gz_f1":null},{"gen":"v1.6","vision":"dead","talmud_cer":0.0038,"gz_substantive":0.137,"gz_ngramP":0.0101,"gz_f1":0.0833},{"gen":"v1.7","vision":"dead","talmud_cer":0.0047,"gz_substantive":0.664,"gz_ngramP":0.1672,"gz_f1":0.553},{"gen":"v1.8a","vision":"dead","talmud_cer":null,"gz_substantive":0.748,"gz_ngramP":0.186,"gz_f1":0.6162},{"gen":"v1.8b","vision":"trained","talmud_cer":null,"gz_substantive":0.901,"gz_ngramP":0.4751,"gz_f1":0.8074}],"sections":{"lineage":["base","v1.5","v1.6\u00b7600","v1.6\u00b71000","v1.6\u00b71100","v1.7\u00b7800"],"data":{"gemara":[{"gen":"base","n":65,"median":3.6274,"mean":5.0846,"fail":1.0,"collapse":1.0},{"gen":"v1.5","n":65,"median":0.0477,"mean":0.0586,"fail":0.0154,"collapse":0.0},{"gen":"v1.6\u00b7600","n":65,"median":0.004,"mean":0.0134,"fail":0.0154,"collapse":0.0},{"gen":"v1.6\u00b71000","n":65,"median":0.0046,"mean":0.0902,"fail":0.0308,"collapse":0.0154},{"gen":"v1.6\u00b71100","n":65,"median":0.0038,"mean":0.013,"fail":0.0154,"collapse":0.0},{"gen":"v1.7\u00b7800","n":65,"median":0.0047,"mean":0.0142,"fail":0.0154,"collapse":0.0}],"rashi":[{"gen":"base","n":65,"median":3.3893,"mean":4.4541,"fail":1.0,"collapse":1.0},{"gen":"v1.5","n":65,"median":0.1439,"mean":0.3618,"fail":0.2,"collapse":0.0615},{"gen":"v1.6\u00b7600","n":65,"median":0.0169,"mean":0.2255,"fail":0.1385,"collapse":0.0615},{"gen":"v1.6\u00b71000","n":65,"median":0.0136,"mean":0.0471,"fail":0.0462,"collapse":0.0154},{"gen":"v1.6\u00b71100","n":65,"median":0.0143,"mean":0.1832,"fail":0.0923,"collapse":0.0308},{"gen":"v1.7\u00b7800","n":65,"median":0.0147,"mean":0.0835,"fail":0.0769,"collapse":0.0308}],"tosafot":[{"gen":"base","n":63,"median":3.7427,"mean":6.1061,"fail":1.0,"collapse":0.9524},{"gen":"v1.5","n":63,"median":0.1296,"mean":0.5122,"fail":0.2222,"collapse":0.0635},{"gen":"v1.6\u00b7600","n":63,"median":0.0137,"mean":0.1257,"fail":0.127,"collapse":0.0317},{"gen":"v1.6\u00b71000","n":63,"median":0.0133,"mean":0.099,"fail":0.1111,"collapse":0.0},{"gen":"v1.6\u00b71100","n":63,"median":0.0112,"mean":0.308,"fail":0.0952,"collapse":0.0476},{"gen":"v1.7\u00b7800","n":63,"median":0.012,"mean":0.0368,"fail":0.0159,"collapse":0.0159}]}}};
+const NS = "http://www.w3.org/2000/svg";
+const el = (t, a = {}, kids = []) => {
+  const n = document.createElementNS(NS, t);
+  for (const k in a) if (a[k] != null) n.setAttribute(k, a[k]);
+  (Array.isArray(kids) ? kids : [kids]).forEach(c =>
+    n.appendChild(typeof c === "string" ? document.createTextNode(c) : c));
+  return n;
+};
+const tip = document.getElementById("tip");
+function hover(node, html) {
+  node.style.cursor = "crosshair";
+  node.addEventListener("mousemove", e => {
+    tip.innerHTML = html; tip.style.opacity = 1;
+    const r = tip.getBoundingClientRect();
+    let x = e.clientX + 14, y = e.clientY + 14;
+    if (x + r.width > innerWidth - 8) x = e.clientX - r.width - 14;
+    if (y + r.height > innerHeight - 8) y = e.clientY - r.height - 14;
+    tip.style.left = x + "px"; tip.style.top = y + "px";
+  });
+  node.addEventListener("mouseleave", () => tip.style.opacity = 0);
+}
+const n0 = v => v.toLocaleString();
+const box = (x, y, w, h, kind, rx = 3) => el("rect", {
+  x, y, width: w, height: h, rx,
+  fill: `var(--${kind}-soft)`, stroke: `var(--${kind})`, "stroke-width": 1.5 });
+const txt = (x, y, s, o = {}) => el("text", Object.assign({
+  x, y, "font-size": 11, fill: "var(--ink)" }, o), s);
+
+/* ============================================================
+   FIGURE 1 — annotated architecture
+   ============================================================ */
+(function () {
+  const W = 1180, H = 474;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": "Qwen3-VL-8B architecture with LoRA-trained modules marked. The 27 vision blocks and 36 language layers were wrapped; the patch embedding, merger and deepstack mergers were never wrapped." });
+  const defs = el("defs");
+  ["arrow-ink", "arrow-dead"].forEach((id, i) => {
+    const m = el("marker", { id, viewBox: "0 0 10 10", refX: 9, refY: 5,
+      markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" });
+    m.appendChild(el("path", { d: "M0 0 L10 5 L0 10 z",
+      fill: i ? "var(--dead)" : "var(--ink-2)" }));
+    defs.appendChild(m);
+  });
+  svg.appendChild(defs);
+  const arrow = (x1, y1, x2, y2, dead) => el("line", { x1, y1, x2, y2,
+    stroke: dead ? "var(--dead)" : "var(--ink-2)", "stroke-width": 1.4,
+    "marker-end": `url(#${dead ? "arrow-dead" : "arrow-ink"})` });
+
+  /* ---- column headers ---- */
+  svg.appendChild(txt(150, 26, "VISION TOWER", { "font-size": 11.5, "font-weight": 600, "text-anchor": "middle", fill: "var(--ink-3)", "letter-spacing": "1.6" }));
+  svg.appendChild(txt(880, 26, "LANGUAGE MODEL", { "font-size": 11.5, "font-weight": 600, "text-anchor": "middle", fill: "var(--ink-3)", "letter-spacing": "1.6" }));
+
+  /* ---- vision path ---- */
+  let y = 46;
+  const vx = 40, vw = 220;
+  svg.appendChild(box(vx, y, vw, 40, "frozen"));
+  svg.appendChild(txt(vx + 10, y + 17, "patch_embed  Conv3d"));
+  svg.appendChild(txt(vx + 10, y + 31, "3 × 16×16 × 2 → 1,152", { "font-size": 9.5, fill: "var(--ink-3)" }));
+  hover(svg.lastChild.previousSibling, "<span class='t'>patch_embed.proj</span>1,770,624 params · never wrapped");
+  y += 52;
+  svg.appendChild(box(vx, y, vw, 30, "frozen"));
+  svg.appendChild(txt(vx + 10, y + 19, "pos_embed  2,304 × 1,152", { "font-size": 10 }));
+  y += 44;
+
+  /* 27 vision blocks, drawn as a stack with deepstack taps */
+  const blkTop = y, blkH = 26, gap = 4, shown = [0, 1, 2];
+  const bx = vx, bw = vw;
+  const drawBlk = (yy, label, sub) => {
+    const g = el("g");
+    g.appendChild(box(bx, yy, bw, blkH, "dead"));
+    g.appendChild(txt(bx + 10, yy + 12, label, { "font-size": 10.5 }));
+    g.appendChild(txt(bx + 10, yy + 22, sub, { "font-size": 9, fill: "var(--ink-3)" }));
+    hover(g, `<span class='t'>${label}</span>
+      <span class='r'><span>attn.qkv</span><span>1152 → 3456</span></span>
+      <span class='r'><span>attn.proj</span><span>1152 → 1152</span></span>
+      <span class='r'><span>mlp.linear_fc1</span><span>1152 → 4304</span></span>
+      <span class='r'><span>mlp.linear_fc2</span><span>4304 → 1152</span></span>
+      <span class='r'><span>lora_B through v1.8a</span><span>exactly 0</span></span>`);
+    return g;
+  };
+  shown.forEach((i, k) => svg.appendChild(drawBlk(blkTop + k * (blkH + gap), `block ${i}   4 × LoRA`, "1,152 wide · 16 heads")));
+  /* blocks 3-25 collapse into one band; the deepstack taps live inside it */
+  const dotsY = blkTop + 3 * (blkH + gap);
+  const bandH = 52;
+  svg.appendChild(el("rect", { x: bx, y: dotsY, width: bw, height: bandH, rx: 3,
+    fill: "var(--dead-soft)", stroke: "var(--dead)", "stroke-width": 1.5,
+    "stroke-dasharray": "4 3" }));
+  svg.appendChild(txt(bx + bw / 2, dotsY + 30, "blocks 3 – 25   ·   4 × LoRA each",
+    { "font-size": 10, "text-anchor": "middle", fill: "var(--ink-3)" }));
+  const lastY = dotsY + bandH + gap;
+  svg.appendChild(drawBlk(lastY, "block 26   4 × LoRA", "1,152 wide · 16 heads"));
+  const visBot = lastY + blkH;
+
+  svg.appendChild(el("rect", { x: bx - 12, y: blkTop - 6, width: bw + 24, height: visBot - blkTop + 12,
+    fill: "none", stroke: "var(--dead)", "stroke-width": 1, "stroke-dasharray": "3 3", opacity: .55, rx: 4 }));
+  svg.appendChild(txt(bx - 16, blkTop + (visBot - blkTop) / 2, "27 blocks", {
+    "font-size": 10, "text-anchor": "middle", fill: "var(--dead)",
+    transform: `rotate(-90 ${bx - 16} ${blkTop + (visBot - blkTop) / 2})` }));
+
+  /* deepstack taps */
+  const tapX = bx + bw + 18;
+  [[8, dotsY + 12], [16, dotsY + 26], [24, dotsY + 40]].forEach(([idx, yy], k) => {
+    svg.appendChild(el("line", { x1: bx + bw, y1: yy, x2: tapX + 24, y2: yy,
+      stroke: "var(--frozen)", "stroke-width": 1.2, "stroke-dasharray": "4 3" }));
+    svg.appendChild(txt(tapX + 28, yy + 3.5, `tap ${idx}`, { "font-size": 9, fill: "var(--frozen)" }));
+  });
+
+  /* merger */
+  y = visBot + 22;
+  svg.appendChild(box(vx, y, vw, 44, "frozen"));
+  svg.appendChild(txt(vx + 10, y + 18, "merger  2×2 spatial merge"));
+  svg.appendChild(txt(vx + 10, y + 32, "4,608 → 4,096   40.1M params", { "font-size": 9.5, fill: "var(--ink-3)" }));
+  hover(svg.lastChild.previousSibling, "<span class='t'>visual.merger</span>40,119,040 params · never wrapped in any generation");
+  y += 56;
+  svg.appendChild(box(vx, y, vw, 36, "frozen"));
+  svg.appendChild(txt(vx + 10, y + 15, "deepstack_merger_list  × 3"));
+  svg.appendChild(txt(vx + 10, y + 28, "120.4M params", { "font-size": 9.5, fill: "var(--ink-3)" }));
+  const bridgeBot = y + 36;
+
+  /* bridge callout */
+  svg.appendChild(el("rect", { x: vx - 12, y: visBot + 16, width: vw + 24, height: bridgeBot - visBot - 10,
+    fill: "none", stroke: "var(--frozen)", "stroke-width": 1.5, rx: 4 }));
+  svg.appendChild(txt(vx - 4, bridgeBot + 18, "vision → language bridge · 160.5M params · never adapted", {
+    "font-size": 10, fill: "var(--frozen)" }));
+
+  /* ---- language path ---- */
+  const lx = 700, lw = 300;
+  let ly = 46;
+  svg.appendChild(box(lx, ly, lw, 38, "frozen"));
+  svg.appendChild(txt(lx + 10, ly + 16, "embed_tokens  151,936 × 4,096"));
+  svg.appendChild(txt(lx + 10, ly + 29, "622.3M params · frozen", { "font-size": 9.5, fill: "var(--ink-3)" }));
+  ly += 52;
+
+  const lTop = ly, lH = 30;
+  const drawLayer = (yy, label) => {
+    const g = el("g");
+    g.appendChild(box(lx, yy, lw, lH, "trained"));
+    g.appendChild(txt(lx + 10, yy + 13, label, { "font-size": 10.5 }));
+    g.appendChild(txt(lx + 10, yy + 24, "q k v o  +  gate up down   7 × LoRA", { "font-size": 9, fill: "var(--ink-3)" }));
+    hover(g, `<span class='t'>${label}</span>
+      <span class='r'><span>q_proj / o_proj</span><span>4096 → 4096</span></span>
+      <span class='r'><span>k_proj / v_proj</span><span>4096 → 1024 (GQA)</span></span>
+      <span class='r'><span>gate / up</span><span>4096 → 12288</span></span>
+      <span class='r'><span>down</span><span>12288 → 4096</span></span>
+      <span class='r'><span>lora_B</span><span>nonzero in every generation</span></span>`);
+    return g;
+  };
+  [0, 1].forEach((i, k) => svg.appendChild(drawLayer(lTop + k * (lH + 5), `layer ${i}`)));
+  const ldots = lTop + 2 * (lH + 5);
+  svg.appendChild(txt(lx + lw / 2, ldots + 16, "⋮   layers 2 – 34   ⋮", { "font-size": 10, "text-anchor": "middle", fill: "var(--ink-3)" }));
+  svg.appendChild(el("rect", { x: lx, y: ldots + 22, width: lw, height: 3, fill: "var(--trained)", opacity: .35 }));
+  const llast = ldots + 34;
+  svg.appendChild(drawLayer(llast, "layer 35"));
+  const lBot = llast + lH;
+  svg.appendChild(el("rect", { x: lx - 12, y: lTop - 6, width: lw + 24, height: lBot - lTop + 12,
+    fill: "none", stroke: "var(--trained)", "stroke-width": 1, "stroke-dasharray": "3 3", opacity: .55, rx: 4 }));
+  svg.appendChild(txt(lx + lw + 18, lTop + (lBot - lTop) / 2, "36 layers", {
+    "font-size": 10, "text-anchor": "middle", fill: "var(--trained)",
+    transform: `rotate(90 ${lx + lw + 18} ${lTop + (lBot - lTop) / 2})` }));
+  svg.appendChild(txt(lx + lw + 34, lTop + 14, "hidden 4,096", { "font-size": 9.5, fill: "var(--ink-3)" }));
+  svg.appendChild(txt(lx + lw + 34, lTop + 27, "32 q / 8 kv heads", { "font-size": 9.5, fill: "var(--ink-3)" }));
+  svg.appendChild(txt(lx + lw + 34, lTop + 40, "head_dim 128", { "font-size": 9.5, fill: "var(--ink-3)" }));
+  svg.appendChild(txt(lx + lw + 34, lTop + 53, "SwiGLU 12,288", { "font-size": 9.5, fill: "var(--ink-3)" }));
+  svg.appendChild(txt(lx + lw + 34, lTop + 66, "interleaved MRoPE", { "font-size": 9.5, fill: "var(--ink-3)" }));
+
+  ly = lBot + 16;
+  svg.appendChild(box(lx, ly, lw, 28, "frozen"));
+  svg.appendChild(txt(lx + 10, ly + 18, "final norm → lm_head  622.3M", { "font-size": 10.5 }));
+  ly += 40;
+  svg.appendChild(txt(lx + lw / 2, ly + 12, "logits", { "font-size": 11, "text-anchor": "middle", fill: "var(--ink-2)" }));
+
+  /* ---- connectors ---- */
+  const mergerMidY = visBot + 44;                 /* right edge of the merger box */
+  const deepMidY = bridgeBot - 18;                /* right edge of the deepstack box */
+  svg.appendChild(arrow(vx + vw + 4, mergerMidY, lx - 8, lTop + 34));
+  svg.appendChild(txt((vx + vw + lx) / 2, mergerMidY - 10, "visual tokens · 4,096-d", {
+    "font-size": 10, "text-anchor": "middle", fill: "var(--ink-2)" }));
+  svg.appendChild(arrow(vx + vw + 4, deepMidY, lx - 8, lTop + 78));
+  svg.appendChild(txt((vx + vw + lx) / 2, deepMidY + 16, "deepstack features → early LM layers", {
+    "font-size": 9.5, "text-anchor": "middle", fill: "var(--frozen)" }));
+
+  document.getElementById("arch-svg").appendChild(svg);
+})();
+
+/* ============================================================
+   FIGURE 2 — LoRA attachment detail
+   ============================================================ */
+(function () {
+  const W = 1180, H = 300;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": "A LoRA pair attaches beside each frozen projection: the input goes through a rank-16 down-projection A then an up-projection B, and the result is added to the frozen output." });
+  const defs = el("defs");
+  const m = el("marker", { id: "a2", viewBox: "0 0 10 10", refX: 9, refY: 5,
+    markerWidth: 6, markerHeight: 6, orient: "auto-start-reverse" });
+  m.appendChild(el("path", { d: "M0 0 L10 5 L0 10 z", fill: "var(--ink-2)" }));
+  defs.appendChild(m); svg.appendChild(defs);
+  const ar = (x1, y1, x2, y2, c) => el("line", { x1, y1, x2, y2,
+    stroke: c || "var(--ink-2)", "stroke-width": 1.4, "marker-end": "url(#a2)" });
+
+  const cx = 110, midY = 150;
+  svg.appendChild(txt(cx, midY + 4, "x", { "font-size": 15, "text-anchor": "middle" }));
+  svg.appendChild(txt(cx, midY + 22, "activations", { "font-size": 9.5, "text-anchor": "middle", fill: "var(--ink-3)" }));
+
+  /* frozen path */
+  svg.appendChild(ar(cx + 16, midY, 250, 78));
+  svg.appendChild(box(250, 56, 210, 46, "frozen"));
+  svg.appendChild(txt(258, 74, "W   frozen base weight", { "font-size": 11 }));
+  svg.appendChild(txt(258, 90, "bf16 · never updated", { "font-size": 9.5, fill: "var(--ink-3)" }));
+
+  /* lora path */
+  svg.appendChild(ar(cx + 16, midY, 250, 214));
+  svg.appendChild(box(250, 192, 96, 46, "trained"));
+  svg.appendChild(txt(258, 211, "lora_A", { "font-size": 11 }));
+  svg.appendChild(txt(258, 226, "→ rank 16", { "font-size": 9.5, fill: "var(--ink-3)" }));
+  svg.appendChild(ar(346, 215, 384, 215));
+  svg.appendChild(box(384, 192, 96, 46, "trained"));
+  svg.appendChild(txt(392, 211, "lora_B", { "font-size": 11 }));
+  svg.appendChild(txt(392, 226, "rank 16 →", { "font-size": 9.5, fill: "var(--ink-3)" }));
+  svg.appendChild(txt(365, 262, "init 0  ⇒  an untrained adapter is invisible", {
+    "font-size": 10, "text-anchor": "middle", fill: "var(--dead)" }));
+
+  /* sum */
+  svg.appendChild(ar(460, 78, 556, 140));
+  svg.appendChild(ar(480, 215, 556, 162));
+  svg.appendChild(el("circle", { cx: 570, cy: 150, r: 14, fill: "var(--surface)",
+    stroke: "var(--ink-2)", "stroke-width": 1.5 }));
+  svg.appendChild(txt(570, 155, "+", { "font-size": 15, "text-anchor": "middle" }));
+  svg.appendChild(ar(586, 150, 630, 150));
+  svg.appendChild(txt(700, 146, "h  =  W·x  +  (α/r)·B·A·x", { "font-size": 14 }));
+  svg.appendChild(txt(700, 168, "α = 16,  r = 16   ⇒   scale = 1.0,  dropout 0, bias none", {
+    "font-size": 10, fill: "var(--ink-3)" }));
+
+  /* shape table */
+  const rows = [
+    ["vision", "attn.qkv", "1,152 → 3,456", "A 16×1,152", "B 3,456×16"],
+    ["vision", "mlp.linear_fc1", "1,152 → 4,304", "A 16×1,152", "B 4,304×16"],
+    ["language", "self_attn.q_proj", "4,096 → 4,096", "A 16×4,096", "B 4,096×16"],
+    ["language", "self_attn.k_proj", "4,096 → 1,024", "A 16×4,096", "B 1,024×16"],
+    ["language", "mlp.gate_proj", "4,096 → 12,288", "A 16×4,096", "B 12,288×16"],
+  ];
+  const tx = 700, ty = 208;
+  svg.appendChild(txt(tx, ty - 16, "REPRESENTATIVE SHAPES", { "font-size": 9.5, fill: "var(--ink-3)", "letter-spacing": "1.2" }));
+  rows.forEach((r, i) => {
+    const yy = ty + i * 20;
+    svg.appendChild(el("line", { x1: tx, x2: tx + 440, y1: yy + 6, y2: yy + 6,
+      stroke: "var(--grid)", "stroke-width": 1 }));
+    svg.appendChild(txt(tx, yy, r[1], { "font-size": 10,
+      fill: r[0] === "vision" ? "var(--dead)" : "var(--trained)" }));
+    svg.appendChild(txt(tx + 168, yy, r[2], { "font-size": 10, fill: "var(--ink-2)" }));
+    svg.appendChild(txt(tx + 288, yy, r[3], { "font-size": 10, fill: "var(--ink-3)" }));
+    svg.appendChild(txt(tx + 372, yy, r[4], { "font-size": 10, fill: "var(--ink-3)" }));
+  });
+  document.getElementById("lora-svg").appendChild(svg);
+})();
+
+/* ============================================================
+   FIGURE 3 — per-layer update magnitude
+   The three dead-vision generations are pointwise identical in the vision
+   panel and near-identical in the language panel, so they are drawn as one
+   envelope rather than three overlapping lines.
+   ============================================================ */
+(function () {
+  const DEAD = ["v16", "v17", "v18a"];
+  document.getElementById("moved-key").innerHTML =
+    `<span><i style="background:var(--dead-soft);border-color:var(--dead)"></i>v1.6 · v1.7 · v1.8a &nbsp;(range)</span>` +
+    `<span><i style="background:var(--trained);border-color:var(--trained)"></i>v1.8b</span>`;
+
+  const W = 1180, H = 320, padL = 62, padR = 24, top = 40, botH = 48;
+  const panelW = (W - padL - padR - 70) / 2;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": "Per-layer LoRA update magnitude. The vision panel is flat at exactly zero for v1.6, v1.7 and v1.8a and nonzero only for v1.8b; the language panel is nearly identical across all four generations." });
+
+  [{ name: "VISION TOWER · 27 blocks", tower: "vision", x: padL, max: 0.26, ticks: [0, .1, .2] },
+   { name: "LANGUAGE MODEL · 36 layers", tower: "language", x: padL + panelW + 70, max: 6, ticks: [0, 2, 4, 6] }
+  ].forEach(p => {
+    const y0 = top, y1 = H - botH;
+    const Y = v => y1 - (v / p.max) * (y1 - y0);
+    const n = p.tower === "vision" ? 27 : 36;
+    const X = i => p.x + (i / (n - 1)) * panelW;
+    const unit = p.tower === "vision" ? "block" : "layer";
+
+    svg.appendChild(txt(p.x, top - 16, p.name, { "font-size": 10.5, "font-weight": 600,
+      fill: "var(--ink-3)", "letter-spacing": "1.2" }));
+    p.ticks.forEach(v => {
+      svg.appendChild(el("line", { x1: p.x, x2: p.x + panelW, y1: Y(v), y2: Y(v),
+        stroke: "var(--grid)", "stroke-width": 1 }));
+      svg.appendChild(txt(p.x - 8, Y(v) + 3.5, v.toFixed(v < 1 && v > 0 ? 1 : 0),
+        { "font-size": 9.5, "text-anchor": "end", fill: "var(--ink-3)" }));
+    });
+    [0, n - 1].forEach(i => svg.appendChild(txt(X(i), y1 + 16, `${unit} ${i}`,
+      { "font-size": 9.5, "text-anchor": i ? "end" : "start", fill: "var(--ink-3)" })));
+
+    /* envelope over the three dead-vision generations */
+    const series = DEAD.map(k => (D.perlayer[k] || {})[p.tower]).filter(Boolean);
+    const lo = [], hi = [];
+    for (let i = 0; i < n; i++) {
+      const col = series.map(v => v[i]);
+      lo.push(Math.min(...col)); hi.push(Math.max(...col));
+    }
+    const flat = hi.every(v => v === 0);
+    if (flat) {
+      svg.appendChild(el("line", { x1: X(0), x2: X(n - 1), y1: Y(0), y2: Y(0),
+        stroke: "var(--dead)", "stroke-width": 3.5, "stroke-linecap": "round" }));
+      svg.appendChild(txt(p.x + panelW / 2, Y(0) - 12,
+        "all three generations · all 27 blocks · exactly 0.0000",
+        { "font-size": 10, "text-anchor": "middle", fill: "var(--dead)", "font-weight": 600 }));
+    } else {
+      const area = hi.map((v, i) => (i ? "L" : "M") + X(i) + " " + Y(v)).join(" ") + " " +
+        lo.map((v, i) => "L" + X(n - 1 - i) + " " + Y(lo[n - 1 - i])).join(" ") + " Z";
+      svg.appendChild(el("path", { d: area, fill: "var(--dead)", opacity: .18, stroke: "none" }));
+      svg.appendChild(el("path", { d: hi.map((v, i) => (i ? "L" : "M") + X(i) + " " + Y(v)).join(" "),
+        fill: "none", stroke: "var(--dead)", "stroke-width": 1.2, opacity: .75 }));
+      svg.appendChild(el("path", { d: lo.map((v, i) => (i ? "L" : "M") + X(i) + " " + Y(v)).join(" "),
+        fill: "none", stroke: "var(--dead)", "stroke-width": 1.2, opacity: .75 }));
+    }
+
+    /* v1.8b */
+    const b = (D.perlayer.v18b || {})[p.tower] || [];
+    svg.appendChild(el("path", { d: b.map((v, i) => (i ? "L" : "M") + X(i) + " " + Y(v)).join(" "),
+      fill: "none", stroke: "var(--trained)", "stroke-width": 2, "stroke-linejoin": "round" }));
+    b.forEach((v, i) => {
+      const dot = el("circle", { cx: X(i), cy: Y(v), r: 2.7, fill: "var(--trained)",
+        stroke: "var(--surface)", "stroke-width": 1 });
+      hover(dot, `<span class='t'>${unit} ${i}</span>
+        <span class='r'><span>v1.8b</span><span>${v.toFixed(4)}</span></span>
+        <span class='r'><span>v1.6 – v1.8a</span><span>${lo[i].toFixed(4)} – ${hi[i].toFixed(4)}</span></span>`);
+      svg.appendChild(dot);
+    });
+  });
+  svg.appendChild(txt(padL, H - 10,
+    "mean ‖B·A‖F over the wrapped projections in each layer  ·  the two panels use different y-scales",
+    { "font-size": 9.5, fill: "var(--ink-3)" }));
+  document.getElementById("moved-svg").appendChild(svg);
+})();
+
+/* ============================================================
+   FIGURE 4 — parameter budget
+   ============================================================ */
+(function () {
+  const order = [
+    ["language: 36 layers (attn+mlp)", "36 language layers", "trained", 43646976],
+    ["language: token embeddings", "token embeddings", "frozen", 0],
+    ["language: lm_head", "lm_head", "frozen", 0],
+    ["vision: 27 blocks (attn+mlp)", "27 vision blocks", "dead", 7699968],
+    ["vision: deepstack mergers (x3)", "deepstack mergers × 3", "frozen", 0],
+    ["vision: merger (projector)", "merger (projector)", "frozen", 0],
+    ["vision: position embed", "vision position embed", "frozen", 0],
+    ["vision: patch embed", "patch embed", "frozen", 0],
+    ["language: norms", "language norms", "frozen", 0],
+    ["vision: block norms", "vision block norms", "frozen", 0],
+  ].filter(r => D.params[r[0]] != null);
+  const total = D.arch.total_params;
+  const W = 1180, rowH = 30, top = 40, padL = 210, padR = 210;
+  const H = top + order.length * rowH + 40, x0 = padL, x1 = W - padR;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": "Parameter budget by component, showing which were LoRA-adapted." });
+  const maxV = Math.max(...order.map(r => D.params[r[0]]));
+  const X = v => (v / maxV) * (x1 - x0);
+  svg.appendChild(txt(padL, top - 16, "BASE PARAMETERS  (log-free, scaled to the largest component)",
+    { "font-size": 9.5, fill: "var(--ink-3)", "letter-spacing": "1.1" }));
+  order.forEach((r, i) => {
+    const [key, label, kind, lora] = r;
+    const v = D.params[key], y = top + i * rowH;
+    const w = Math.max(X(v), 1.5);
+    const bar = el("rect", { x: x0, y: y + 5, width: w, height: 17, rx: 2,
+      fill: `var(--${kind}-soft)`, stroke: `var(--${kind})`, "stroke-width": 1.5 });
+    hover(bar, `<span class='t'>${label}</span>
+      <span class='r'><span>base params</span><span>${n0(v)}</span></span>
+      <span class='r'><span>share of model</span><span>${(v / total * 100).toFixed(2)}%</span></span>
+      <span class='r'><span>LoRA params</span><span>${lora ? n0(lora) : "none — frozen"}</span></span>`);
+    svg.appendChild(bar);
+    svg.appendChild(txt(x0 - 12, y + 18, label, { "font-size": 10.5, "text-anchor": "end" }));
+    /* wide bars carry their value inside, so the LoRA column stays clear */
+    if (w > 130) svg.appendChild(txt(x0 + w - 8, y + 18, n0(v),
+      { "font-size": 10, fill: "var(--ink-2)", "text-anchor": "end" }));
+    else svg.appendChild(txt(x0 + w + 8, y + 18, n0(v), { "font-size": 10, fill: "var(--ink-2)" }));
+    if (lora) svg.appendChild(txt(W - 6, y + 18, `+ ${n0(lora)} LoRA`,
+      { "font-size": 10, fill: `var(--${kind})`, "font-weight": 600, "text-anchor": "end" }));
+  });
+  svg.appendChild(txt(padL, H - 12,
+    `8,767,123,696 parameters total  ·  51,346,944 written by LoRA  ·  0.586%  ·  of which 7,699,968 sat at exactly zero through v1.8a`,
+    { "font-size": 10, fill: "var(--ink-2)" }));
+  document.getElementById("budget-svg").appendChild(svg);
+})();
+
+/* ============================================================
+   FIGURE 5 — the language stack, layer x projection
+   ============================================================ */
+(function () {
+  const MODS = [
+    ["self_attn.q_proj", "q_proj"], ["self_attn.k_proj", "k_proj"],
+    ["self_attn.v_proj", "v_proj"], ["self_attn.o_proj", "o_proj"],
+    ["mlp.gate_proj", "gate_proj"], ["mlp.up_proj", "up_proj"], ["mlp.down_proj", "down_proj"]];
+  const grid = D.langgrid.v17.grid;
+  const L = 36;
+  const vals = [];
+  for (let l = 0; l < L; l++) for (const [k] of MODS) vals.push(grid[l][k]);
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  const RAMP = ["var(--q1)", "var(--q2)", "var(--q3)", "var(--q4)", "var(--q5)", "var(--q6)"];
+  const step = v => Math.min(5, Math.max(0, Math.floor((v - lo) / (hi - lo) * 6)));
+
+  const W = 1180, padL = 120, padR = 150, top = 96, cellH = 26;
+  const cw = (W - padL - padR) / L;
+  const H = top + MODS.length * cellH + 46;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": "Heatmap of LoRA update magnitude across 36 language layers and 7 projection types, with a per-layer profile above and a per-projection mean at right." });
+
+  /* per-layer profile strip above the heatmap */
+  const prof = [];
+  for (let l = 0; l < L; l++) prof.push(MODS.reduce((s2, [k]) => s2 + grid[l][k], 0) / MODS.length);
+  const pLo = Math.min(...prof), pHi = Math.max(...prof);
+  const pY = v => 76 - ((v - pLo) / (pHi - pLo)) * 44;
+  svg.appendChild(txt(padL, 22, "MEAN UPDATE PER LAYER", { "font-size": 9.5, fill: "var(--ink-3)", "letter-spacing": "1.1" }));
+  svg.appendChild(el("path", { d: prof.map((v, i) => (i ? "L" : "M") + (padL + i * cw + cw / 2) + " " + pY(v)).join(" "),
+    fill: "none", stroke: "var(--trained)", "stroke-width": 2 }));
+  prof.forEach((v, i) => {
+    const c = el("circle", { cx: padL + i * cw + cw / 2, cy: pY(v), r: 2.4, fill: "var(--trained)" });
+    hover(c, `<span class='t'>layer ${i}</span><span class='r'><span>mean RMS update</span><span>${v.toExponential(2)}</span></span>`);
+    svg.appendChild(c);
+  });
+  [["early", 0, 11], ["middle", 12, 23], ["late", 24, 35]].forEach(([n, a, b]) => {
+    const mid = padL + ((a + b) / 2 + .5) * cw;
+    svg.appendChild(txt(mid, 90, n, { "font-size": 9, "text-anchor": "middle", fill: "var(--ink-3)" }));
+  });
+
+  /* heatmap */
+  MODS.forEach(([key, label], r) => {
+    const y = top + r * cellH;
+    svg.appendChild(txt(padL - 10, y + cellH / 2 + 4, label, {
+      "font-size": 10.5, "text-anchor": "end",
+      fill: key.startsWith("mlp") ? "var(--trained)" : "var(--ink)" }));
+    let sum = 0;
+    for (let l = 0; l < L; l++) {
+      const v = grid[l][key]; sum += v;
+      const cell = el("rect", { x: padL + l * cw + .6, y: y + 1.5, width: cw - 1.6,
+        height: cellH - 3, fill: RAMP[step(v)], rx: 1.5 });
+      hover(cell, `<span class='t'>layer ${l} · ${label}</span>
+        <span class='r'><span>RMS update</span><span>${v.toExponential(2)}</span></span>
+        <span class='r'><span>vs grid max</span><span>${(v / hi * 100).toFixed(0)}%</span></span>`);
+      svg.appendChild(cell);
+    }
+    const mean = sum / L;
+    const bw = (mean / hi) * 110;
+    svg.appendChild(el("rect", { x: W - padR + 12, y: y + 6, width: Math.max(bw, 1), height: cellH - 12,
+      fill: key.startsWith("mlp") ? "var(--trained)" : "var(--frozen)", rx: 1.5 }));
+    svg.appendChild(txt(W - padR + 12 + bw + 6, y + cellH / 2 + 4, mean.toExponential(1),
+      { "font-size": 9, fill: "var(--ink-3)" }));
+  });
+  svg.appendChild(txt(W - padR + 12, top - 8, "MEAN", { "font-size": 9, fill: "var(--ink-3)", "letter-spacing": "1" }));
+  [0, 11, 23, 35].forEach(l => svg.appendChild(txt(padL + l * cw + cw / 2, top + MODS.length * cellH + 16,
+    "L" + l, { "font-size": 9.5, "text-anchor": "middle", fill: "var(--ink-3)" })));
+  svg.appendChild(txt(padL, H - 8,
+    "cell = per-entry RMS of the LoRA update  ·  darker = larger  ·  MLP projections in blue, attention in grey",
+    { "font-size": 9.5, fill: "var(--ink-3)" }));
+  document.getElementById("lang-svg").appendChild(svg);
+})();
+
+/* ============================================================
+   FIGURE 6 — what language-only bought
+   ============================================================ */
+(function () {
+  document.getElementById("prog-key").innerHTML =
+    `<span><i style="background:var(--dead-soft);border-color:var(--dead)"></i>vision tower dead (lora_B = 0)</span>` +
+    `<span><i style="background:var(--trained-soft);border-color:var(--trained)"></i>vision tower trained</span>`;
+  const P = D.progress;
+  const W = 1180, H = 356, top = 54, botH = 60;
+  const panelW = 452, gapX = 116, padL = 68;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": "Left panel: Talmud character error rate falls 771 times with the vision tower frozen. Right panel: on Genizah, language-only training raised attempt rate but n-gram precision only rose once vision trained." });
+
+  /* -- left: Talmud CER, log scale, all three text bodies -- */
+  const SEC = [{ k: "gemara", t: "Gemara", c: "var(--dead)" },
+               { k: "rashi", t: "Rashi", c: "var(--s2)" },
+               { k: "tosafot", t: "Tosafot", c: "var(--s3)" }];
+  const tp = P.filter(r => r.talmud_cer != null);
+  const x0 = padL, y0 = top, y1 = H - botH;
+  const LO = 0.003, HI = 5;
+  const Y = v => y1 - (Math.log10(Math.max(v, LO)) - Math.log10(LO)) / (Math.log10(HI) - Math.log10(LO)) * (y1 - y0);
+  svg.appendChild(txt(x0, top - 22, "PRINTED TALMUD · median CER, gemara", { "font-size": 10.5, "font-weight": 600, fill: "var(--ink-3)", "letter-spacing": "1.1" }));
+  [0.01, 0.1, 1].forEach(v => {
+    svg.appendChild(el("line", { x1: x0, x2: x0 + panelW, y1: Y(v), y2: Y(v), stroke: "var(--grid)", "stroke-width": 1 }));
+    svg.appendChild(txt(x0 - 8, Y(v) + 3.5, String(v), { "font-size": 9.5, "text-anchor": "end", fill: "var(--ink-3)" }));
+  });
+  const lin = D.sections.lineage;
+  const tx = i => x0 + 40 + i * ((panelW - 76) / (lin.length - 1));
+  SEC.forEach(sc => {
+    const rows = D.sections.data[sc.k];
+    svg.appendChild(el("path", { d: rows.map((r, i) => (i ? "L" : "M") + tx(i) + " " + Y(r.median)).join(" "),
+      fill: "none", stroke: sc.c, "stroke-width": 2, "stroke-linejoin": "round" }));
+    rows.forEach((r, i) => {
+      const c = el("circle", { cx: tx(i), cy: Y(r.median), r: 3.6, fill: sc.c,
+        stroke: "var(--surface)", "stroke-width": 1.6 });
+      hover(c, `<span class='t'>${r.gen} · ${sc.t}</span>
+        <span class='r'><span>median CER</span><span>${r.median.toFixed(4)}</span></span>
+        <span class='r'><span>mean CER</span><span>${r.mean.toFixed(4)}</span></span>
+        <span class='r'><span>pages &gt; 0.3</span><span>${(r.fail * 100).toFixed(1)}%</span></span>
+        <span class='r'><span>pages</span><span>${r.n}</span></span>`);
+      svg.appendChild(c);
+    });
+    const lastR = rows[rows.length - 1];
+    svg.appendChild(txt(tx(lin.length - 1) + 8, Y(lastR.median) + 3.5,
+      `${sc.t} ${lastR.median.toFixed(4)}`, { "font-size": 9.5, fill: sc.c, "font-weight": 600 }));
+  });
+  lin.forEach((g, i) => svg.appendChild(txt(tx(i), y1 + 18, g,
+    { "font-size": 8.5, "text-anchor": "middle", fill: "var(--ink-3)" })));
+  svg.appendChild(txt(x0 + panelW / 2, y1 + 38, "every step with the vision tower frozen",
+    { "font-size": 10, "text-anchor": "middle", fill: "var(--dead)", "font-weight": 600 }));
+
+  /* -- right: Genizah coverage vs grounding -- */
+  const gx = x0 + panelW + gapX;
+  const gp = P.filter(r => r.gz_substantive != null);
+  const gw = panelW, bh = 15;
+  svg.appendChild(txt(gx, top - 22, "GENIZAH MANUSCRIPT · 131 fragments", { "font-size": 10.5, "font-weight": 600, fill: "var(--ink-3)", "letter-spacing": "1.1" }));
+  const rowH = (y1 - y0) / gp.length;
+  gp.forEach((r, i) => {
+    const yy = y0 + i * rowH + 6;
+    svg.appendChild(txt(gx - 8, yy + 16, r.gen, { "font-size": 10, "text-anchor": "end", fill: "var(--ink)" }));
+    [["gz_substantive", "attempted", 0], ["gz_ngramP", "on the page", 1]].forEach(([k, lab, j]) => {
+      const v = r[k], w = v * (gw - 120);
+      const kind = (k === "gz_ngramP" && r.vision === "trained") ? "trained"
+        : (k === "gz_ngramP" ? "dead" : "frozen");
+      const bar = el("rect", { x: gx, y: yy + j * (bh + 3), width: Math.max(w, 1.5), height: bh, rx: 2,
+        fill: `var(--${kind}-soft)`, stroke: `var(--${kind})`, "stroke-width": 1.4 });
+      hover(bar, `<span class='t'>${r.gen} · ${lab}</span>
+        <span class='r'><span>${k === "gz_ngramP" ? "n-gram precision" : "read substantively"}</span><span>${k === "gz_ngramP" ? v.toFixed(3) : (v * 100).toFixed(1) + "%"}</span></span>`);
+      svg.appendChild(bar);
+      svg.appendChild(txt(gx + w + 7, yy + j * (bh + 3) + 11.5,
+        (k === "gz_ngramP" ? v.toFixed(3) : (v * 100).toFixed(0) + "%"),
+        { "font-size": 9, fill: "var(--ink-3)" }));
+    });
+  });
+  svg.appendChild(txt(gx, y1 + 18, "upper bar: share attempted  ·  lower bar: n-gram precision (is the text on the page?)",
+    { "font-size": 9.5, fill: "var(--ink-3)" }));
+  svg.appendChild(txt(gx, y1 + 38, "coverage came from language training · grounding only came with vision",
+    { "font-size": 10, fill: "var(--trained)", "font-weight": 600 }));
+  document.getElementById("prog-svg").appendChild(svg);
+})();
+
+/* ============================================================
+   FIGURE 7 — the three text bodies
+   ============================================================ */
+(function () {
+  const SEC = [{ k: "gemara", t: "Gemara", script: "square script", c: "var(--dead)" },
+               { k: "rashi", t: "Rashi", script: "Rashi script", c: "var(--s2)" },
+               { k: "tosafot", t: "Tosafot", script: "Rashi script", c: "var(--s3)" }];
+  const lin = D.sections.lineage;
+  const W = 1180, H = 412;
+  const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img",
+    "aria-label": "Left: schematic of a Vilna Talmud page showing gemara in the centre in square script, flanked by Rashi and Tosafot in Rashi script. Right: median character error rate for each section across the checkpoint lineage, and the endpoint failure rates." });
+
+  /* ---- page schematic ---- */
+  const px = 40, py = 54, pw = 250, ph = 292;
+  svg.appendChild(txt(px, py - 16, "VILNA PAGE LAYOUT · amud a",
+    { "font-size": 10, fill: "var(--ink-3)", "letter-spacing": "1.1" }));
+  svg.appendChild(el("rect", { x: px, y: py, width: pw, height: ph, rx: 3,
+    fill: "var(--surface)", stroke: "var(--rule-strong)", "stroke-width": 1.5 }));
+  /* outer apparatus strips (not transcribed) */
+  [[px + 5, 15], [px + pw - 20, 15]].forEach(([xx, ww]) =>
+    svg.appendChild(el("rect", { x: xx, y: py + 26, width: ww, height: ph - 46, rx: 2,
+      fill: "var(--frozen-soft)", stroke: "var(--frozen)", "stroke-width": 1,
+      "stroke-dasharray": "3 3" })));
+  /* Rashi's opening lines span the full width above the three columns
+     (verified against the Berakhot 10a/10b scans). */
+  const bandY = py + 26, bandH = 24, colY = bandY + bandH + 4;
+  svg.appendChild(el("rect", { x: px + 26, y: bandY, width: 202, height: bandH, rx: 2,
+    fill: "rgba(235,104,52,.14)", stroke: SEC[1].c, "stroke-width": 1.4 }));
+  for (let i = 0; i < 2; i++)
+    svg.appendChild(el("rect", { x: px + 32, y: bandY + 6 + i * 8, width: 190, height: 3,
+      rx: 1, fill: SEC[1].c, opacity: .34 }));
+  svg.appendChild(txt(px + 127, bandY + bandH + 1, "", {}));
+  const cols = [
+    { x: px + 26, w: 58, s: SEC[2], label: "Tosafot" },
+    { x: px + 90, w: 74, s: SEC[0], label: "Gemara" },
+    { x: px + 170, w: 58, s: SEC[1], label: "Rashi" }];
+  cols.forEach(c => {
+    const r = el("rect", { x: c.x, y: colY, width: c.w, height: py + ph - 20 - colY, rx: 2,
+      fill: `${c.s.c === "var(--dead)" ? "var(--dead-soft)" : c.s.c === "var(--s2)" ? "rgba(235,104,52,.14)" : "rgba(27,175,122,.14)"}`,
+      stroke: c.s.c, "stroke-width": 1.6 });
+    hover(r, `<span class='t'>${c.s.t}</span><span class='r'><span>typeface</span><span>${c.s.script}</span></span>`);
+    svg.appendChild(r);
+    /* fake text lines */
+    for (let i = 0; i < 10; i++)
+      svg.appendChild(el("rect", { x: c.x + 6, y: colY + 12 + i * 18, width: c.w - 12,
+        height: c.s.k === "gemara" ? 5 : 3, rx: 1, fill: c.s.c, opacity: .34 }));
+    svg.appendChild(txt(c.x + c.w / 2, py + ph - 8, c.label,
+      { "font-size": 9.5, "text-anchor": "middle", fill: c.s.c, "font-weight": 600 }));
+  });
+  svg.appendChild(txt(px, py + ph + 18, "square centre · Rashi script: top band + flanks",
+    { "font-size": 9.5, fill: "var(--ink-3)" }));
+  svg.appendChild(txt(px, py + ph + 32, "grey strips: marginal apparatus, not transcribed",
+    { "font-size": 9, fill: "var(--frozen)" }));
+  svg.appendChild(txt(px, py + ph + 45, "amud a shown: Rashi right, Tosafot left, Rashi\u2019s first",
+    { "font-size": 9, fill: "var(--frozen)" }));
+  svg.appendChild(txt(px, py + ph + 57, "lines full-width on top · flanks mirror on amud b (verified, Ber. 10a/10b)",
+    { "font-size": 9, fill: "var(--frozen)" }));
+
+  /* ---- trajectory ---- */
+  const gx = px + pw + 92, gw = 470, y0 = py, y1 = py + 212;
+  const LO = 0.003, HI = 5;
+  const Y = v => y1 - (Math.log10(Math.max(v, LO)) - Math.log10(LO)) / (Math.log10(HI) - Math.log10(LO)) * (y1 - y0);
+  const X = i => gx + 34 + i * ((gw - 96) / (lin.length - 1));
+  svg.appendChild(txt(gx, py - 16, "MEDIAN CER ACROSS THE CHECKPOINT LINEAGE",
+    { "font-size": 10, fill: "var(--ink-3)", "letter-spacing": "1.1" }));
+  [0.01, 0.1, 1].forEach(v => {
+    svg.appendChild(el("line", { x1: gx, x2: gx + gw - 40, y1: Y(v), y2: Y(v),
+      stroke: "var(--grid)", "stroke-width": 1 }));
+    svg.appendChild(txt(gx - 6, Y(v) + 3.5, String(v),
+      { "font-size": 9.5, "text-anchor": "end", fill: "var(--ink-3)" }));
+  });
+  const ends = [];
+  SEC.forEach(sc => {
+    const rows = D.sections.data[sc.k];
+    svg.appendChild(el("path", { d: rows.map((r, i) => (i ? "L" : "M") + X(i) + " " + Y(r.median)).join(" "),
+      fill: "none", stroke: sc.c, "stroke-width": 2, "stroke-linejoin": "round" }));
+    rows.forEach((r, i) => {
+      const c = el("circle", { cx: X(i), cy: Y(r.median), r: 3.6, fill: sc.c,
+        stroke: "var(--surface)", "stroke-width": 1.6 });
+      hover(c, `<span class='t'>${r.gen} · ${sc.t} (${sc.script})</span>
+        <span class='r'><span>median CER</span><span>${r.median.toFixed(4)}</span></span>
+        <span class='r'><span>mean CER</span><span>${r.mean.toFixed(4)}</span></span>
+        <span class='r'><span>pages &gt; 0.3</span><span>${(r.fail * 100).toFixed(1)}%</span></span>`);
+      svg.appendChild(c);
+    });
+    ends.push({ y: Y(rows[rows.length - 1].median), c: sc.c,
+      t: `${sc.t} ${rows[rows.length - 1].median.toFixed(4)}` });
+  });
+  ends.sort((a, b) => a.y - b.y);
+  for (let i = 1; i < ends.length; i++)
+    if (ends[i].y - ends[i - 1].y < 13) ends[i].y = ends[i - 1].y + 13;
+  ends.forEach(e => svg.appendChild(txt(X(lin.length - 1) + 10, e.y + 3.5, e.t,
+    { "font-size": 9.5, fill: e.c, "font-weight": 600 })));
+  lin.forEach((g, i) => svg.appendChild(txt(X(i), y1 + 16, g,
+    { "font-size": 8.5, "text-anchor": "middle", fill: "var(--ink-3)" })));
+
+  /* ---- endpoint summary strip ---- */
+  const sy = y1 + 56;
+  svg.appendChild(txt(gx, sy - 6, "AT v1.7 · VISION TOWER STILL DEAD",
+    { "font-size": 9.5, fill: "var(--ink-3)", "letter-spacing": "1.1" }));
+  const cols2 = [["median CER", r => r.median.toFixed(4)],
+                 ["mean CER", r => r.mean.toFixed(4)],
+                 ["pages > 0.3", r => (r.fail * 100).toFixed(1) + "%"]];
+  SEC.forEach((sc, i) => {
+    const rows = D.sections.data[sc.k], r = rows[rows.length - 1];
+    const yy = sy + 20 + i * 19;
+    svg.appendChild(el("rect", { x: gx, y: yy - 8, width: 9, height: 9, rx: 2, fill: sc.c }));
+    svg.appendChild(txt(gx + 16, yy, sc.t, { "font-size": 10, fill: "var(--ink)" }));
+    cols2.forEach(([lab, f], j) => {
+      if (i === 0) svg.appendChild(txt(gx + 110 + j * 116, sy + 2, lab,
+        { "font-size": 8.5, fill: "var(--ink-3)" }));
+      svg.appendChild(txt(gx + 110 + j * 116, yy, f(r), { "font-size": 10, fill: "var(--ink-2)" }));
+    });
+  });
+  document.getElementById("sec-svg").appendChild(svg);
+})();
+
+/* ============================================================
+   MODULE TABLE
+   ============================================================ */
+(function () {
+  const rows = [];
+  ["vision", "language"].forEach(t => D.modules[t].forEach(m => rows.push([t, m])));
+  const body = rows.map(([t, m]) => `<tr${t === "vision" ? ' class="dead"' : ""}>
+      <td>${t === "vision" ? "vision block" : "language layer"} · ${m.m}</td>
+      <td>${m.n}</td><td>${m.shape[1].toLocaleString()} → ${m.shape[0].toLocaleString()}</td>
+      <td>16</td><td>${m.p.toLocaleString()}</td></tr>`).join("");
+  const totMods = rows.reduce((s, [, m]) => s + m.n, 0);
+  const totP = rows.reduce((s, [, m]) => s + m.p, 0);
+  document.getElementById("mod-table").innerHTML = `<table>
+    <thead><tr><th>Wrapped module</th><th>Count</th><th>ΔW shape</th><th>Rank</th><th>LoRA params</th></tr></thead>
+    <tbody>${body}<tr class="tot"><td>Total</td><td>${totMods}</td><td>—</td><td>16</td><td>${totP.toLocaleString()}</td></tr></tbody></table>`;
+})();
+
+/* export mode */
+(function () {
+  const m = /export=([\w-]+)/.exec(location.hash);
+  if (!m) return;
+  const src = document.getElementById(m[1]);
+  if (!src) return;
+  const stage = document.createElement("div");
+  stage.className = "export-stage";
+  stage.appendChild(src);
+  document.body.appendChild(stage);
+  document.body.classList.add("export");
+  document.body.style.zoom = "2";
+})();
+</script>

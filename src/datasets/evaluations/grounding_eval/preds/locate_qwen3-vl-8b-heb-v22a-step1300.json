@@ -1,0 +1,1593 @@
+{
+ "model": "qwen3-vl-8b-heb-v22a-step1300",
+ "mode": "locate",
+ "n": 72,
+ "decoded_at": "2026-09-28T02:26:39",
+ "temperature": 0.1,
+ "preds": [
+  {
+   "doc_id": "KTIV_990051937530205171_FL202188735",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051937530205171_FL202188735.jpg",
+   "phrase": "ממנו תרומה",
+   "gt_box": [
+    149,
+    186,
+    382,
+    235
+   ],
+   "idx": 0,
+   "raw": "{\"bbox_2d\": [147, 196, 380, 235]}",
+   "ok": true,
+   "iou": 0.783732057416268,
+   "hit": 1,
+   "pred_box": [
+    147,
+    196,
+    380,
+    235
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051937530205171_FL202188735",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051937530205171_FL202188735.jpg",
+   "phrase": "אין עונים",
+   "gt_box": [
+    609,
+    234,
+    746,
+    284
+   ],
+   "idx": 1,
+   "raw": "{\"bbox_2d\": [610, 243, 879, 285]}",
+   "ok": true,
+   "iou": 0.4435252943048043,
+   "hit": 1,
+   "pred_box": [
+    610,
+    243,
+    879,
+    285
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051937530205171_FL202188735",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051937530205171_FL202188735.jpg",
+   "phrase": "חייו קטופ'",
+   "gt_box": [
+    602,
+    332,
+    764,
+    382
+   ],
+   "idx": 2,
+   "raw": "{\"bbox_2d\": [603, 341, 789, 375]}",
+   "ok": true,
+   "iou": 0.6116201117318436,
+   "hit": 1,
+   "pred_box": [
+    603,
+    341,
+    789,
+    375
+   ]
+  },
+  {
+   "doc_id": "KTIV_990025092800205171_FL202082610",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990025092800205171_FL202082610.jpg",
+   "phrase": "פחות מעשרים",
+   "gt_box": [
+    137,
+    399,
+    374,
+    488
+   ],
+   "idx": 3,
+   "raw": "{\"bbox_2d\": [130, 418, 359, 476]}",
+   "ok": true,
+   "iou": 0.5989115772826643,
+   "hit": 1,
+   "pred_box": [
+    130,
+    418,
+    359,
+    476
+   ]
+  },
+  {
+   "doc_id": "KTIV_990025092800205171_FL202082610",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990025092800205171_FL202082610.jpg",
+   "phrase": "הדבר הגדול",
+   "gt_box": [
+    415,
+    307,
+    594,
+    396
+   ],
+   "idx": 4,
+   "raw": "{\"bbox_2d\": [453, 316, 709, 382]}",
+   "ok": true,
+   "iou": 0.3956464436035883,
+   "hit": 1,
+   "pred_box": [
+    453,
+    316,
+    709,
+    382
+   ]
+  },
+  {
+   "doc_id": "KTIV_990025092800205171_FL202082610",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990025092800205171_FL202082610.jpg",
+   "phrase": "שות ולמ ידת",
+   "gt_box": [
+    311,
+    237,
+    521,
+    327
+   ],
+   "idx": 5,
+   "raw": "{\"bbox_2d\": [389, 261, 574, 320]}",
+   "ok": true,
+   "iou": 0.35356607799518774,
+   "hit": 1,
+   "pred_box": [
+    389,
+    261,
+    574,
+    320
+   ]
+  },
+  {
+   "doc_id": "KTIV_990053495120205171_FL201832544",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053495120205171_FL201832544.jpg",
+   "phrase": "מלך שבע שנים",
+   "gt_box": [
+    345,
+    393,
+    457,
+    410
+   ],
+   "idx": 6,
+   "raw": "{\"bbox_2d\": [341, 395, 506, 412]}",
+   "ok": true,
+   "iou": 0.5546384945526577,
+   "hit": 1,
+   "pred_box": [
+    341,
+    395,
+    506,
+    412
+   ]
+  },
+  {
+   "doc_id": "KTIV_990053495120205171_FL201832544",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053495120205171_FL201832544.jpg",
+   "phrase": "יי שדחפו לישו",
+   "gt_box": [
+    191,
+    666,
+    358,
+    684
+   ],
+   "idx": 7,
+   "raw": "{\"bbox_2d\": [103, 674, 269, 685]}",
+   "ok": true,
+   "iou": 0.192497532082922,
+   "hit": 0,
+   "pred_box": [
+    103,
+    674,
+    269,
+    685
+   ]
+  },
+  {
+   "doc_id": "KTIV_990053495120205171_FL201832544",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053495120205171_FL201832544.jpg",
+   "phrase": "זה וה עמידה",
+   "gt_box": [
+    99,
+    445,
+    160,
+    462
+   ],
+   "idx": 8,
+   "raw": "{\"bbox_2d\": [104, 563, 278, 592]}",
+   "ok": true,
+   "iou": 0.0,
+   "hit": 0,
+   "pred_box": [
+    104,
+    563,
+    278,
+    592
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051943150205171_FL202972671",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051943150205171_FL202972671.jpg",
+   "phrase": "ביצים גמורו",
+   "gt_box": [
+    272,
+    774,
+    540,
+    820
+   ],
+   "idx": 9,
+   "raw": "{\"bbox_2d\": [378, 641, 590, 672]}",
+   "ok": true,
+   "iou": 0.0,
+   "hit": 0,
+   "pred_box": [
+    378,
+    641,
+    590,
+    672
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051943150205171_FL202972671",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051943150205171_FL202972671.jpg",
+   "phrase": "לב שלתורה",
+   "gt_box": [
+    339,
+    548,
+    611,
+    587
+   ],
+   "idx": 10,
+   "raw": "{\"bbox_2d\": [398, 546, 610, 587]}",
+   "ok": true,
+   "iou": 0.7494561276287165,
+   "hit": 1,
+   "pred_box": [
+    398,
+    546,
+    610,
+    587
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051943150205171_FL202972671",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051943150205171_FL202972671.jpg",
+   "phrase": "פיכך אסרו כל",
+   "gt_box": [
+    480,
+    675,
+    795,
+    728
+   ],
+   "idx": 11,
+   "raw": "{\"bbox_2d\": [497, 683, 751, 720]}",
+   "ok": true,
+   "iou": 0.5629230308475591,
+   "hit": 1,
+   "pred_box": [
+    497,
+    683,
+    751,
+    720
+   ]
+  },
+  {
+   "doc_id": "KTIV_990025086880205171_FL202082467",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990025086880205171_FL202082467.jpg",
+   "phrase": "דברים הרי זה",
+   "gt_box": [
+    200,
+    508,
+    401,
+    579
+   ],
+   "idx": 12,
+   "raw": "{\"bbox_2d\": [198, 504, 463, 572]}",
+   "ok": true,
+   "iou": 0.6621712050239358,
+   "hit": 1,
+   "pred_box": [
+    198,
+    504,
+    463,
+    572
+   ]
+  },
+  {
+   "doc_id": "KTIV_990025086880205171_FL202082467",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990025086880205171_FL202082467.jpg",
+   "phrase": "ומ' משל אמצע",
+   "gt_box": [
+    310,
+    267,
+    500,
+    352
+   ],
+   "idx": 13,
+   "raw": "{\"bbox_2d\": [310, 287, 549, 361]}",
+   "ok": true,
+   "iou": 0.5747928883924416,
+   "hit": 1,
+   "pred_box": [
+    310,
+    287,
+    549,
+    361
+   ]
+  },
+  {
+   "doc_id": "KTIV_990025086880205171_FL202082467",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990025086880205171_FL202082467.jpg",
+   "phrase": "תף שבועת הש",
+   "gt_box": [
+    396,
+    433,
+    615,
+    508
+   ],
+   "idx": 14,
+   "raw": "{\"bbox_2d\": [457, 431, 609, 482]}",
+   "ok": true,
+   "iou": 0.4452148962878833,
+   "hit": 1,
+   "pred_box": [
+    457,
+    431,
+    609,
+    482
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051365260205171_FL202939052",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051365260205171_FL202939052.jpg",
+   "phrase": "לא נחלקו בית",
+   "gt_box": [
+    349,
+    291,
+    457,
+    336
+   ],
+   "idx": 15,
+   "raw": "{\"bbox_2d\": [381, 294, 507, 346]}",
+   "ok": true,
+   "iou": 0.3883211678832117,
+   "hit": 1,
+   "pred_box": [
+    381,
+    294,
+    507,
+    346
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051365260205171_FL202939052",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051365260205171_FL202939052.jpg",
+   "phrase": "וחגותם אותו חג",
+   "gt_box": [
+    409,
+    110,
+    549,
+    161
+   ],
+   "idx": 16,
+   "raw": "{\"bbox_2d\": [450, 116, 597, 152]}",
+   "ok": true,
+   "iou": 0.401894451962111,
+   "hit": 1,
+   "pred_box": [
+    450,
+    116,
+    597,
+    152
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051365260205171_FL202939052",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051365260205171_FL202939052.jpg",
+   "phrase": "אלעזר לא נחלקו",
+   "gt_box": [
+    383,
+    291,
+    512,
+    336
+   ],
+   "idx": 17,
+   "raw": "{\"bbox_2d\": [381, 294, 507, 346]}",
+   "ok": true,
+   "iou": 0.7284934955937893,
+   "hit": 1,
+   "pred_box": [
+    381,
+    294,
+    507,
+    346
+   ]
+  },
+  {
+   "doc_id": "KTIV_990025086880205171_FL202082468",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990025086880205171_FL202082468.jpg",
+   "phrase": "מעולם הרי הנתבע",
+   "gt_box": [
+    542,
+    249,
+    834,
+    332
+   ],
+   "idx": 18,
+   "raw": "{\"bbox_2d\": [543, 267, 819, 320]}",
+   "ok": true,
+   "iou": 0.6035649447103483,
+   "hit": 1,
+   "pred_box": [
+    543,
+    267,
+    819,
+    320
+   ]
+  },
+  {
+   "doc_id": "KTIV_990025086880205171_FL202082468",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990025086880205171_FL202082468.jpg",
+   "phrase": "ותפו וחזר",
+   "gt_box": [
+    653,
+    659,
+    805,
+    728
+   ],
+   "idx": 19,
+   "raw": "{\"bbox_2d\": [648, 671, 809, 732]}",
+   "ok": true,
+   "iou": 0.7440103048518678,
+   "hit": 1,
+   "pred_box": [
+    648,
+    671,
+    809,
+    732
+   ]
+  },
+  {
+   "doc_id": "KTIV_990025086880205171_FL202082468",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990025086880205171_FL202082468.jpg",
+   "phrase": "שותפין אנחנו ויש",
+   "gt_box": [
+    474,
+    493,
+    733,
+    575
+   ],
+   "idx": 20,
+   "raw": "{\"bbox_2d\": [475, 508, 691, 562]}",
+   "ok": true,
+   "iou": 0.5492042565213296,
+   "hit": 1,
+   "pred_box": [
+    475,
+    508,
+    691,
+    562
+   ]
+  },
+  {
+   "doc_id": "KTIV_990053269970205171_FL203094978",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053269970205171_FL203094978.jpg",
+   "phrase": "ויושבי בה",
+   "gt_box": [
+    214,
+    377,
+    372,
+    417
+   ],
+   "idx": 21,
+   "raw": "{\"bbox_2d\": [217, 384, 360, 415]}",
+   "ok": true,
+   "iou": 0.7014240506329114,
+   "hit": 1,
+   "pred_box": [
+    217,
+    384,
+    360,
+    415
+   ]
+  },
+  {
+   "doc_id": "KTIV_990053269970205171_FL203094978",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053269970205171_FL203094978.jpg",
+   "phrase": "לבני קרח: גדול",
+   "gt_box": [
+    572,
+    428,
+    836,
+    489
+   ],
+   "idx": 22,
+   "raw": "{\"bbox_2d\": [569, 438, 781, 482]}",
+   "ok": true,
+   "iou": 0.5663956639566395,
+   "hit": 1,
+   "pred_box": [
+    569,
+    438,
+    781,
+    482
+   ]
+  },
+  {
+   "doc_id": "KTIV_990053269970205171_FL203094978",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053269970205171_FL203094978.jpg",
+   "phrase": "אומרים מזמור",
+   "gt_box": [
+    200,
+    724,
+    458,
+    777
+   ],
+   "idx": 23,
+   "raw": "{\"bbox_2d\": [198, 730, 634, 772]}",
+   "ok": true,
+   "iou": 0.512340425531915,
+   "hit": 1,
+   "pred_box": [
+    198,
+    730,
+    634,
+    772
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051726080205171_FL203737423",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051726080205171_FL203737423.jpg",
+   "phrase": "לך מילתא באהלות",
+   "gt_box": [
+    220,
+    339,
+    321,
+    365
+   ],
+   "idx": 24,
+   "raw": "{\"bbox_2d\": [196, 345, 307, 368]}",
+   "ok": true,
+   "iou": 0.5059610351846467,
+   "hit": 1,
+   "pred_box": [
+    196,
+    345,
+    307,
+    368
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051726080205171_FL203737423",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051726080205171_FL203737423.jpg",
+   "phrase": "רבא ואי צאלי",
+   "gt_box": [
+    574,
+    148,
+    648,
+    176
+   ],
+   "idx": 25,
+   "raw": "{\"bbox_2d\": [563, 149, 670, 172]}",
+   "ok": true,
+   "iou": 0.6012009890498057,
+   "hit": 1,
+   "pred_box": [
+    563,
+    149,
+    670,
+    172
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051726080205171_FL203737423",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051726080205171_FL203737423.jpg",
+   "phrase": "בסערה ומאי קושיא",
+   "gt_box": [
+    316,
+    122,
+    424,
+    148
+   ],
+   "idx": 26,
+   "raw": "{\"bbox_2d\": [341, 127, 456, 150]}",
+   "ok": true,
+   "iou": 0.469811320754717,
+   "hit": 1,
+   "pred_box": [
+    341,
+    127,
+    456,
+    150
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051168020205171_FL202419280",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051168020205171_FL202419280.jpg",
+   "phrase": "מתנא מאביי מו",
+   "gt_box": [
+    606,
+    663,
+    719,
+    687
+   ],
+   "idx": 27,
+   "raw": "{\"bbox_2d\": [614, 659, 738, 682]}",
+   "ok": true,
+   "iou": 0.5589801064724013,
+   "hit": 1,
+   "pred_box": [
+    614,
+    659,
+    738,
+    682
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051168020205171_FL202419280",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051168020205171_FL202419280.jpg",
+   "phrase": "לא יכסנו משתחשך",
+   "gt_box": [
+    144,
+    356,
+    288,
+    382
+   ],
+   "idx": 28,
+   "raw": "{\"bbox_2d\": [149, 358, 367, 378]}",
+   "ok": true,
+   "iou": 0.5221637866265966,
+   "hit": 1,
+   "pred_box": [
+    149,
+    358,
+    367,
+    378
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051168020205171_FL202419280",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051168020205171_FL202419280.jpg",
+   "phrase": "ניצוצות בשבת ואין",
+   "gt_box": [
+    332,
+    124,
+    474,
+    150
+   ],
+   "idx": 29,
+   "raw": "{\"bbox_2d\": [346, 130, 578, 152]}",
+   "ok": true,
+   "iou": 0.41051956382296345,
+   "hit": 1,
+   "pred_box": [
+    346,
+    130,
+    578,
+    152
+   ]
+  },
+  {
+   "doc_id": "KTIV_990052000030205171_FL202135225",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990052000030205171_FL202135225.jpg",
+   "phrase": "עומדין וזה הוא",
+   "gt_box": [
+    233,
+    608,
+    438,
+    639
+   ],
+   "idx": 30,
+   "raw": "{\"bbox_2d\": [196, 608, 457, 632]}",
+   "ok": true,
+   "iou": 0.6390440316924276,
+   "hit": 1,
+   "pred_box": [
+    196,
+    608,
+    457,
+    632
+   ]
+  },
+  {
+   "doc_id": "KTIV_990052000030205171_FL202135225",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990052000030205171_FL202135225.jpg",
+   "phrase": "ביום השמיני.",
+   "gt_box": [
+    142,
+    259,
+    321,
+    300
+   ],
+   "idx": 31,
+   "raw": "{\"bbox_2d\": [157, 280, 346, 300]}",
+   "ok": true,
+   "iou": 0.4184207169281796,
+   "hit": 1,
+   "pred_box": [
+    157,
+    280,
+    346,
+    300
+   ]
+  },
+  {
+   "doc_id": "KTIV_990052000030205171_FL202135225",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990052000030205171_FL202135225.jpg",
+   "phrase": "על צווי על",
+   "gt_box": [
+    551,
+    795,
+    682,
+    829
+   ],
+   "idx": 32,
+   "raw": "{\"bbox_2d\": [648, 730, 791, 765]}",
+   "ok": true,
+   "iou": 0.0,
+   "hit": 0,
+   "pred_box": [
+    648,
+    730,
+    791,
+    765
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051173370205171_FL203730770",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051173370205171_FL203730770.jpg",
+   "phrase": "לא כיון יצא",
+   "gt_box": [
+    635,
+    195,
+    707,
+    232
+   ],
+   "idx": 33,
+   "raw": "{\"bbox_2d\": [657, 198, 730, 224]}",
+   "ok": true,
+   "iou": 0.39852851011649293,
+   "hit": 1,
+   "pred_box": [
+    657,
+    198,
+    730,
+    224
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051173370205171_FL203730770",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051173370205171_FL203730770.jpg",
+   "phrase": "אחריה אמת אמונה",
+   "gt_box": [
+    227,
+    197,
+    361,
+    230
+   ],
+   "idx": 34,
+   "raw": "{\"bbox_2d\": [160, 204, 387, 225]}",
+   "ok": true,
+   "iou": 0.44141176470588234,
+   "hit": 1,
+   "pred_box": [
+    160,
+    204,
+    387,
+    225
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051173370205171_FL203730770",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051173370205171_FL203730770.jpg",
+   "phrase": "להוסיף עליהן מקום",
+   "gt_box": [
+    296,
+    441,
+    435,
+    469
+   ],
+   "idx": 35,
+   "raw": "{\"bbox_2d\": [301, 457, 436, 482]}",
+   "ok": true,
+   "iou": 0.2841491429581198,
+   "hit": 0,
+   "pred_box": [
+    301,
+    457,
+    436,
+    482
+   ]
+  },
+  {
+   "doc_id": "KTIV_990053296120205171_FL202317487",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053296120205171_FL202317487.jpg",
+   "phrase": "שני מקדש ראשון",
+   "gt_box": [
+    406,
+    544,
+    565,
+    576
+   ],
+   "idx": 36,
+   "raw": "{\"bbox_2d\": [408, 547, 563, 569]}",
+   "ok": true,
+   "iou": 0.6702044025157232,
+   "hit": 1,
+   "pred_box": [
+    408,
+    547,
+    563,
+    569
+   ]
+  },
+  {
+   "doc_id": "KTIV_990053296120205171_FL202317487",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053296120205171_FL202317487.jpg",
+   "phrase": "החג כדי שיג",
+   "gt_box": [
+    279,
+    465,
+    388,
+    516
+   ],
+   "idx": 37,
+   "raw": "{\"bbox_2d\": [281, 479, 365, 507]}",
+   "ok": true,
+   "iou": 0.423097679438748,
+   "hit": 1,
+   "pred_box": [
+    281,
+    479,
+    365,
+    507
+   ]
+  },
+  {
+   "doc_id": "KTIV_990053296120205171_FL202317487",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053296120205171_FL202317487.jpg",
+   "phrase": "מקדש ראשון דהוו",
+   "gt_box": [
+    363,
+    544,
+    524,
+    576
+   ],
+   "idx": 38,
+   "raw": "{\"bbox_2d\": [374, 548, 560, 571]}",
+   "ok": true,
+   "iou": 0.5769230769230769,
+   "hit": 1,
+   "pred_box": [
+    374,
+    548,
+    560,
+    571
+   ]
+  },
+  {
+   "doc_id": "KTIV_990053590610205171_FL202302740",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053590610205171_FL202302740.jpg",
+   "phrase": "אחת ברוך אתה",
+   "gt_box": [
+    289,
+    795,
+    680,
+    863
+   ],
+   "idx": 39,
+   "raw": "{\"bbox_2d\": [346, 805, 719, 852]}",
+   "ok": true,
+   "iou": 0.552338059885296,
+   "hit": 1,
+   "pred_box": [
+    346,
+    805,
+    719,
+    852
+   ]
+  },
+  {
+   "doc_id": "KTIV_990053590610205171_FL202302740",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053590610205171_FL202302740.jpg",
+   "phrase": "גומיל חסדים",
+   "gt_box": [
+    135,
+    84,
+    404,
+    149
+   ],
+   "idx": 40,
+   "raw": "{\"bbox_2d\": [135, 97, 406, 148]}",
+   "ok": true,
+   "iou": 0.7800648206061295,
+   "hit": 1,
+   "pred_box": [
+    135,
+    97,
+    406,
+    148
+   ]
+  },
+  {
+   "doc_id": "KTIV_990053590610205171_FL202302740",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053590610205171_FL202302740.jpg",
+   "phrase": "התכבדו מכובדים קדושים",
+   "gt_box": [
+    72,
+    266,
+    664,
+    326
+   ],
+   "idx": 41,
+   "raw": "{\"bbox_2d\": [75, 280, 836, 319]}",
+   "ok": true,
+   "iou": 0.5439755612389884,
+   "hit": 1,
+   "pred_box": [
+    75,
+    280,
+    836,
+    319
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051098740205171_FL202441615",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051098740205171_FL202441615.jpg",
+   "phrase": "משנה או מן",
+   "gt_box": [
+    650,
+    564,
+    803,
+    602
+   ],
+   "idx": 42,
+   "raw": "{\"bbox_2d\": [478, 569, 631, 592]}",
+   "ok": true,
+   "iou": 0.0,
+   "hit": 0,
+   "pred_box": [
+    478,
+    569,
+    631,
+    592
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051098740205171_FL202441615",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051098740205171_FL202441615.jpg",
+   "phrase": "אלהינו מל' העו'",
+   "gt_box": [
+    199,
+    100,
+    369,
+    147
+   ],
+   "idx": 43,
+   "raw": "{\"bbox_2d\": [198, 107, 354, 146]}",
+   "ok": true,
+   "iou": 0.752895752895753,
+   "hit": 1,
+   "pred_box": [
+    198,
+    107,
+    354,
+    146
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051098740205171_FL202441615",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051098740205171_FL202441615.jpg",
+   "phrase": "דברי תורה: הערב",
+   "gt_box": [
+    206,
+    147,
+    442,
+    180
+   ],
+   "idx": 44,
+   "raw": "{\"bbox_2d\": [198, 154, 367, 172]}",
+   "ok": true,
+   "iou": 0.3653555219364599,
+   "hit": 1,
+   "pred_box": [
+    198,
+    154,
+    367,
+    172
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051164750205171_FL203110686",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051164750205171_FL203110686.jpg",
+   "phrase": "אפילו בית הבעל",
+   "gt_box": [
+    248,
+    333,
+    400,
+    362
+   ],
+   "idx": 45,
+   "raw": "{\"bbox_2d\": [518, 604, 739, 620]}",
+   "ok": true,
+   "iou": 0.0,
+   "hit": 0,
+   "pred_box": [
+    518,
+    604,
+    739,
+    620
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051164750205171_FL203110686",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051164750205171_FL203110686.jpg",
+   "phrase": "הבעל לא משום",
+   "gt_box": [
+    399,
+    312,
+    545,
+    333
+   ],
+   "idx": 46,
+   "raw": "{\"bbox_2d\": [403, 316, 578, 332]}",
+   "ok": true,
+   "iou": 0.6321647189760712,
+   "hit": 1,
+   "pred_box": [
+    403,
+    316,
+    578,
+    332
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051164750205171_FL203110686",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051164750205171_FL203110686.jpg",
+   "phrase": "וישקה לגינתו או",
+   "gt_box": [
+    137,
+    647,
+    282,
+    677
+   ],
+   "idx": 47,
+   "raw": "{\"bbox_2d\": [130, 654, 387, 672]}",
+   "ok": true,
+   "iou": 0.40999057492931196,
+   "hit": 1,
+   "pred_box": [
+    130,
+    654,
+    387,
+    672
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051101030205171_FL202443663",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051101030205171_FL202443663.jpg",
+   "phrase": "לנו משה רב",
+   "gt_box": [
+    341,
+    481,
+    537,
+    529
+   ],
+   "idx": 48,
+   "raw": "{\"bbox_2d\": [358, 476, 591, 520]}",
+   "ok": true,
+   "iou": 0.5505954728290875,
+   "hit": 1,
+   "pred_box": [
+    358,
+    476,
+    591,
+    520
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051101030205171_FL202443663",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051101030205171_FL202443663.jpg",
+   "phrase": "ישראל יי אלהינו",
+   "gt_box": [
+    262,
+    571,
+    516,
+    628
+   ],
+   "idx": 49,
+   "raw": "{\"bbox_2d\": [265, 573, 480, 619]}",
+   "ok": true,
+   "iou": 0.6831054012985219,
+   "hit": 1,
+   "pred_box": [
+    265,
+    573,
+    480,
+    619
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051101030205171_FL202443663",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051101030205171_FL202443663.jpg",
+   "phrase": "או אשה וכו'",
+   "gt_box": [
+    389,
+    520,
+    603,
+    576
+   ],
+   "idx": 50,
+   "raw": "{\"bbox_2d\": [417, 530, 689, 552]}",
+   "ok": true,
+   "iou": 0.2948976650331508,
+   "hit": 1,
+   "pred_box": [
+    417,
+    530,
+    689,
+    552
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051085960205171_FL202432494",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051085960205171_FL202432494.jpg",
+   "phrase": "זה האחרון יתר",
+   "gt_box": [
+    274,
+    601,
+    375,
+    635
+   ],
+   "idx": 51,
+   "raw": "{\"bbox_2d\": [184, 605, 379, 642]}",
+   "ok": true,
+   "iou": 0.39768998556240975,
+   "hit": 1,
+   "pred_box": [
+    184,
+    605,
+    379,
+    642
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051085960205171_FL202432494",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051085960205171_FL202432494.jpg",
+   "phrase": "דש ומבדיל אחר",
+   "gt_box": [
+    695,
+    271,
+    826,
+    314
+   ],
+   "idx": 52,
+   "raw": "{\"bbox_2d\": [675, 280, 849, 310]}",
+   "ok": true,
+   "iou": 0.5676729741441572,
+   "hit": 1,
+   "pred_box": [
+    675,
+    280,
+    849,
+    310
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051085960205171_FL202432494",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051085960205171_FL202432494.jpg",
+   "phrase": "אלכסון שלעיר מדד",
+   "gt_box": [
+    198,
+    417,
+    336,
+    455
+   ],
+   "idx": 53,
+   "raw": "{\"bbox_2d\": [143, 428, 276, 459]}",
+   "ok": true,
+   "iou": 0.29004269384382314,
+   "hit": 1,
+   "pred_box": [
+    143,
+    428,
+    276,
+    459
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051937980205171_FL202452456",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051937980205171_FL202452456.jpg",
+   "phrase": "שום שנ' ברב",
+   "gt_box": [
+    451,
+    136,
+    848,
+    198
+   ],
+   "idx": 54,
+   "raw": "{\"bbox_2d\": [453, 160, 789, 192]}",
+   "ok": true,
+   "iou": 0.43682457138214026,
+   "hit": 1,
+   "pred_box": [
+    453,
+    160,
+    789,
+    192
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051937980205171_FL202452456",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051937980205171_FL202452456.jpg",
+   "phrase": "גן אלי'ם. מת",
+   "gt_box": [
+    381,
+    487,
+    772,
+    545
+   ],
+   "idx": 55,
+   "raw": "{\"bbox_2d\": [340, 519, 768, 542]}",
+   "ok": true,
+   "iou": 0.37682570593963,
+   "hit": 1,
+   "pred_box": [
+    340,
+    519,
+    768,
+    542
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051937980205171_FL202452456",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051937980205171_FL202452456.jpg",
+   "phrase": "נר לכבוד הוא",
+   "gt_box": [
+    237,
+    545,
+    626,
+    598
+   ],
+   "idx": 56,
+   "raw": "{\"bbox_2d\": [301, 564, 798, 592]}",
+   "ok": true,
+   "iou": 0.3578028545590375,
+   "hit": 1,
+   "pred_box": [
+    301,
+    564,
+    798,
+    592
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051085960205171_FL202432495",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051085960205171_FL202432495.jpg",
+   "phrase": "דשנו במצותיו ורצה",
+   "gt_box": [
+    651,
+    641,
+    792,
+    671
+   ],
+   "idx": 57,
+   "raw": "{\"bbox_2d\": [574, 638, 801, 672]}",
+   "ok": true,
+   "iou": 0.5480694480435346,
+   "hit": 1,
+   "pred_box": [
+    574,
+    638,
+    801,
+    672
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051085960205171_FL202432495",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051085960205171_FL202432495.jpg",
+   "phrase": "זה שלא אמרו",
+   "gt_box": [
+    696,
+    276,
+    802,
+    312
+   ],
+   "idx": 58,
+   "raw": "{\"bbox_2d\": [698, 275, 813, 314]}",
+   "ok": true,
+   "iou": 0.8215931533903884,
+   "hit": 1,
+   "pred_box": [
+    698,
+    275,
+    813,
+    314
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051085960205171_FL202432495",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051085960205171_FL202432495.jpg",
+   "phrase": "כי בנו בחרת",
+   "gt_box": [
+    353,
+    165,
+    443,
+    199
+   ],
+   "idx": 59,
+   "raw": "{\"bbox_2d\": [347, 168, 440, 195]}",
+   "ok": true,
+   "iou": 0.729050279329609,
+   "hit": 1,
+   "pred_box": [
+    347,
+    168,
+    440,
+    195
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051995720205171_FL203740594",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051995720205171_FL203740594.jpg",
+   "phrase": "וירביצנה וישחוט",
+   "gt_box": [
+    663,
+    448,
+    908,
+    566
+   ],
+   "idx": 60,
+   "raw": "{\"bbox_2d\": [654, 470, 913, 532]}",
+   "ok": true,
+   "iou": 0.5101081335213916,
+   "hit": 1,
+   "pred_box": [
+    654,
+    470,
+    913,
+    532
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051995720205171_FL203740594",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051995720205171_FL203740594.jpg",
+   "phrase": "כש רה שאין",
+   "gt_box": [
+    144,
+    355,
+    301,
+    456
+   ],
+   "idx": 61,
+   "raw": "{\"bbox_2d\": [143, 376, 408, 452]}",
+   "ok": true,
+   "iou": 0.4958238105131934,
+   "hit": 1,
+   "pred_box": [
+    143,
+    376,
+    408,
+    452
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051995720205171_FL203740594",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051995720205171_FL203740594.jpg",
+   "phrase": "ששין אלא למחשבת",
+   "gt_box": [
+    135,
+    456,
+    403,
+    552
+   ],
+   "idx": 62,
+   "raw": "{\"bbox_2d\": [134, 465, 430, 542]}",
+   "ok": true,
+   "iou": 0.740065987663176,
+   "hit": 1,
+   "pred_box": [
+    134,
+    465,
+    430,
+    542
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051533880205171_FL202569257",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051533880205171_FL202569257.jpg",
+   "phrase": "אנו יכולין להקריב",
+   "gt_box": [
+    81,
+    350,
+    380,
+    395
+   ],
+   "idx": 63,
+   "raw": "{\"bbox_2d\": [80, 356, 419, 387]}",
+   "ok": true,
+   "iou": 0.6307587614834977,
+   "hit": 1,
+   "pred_box": [
+    80,
+    356,
+    419,
+    387
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051533880205171_FL202569257",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051533880205171_FL202569257.jpg",
+   "phrase": "יי מקדש השבת",
+   "gt_box": [
+    206,
+    709,
+    459,
+    745
+   ],
+   "idx": 64,
+   "raw": "{\"bbox_2d\": [198, 706, 435, 742]}",
+   "ok": true,
+   "iou": 0.7494793216304672,
+   "hit": 1,
+   "pred_box": [
+    198,
+    706,
+    435,
+    742
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051533880205171_FL202569257",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051533880205171_FL202569257.jpg",
+   "phrase": "וקירבתנו מלכינו לעבודתיך",
+   "gt_box": [
+    86,
+    190,
+    494,
+    232
+   ],
+   "idx": 65,
+   "raw": "{\"bbox_2d\": [103, 206, 859, 224]}",
+   "ok": true,
+   "iou": 0.2968868640850418,
+   "hit": 1,
+   "pred_box": [
+    103,
+    206,
+    859,
+    224
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051937530205171_FL202188734",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051937530205171_FL202188734.jpg",
+   "phrase": "שם ברכה חוזר",
+   "gt_box": [
+    115,
+    123,
+    384,
+    193
+   ],
+   "idx": 66,
+   "raw": "{\"bbox_2d\": [109, 153, 384, 192]}",
+   "ok": true,
+   "iou": 0.5503042383550147,
+   "hit": 1,
+   "pred_box": [
+    109,
+    153,
+    384,
+    192
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051937530205171_FL202188734",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051937530205171_FL202188734.jpg",
+   "phrase": "לא אזמין עליה",
+   "gt_box": [
+    625,
+    194,
+    844,
+    234
+   ],
+   "idx": 67,
+   "raw": "{\"bbox_2d\": [624, 193, 850, 237]}",
+   "ok": true,
+   "iou": 0.8809332260659695,
+   "hit": 1,
+   "pred_box": [
+    624,
+    193,
+    850,
+    237
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051937530205171_FL202188734",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051937530205171_FL202188734.jpg",
+   "phrase": "חכמ' זה הוא",
+   "gt_box": [
+    638,
+    122,
+    818,
+    194
+   ],
+   "idx": 68,
+   "raw": "{\"bbox_2d\": [637, 154, 830, 192]}",
+   "ok": true,
+   "iou": 0.5083989891482087,
+   "hit": 1,
+   "pred_box": [
+    637,
+    154,
+    830,
+    192
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051539160205171_FL202569324",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051539160205171_FL202569324.jpg",
+   "phrase": "ש'נ' ואותנו הוציא",
+   "gt_box": [
+    420,
+    294,
+    696,
+    328
+   ],
+   "idx": 69,
+   "raw": "{\"bbox_2d\": [458, 293, 671, 320]}",
+   "ok": true,
+   "iou": 0.5770553297905595,
+   "hit": 1,
+   "pred_box": [
+    458,
+    293,
+    671,
+    320
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051539160205171_FL202569324",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051539160205171_FL202569324.jpg",
+   "phrase": "אדם להראות את",
+   "gt_box": [
+    495,
+    168,
+    776,
+    211
+   ],
+   "idx": 70,
+   "raw": "{\"bbox_2d\": [497, 168, 775, 203]}",
+   "ok": true,
+   "iou": 0.8052635934784408,
+   "hit": 1,
+   "pred_box": [
+    497,
+    168,
+    775,
+    203
+   ]
+  },
+  {
+   "doc_id": "KTIV_990051539160205171_FL202569324",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051539160205171_FL202569324.jpg",
+   "phrase": "טוב ומאפילה לאור",
+   "gt_box": [
+    292,
+    629,
+    601,
+    665
+   ],
+   "idx": 71,
+   "raw": "{\"bbox_2d\": [291, 634, 785, 660]}",
+   "ok": true,
+   "iou": 0.5042048449855655,
+   "hit": 1,
+   "pred_box": [
+    291,
+    634,
+    785,
+    660
+   ]
+  }
+ ]
+}

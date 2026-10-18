@@ -34,3 +34,20 @@ transcription_raw_outputs_archive_*/
 **/talmud_results/
 
 # Paper source lives in the separate genizah-paper repository (split 2026-08-05).
+
+# built grounding viewer (13 MB, embeds page images) — rebuild with viewer/build_viewer.py
+src/datasets/evaluations/grounding_eval/viewer/grounding_viewer.html
+
+# the Space needs its pip manifest despite the blanket *.txt rule above
+!spaces/genizah_reader/requirements.txt
+
+# article export scratch (headless Firefox profile, superseded exports)
+article/build/ffprofile/
+article/build/assets_prev_*/
+
+# column-transcription probe raw cache (crops + per-column decodes)
+src/datasets/evaluations/transcription_raw_outputs_probe_columns/
+.env.bak*
+.claude/worktrees/
+.claude/settings.local.json
+logs

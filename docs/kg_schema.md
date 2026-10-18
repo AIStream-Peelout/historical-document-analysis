@@ -54,6 +54,16 @@ A person/scholar can be either label — the map should match `(p:Person OR p:Sc
 | `MARRIED_TO` | Person → Person | 316 |
 | `TRANSCRIBED` | Scholar/Person → Fragment | 234 |
 
+### PGP-website role edges (added 2026-08-12)
+
+Person → Fragment role relationships scraped from the PGP website (absent from
+the pgp-metadata export). All follow the same pattern and carry the same
+properties (see below): `SCRIBE_OF` (2,680), `MENTIONED_IN` (1,794),
+`RECIPIENT_OF` (1,469), `SENDER_OF` (1,413), `WITNESS_OF` (897), `PARTY_TO`
+(720), `AUTHORITY_OF` (240), `VALIDATING_JUDGE_OF` (187), `AUTHOR_OF` (119),
+`LEGAL_PERSONNEL_IN` (113), `REUSER_OF` (40), `BEARER_OF` (20), `PAYER_IN`
+(17), `MARRIAGE_PARTY_TO` (10), `PETITIONER_OF` (7) — 9,726 edges total.
+
 ### Relationship properties
 - **Academic-literature edges** (`LIVED_IN`, `TRAVELED_TO`, `ORIGINATED_FROM`, `MENTIONS_PERSON`, `MENTIONS_PLACE`, `WROTE`, `STUDIED`, `AFFILIATED_WITH`, `CITED_IN`, `COLLABORATED_WITH`, `MARRIED_TO`, `RELATED_TO`, `TRANSCRIBED`): `evidence`, `evidence_page`, `confidence` (`high`/`medium`), `book_uuid`, `page_uuid`, `source`, `source_books`, `data_sources`.
 - **`REFERENCES`** (bibliography): `pages`, `has_discussion`, `has_transcription`, `has_translation`, `transcription_extent`, `translation_extent`, `data_sources`.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify the re-embedded Elasticsearch indexes match the Qwen embedding contract.
 
-Checks, per index (``bibliography_text_only_0.7`` and ``genizah_merged_v2``):
+Checks, per index (``bibliography_text_only_0.7`` and ``genizah_merged_v4``):
 
 1. **Self-consistency** — for N random docs, re-embed the document's source
    text in document mode and require cosine(stored_vector, fresh_vector) > 0.99.
@@ -36,7 +36,7 @@ MERGED_JSONL = os.path.join(
     "merged", "merged_shelfmarks.jsonl",
 )
 BIBLIO_INDEX = "bibliography_text_only_0.7"
-GENIZAH_INDEX = "genizah_merged_v2"
+GENIZAH_INDEX = "genizah_merged_v4"
 
 
 def _es_client():

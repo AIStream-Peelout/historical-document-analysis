@@ -1,0 +1,638 @@
+{
+ "model": "qwen3-vl-8b-heb-v20a-step1800",
+ "mode": "read_box",
+ "n": 37,
+ "decoded_at": "2026-09-08T01:06:20",
+ "temperature": 0.1,
+ "preds": [
+  {
+   "doc_id": "KTIV_990053495120205171_FL201832544",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053495120205171_FL201832544.jpg",
+   "gt_text": "מאין גחזי א\"ל לא הלך עבדך אנה ואנה ככת' ויאמר",
+   "gt_box": [
+    95,
+    792,
+    274,
+    801
+   ],
+   "idx": 0,
+   "raw": "ואנה וכת'",
+   "ok": true,
+   "cer": 0.8222222222222222,
+   "len_ratio": 0.20588235294117646,
+   "pred_text": "ואנה וכת'"
+  },
+  {
+   "doc_id": "KTIV_990053495120205171_FL201832544",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053495120205171_FL201832544.jpg",
+   "gt_text": "ᵔלך איש על גחלים ורגליו פתחי עולם ויבא מלך הכבוד ולא כיהושע בן פרחיה שדח'",
+   "gt_box": [
+    97,
+    649,
+    724,
+    667
+   ],
+   "idx": 1,
+   "raw": "שדחפו לגחזי בשתי ידיו זל לא כי הושע פרחיה שדח",
+   "ok": true,
+   "cer": 0.5753424657534246,
+   "len_ratio": 0.631578947368421,
+   "pred_text": "שדחפו לגחזי בשתי ידיו זל לא כי הושע פרחיה שדח"
+  },
+  {
+   "doc_id": "KTIV_990051943150205171_FL202972671",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051943150205171_FL202972671.jpg",
+   "gt_text": "לפיכך אסרו כל בשר בח..ב",
+   "gt_box": [
+    241,
+    675,
+    818,
+    728
+   ],
+   "idx": 2,
+   "raw": "לפיכך אסרו כלל קטן לה",
+   "ok": true,
+   "cer": 0.391304347826087,
+   "len_ratio": 1.0,
+   "pred_text": "לפיכך אסרו כלל קטן לה"
+  },
+  {
+   "doc_id": "KTIV_990051943150205171_FL202972671",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051943150205171_FL202972671.jpg",
+   "gt_text": "ם וחגבים מותר לאכלן בחלב",
+   "gt_box": [
+    233,
+    728,
+    847,
+    774
+   ],
+   "idx": 3,
+   "raw": "שוחט בשר לן בחופר",
+   "ok": true,
+   "cer": 0.625,
+   "len_ratio": 0.7,
+   "pred_text": "שוחט בשר לן בחופר"
+  },
+  {
+   "doc_id": "KTIV_990051365260205171_FL202939052",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051365260205171_FL202939052.jpg",
+   "gt_text": "נדרים ונדבות אין קריבין ביום טוב",
+   "gt_box": [
+    329,
+    246,
+    600,
+    291
+   ],
+   "idx": 4,
+   "raw": "נדכים ויצא [...] ן קריבין ביום טוב ות",
+   "ok": true,
+   "cer": 0.4375,
+   "len_ratio": 0.9259259259259259,
+   "pred_text": "נדכים ויצא [...] ן קריבין ביום טוב ות"
+  },
+  {
+   "doc_id": "KTIV_990051365260205171_FL202939052",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051365260205171_FL202939052.jpg",
+   "gt_text": "בשלמי חגיגה לסמוך",
+   "gt_box": [
+    419,
+    72,
+    592,
+    110
+   ],
+   "idx": 5,
+   "raw": "בשלמי מנשה לתמוך",
+   "ok": true,
+   "cer": 0.29411764705882354,
+   "len_ratio": 0.9333333333333333,
+   "pred_text": "בשלמי מנשה לתמוך"
+  },
+  {
+   "doc_id": "KTIV_990025086880205171_FL202082468",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990025086880205171_FL202082468.jpg",
+   "gt_text": "תפי מעולם הרי הנתבע נשבע הסת שאין לו בידו כלום",
+   "gt_box": [
+    107,
+    249,
+    893,
+    332
+   ],
+   "idx": 6,
+   "raw": "תפי מעולם הרי הנתבע נשבע הסת שאין לו בידו כלום",
+   "ok": true,
+   "cer": 0.0,
+   "len_ratio": 1.0,
+   "pred_text": "תפי מעולם הרי הנתבע נשבע הסת שאין לו בידו כלום"
+  },
+  {
+   "doc_id": "KTIV_990053269970205171_FL203094978",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053269970205171_FL203094978.jpg",
+   "gt_text": "המקדש ביום הראשון היו אומרים",
+   "gt_box": [
+    236,
+    315,
+    840,
+    377
+   ],
+   "idx": 7,
+   "raw": "היאך ומליאה אבל ויושבי בהן",
+   "ok": true,
+   "cer": 0.75,
+   "len_ratio": 0.9166666666666666,
+   "pred_text": "היאך ומליאה אבל ויושבי בהן"
+  },
+  {
+   "doc_id": "KTIV_990053269970205171_FL203094978",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053269970205171_FL203094978.jpg",
+   "gt_text": "בששי היו אומ' י מלך גאות",
+   "gt_box": [
+    204,
+    676,
+    692,
+    733
+   ],
+   "idx": 8,
+   "raw": "בששי היו אומ' יג מלך גאות",
+   "ok": true,
+   "cer": 0.041666666666666664,
+   "len_ratio": 1.0555555555555556,
+   "pred_text": "בששי היו אומ' יג מלך גאות"
+  },
+  {
+   "doc_id": "KTIV_990051726080205171_FL203737423",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051726080205171_FL203737423.jpg",
+   "gt_text": "אדם מה למעלה מה למטה מה לפנים מה לאחור ת\"ל ולמקצה",
+   "gt_box": [
+    552,
+    451,
+    880,
+    478
+   ],
+   "idx": 9,
+   "raw": "אשם מה מענה מה למטה מה לפנים מה לאחור ת'ל' ולמקצה",
+   "ok": true,
+   "cer": 0.10204081632653061,
+   "len_ratio": 0.9736842105263158,
+   "pred_text": "אשם מה מענה מה למטה מה לפנים מה לאחור ת'ל' ולמקצה"
+  },
+  {
+   "doc_id": "KTIV_990051726080205171_FL203737423",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051726080205171_FL203737423.jpg",
+   "gt_text": "אשר ברא אלהים אדם יכול לא ישאל אדם מששת ימי בראשית",
+   "gt_box": [
+    551,
+    393,
+    882,
+    422
+   ],
+   "idx": 10,
+   "raw": "ואין שנים שוחלין יכול ישאל קודם שיבד [...] יתלם ת\"ל למי היום",
+   "ok": true,
+   "cer": 0.9,
+   "len_ratio": 1.075,
+   "pred_text": "ואין שנים שוחלין יכול ישאל קודם שיבד [...] יתלם ת\"ל למי היום"
+  },
+  {
+   "doc_id": "KTIV_990051168020205171_FL202419280",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051168020205171_FL202419280.jpg",
+   "gt_text": "טומנין אין טומנין לא בגפת ולא בזבל ולא",
+   "gt_box": [
+    167,
+    229,
+    463,
+    251
+   ],
+   "idx": 11,
+   "raw": "שומנין אין שומנין לא מנפח ולא מבלול",
+   "ok": true,
+   "cer": 0.23684210526315788,
+   "len_ratio": 0.9354838709677419,
+   "pred_text": "שומנין אין שומנין לא מנפח ולא מבלול"
+  },
+  {
+   "doc_id": "KTIV_990051168020205171_FL202419280",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051168020205171_FL202419280.jpg",
+   "gt_text": "דרן עלך: כירה שהסיקוה:",
+   "gt_box": [
+    237,
+    199,
+    649,
+    229
+   ],
+   "idx": 12,
+   "raw": "כדי שיחסינהו",
+   "ok": true,
+   "cer": 0.7727272727272727,
+   "len_ratio": 0.6470588235294118,
+   "pred_text": "כדי שיחסינהו"
+  },
+  {
+   "doc_id": "KTIV_990052000030205171_FL202135225",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990052000030205171_FL202135225.jpg",
+   "gt_text": "היא יש בה על צווי על זכירת כל המצוות: א'ע'פ' שאין",
+   "gt_box": [
+    86,
+    795,
+    816,
+    829
+   ],
+   "idx": 13,
+   "raw": "הראשיבה על עיר על זכירה כל המצוות: א'ע'פ' שאין",
+   "ok": true,
+   "cer": 0.1836734693877551,
+   "len_ratio": 0.9714285714285714,
+   "pred_text": "הראשיבה על עיר על זכירה כל המצוות: א'ע'פ' שאין"
+  },
+  {
+   "doc_id": "KTIV_990052000030205171_FL202135225",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990052000030205171_FL202135225.jpg",
+   "gt_text": "מצות עשה אחת והיא למול את הזכרים ביום השמיני.",
+   "gt_box": [
+    142,
+    259,
+    832,
+    300
+   ],
+   "idx": 14,
+   "raw": "מצות עשה אחת והיא למול את היברים ביום השמיני:",
+   "ok": true,
+   "cer": 0.06666666666666667,
+   "len_ratio": 1.0,
+   "pred_text": "מצות עשה אחת והיא למול את היברים ביום השמיני:"
+  },
+  {
+   "doc_id": "KTIV_990051173370205171_FL203730770",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051173370205171_FL203730770.jpg",
+   "gt_text": "בברוך אינו רשאי שלא לחתום ומקום ש'",
+   "gt_box": [
+    170,
+    469,
+    435,
+    505
+   ],
+   "idx": 15,
+   "raw": "בפרק אינו רשאי שלא לחתום ומקום ש'",
+   "ok": true,
+   "cer": 0.08823529411764706,
+   "len_ratio": 0.9629629629629629,
+   "pred_text": "בפרק אינו רשאי שלא לחתום ומקום ש'"
+  },
+  {
+   "doc_id": "KTIV_990051173370205171_FL203730770",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051173370205171_FL203730770.jpg",
+   "gt_text": "אחת מהן בברוך ואין להן פתיחה",
+   "gt_box": [
+    218,
+    315,
+    439,
+    342
+   ],
+   "idx": 16,
+   "raw": "אחת מהן בברוך ואין לו פתיחה:",
+   "ok": true,
+   "cer": 0.10714285714285714,
+   "len_ratio": 0.9565217391304348,
+   "pred_text": "אחת מהן בברוך ואין לו פתיחה:"
+  },
+  {
+   "doc_id": "KTIV_990053296120205171_FL202317487",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053296120205171_FL202317487.jpg",
+   "gt_text": "חמשה עשר יום אחר החג כדי שיג",
+   "gt_box": [
+    279,
+    465,
+    577,
+    516
+   ],
+   "idx": 17,
+   "raw": "חמשה עשר יום אחר החג כדי שיג",
+   "ok": true,
+   "cer": 0.0,
+   "len_ratio": 1.0,
+   "pred_text": "חמשה עשר יום אחר החג כדי שיג"
+  },
+  {
+   "doc_id": "KTIV_990053296120205171_FL202317487",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053296120205171_FL202317487.jpg",
+   "gt_text": "שני מקדש ראשון דהוו נפישי י",
+   "gt_box": [
+    296,
+    544,
+    565,
+    576
+   ],
+   "idx": 18,
+   "raw": "שניי מקדש ראשון דהוו נפישי י",
+   "ok": true,
+   "cer": 0.037037037037037035,
+   "len_ratio": 1.0454545454545454,
+   "pred_text": "שניי מקדש ראשון דהוו נפישי י"
+  },
+  {
+   "doc_id": "KTIV_990053590610205171_FL202302740",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053590610205171_FL202302740.jpg",
+   "gt_text": "נקבים נקבים ..ללים חללים ש'",
+   "gt_box": [
+    128,
+    617,
+    834,
+    677
+   ],
+   "idx": 19,
+   "raw": "נקברים נקבים לילים חללים ש'",
+   "ok": true,
+   "cer": 0.14814814814814814,
+   "len_ratio": 1.1,
+   "pred_text": "נקברים נקבים לילים חללים ש'"
+  },
+  {
+   "doc_id": "KTIV_990053590610205171_FL202302740",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990053590610205171_FL202302740.jpg",
+   "gt_text": "טובים וכל זמן שי'כנ",
+   "gt_box": [
+    137,
+    149,
+    850,
+    198
+   ],
+   "idx": 20,
+   "raw": "טובים יי וכל זמן שיב'",
+   "ok": true,
+   "cer": 0.3157894736842105,
+   "len_ratio": 1.0666666666666667,
+   "pred_text": "טובים יי וכל זמן שיב'"
+  },
+  {
+   "doc_id": "KTIV_990051098740205171_FL202441615",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051098740205171_FL202441615.jpg",
+   "gt_text": "המשנה או מן הבריתות.",
+   "gt_box": [
+    525,
+    564,
+    822,
+    602
+   ],
+   "idx": 21,
+   "raw": "הו אינו אונסו הנותן תומ'",
+   "ok": true,
+   "cer": 0.75,
+   "len_ratio": 1.1875,
+   "pred_text": "הו אינו אונסו הנותן תומ'"
+  },
+  {
+   "doc_id": "KTIV_990051098740205171_FL202441615",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051098740205171_FL202441615.jpg",
+   "gt_text": "מדב. תורה העם לקרות ברכת כהנים ויש",
+   "gt_box": [
+    201,
+    450,
+    822,
+    488
+   ],
+   "idx": 22,
+   "raw": "שורה ותורה מאי קמשמע ליה",
+   "ok": true,
+   "cer": 0.7352941176470589,
+   "len_ratio": 0.7407407407407407,
+   "pred_text": "שורה ותורה מאי קמשמע ליה"
+  },
+  {
+   "doc_id": "KTIV_990051164750205171_FL203110686",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051164750205171_FL203110686.jpg",
+   "gt_text": "לא כך ולא כך לא שנא חרב מעיינה ולא שנא לא חרב מעיינה ממעין",
+   "gt_box": [
+    127,
+    733,
+    751,
+    755
+   ],
+   "idx": 23,
+   "raw": "לא כך ולא כך לא שנא חרב מעיינה ולא שנא לא חרב מעיינה ממעין",
+   "ok": true,
+   "cer": 0.0,
+   "len_ratio": 1.0,
+   "pred_text": "לא כך ולא כך לא שנא חרב מעיינה ולא שנא לא חרב מעיינה ממעין"
+  },
+  {
+   "doc_id": "KTIV_990051164750205171_FL203110686",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051164750205171_FL203110686.jpg",
+   "gt_text": "לחורבתו בחולו שלמועד מאי חרבה או חרבה ממש למה לי דמשקי לה",
+   "gt_box": [
+    114,
+    677,
+    751,
+    704
+   ],
+   "idx": 24,
+   "raw": "לחורבתו בחולו שלמועד מאי חרבה או חרבה ממש למה לי דמשקי לה",
+   "ok": true,
+   "cer": 0.0,
+   "len_ratio": 1.0,
+   "pred_text": "לחורבתו בחולו שלמועד מאי חרבה או חרבה ממש למה לי דמשקי לה"
+  },
+  {
+   "doc_id": "KTIV_990051101030205171_FL202443663",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051101030205171_FL202443663.jpg",
+   "gt_text": "בכם איש או אשה וכו' כולם",
+   "gt_box": [
+    200,
+    517,
+    782,
+    576
+   ],
+   "idx": 25,
+   "raw": "בכם איש או אשה וכו' ו [...] עין פן יש",
+   "ok": true,
+   "cer": 0.7083333333333334,
+   "len_ratio": 1.2222222222222223,
+   "pred_text": "בכם איש או אשה וכו' ו [...] עין פן יש"
+  },
+  {
+   "doc_id": "KTIV_990051101030205171_FL202443663",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051101030205171_FL202443663.jpg",
+   "gt_text": "ואמרו לו שמע ישראל יי אלהינו יי",
+   "gt_box": [
+    224,
+    565,
+    789,
+    628
+   ],
+   "idx": 26,
+   "raw": "וזהו לו שמע ישראל יי אלהינו ייי",
+   "ok": true,
+   "cer": 0.12903225806451613,
+   "len_ratio": 1.0,
+   "pred_text": "וזהו לו שמע ישראל יי אלהינו ייי"
+  },
+  {
+   "doc_id": "KTIV_990051085960205171_FL202432494",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051085960205171_FL202432494.jpg",
+   "gt_text": "קודם שיבדיל שכח או עבר ואכל ושתה",
+   "gt_box": [
+    565,
+    205,
+    845,
+    235
+   ],
+   "idx": 27,
+   "raw": "קודם שיבדיל שכח או עובר ותכלו שתה",
+   "ok": true,
+   "cer": 0.125,
+   "len_ratio": 1.0384615384615385,
+   "pred_text": "קודם שיבדיל שכח או עובר ותכלו שתה"
+  },
+  {
+   "doc_id": "KTIV_990051085960205171_FL202432494",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051085960205171_FL202432494.jpg",
+   "gt_text": "ומברך על הגפן ואחר כך מקד מנהג",
+   "gt_box": [
+    557,
+    707,
+    846,
+    742
+   ],
+   "idx": 28,
+   "raw": "ומברך על הגפן ואחר כך מקדש ונותן",
+   "ok": true,
+   "cer": 0.16666666666666666,
+   "len_ratio": 1.0833333333333333,
+   "pred_text": "ומברך על הגפן ואחר כך מקדש ונותן"
+  },
+  {
+   "doc_id": "KTIV_990051085960205171_FL202432495",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051085960205171_FL202432495.jpg",
+   "gt_text": "אלא להקל מפני ששיעור אלפים מדבריהם.",
+   "gt_box": [
+    545,
+    312,
+    844,
+    346
+   ],
+   "idx": 29,
+   "raw": "לא להקל מפני ששיעורן אלפים מכל רוחם'",
+   "ok": true,
+   "cer": 0.22857142857142856,
+   "len_ratio": 1.0,
+   "pred_text": "לא להקל מפני ששיעורן אלפים מכל רוחם'"
+  },
+  {
+   "doc_id": "KTIV_990051085960205171_FL202432495",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051085960205171_FL202432495.jpg",
+   "gt_text": "שבת בלבד אסור לאדם לאכול",
+   "gt_box": [
+    142,
+    630,
+    437,
+    666
+   ],
+   "idx": 30,
+   "raw": "אחתה לבעל אסור לאדם לאכול",
+   "ok": true,
+   "cer": 0.25,
+   "len_ratio": 1.05,
+   "pred_text": "אחתה לבעל אסור לאדם לאכול"
+  },
+  {
+   "doc_id": "KTIV_990051995720205171_FL203740594",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051995720205171_FL203740594.jpg",
+   "gt_text": "חוששין אלא למחשבת",
+   "gt_box": [
+    135,
+    456,
+    434,
+    552
+   ],
+   "idx": 31,
+   "raw": "חושטין אלא למחשבת",
+   "ok": true,
+   "cer": 0.058823529411764705,
+   "len_ratio": 1.0,
+   "pred_text": "חושטין אלא למחשבת"
+  },
+  {
+   "doc_id": "KTIV_990051995720205171_FL203740594",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051995720205171_FL203740594.jpg",
+   "gt_text": "הבהמה שחיטתו נבלה",
+   "gt_box": [
+    144,
+    640,
+    430,
+    757
+   ],
+   "idx": 32,
+   "raw": "חמורה שחיטתו נבלה",
+   "ok": true,
+   "cer": 0.23529411764705882,
+   "len_ratio": 1.0,
+   "pred_text": "חמורה שחיטתו נבלה"
+  },
+  {
+   "doc_id": "KTIV_990051533880205171_FL202569257",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051533880205171_FL202569257.jpg",
+   "gt_text": "ושמך הגדול והקדוש עלינו קראת ותתן לנו",
+   "gt_box": [
+    106,
+    232,
+    867,
+    278
+   ],
+   "idx": 33,
+   "raw": "ושמך הגדול והקדוש עלינו קראת ותתן לנו",
+   "ok": true,
+   "cer": 0.0,
+   "len_ratio": 1.0,
+   "pred_text": "ושמך הגדול והקדוש עלינו קראת ותתן לנו"
+  },
+  {
+   "doc_id": "KTIV_990051533880205171_FL202569257",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051533880205171_FL202569257.jpg",
+   "gt_text": "מקדם כיליתה מלאכתך ביום השביעי בחרת",
+   "gt_box": [
+    92,
+    111,
+    862,
+    154
+   ],
+   "idx": 34,
+   "raw": "מקדם כיליתה מלאכתך ביום השביעי בחרת",
+   "ok": true,
+   "cer": 0.0,
+   "len_ratio": 1.0,
+   "pred_text": "מקדם כיליתה מלאכתך ביום השביעי בחרת"
+  },
+  {
+   "doc_id": "KTIV_990051539160205171_FL202569324",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051539160205171_FL202569324.jpg",
+   "gt_text": "ולהדר ולנצח למי שעשה לנו",
+   "gt_box": [
+    314,
+    478,
+    772,
+    518
+   ],
+   "idx": 35,
+   "raw": "ולהדר ולנצח למי שעשה לנו",
+   "ok": true,
+   "cer": 0.0,
+   "len_ratio": 1.0,
+   "pred_text": "ולהדר ולנצח למי שעשה לנו"
+  },
+  {
+   "doc_id": "KTIV_990051539160205171_FL202569324",
+   "image": "/Users/isaac/Documents/GitHub/historical-document-analysis/src/datasets/raw_data/cairo_genizah/evaluations/genizah_religious_v1/images/990051539160205171_FL202569324.jpg",
+   "gt_text": "אדם להראות את עצמו כאילו",
+   "gt_box": [
+    309,
+    168,
+    776,
+    211
+   ],
+   "idx": 36,
+   "raw": "אדם להראות את עצמו כאילו",
+   "ok": true,
+   "cer": 0.0,
+   "len_ratio": 1.0,
+   "pred_text": "אדם להראות את עצמו כאילו"
+  }
+ ]
+}

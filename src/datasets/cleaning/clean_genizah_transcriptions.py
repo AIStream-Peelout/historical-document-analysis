@@ -7,8 +7,11 @@ The merged index mixes two very different transcription lineages:
 
 * **Diplomatic transcriptions** (PGP lineage: Goitein, Gil, Elbaum, ...) —
   line-faithful text with a small editorial vocabulary: ``[...]`` lacunae,
-  bracketed best-guess reconstructions, ``(?)`` uncertainty, ``{x}`` supplied
-  (never-written) letters, ``//x//`` or ``\\x\\`` interlinear insertions.
+  bracketed best-guess reconstructions, ``(?)`` uncertainty, ``(!)`` sic marks,
+  ``(x)`` expansions of abbreviations (or, in Weiss-format editions that write
+  lacunae as ``( )``, restorations), ``{x}`` supplied (never-written) letters,
+  ``//x//`` or ``\\x\\`` interlinear insertions, ``|`` join lines between
+  fragments.
 * **Edition scrapes** (anonymous ``FJP N`` editors) — OCR of *printed critical
   editions*, including catalog headers, apparatus footnotes, parallel-witness
   reconstructions and Hebrew-font mojibake (final letters -> ``& # $``,
@@ -34,10 +37,37 @@ GAP = "␣gap␣"
 
 HEBREW_RE = re.compile(r"[֐-׿]")
 SEMITIC_RE = re.compile(r"[֐-׿؀-ۿ]")
+LATIN_RE = re.compile(r"[A-Za-z]")
+# Hebrew letters (with presentation forms) for word boundaries. ``\b`` is useless
+# here: every Hebrew letter is a word character to ``re``, and the markers below must
+# not be found inside ordinary words (``ושכרך`` and ``זוכרך`` contain ``כרך``), so
+# tokens are bounded by Hebrew letters instead.
+HEBREW_LETTER = "\u05d0-\u05ea\ufb1d-\ufb4f"
+_NOT_AFTER_LETTER = rf"(?<![{HEBREW_LETTER}])"
+_NOT_BEFORE_LETTER = rf"(?![{HEBREW_LETTER}])"
+# Longest bracketed/parenthesised span still read as one editorial mark (a
+# reconstruction or an expansion); longer spans are two unrelated markers or an aside.
+MAX_EDITORIAL_SPAN = 40
 EDITOR_HEADER_RE = re.compile(r"Editors?\s*:", re.I)
 FOOTNOTE_RULE_RE = re.compile(r"_{10,}")
 FLIPPED_BRACKET_RE = re.compile(r"\]\s*\d+\s*\[")
-EDITION_REF_RE = re.compile(r"מהד\s*'|עמ\s*'?\s*\d+|ק\"ג |כרך|תרגום ד\"?ר|השלמתי")
+# Editor references (edition, page, volume, translator credit, "I restored"). Every
+# token stands alone (no Hebrew letter glued to either side, so ``ושכרך``, ``זוכרך``
+# and the name ``אלמהד'ב`` never match), whitespace inside a token never crosses a
+# line (a scribal ``עמ'`` at a line end followed by a line number is not a page
+# reference) and ``כרך`` needs a volume designator (``כרך ב``, ``כרך י"ב``, ``כרך 2``,
+# ``כרך שני``): on its own it is also the ordinary word "city".
+EDITION_REF_RE = re.compile(
+    _NOT_AFTER_LETTER + r"(?:"
+    r"[ובלמש]?מהד[ \t]*['׳’]"                          # מהד', במהד' (edition)
+    r"|[ובלמש]?עמ[ \t]*['׳’]?[ \t]*\d+"               # עמ' 12, בעמ' 12 (page)
+    r"|ק[\"״]ג"                                        # ק"ג (kilograms)
+    rf"|כרך[ \t]+(?:\d+|[{HEBREW_LETTER}](?:[\"״][{HEBREW_LETTER}])?['׳’\"״]?"
+    r"|ראשון|שני|שלישי|רביעי|חמישי)"                    # volume designator
+    r"|תרגום[ \t]+ד[\"״]?ר"                           # תרגום ד"ר (translator)
+    r"|ו?השלמתי"                                        # editor's "I restored"
+    r")" + _NOT_BEFORE_LETTER
+)
 NUMBERED_FOOTNOTE_RE = re.compile(r"^\s*\d{1,2}\s*\)|(?<=[.\s])\d{1,2}\)\s", re.M)
 MOJIBAKE_FINAL_RE = re.compile(r"(?<=[֐-׿])[&#$]|[&#$](?=[֐-׿])")
 DOTS_RUN_RE = re.compile(r"(?:[.·…]\s*){2,}")
@@ -46,6 +76,17 @@ SUPPLIED_RE = re.compile(r"\{[^{}\n]*\}")
 INTERLINEAR_RE = re.compile(r"//([^/\n]{1,60})//|\\\\?([^\\\n]{1,60})\\\\?")
 COLUMN_MARKER_RE = re.compile(r"טור_[א-ת]")
 SIDE_MARKER_RE = re.compile(r"\b(recto|verso|margin)\b:?", re.I)
+# Sic marks: ``(!)``, ``( !)``, ``(!!)``, ``(?!)``, ``[!]``, the bidi-mangled ``)!(``
+# and ``}!}``, and a bare ``!`` after a word (``אלבדיה!``). ``!`` is never ink.
+SIC_RE = re.compile(r"[()\[\]{}][ \t]*[!?]*![!?]*[ \t]*[()\[\]{}]|!")
+PARENTHESES_RE = re.compile(r"\(([^()\n]*)\)")
+# An empty pair marks a Weiss-format text, where parentheses are restoration brackets.
+EMPTY_PARENS_RE = re.compile(r"\([ \t]*\)")
+# Editor's note standing for ink that was not transcribed: a signature, lost, torn,
+# illegible or erased text.
+LOSS_NOTE_RE = re.compile(
+    r"חתימ|אבוד|אבד|קרוע|בלתי קריא|לא קריא|אינ[וה] קריא|מחוק|נמחק")
+PIPE_RE = re.compile(r"\|+")
 
 
 @dataclass
@@ -151,19 +192,70 @@ def near_duplicates(a: str, b: str, n: int = 4, threshold: float = 0.4) -> bool:
     return len(grams_a & grams_b) / min(len(grams_a), len(grams_b)) > threshold
 
 
+def _expansion(m: "re.Match[str]") -> str:
+    """Resolve one parenthesised span of an ordinary (not Weiss-format) line.
+
+    A short span of Semitic script without Latin letters is an editor's expansion
+    of an abbreviation (``ר' (רבי)``, ``ויהב(נא)``), supplied letters or a gloss
+    (``(צ"ל: יחסן)``): none of it is ink, so the span is dropped and the
+    abbreviated form kept, like supplied ``{x}`` letters. A note standing for ink
+    the editor did not transcribe (``(חתימת יד)``, ``(השאר אבוד)``) and a span of
+    dots (``(...)``) are lacunae and become a :data:`GAP`. Anything else (Latin
+    glosses, numbers, spans over :data:`MAX_EDITORIAL_SPAN` chars) is left for
+    downstream gates rather than guessed.
+
+    :param m: Match of :data:`PARENTHESES_RE`.
+    :returns: Replacement text for the whole match.
+    """
+    inner = m.group(1)
+    if DOTS_RUN_RE.fullmatch(inner.strip()) or LOSS_NOTE_RE.search(inner):
+        return f" {GAP} "
+    if (SEMITIC_RE.search(inner) and not LATIN_RE.search(inner)
+            and len(inner) <= MAX_EDITORIAL_SPAN):
+        return ""
+    return m.group(0)
+
+
+def _restoration(m: "re.Match[str]") -> str:
+    """Resolve one parenthesised span of a Weiss-format line.
+
+    Editions in Weiss's layout (also Ackerman-Lieberman's and Friedman's Halfon
+    documents) write lacunae as ``( )`` and restored text as ``(xxx)``, a trailing
+    space marking a torn line end (``מעכש(ו )``). Such spans are rewritten as
+    square brackets so the reconstruction rule turns them into gaps and counts
+    their letters; other marks (``(?)``, dots) keep their own treatment.
+
+    :param m: Match of :data:`PARENTHESES_RE`.
+    :returns: Replacement text for the whole match.
+    """
+    inner = m.group(1)
+    if DOTS_RUN_RE.fullmatch(inner.strip()):
+        return f" {GAP} "
+    if not inner.strip() or SEMITIC_RE.search(inner):
+        return f"[{inner}]"
+    return m.group(0)
+
+
 def clean_diplomatic(text: str) -> Tuple[str, int, int]:
     """Strict-clean a diplomatic transcription to visible-ink ground truth.
 
     Editorial reconstructions (bracketed letters, dotted lacunae, edge
-    brackets) become :data:`GAP` tokens; supplied-letter braces are removed;
-    interlinear-insertion markers are unwrapped (the ink is on the page);
-    uncertainty markers and layout noise are stripped.
+    brackets) become :data:`GAP` tokens; supplied-letter braces and sic marks
+    (``(!)``) are removed; parenthesised spans are resolved by
+    :func:`_expansion` (expansions, glosses and supplied letters dropped, the
+    abbreviated ink kept and nothing counted as reconstruction) or, when the
+    text writes lacunae as ``( )``, by :func:`_restoration` (Weiss format:
+    restorations become counted gaps); interlinear-insertion markers are
+    unwrapped (the ink is on the page); uncertainty markers and layout noise
+    are stripped. A ``|`` marks the join or tear line between fragments, which
+    crosses lines mid-word, so it is deleted (a spaced ``|`` leaves its space).
 
     :param text: Raw diplomatic section text.
     :returns: Tuple of (cleaned text, reconstruction chars replaced,
         visible Semitic chars kept).
     """
     text = unicodedata.normalize("NFC", text).replace("\xa0", " ")
+    resolve_parens = _restoration if EMPTY_PARENS_RE.search(text) else _expansion
     recon_chars = 0
     lines_out = []
     for line in text.splitlines():
@@ -171,6 +263,8 @@ def clean_diplomatic(text: str) -> Tuple[str, int, int]:
         line = COLUMN_MARKER_RE.sub(" ", line)
         line = SUPPLIED_RE.sub("", line)
         line = INTERLINEAR_RE.sub(lambda m: m.group(1) or m.group(2) or "", line)
+        line = SIC_RE.sub("", line)
+        line = PARENTHESES_RE.sub(resolve_parens, line)
 
         def _bracket(m: "re.Match[str]") -> str:
             nonlocal recon_chars
@@ -179,7 +273,7 @@ def clean_diplomatic(text: str) -> Tuple[str, int, int]:
             # spans mean two independent edge-damage markers that happened to
             # pair up in flat (newline-less) text: keep the real ink between
             # them and record damage at both edges.
-            if len(inner) <= 40:
+            if len(inner) <= MAX_EDITORIAL_SPAN:
                 recon_chars += len(SEMITIC_RE.findall(inner))
                 return f" {GAP} "
             return f" {GAP} {inner} {GAP} "
@@ -198,6 +292,7 @@ def clean_diplomatic(text: str) -> Tuple[str, int, int]:
         # Any remaining stray brackets are edition debris.
         line = line.replace("[", " ").replace("]", " ")
         line = UNCERTAIN_RE.sub("", line)
+        line = PIPE_RE.sub("", line)
         line = DOTS_RUN_RE.sub(f" {GAP} ", line)
         line = re.sub(rf"(?:{re.escape(GAP)}\s*)+", f"{GAP} ", line)
         line = re.sub(r"[ \t]+", " ", line).strip()

@@ -1,0 +1,298 @@
+<title>Is It On The Page?</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Frank+Ruhl+Libre:wght@400;500&display=swap">
+<style>
+  :root {
+    --paper: #EEF1F5;
+    --paper-2: #E3E8EE;
+    --ink: #1B2431;
+    --ink-2: #4A5665;
+    --ink-3: #7B8794;
+    --rule: #C9D1DA;
+    --hit: #1F7A8C;
+    --hit-bg: #D6ECEF;
+    --miss: #B23A48;
+    --miss-bg: #F3DCDF;
+    --gold: #8A6D2F;
+    --chip-bg: #FFFFFF;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #151A21;
+      --paper-2: #1D242D;
+      --ink: #E6EAEF;
+      --ink-2: #AEB7C2;
+      --ink-3: #7D8894;
+      --rule: #333C47;
+      --hit: #5FC1D0;
+      --hit-bg: #17353B;
+      --miss: #E4778A;
+      --miss-bg: #3D1F26;
+      --gold: #D2B26A;
+      --chip-bg: #232B35;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #151A21;
+    --paper-2: #1D242D;
+    --ink: #E6EAEF;
+    --ink-2: #AEB7C2;
+    --ink-3: #7D8894;
+    --rule: #333C47;
+    --hit: #5FC1D0;
+    --hit-bg: #17353B;
+    --miss: #E4778A;
+    --miss-bg: #3D1F26;
+    --gold: #D2B26A;
+    --chip-bg: #232B35;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    padding-block: 40px 64px;
+    padding-inline: 20px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  .heb { font-family: "Frank Ruhl Libre", "Noto Serif Hebrew", "Times New Roman", serif; direction: rtl; unicode-bidi: isolate; }
+  .mono { font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  h1, h2, h3 { font-family: "Newsreader", Georgia, "Times New Roman", serif; font-weight: 500; text-wrap: balance; margin: 0; }
+  h1 { font-size: 44px; line-height: 1.05; letter-spacing: -0.01em; }
+  h2 { font-size: 26px; line-height: 1.15; }
+  h3 { font-size: 19px; line-height: 1.2; }
+  p { margin: 0; max-width: 62ch; }
+  .eyebrow { font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .lede { font-size: 17px; color: var(--ink-2); max-width: 60ch; }
+  em { font-family: "Newsreader", Georgia, serif; font-style: italic; font-size: 1.06em; }
+
+  header { display: grid; gap: 14px; padding-bottom: 28px; border-bottom: 1px solid var(--rule); }
+  .question { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; }
+  .question .heb { font-size: 30px; color: var(--ink-2); }
+
+  /* pipeline */
+  .pipeline { display: grid; gap: 0; margin-top: 8px; }
+  .step {
+    display: grid; grid-template-columns: 64px 1fr; gap: 0 22px;
+    padding-block: 26px; border-bottom: 1px solid var(--rule);
+  }
+  .step:last-child { border-bottom: 0; }
+  .num { font-family: "Newsreader", Georgia, serif; font-size: 40px; line-height: 1; color: var(--ink-3); font-weight: 400; padding-top: 2px; }
+  .step-body { display: grid; gap: 12px; min-width: 0; }
+  .step-body p { color: var(--ink-2); }
+  .code-ref { font-size: 12px; color: var(--ink-3); }
+
+  .sample {
+    display: grid; gap: 6px; padding: 14px 16px; background: var(--paper-2);
+    border-left: 3px solid var(--rule);
+  }
+  .sample .label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .sample .heb { font-size: 22px; line-height: 1.5; }
+  .sample.ref { border-left-color: var(--gold); }
+  .strike { color: var(--miss); text-decoration: line-through; text-decoration-thickness: 1.5px; }
+  .dim { color: var(--ink-3); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .two { grid-template-columns: 1fr; } .step { grid-template-columns: 44px 1fr; gap: 0 14px; } .num { font-size: 30px; } h1 { font-size: 34px; } }
+
+  .letters { font-size: 22px; letter-spacing: 0.04em; word-break: break-all; }
+  .count { font-size: 12px; color: var(--ink-3); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; direction: rtl; }
+  .chip {
+    font-family: "Frank Ruhl Libre", "Noto Serif Hebrew", serif; font-size: 18px; line-height: 1;
+    padding: 7px 9px 6px; border: 1px solid var(--rule); background: var(--chip-bg); border-radius: 3px;
+    unicode-bidi: isolate;
+  }
+  .chip.hit { border-color: var(--hit); background: var(--hit-bg); color: var(--hit); }
+  .chip.miss { border-color: var(--miss); background: var(--miss-bg); color: var(--miss); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px; vertical-align: -1px; }
+  .legend .l-hit::before { background: var(--hit); }
+  .legend .l-miss::before { background: var(--miss); }
+
+  .score { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 18px; }
+  .score .big { font-family: "Newsreader", Georgia, serif; font-size: 54px; line-height: 1; }
+  .score .frac { font-size: 15px; color: var(--ink-2); }
+  .bar { height: 10px; background: var(--miss-bg); border-radius: 2px; overflow: hidden; max-width: 420px; }
+  .bar i { display: block; height: 100%; width: 53.3%; background: var(--hit); }
+
+  .gates { display: grid; gap: 0; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+  .gate { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--rule); align-items: baseline; }
+  .gate:last-child { border-bottom: 0; }
+  .gate .name { font-weight: 600; font-size: 14px; }
+  .gate .rule { color: var(--ink-2); font-size: 14px; }
+  .gate.on { background: var(--hit-bg); }
+  .gate.on .name { color: var(--hit); }
+  @media (max-width: 640px) { .gate { grid-template-columns: 1fr; gap: 2px; } }
+
+  /* why */
+  section.why { margin-top: 44px; display: grid; gap: 22px; }
+  .why-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  @media (max-width: 720px) { .why-grid { grid-template-columns: 1fr; } }
+  .why-card { display: grid; gap: 10px; padding-top: 14px; border-top: 2px solid var(--ink); align-content: start; }
+  .why-card p { font-size: 14px; color: var(--ink-2); }
+  .stat { font-family: "Newsreader", Georgia, serif; font-size: 34px; line-height: 1; }
+  .stat small { font-family: "IBM Plex Sans", sans-serif; font-size: 12px; color: var(--ink-3); display: block; margin-top: 6px; letter-spacing: 0.02em; }
+
+  /* null distribution strip */
+  .null { display: grid; gap: 10px; padding: 18px 20px; background: var(--paper-2); }
+  .null .row { display: grid; grid-template-columns: 170px 1fr; gap: 12px; align-items: center; font-size: 13.5px; }
+  @media (max-width: 640px) { .null .row { grid-template-columns: 1fr; gap: 4px; } }
+  .track { position: relative; height: 22px; background: var(--chip-bg); border: 1px solid var(--rule); border-radius: 2px; }
+  .track b { position: absolute; top: 3px; height: 14px; border-radius: 2px; }
+  .track .own { background: var(--hit); opacity: .85; }
+  .track .wrong { background: var(--miss); opacity: .85; }
+  .track .tick { position: absolute; top: -6px; bottom: -6px; width: 1px; background: var(--ink); }
+  .track .tick::after { content: attr(data-l); position: absolute; top: -16px; left: 4px; font-size: 10.5px; color: var(--ink-3); white-space: nowrap; font-family: "IBM Plex Mono", monospace; }
+  .axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--ink-3); padding-inline: 170px 0; }
+  @media (max-width: 640px) { .axis { padding-inline: 0; } }
+
+  /* limits */
+  section.limits { margin-top: 44px; display: grid; gap: 14px; }
+  .limit-list { display: grid; gap: 10px; }
+  .limit { display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start; font-size: 14px; color: var(--ink-2); }
+  .limit .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--miss); }
+  .limit .dot.ok { background: var(--hit); }
+  .limit strong { color: var(--ink); font-weight: 600; }
+  footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--ink-3); display: grid; gap: 4px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Scoring Hebrew manuscript transcription · the order-independent n-gram precision</div>
+    <h1>Is it on the page?</h1>
+    <p class="lede">A transcription model can fail by reading badly, or by writing fluent text that was never there. Character error rate cannot tell those apart on a Cairo Genizah fragment, where the "right order" is often an editor's guess. So we ask one narrower question: <em>of everything the model wrote, how much actually occurs somewhere on this page?</em></p>
+  </header>
+
+  <div class="pipeline">
+
+    <div class="step">
+      <div class="num">1</div>
+      <div class="step-body">
+        <h3>Start with the two texts</h3>
+        <p>The model's raw output, and the editor's diplomatic transcription of the same fragment. Here, a line from a Judaeo-Aramaic marriage contract (Oxford, Bodleian MS heb. a 2/4); the model has misread one letter and closed with a stock blessing that is not on the page.</p>
+        <div class="two">
+          <div class="sample ref"><span class="label">Reference (editor)</span><span class="heb">בנחשא טבא [...] מעליא ויבנו ויצליחו</span></div>
+          <div class="sample"><span class="label">Model output (raw)</span><span class="heb">**בנחשא טבא** מעליא ויכנו ויצליחו [?] שלום וברכה</span></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">2</div>
+      <div class="step-body">
+        <h3>Reduce both to visible ink</h3>
+        <p>Editorial apparatus goes: lacuna markers <span class="mono">[...]</span>, uncertainty marks <span class="mono">[?]</span>, markdown emphasis, dot runs. Neither side is penalised for punctuation conventions it did not choose.</p>
+        <div class="two">
+          <div class="sample ref"><span class="label">Reference, visible ink</span><span class="heb">בנחשא טבא <span class="strike dim">[...]</span> מעליא ויבנו ויצליחו</span></div>
+          <div class="sample"><span class="label">Output, normalised</span><span class="heb"><span class="strike dim">**</span>בנחשא טבא<span class="strike dim">**</span> מעליא ויכנו ויצליחו <span class="strike dim">[?]</span> שלום וברכה</span></div>
+        </div>
+        <span class="code-ref mono">metrics.py · genizah_visible_ink_gt, normalize_ink_hypothesis</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">3</div>
+      <div class="step-body">
+        <h3>Keep only the letters</h3>
+        <p>Spaces and punctuation are dropped too, so the windows in the next step run across word boundaries. Only Hebrew-block characters count in the published version; the resubmission adds the Arabic block so Arabic-script fragments are graded on what they contain.</p>
+        <div class="two">
+          <div class="sample ref"><span class="label">Reference letters</span><span class="heb letters">בנחשאטבאמעליאויבנוויצליחו</span><span class="count mono">25 letters</span></div>
+          <div class="sample"><span class="label">Output letters</span><span class="heb letters">בנחשאטבאמעליאויכנוויצליחושלוםוברכה</span><span class="count mono">34 letters</span></div>
+        </div>
+        <span class="code-ref mono">audit_genizah_benchmark.py · letters_only · [֐-׿]</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">4</div>
+      <div class="step-body">
+        <h3>Slide a five-letter window over each</h3>
+        <p>Every run of five consecutive letters is a window. The reference's 21 windows go into a lookup set; the output's 30 windows are checked against it one by one. Order never enters: a window matches wherever it sits on the page.</p>
+        <div class="legend"><span class="l-hit">found in the reference</span><span class="l-miss">not on the page</span></div>
+        <div class="chips">
+          <span class="chip hit">בנחשא</span><span class="chip hit">נחשאט</span><span class="chip hit">חשאטב</span><span class="chip hit">שאטבא</span><span class="chip hit">אטבאמ</span><span class="chip hit">טבאמע</span><span class="chip hit">באמעל</span><span class="chip hit">אמעלי</span><span class="chip hit">מעליא</span><span class="chip hit">עליאו</span><span class="chip hit">ליאוי</span>
+          <span class="chip miss">יאויכ</span><span class="chip miss">אויכנ</span><span class="chip miss">ויכנו</span><span class="chip miss">יכנוו</span><span class="chip miss">כנווי</span>
+          <span class="chip hit">נוויצ</span><span class="chip hit">וויצל</span><span class="chip hit">ויצלי</span><span class="chip hit">יצליח</span><span class="chip hit">צליחו</span>
+          <span class="chip miss">ליחוש</span><span class="chip miss">יחושל</span><span class="chip miss">חושלו</span><span class="chip miss">ושלום</span><span class="chip miss">שלוםו</span><span class="chip miss">לוםוב</span><span class="chip miss">וםובר</span><span class="chip miss">םוברכ</span><span class="chip miss">וברכה</span>
+        </div>
+        <p>Read the pattern: the single misread letter (כ for ב) breaks exactly the five windows that contain it. The nine invented letters of <span class="heb">שלום וברכה</span> break all nine windows they touch. A window is either on the page or it is not.</p>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">5</div>
+      <div class="step-body">
+        <h3>Score = share of the output's windows found on the page</h3>
+        <div class="score"><span class="big mono">0.53</span><span class="frac mono">16 of 30 windows</span></div>
+        <div class="bar"><i></i></div>
+        <p>Precision, not recall: the metric asks whether what was written is real, not whether everything on the page was read. Coverage is measured separately by aligned recall. In the resubmission each reference window can be claimed at most as many times as it occurs, so an output that repeats one genuine phrase a hundred times no longer earns credit a hundred times.</p>
+        <span class="code-ref mono">score_genizah_offline.py · ngram_precision (n = 5)</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">6</div>
+      <div class="step-body">
+        <h3>Sort the output into a behaviour class</h3>
+        <p>Checked in this order; the first rule that fires wins. CER is reported only for outputs that reach the last row, so the score works as the admission filter for error-rate metrics.</p>
+        <div class="gates">
+          <div class="gate"><span class="name">Abstained</span><span class="rule">fewer than 25 letters asserted, or a refusal phrase</span></div>
+          <div class="gate"><span class="name">Loop collapse</span><span class="rule">one repeated 12-letter span covers more than 45 % of the text</span></div>
+          <div class="gate"><span class="name">Hallucinated</span><span class="rule">score below 0.10: what was written is not this page</span></div>
+          <div class="gate on"><span class="name">Substantive</span><span class="rule">everything else. Our example, at 0.53, lands here and goes on to CER.</span></div>
+        </div>
+        <p>A fragment is <strong>Tier A</strong> when an order-blind line recogniser (Kraken) and at least one vision-language model both score 0.25 or more against the reference: two independent readers agreeing that the editor transcribed the right layer in the right order, which is what makes an error rate meaningful there.</p>
+      </div>
+    </div>
+  </div>
+
+  <section class="why">
+    <div>
+      <div class="eyebrow">Why this and not CER</div>
+      <h2>Three things the window score does that an error rate cannot</h2>
+    </div>
+    <div class="why-grid">
+      <div class="why-card">
+        <span class="stat">0<small>credit for invented text, wherever it is placed</small></span>
+        <p>A fluent paragraph that is not on the page contains no reference windows. It scores the same whether it is inserted at the top, the bottom, or woven through real lines.</p>
+      </div>
+      <div class="why-card">
+        <span class="stat">15 of 33<small>reading-order "failures" that were Kraken reading correctly</small></span>
+        <p>On pages with marginalia, over-writing or a palimpsest under-text, the editor's linearisation is a choice. A system that reads the transcribed lines in a different order keeps its score; alignment-based metrics punish it.</p>
+      </div>
+      <div class="why-card">
+        <span class="stat">0.005<small>median score of a real transcription against the wrong page</small></span>
+        <p>Scoring every good output against all 130 other fragments gives an empirical null. Under 1 % of those wrong-page pairs reach 0.10, and 0.1 % reach 0.25: the two cutoffs sit at the null's 99th and 99.9th percentiles.</p>
+      </div>
+    </div>
+
+    <div class="null">
+      <div class="eyebrow">Same outputs, right page versus wrong page (Kraken, 5-letter windows, 131 fragments)</div>
+      <div class="row"><span>Against the wrong page<br><span class="dim">median 0.006 · 90th pct 0.026</span></span>
+        <div class="track"><b class="wrong" style="left:0.3%;width:2.6%"></b><span class="tick" style="left:10%" data-l="0.10 hallucination cutoff"></span><span class="tick" style="left:25%" data-l="0.25 Tier A"></span></div></div>
+      <div class="row"><span>Against its own page<br><span class="dim">median 0.477 · 10th pct 0.23</span></span>
+        <div class="track"><b class="own" style="left:23%;width:47%"></b><span class="tick" style="left:10%"></span><span class="tick" style="left:25%"></span></div></div>
+      <div class="axis"><span>0</span><span>0.25</span><span>0.50</span><span>0.75</span><span>1.0</span></div>
+    </div>
+  </section>
+
+  <section class="limits">
+    <div>
+      <div class="eyebrow">What it does not see</div>
+      <h2>An off-page detector, and only that</h2>
+    </div>
+    <div class="limit-list">
+      <div class="limit"><span class="dot"></span><span><strong>Text copied from elsewhere on the same page.</strong> A model that patches an illegible passage with a formula it already read three lines up keeps, or even raises, its score. Only order-aware metrics (aligned F1, CER) notice.</span></div>
+      <div class="limit"><span class="dot"></span><span><strong>Canonical interpolation.</strong> A liturgical or biblical fragment completed from the model's memory of the standard text shares most of its windows with the page. The judge and the scholar have to catch this one.</span></div>
+      <div class="limit"><span class="dot"></span><span><strong>A layer the editor did not transcribe.</strong> Marginalia read correctly but absent from the reference score as hallucination. The metric is invariant to reading order, not to which layer was chosen.</span></div>
+      <div class="limit"><span class="dot ok"></span><span><strong>Near-miss reads are penalised, by design.</strong> One wrong letter costs five windows, so the score rewards getting letters exactly right. The trade-off is why n = 5: three-letter windows match almost any Hebrew text (wrong-page median 0.22), eight-letter windows break on every small confusion.</span></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Worked example: Oxford, Bodleian MS heb. a 2/4, Judaeo-Aramaic ketubba formula; the model output is constructed to show both failure types. Null distribution and Tier A counts from the 2026-09 metric audit of the 131-fragment verified Genizah benchmark.</span>
+    <span>Pipeline as implemented in score_genizah_offline.py; the resubmission adds count clipping and the Hebrew+Arabic letter set, and leaves n, the cutoffs and the gate order unchanged.</span>
+  </footer>
+</div>

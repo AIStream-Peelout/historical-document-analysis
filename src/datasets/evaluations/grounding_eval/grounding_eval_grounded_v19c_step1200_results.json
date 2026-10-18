@@ -1,0 +1,164 @@
+[
+ {
+  "ok": true,
+  "n_lines": 15,
+  "matched": 15,
+  "gt_n": 16,
+  "miou": 0.6254014598540146,
+  "mcer": 0.23076923076923078
+ },
+ {
+  "ok": true,
+  "n_lines": 6,
+  "matched": 6,
+  "gt_n": 6,
+  "miou": 0.22685457375410034,
+  "mcer": 0.5048309178743962
+ },
+ {
+  "ok": false
+ },
+ {
+  "ok": true,
+  "n_lines": 14,
+  "matched": 5,
+  "gt_n": 16,
+  "miou": 0.0,
+  "mcer": 0.56
+ },
+ {
+  "ok": true,
+  "n_lines": 6,
+  "matched": 5,
+  "gt_n": 6,
+  "miou": 0.8066708621774701,
+  "mcer": 0.4107142857142857
+ },
+ {
+  "ok": true,
+  "n_lines": 6,
+  "matched": 6,
+  "gt_n": 7,
+  "miou": 0.11002005217111056,
+  "mcer": 0.31378299120234604
+ },
+ {
+  "ok": true,
+  "n_lines": 6,
+  "matched": 6,
+  "gt_n": 6,
+  "miou": 0.0595506696750036,
+  "mcer": 0.2774122807017544
+ },
+ {
+  "ok": true,
+  "n_lines": 12,
+  "matched": 11,
+  "gt_n": 14,
+  "miou": 0.11213412120379278,
+  "mcer": 0.21052631578947367
+ },
+ {
+  "ok": true,
+  "n_lines": 44,
+  "matched": 43,
+  "gt_n": 44,
+  "miou": 0.0,
+  "mcer": 0.16981132075471697
+ },
+ {
+  "ok": true,
+  "n_lines": 30,
+  "matched": 18,
+  "gt_n": 30,
+  "miou": 0.0,
+  "mcer": 0.4567901234567901
+ },
+ {
+  "ok": true,
+  "n_lines": 19,
+  "matched": 19,
+  "gt_n": 20,
+  "miou": 0.2849064810787299,
+  "mcer": 0.13636363636363635
+ },
+ {
+  "ok": true,
+  "n_lines": 38,
+  "matched": 38,
+  "gt_n": 38,
+  "miou": 0.0,
+  "mcer": 0.2637759710930443
+ },
+ {
+  "ok": false
+ },
+ {
+  "ok": true,
+  "n_lines": 13,
+  "matched": 13,
+  "gt_n": 13,
+  "miou": 0.6783114992721979,
+  "mcer": 0.1111111111111111
+ },
+ {
+  "ok": false
+ },
+ {
+  "ok": false
+ },
+ {
+  "ok": true,
+  "n_lines": 15,
+  "matched": 14,
+  "gt_n": 16,
+  "miou": 0.4175544111439272,
+  "mcer": 0.40664711632453565
+ },
+ {
+  "ok": true,
+  "n_lines": 35,
+  "matched": 31,
+  "gt_n": 34,
+  "miou": 0.0,
+  "mcer": 0.14285714285714285
+ },
+ {
+  "ok": true,
+  "n_lines": 13,
+  "matched": 12,
+  "gt_n": 13,
+  "miou": 0.3737569024193228,
+  "mcer": 0.303030303030303
+ },
+ {
+  "ok": false
+ },
+ {
+  "ok": false
+ },
+ {
+  "ok": true,
+  "n_lines": 21,
+  "matched": 21,
+  "gt_n": 21,
+  "miou": 0.6334941126400908,
+  "mcer": 0.0
+ },
+ {
+  "ok": true,
+  "n_lines": 16,
+  "matched": 13,
+  "gt_n": 16,
+  "miou": 0.2785714285714286,
+  "mcer": 0.2857142857142857
+ },
+ {
+  "ok": true,
+  "n_lines": 15,
+  "matched": 15,
+  "gt_n": 15,
+  "miou": 0.6298508845049551,
+  "mcer": 0.0
+ }
+]

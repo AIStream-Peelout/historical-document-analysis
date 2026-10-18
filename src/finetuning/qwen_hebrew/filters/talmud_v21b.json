@@ -1,0 +1,7 @@
+{
+  "description": "Talmud replay rows the v2.1b run trained on (colab/genizah_v21b_dispatchfix.ipynb cell 2): gemara_crops = task crop_transcribe with section gemara; pages_small = task page_extract with section rashi or tosafot, excluding volumes 16 and 05 (notebook: stem.split('_')[0] not in ('16', '05'), i.e. the stem starts with 16 or 05 followed by '_' or the end of the stem).",
+  "any": [
+    {"task": "crop_transcribe", "section": ["gemara"]},
+    {"task": "page_extract", "section": ["rashi", "tosafot"], "stem_not_regex": "^(?:16|05)(?:_|\\Z)"}
+  ]
+}

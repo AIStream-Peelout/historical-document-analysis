@@ -1,0 +1,467 @@
+<title>How Did It Fail?</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&family=Frank+Ruhl+Libre:wght@400;500&display=swap">
+<style>
+  :root {
+    --paper: #EEF1F5;
+    --paper-2: #E3E8EE;
+    --ink: #1B2431;
+    --ink-2: #4A5665;
+    --ink-3: #7B8794;
+    --rule: #C9D1DA;
+    --hit: #1F7A8C;
+    --hit-bg: #D6ECEF;
+    --miss: #B23A48;
+    --miss-bg: #F3DCDF;
+    --gold: #8A6D2F;
+    --chip-bg: #FFFFFF;
+    --on-grey: #12181F;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --paper: #151A21;
+      --paper-2: #1D242D;
+      --ink: #E6EAEF;
+      --ink-2: #AEB7C2;
+      --ink-3: #7D8894;
+      --rule: #333C47;
+      --hit: #5FC1D0;
+      --hit-bg: #17353B;
+      --miss: #E4778A;
+      --miss-bg: #3D1F26;
+      --gold: #D2B26A;
+      --chip-bg: #232B35;
+      --on-grey: #12181F;
+    }
+  }
+  :root[data-theme="dark"] {
+    --paper: #151A21;
+    --paper-2: #1D242D;
+    --ink: #E6EAEF;
+    --ink-2: #AEB7C2;
+    --ink-3: #7D8894;
+    --rule: #333C47;
+    --hit: #5FC1D0;
+    --hit-bg: #17353B;
+    --miss: #E4778A;
+    --miss-bg: #3D1F26;
+    --gold: #D2B26A;
+    --chip-bg: #232B35;
+    --on-grey: #12181F;
+  }
+
+  body {
+    background: var(--paper);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.5;
+    padding-block: 40px 64px;
+    padding-inline: 20px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  .heb { font-family: "Frank Ruhl Libre", "Noto Serif Hebrew", "Times New Roman", serif; direction: rtl; unicode-bidi: isolate; }
+  .mono { font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace; font-variant-numeric: tabular-nums; }
+  h1, h2, h3 { font-family: "Newsreader", Georgia, "Times New Roman", serif; font-weight: 500; text-wrap: balance; margin: 0; }
+  h1 { font-size: 44px; line-height: 1.05; letter-spacing: -0.01em; }
+  h2 { font-size: 26px; line-height: 1.15; }
+  h3 { font-size: 19px; line-height: 1.2; }
+  p { margin: 0; max-width: 62ch; }
+  .eyebrow { font-size: 11.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .lede { font-size: 17px; color: var(--ink-2); max-width: 60ch; }
+  em { font-family: "Newsreader", Georgia, serif; font-style: italic; font-size: 1.06em; }
+
+  header { display: grid; gap: 14px; padding-bottom: 28px; border-bottom: 1px solid var(--rule); }
+  .question { display: flex; flex-wrap: wrap; gap: 8px 22px; align-items: baseline; }
+  .question .heb { font-size: 30px; color: var(--ink-2); }
+
+  /* pipeline */
+  .pipeline { display: grid; gap: 0; margin-top: 8px; }
+  .step {
+    display: grid; grid-template-columns: 64px 1fr; gap: 0 22px;
+    padding-block: 26px; border-bottom: 1px solid var(--rule);
+  }
+  .step:last-child { border-bottom: 0; }
+  .num { font-family: "Newsreader", Georgia, serif; font-size: 40px; line-height: 1; color: var(--ink-3); font-weight: 400; padding-top: 2px; }
+  .step-body { display: grid; gap: 12px; min-width: 0; }
+  .step-body p { color: var(--ink-2); }
+  .code-ref { font-size: 12px; color: var(--ink-3); }
+
+  .sample {
+    display: grid; gap: 6px; padding: 14px 16px; background: var(--paper-2);
+    border-left: 3px solid var(--rule);
+  }
+  .sample .label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+  .sample .heb { font-size: 22px; line-height: 1.5; }
+  .sample.ref { border-left-color: var(--gold); }
+  .strike { color: var(--miss); text-decoration: line-through; text-decoration-thickness: 1.5px; }
+  .dim { color: var(--ink-3); }
+  .two { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .two { grid-template-columns: 1fr; } .step { grid-template-columns: 44px 1fr; gap: 0 14px; } .num { font-size: 30px; } h1 { font-size: 34px; } }
+
+  .letters { font-size: 22px; letter-spacing: 0.04em; word-break: break-all; }
+  .count { font-size: 12px; color: var(--ink-3); }
+
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; direction: rtl; }
+  .chip {
+    font-family: "Frank Ruhl Libre", "Noto Serif Hebrew", serif; font-size: 18px; line-height: 1;
+    padding: 7px 9px 6px; border: 1px solid var(--rule); background: var(--chip-bg); border-radius: 3px;
+    unicode-bidi: isolate;
+  }
+  .chip.hit { border-color: var(--hit); background: var(--hit-bg); color: var(--hit); }
+  .chip.miss { border-color: var(--miss); background: var(--miss-bg); color: var(--miss); }
+  .legend { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 13px; color: var(--ink-2); }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 7px; vertical-align: -1px; }
+  .legend .l-hit::before { background: var(--hit); }
+  .legend .l-miss::before { background: var(--miss); }
+  .legend .l-gold::before { background: var(--gold); }
+  .legend .l-grey::before { background: var(--ink-3); }
+
+  .score { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 18px; }
+  .score .big { font-family: "Newsreader", Georgia, serif; font-size: 54px; line-height: 1; }
+  .score .frac { font-size: 15px; color: var(--ink-2); }
+  .bar { height: 10px; background: var(--miss-bg); border-radius: 2px; overflow: hidden; max-width: 420px; }
+  .bar i { display: block; height: 100%; width: 53.3%; background: var(--hit); }
+
+  .gates { display: grid; gap: 0; border: 1px solid var(--rule); border-radius: 4px; overflow: hidden; }
+  .gate { display: grid; grid-template-columns: 150px 1fr; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--rule); align-items: baseline; }
+  .gate:last-child { border-bottom: 0; }
+  .gate .name { font-weight: 600; font-size: 14px; }
+  .gate .rule { color: var(--ink-2); font-size: 14px; }
+  .gate.on { background: var(--hit-bg); }
+  .gate.on .name { color: var(--hit); }
+  .gate.stop { background: var(--miss-bg); }
+  .gate.stop .name { color: var(--miss); }
+  .gate.loop { background: var(--paper-2); }
+  .gate.loop .name { color: var(--gold); }
+  @media (max-width: 640px) { .gate { grid-template-columns: 1fr; gap: 2px; } }
+
+  /* page 2 additions, same tokens */
+  .sample .lit { font-family: "IBM Plex Mono", "SFMono-Regular", Menlo, monospace; font-size: 20px; line-height: 1.5; }
+  .sample .heb.small { font-size: 19px; }
+  .tag { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 600; color: var(--ink-3); }
+  .win { color: var(--gold); border-bottom: 2px solid var(--gold); }
+
+  /* behaviour distribution */
+  .dist { display: grid; gap: 8px; margin-top: 8px; }
+  .dist-row { display: grid; grid-template-columns: 204px 1fr 42px; gap: 14px; align-items: center; }
+  .dist-row .who { font-size: 13.5px; color: var(--ink-2); }
+  .dist-row.ours .who { color: var(--ink); font-weight: 600; }
+  .dist-row .n { font-size: 11.5px; color: var(--ink-3); text-align: right; font-family: "IBM Plex Mono", monospace; }
+  .stack { display: flex; height: 26px; border-radius: 2px; overflow: hidden; background: var(--paper-2); }
+  .stack i { flex-grow: 0; flex-basis: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+  .stack i b { font-size: 11px; font-weight: 600; font-family: "IBM Plex Mono", monospace; color: var(--paper); white-space: nowrap; }
+  .stack .s-sub { background: var(--hit); }
+  .stack .s-hal { background: var(--miss); }
+  .stack .s-loop { background: var(--gold); }
+  .stack .s-abs { background: var(--ink-3); }
+  .stack .s-abs b { color: var(--on-grey); }
+  .dist-head { display: grid; grid-template-columns: 204px 1fr 42px; gap: 14px; }
+  @media (max-width: 720px) {
+    .dist-row, .dist-head { grid-template-columns: 1fr; gap: 3px; }
+    .dist-row .n { text-align: left; }
+  }
+
+  /* why */
+  section.why { margin-top: 44px; display: grid; gap: 22px; }
+  .why-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; }
+  @media (max-width: 720px) { .why-grid { grid-template-columns: 1fr; } }
+  .why-card { display: grid; gap: 10px; padding-top: 14px; border-top: 2px solid var(--ink); align-content: start; }
+  .why-card p { font-size: 14px; color: var(--ink-2); }
+  .stat { font-family: "Newsreader", Georgia, serif; font-size: 34px; line-height: 1; }
+  .stat.wide { font-size: 30px; }
+  .stat small { font-family: "IBM Plex Sans", sans-serif; font-size: 12px; color: var(--ink-3); display: block; margin-top: 6px; letter-spacing: 0.02em; }
+
+  /* distribution strip */
+  .null { display: grid; gap: 10px; padding: 18px 20px; background: var(--paper-2); }
+  .null .row { display: grid; grid-template-columns: 170px 1fr; gap: 12px; align-items: center; font-size: 13.5px; }
+  @media (max-width: 640px) { .null .row { grid-template-columns: 1fr; gap: 4px; } }
+  .track { position: relative; height: 22px; background: var(--chip-bg); border: 1px solid var(--rule); border-radius: 2px; }
+  .track b { position: absolute; top: 3px; height: 14px; border-radius: 2px; }
+  .track .own { background: var(--hit); opacity: .85; }
+  .track .wrong { background: var(--miss); opacity: .85; }
+  .track .tick { position: absolute; top: -6px; bottom: -6px; width: 1px; background: var(--ink); }
+  .track .tick::after { content: attr(data-l); position: absolute; top: -16px; left: 4px; font-size: 10.5px; color: var(--ink-3); white-space: nowrap; font-family: "IBM Plex Mono", monospace; }
+  .axis { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--ink-3); padding-inline: 170px 0; }
+  @media (max-width: 640px) { .axis { padding-inline: 0; } }
+
+  /* limits */
+  section.limits { margin-top: 44px; display: grid; gap: 14px; }
+  .limit-list { display: grid; gap: 10px; }
+  .limit { display: grid; grid-template-columns: 22px 1fr; gap: 12px; align-items: start; font-size: 14px; color: var(--ink-2); }
+  .limit .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--miss); }
+  .limit .dot.ok { background: var(--hit); }
+  .limit strong { color: var(--ink); font-weight: 600; }
+  footer { margin-top: 40px; padding-top: 14px; border-top: 1px solid var(--rule); font-size: 12px; color: var(--ink-3); display: grid; gap: 4px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Behaviour classification · the paper's primary result</div>
+    <h1>How did it fail?</h1>
+    <p class="lede">Three outputs can all score a character error rate near or above 1.0 and mean completely different things: one declined, one jammed on a single word, one wrote fluent Hebrew from somewhere else. Ranking those numbers ranks the <em>shape</em> of the failure, not reading ability. So every output is sorted into a behaviour class before it is scored, and only the last class goes on to an error rate.</p>
+  </header>
+
+  <div class="pipeline">
+
+    <div class="step">
+      <div class="num">1</div>
+      <div class="step-body">
+        <h3>Four outputs for one page</h3>
+        <p>The same fragment as page one of this series: a line from a Judaeo-Aramaic marriage contract (Oxford, Bodleian MS heb. a 2/4). Four systems answer; each answer is passed through the same three gates, in order, and the first rule that fires decides the class.</p>
+        <div class="sample ref"><span class="label">Reference, visible ink · 29 characters, 5 words</span><span class="heb">בנחשא טבא מעליא ויבנו ויצליחו</span></div>
+        <div class="two">
+          <div class="sample"><span class="label">A · output</span><span class="lit">[?]</span><span class="count">the prompt's damage marker, and nothing else</span></div>
+          <div class="sample"><span class="label">B · output</span><span class="heb small">ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו ויצליחו</span><span class="count mono">one word, twelve times · 84 letters</span></div>
+          <div class="sample"><span class="label">C · output</span><span class="heb small">שלום וברכה לכבוד מרנא ורבנא נטריה רחמנא</span><span class="count">fluent, idiomatic, and not on this page</span></div>
+          <div class="sample"><span class="label">D · output</span><span class="heb small">בנחשא טבא מעליא ויכנו ויצליחו שלום וברכה</span><span class="count mono">40 characters, 7 words · one misread letter, one invented blessing</span></div>
+        </div>
+        <span class="code-ref mono">score_genizah_offline.py · classify</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">2</div>
+      <div class="step-body">
+        <h3>Gate 1: did it assert anything?</h3>
+        <p>An output is an abstention if it asserts fewer than 25 letters, or if a refusal phrase appears in its first 400 characters — <span class="mono">cannot transcribe</span>, <span class="mono">unable to read</span>, <span class="mono">sorry</span> and their neighbours. Only <strong>A</strong> stops here: the damage marker <span class="mono">[?]</span> is apparatus, not ink, so it asserts nothing at all.</p>
+        <div class="gates">
+          <div class="gate stop"><span class="name">A → abstained</span><span class="rule">nothing asserted; no attempt to read was made, and no error rate is computed</span></div>
+          <div class="gate"><span class="name">B, C, D</span><span class="rule">letters asserted, no refusal phrase — they go on to gate 2</span></div>
+        </div>
+        <p>The letter count is <strong>script-agnostic</strong>: Hebrew and Arabic blocks both count as asserted ink. An output written entirely in Arabic script is therefore never an abstention. It claimed to have read something, and it is judged on that claim by the gates below.</p>
+        <span class="code-ref mono">classify · ABSTAIN_MIN_CHARS = 25 · _REFUSAL_RE over raw[:400]</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">3</div>
+      <div class="step-body">
+        <h3>Gate 2: is it one phrase on repeat?</h3>
+        <p>Take every run of twelve consecutive letters, find the single commonest one, and multiply its count by twelve: that is how many letters of the output that one span accounts for. Divide by the output's length. Above <span class="mono">0.45</span> the output is a loop collapse. The test needs at least 36 letters, so a short answer cannot trip it.</p>
+        <div class="two">
+          <div class="sample"><span class="label">B, letters only</span><span class="heb letters">ויצליחוויצליחוויצליחוויצליחוויצליחוויצליחוויצליחוויצליחוויצליחוויצליחוויצליחוויצליחו</span><span class="count mono">84 letters</span></div>
+          <div class="sample"><span class="label">Its commonest 12-letter span</span><span class="heb letters"><span class="win">ויצליחוויצלי</span></span><span class="count mono">loop ratio 1.57</span></div>
+        </div>
+        <p>Because the windows overlap, the covered-letter total runs past the length of the text, and the ratio can exceed 1. That is the signature: the span does not merely occur often, it covers the output several times over.</p>
+        <div class="gates">
+          <div class="gate loop"><span class="name">B → loop collapse</span><span class="rule"><span class="mono">1.57 &gt; 0.45</span> — the model jammed; whether the repeated word is real is beside the point</span></div>
+          <div class="gate"><span class="name">C, D</span><span class="rule">no dominant span — they go on to gate 3</span></div>
+        </div>
+        <span class="code-ref mono">loop_ratio (span = 12) · LOOP_REPEAT_RATIO = 0.45</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">4</div>
+      <div class="step-body">
+        <h3>Gate 3: is it on the page?</h3>
+        <p>Order-independent five-gram precision, the score page one of this series builds: the share of the output's five-letter windows that occur anywhere in the reference. Below <span class="mono">0.10</span>, what was written is not this page.</p>
+        <div class="two">
+          <div class="sample"><span class="label">C · five-gram precision</span><span class="score"><span class="big mono">0.00</span><span class="frac mono">no window on the page</span></span><div class="bar"><i style="width:0"></i></div><span class="count">fluent, on-topic, and about a different document</span></div>
+          <div class="sample"><span class="label">D · five-gram precision</span><span class="score"><span class="big mono">0.53</span><span class="frac mono">16 of 30 windows</span></span><div class="bar"><i></i></div><span class="count">most of what it wrote is genuinely there</span></div>
+        </div>
+        <div class="gates">
+          <div class="gate stop"><span class="name">C → hallucinated</span><span class="rule"><span class="mono">0.00 &lt; 0.10</span> — a real Hebrew blessing, correctly spelled, from nowhere on this fragment</span></div>
+          <div class="gate on"><span class="name">D → substantive</span><span class="rule"><span class="mono">0.53</span> — an attempt at this page, with errors in it. This one gets an error rate.</span></div>
+        </div>
+        <span class="code-ref mono">ngram_precision (n = 5) · HALLUCINATION_NGRAM = 0.10</span>
+      </div>
+    </div>
+
+    <div class="step">
+      <div class="num">5</div>
+      <div class="step-body">
+        <h3>Only substantive attempts get an error rate</h3>
+        <p>D is the single output of the four that was reading this page, and its character error rate — <span class="mono">0.41</span> — means what an error rate is supposed to mean. Score all four with CER and you get numbers that are perfectly well defined and rank the wrong thing:</p>
+        <div class="gates">
+          <div class="gate stop"><span class="name">A · abstained</span><span class="rule"><span class="mono">CER 1.00</span> — the cost of deleting the page. Nothing was read, nothing was wrong.</span></div>
+          <div class="gate loop"><span class="name">B · loop collapse</span><span class="rule"><span class="mono">CER 2.69</span> — worst of the four, because it wrote too much. It wrote one real word.</span></div>
+          <div class="gate stop"><span class="name">C · hallucinated</span><span class="rule"><span class="mono">CER about 1.0</span> — indistinguishable from the abstention, and a different failure entirely</span></div>
+          <div class="gate on"><span class="name">D · substantive</span><span class="rule"><span class="mono">CER 0.41</span> — the only one of the four where the number is about reading</span></div>
+        </div>
+        <p>Averaged, that column says the refusal beat the loop by 1.69 and tied the hallucination. It is a ranking of failure shapes wearing the clothes of an accuracy metric. Hence the order: classify, then score the class that can be scored.</p>
+      </div>
+    </div>
+  </div>
+
+  <section class="why">
+    <div>
+      <div class="eyebrow">The paper's primary result table</div>
+      <h2>Every system, sorted by what it did instead of reading</h2>
+    </div>
+    <div class="legend">
+      <span class="l-grey">abstained</span><span class="l-gold">loop collapse</span><span class="l-miss">hallucinated</span><span class="l-hit">substantive</span>
+    </div>
+    <p class="count">† Added after the paper submission (August–September 2026 checkpoints); same 131 fragments, same scorer.</p>
+    <div class="dist">
+      <div class="dist-head"><span class="eyebrow">System</span><span class="eyebrow">Share of outputs</span><span class="eyebrow" style="text-align:right">n</span></div>
+
+      <div class="dist-row ours">
+        <span class="who">HebVL-2.1 (ours) †</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:0"></i><i class="s-loop" style="flex-grow:0"></i><i class="s-hal" style="flex-grow:1"></i><i class="s-sub" style="flex-grow:99"><b>99%</b></i>
+        </div>
+        <span class="n">131</span>
+      </div>
+
+      <div class="dist-row ours">
+        <span class="who">HebVL-2.0 (ours) †</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:0"></i><i class="s-loop" style="flex-grow:1"></i><i class="s-hal" style="flex-grow:0"></i><i class="s-sub" style="flex-grow:99"><b>99%</b></i>
+        </div>
+        <span class="n">131</span>
+      </div>
+
+      <div class="dist-row">
+        <span class="who">Kraken/MiDRASH → LLM</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:1"></i><i class="s-loop" style="flex-grow:0"></i><i class="s-hal" style="flex-grow:2"></i><i class="s-sub" style="flex-grow:98"><b>98%</b></i>
+        </div>
+        <span class="n">122</span>
+      </div>
+
+      <div class="dist-row ours">
+        <span class="who">HebVL-1.9 (ours) †</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:0"></i><i class="s-loop" style="flex-grow:2"></i><i class="s-hal" style="flex-grow:1"></i><i class="s-sub" style="flex-grow:98"><b>98%</b></i>
+        </div>
+        <span class="n">131</span>
+      </div>
+
+      <div class="dist-row">
+        <span class="who">Kraken/MiDRASH raw, KTIV fine-tune †</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:1"></i><i class="s-loop" style="flex-grow:0"></i><i class="s-hal" style="flex-grow:1"></i><i class="s-sub" style="flex-grow:98"><b>98%</b></i>
+        </div>
+        <span class="n">131</span>
+      </div>
+
+      <div class="dist-row">
+        <span class="who">Kraken/MiDRASH raw</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:1"></i><i class="s-loop" style="flex-grow:0"></i><i class="s-hal" style="flex-grow:2"></i><i class="s-sub" style="flex-grow:97"><b>97%</b></i>
+        </div>
+        <span class="n">131</span>
+      </div>
+
+      <div class="dist-row ours">
+        <span class="who">HebVL-1.8 (ours) †</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:0"></i><i class="s-loop" style="flex-grow:1"></i><i class="s-hal" style="flex-grow:9"><b>9%</b></i><i class="s-sub" style="flex-grow:90"><b>90%</b></i>
+        </div>
+        <span class="n">131</span>
+      </div>
+
+      <div class="dist-row ours">
+        <span class="who">HebVL-1.7 (ours)</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:1"></i><i class="s-loop" style="flex-grow:3"></i><i class="s-hal" style="flex-grow:30"><b>30%</b></i><i class="s-sub" style="flex-grow:66"><b>66%</b></i>
+        </div>
+        <span class="n">131</span>
+      </div>
+
+      <div class="dist-row">
+        <span class="who">Gemini 3.1 Pro</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:0"></i><i class="s-loop" style="flex-grow:0"></i><i class="s-hal" style="flex-grow:41"><b>41%</b></i><i class="s-sub" style="flex-grow:59"><b>59%</b></i>
+        </div>
+        <span class="n">68</span>
+      </div>
+
+      <div class="dist-row">
+        <span class="who">Gemini 3.5 Flash</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:11"><b>11%</b></i><i class="s-loop" style="flex-grow:7"></i><i class="s-hal" style="flex-grow:39"><b>39%</b></i><i class="s-sub" style="flex-grow:43"><b>43%</b></i>
+        </div>
+        <span class="n">122</span>
+      </div>
+
+      <div class="dist-row">
+        <span class="who">Claude Opus 4.8</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:28"><b>28%</b></i><i class="s-loop" style="flex-grow:2"></i><i class="s-hal" style="flex-grow:29"><b>29%</b></i><i class="s-sub" style="flex-grow:40"><b>40%</b></i>
+        </div>
+        <span class="n">131</span>
+      </div>
+
+      <div class="dist-row">
+        <span class="who">Google Vision OCR → LLM</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:14"><b>14%</b></i><i class="s-loop" style="flex-grow:1"></i><i class="s-hal" style="flex-grow:55"><b>55%</b></i><i class="s-sub" style="flex-grow:31"><b>31%</b></i>
+        </div>
+        <span class="n">123</span>
+      </div>
+
+      <div class="dist-row">
+        <span class="who">GPT-5.6 Sol</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:50"><b>50%</b></i><i class="s-loop" style="flex-grow:1"></i><i class="s-hal" style="flex-grow:21"><b>21%</b></i><i class="s-sub" style="flex-grow:27"><b>27%</b></i>
+        </div>
+        <span class="n">131</span>
+      </div>
+
+      <div class="dist-row">
+        <span class="who">Claude Sonnet 5</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:8"><b>8%</b></i><i class="s-loop" style="flex-grow:2"></i><i class="s-hal" style="flex-grow:68"><b>68%</b></i><i class="s-sub" style="flex-grow:22"><b>22%</b></i>
+        </div>
+        <span class="n">131</span>
+      </div>
+
+      <div class="dist-row ours">
+        <span class="who">HebVL-1.6 (ours)</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:1"></i><i class="s-loop" style="flex-grow:17"><b>17%</b></i><i class="s-hal" style="flex-grow:69"><b>69%</b></i><i class="s-sub" style="flex-grow:14"><b>14%</b></i>
+        </div>
+        <span class="n">131</span>
+      </div>
+
+      <div class="dist-row">
+        <span class="who">Qwen3-VL-8B base</span>
+        <div class="stack">
+          <i class="s-abs" style="flex-grow:11"><b>11%</b></i><i class="s-loop" style="flex-grow:59"><b>59%</b></i><i class="s-hal" style="flex-grow:28"><b>28%</b></i><i class="s-sub" style="flex-grow:2"></i>
+        </div>
+        <span class="n">131</span>
+      </div>
+    </div>
+    <p class="count">Share of 131 benchmark fragments (n per row); verified Cairo Genizah benchmark, paper setting.</p>
+  </section>
+
+  <section class="why">
+    <div>
+      <div class="eyebrow">Why the class comes before the number</div>
+      <h2>Three readings an error rate gets exactly backwards</h2>
+    </div>
+    <div class="why-grid">
+      <div class="why-card">
+        <span class="stat wide">2.69 vs 1.00<small>CER of a loop versus CER of a refusal</small></span>
+        <p>Both are failures on the same page, and the numbers say the refusal is the better system. Neither read anything. A metric that rewards writing less is not measuring reading.</p>
+      </div>
+      <div class="why-card">
+        <span class="stat">50 %<small>of the benchmark GPT-5.6 Sol declines to attempt</small></span>
+        <p>Average its CER over the attempts only and it looks competitive, on the half of the corpus it chose. Refusals stay in the table at full <span class="mono">n</span>, so coverage and accuracy are read together.</p>
+      </div>
+      <div class="why-card">
+        <span class="stat">68 %<small>of pages Claude Sonnet 5 hallucinates</small></span>
+        <p>Fluent, on-topic, wrong page. This is the failure the paper's title is about, and on its own CER cannot see it: invented Hebrew and misread Hebrew cost roughly the same characters.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="limits">
+    <div>
+      <div class="eyebrow">What it does not see</div>
+      <h2>Four classes, three thresholds, and the gaps between them</h2>
+    </div>
+    <div class="limit-list">
+      <div class="limit"><span class="dot"></span><span><strong>The loop gate needs one exact 12-letter span.</strong> A long output that recycles several real phrases with variation between them never concentrates on a single window, and passes as substantive. Fourteen HebVL-1.7 outputs ran from three to twenty-four times the reference length; they were caught only once count clipping was added to the five-gram score.</span></div>
+      <div class="limit"><span class="dot"></span><span><strong>The hallucination gate inherits the five-gram score's blind spots.</strong> Text copied from elsewhere on the same page, and canonical text completed from memory, both share windows with the reference and both pass. The gate detects off-page writing, not invention as such.</span></div>
+      <div class="limit"><span class="dot"></span><span><strong>The thresholds are conventions.</strong> 25 letters, 0.45, 0.10: a sweep shows the Kraken systems and the frontier ordering are robust to them, and that HebVL-1.7's margin over Gemini Pro is not — it holds from a cutoff of 0.05 to 0.15 and fails at 0.20.</span></div>
+      <div class="limit"><span class="dot ok"></span><span><strong>Mixed-script output is deliberately not abstention.</strong> Writing Arabic where the page is Hebrew is an assertion, not a decline, so it is never counted as caution. It falls through to the loop and hallucination gates and is judged there, like any other claim about the page.</span></div>
+    </div>
+  </section>
+
+  <footer>
+    <span>Classes and thresholds as implemented in score_genizah_offline.py; distribution from the 2026-08 offline scoring of the verified benchmark.</span>
+  </footer>
+</div>

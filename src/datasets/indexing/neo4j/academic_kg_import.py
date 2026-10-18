@@ -167,6 +167,22 @@ def _add_source(alias: str, source_tag: str) -> str:
     )
 
 
+def _stamp_version(alias: str) -> str:
+    """Cypher fragment stamping the pipeline generation on a new node/edge.
+
+    Intended for an ``ON CREATE SET`` clause only: it records which
+    extraction generation *minted* the element. Elements that already existed
+    (a PGP place, a biblio ``WROTE`` edge) keep whatever they had, so a later
+    ``MATCH ... WHERE x.pipeline_version = 'v3'`` purge removes exactly the
+    academic layer of that generation and nothing shared with other sources.
+    The query must bind ``$pipeline_version``.
+
+    :param alias: Cypher alias of the node or relationship.
+    :returns: ``alias.pipeline_version = $pipeline_version``.
+    """
+    return f"{alias}.pipeline_version = $pipeline_version"
+
+
 _BOOK_DOI_MAP: Optional[Dict[str, str]] = None
 
 
@@ -256,7 +272,8 @@ def _person_label(name: str, declared: str) -> str:
     return declared
 
 
-def _merge_person(tx, raw_name: str, declared: str, tag: str, book: str):
+def _merge_person(tx, raw_name: str, declared: str, tag: str, book: str,
+                  pipeline_version: str = PIPELINE_VERSION):
     """Normalise a person name, resolve its label, and MERGE the node.
 
     Enforces the one-node-per-person policy: if a Person node already
@@ -269,6 +286,8 @@ def _merge_person(tx, raw_name: str, declared: str, tag: str, book: str):
     :param declared: Declared label (Person/Scholar/Entity).
     :param tag: data_sources tag for provenance.
     :param book: Source book name.
+    :param pipeline_version: Generation stamped on the node if this call
+        creates it (see :func:`_stamp_version`).
     :returns: Tuple of (final_label, canonical_name).
     """
     canonical = _normalise_entity(raw_name, declared)
@@ -282,8 +301,9 @@ def _merge_person(tx, raw_name: str, declared: str, tag: str, book: str):
             label = "Scholar"
     tx.run(
         f"MERGE (n:{label} {{name: $name}}) "
+        f"ON CREATE SET {_stamp_version('n')} "
         f"SET {_add_source('n', tag)}, {_src_books('n')}",
-        name=canonical, book=book,
+        name=canonical, book=book, pipeline_version=pipeline_version,
     )
     return label, canonical
 
@@ -807,8 +827,13 @@ class AcademicKGImporter:
     @staticmethod
     def _write_enriched_triplet(tx, t: Dict, book: str,
                                 book_uuid: Optional[str] = None,
-                                page_uuid: Optional[str] = None) -> None:
+                                page_uuid: Optional[str] = None,
+                                pipeline_version: str = PIPELINE_VERSION) -> None:
         """Write one enriched triplet with correct merge keys per label type.
+
+        Every node or relationship this call *creates* is stamped with
+        ``pipeline_version``; pre-existing elements are only annotated with
+        the usual ``data_sources`` / ``source_books`` provenance.
 
         :param tx: Neo4j transaction.
         :param t: Triplet dict (subject/relation/object/types/evidence/…).
@@ -816,6 +841,8 @@ class AcademicKGImporter:
         :param book_uuid: Cross-store book UUID (shared with ES), stamped on the
             relationship so triplets can be joined back to the ES page docs.
         :param page_uuid: Cross-store page UUID for the relation's evidence page.
+        :param pipeline_version: Extraction generation that produced the
+            triplet (``v3`` ...). Defaults to the current ``PIPELINE_VERSION``.
         """
         sl  = t["subject_type"] if t["subject_type"] in _VALID_LABELS else "Entity"
         ol  = t["object_type"]  if t["object_type"]  in _VALID_LABELS else "Entity"
@@ -830,35 +857,38 @@ class AcademicKGImporter:
             canonical_s = ShelfmarkNormalizer.to_canonical_id(subj) or subj
             tx.run(f"""
                 MERGE (a:Fragment {{canonical_shelfmark: $canonical}})
-                  ON CREATE SET a.shelfmark = $display
+                  ON CREATE SET a.shelfmark = $display, {_stamp_version('a')}
                 SET {_add_source('a', 'enriched')},
                     a.source_books = CASE WHEN $book IN coalesce(a.source_books,[])
                         THEN coalesce(a.source_books,[]) ELSE coalesce(a.source_books,[]) + [$book] END
-            """, canonical=canonical_s, display=subj, book=book)
+            """, canonical=canonical_s, display=subj, book=book,
+                 pipeline_version=pipeline_version)
             subj_match = "(a:Fragment {canonical_shelfmark: $subj_key})"
             subj_key = canonical_s
         elif sl == "BookArticle":
             aid = _find_or_make_article_id(tx, subj)
             tx.run(f"""
                 MERGE (a:BookArticle {{article_id: $aid}})
-                  ON CREATE SET a.title = $title
+                  ON CREATE SET a.title = $title, {_stamp_version('a')}
                 SET {_add_source('a', 'enriched')},
                     a.source_books = CASE WHEN $book IN coalesce(a.source_books,[])
                         THEN coalesce(a.source_books,[]) ELSE coalesce(a.source_books,[]) + [$book] END
-            """, aid=aid, title=subj, book=book)
+            """, aid=aid, title=subj, book=book, pipeline_version=pipeline_version)
             subj_match = "(a:BookArticle {article_id: $subj_key})"
             subj_key = aid
         elif sl in ("Person", "Scholar", "BiblicalPerson", "Entity"):
-            final_sl, subj = _merge_person(tx, t["subject"], sl, "enriched", book)
+            final_sl, subj = _merge_person(tx, t["subject"], sl, "enriched", book,
+                                           pipeline_version=pipeline_version)
             subj_match = f"(a:{final_sl} {{name: $subj_key}})"
             subj_key = subj
         else:
             tx.run(f"""
                 MERGE (a:{sl} {{name: $name}})
+                  ON CREATE SET {_stamp_version('a')}
                 SET {_add_source('a', 'enriched')},
                     a.source_books = CASE WHEN $book IN coalesce(a.source_books,[])
                         THEN coalesce(a.source_books,[]) ELSE coalesce(a.source_books,[]) + [$book] END
-            """, name=subj, book=book)
+            """, name=subj, book=book, pipeline_version=pipeline_version)
             subj_match = f"(a:{sl} {{name: $subj_key}})"
             subj_key = subj
 
@@ -867,36 +897,39 @@ class AcademicKGImporter:
             canonical_o = ShelfmarkNormalizer.to_canonical_id(obj) or obj
             tx.run(f"""
                 MERGE (b:Fragment {{canonical_shelfmark: $canonical}})
-                  ON CREATE SET b.shelfmark = $display
+                  ON CREATE SET b.shelfmark = $display, {_stamp_version('b')}
                 SET {_add_source('b', 'enriched')},
                     b.source_books = CASE WHEN $book IN coalesce(b.source_books,[])
                         THEN coalesce(b.source_books,[]) ELSE coalesce(b.source_books,[]) + [$book] END
-            """, canonical=canonical_o, display=obj, book=book)
+            """, canonical=canonical_o, display=obj, book=book,
+                 pipeline_version=pipeline_version)
             obj_match = "(b:Fragment {canonical_shelfmark: $obj_key})"
             obj_key = canonical_o
         elif ol == "BookArticle":
             aid = _find_or_make_article_id(tx, obj)
             tx.run(f"""
                 MERGE (b:BookArticle {{article_id: $aid}})
-                  ON CREATE SET b.title = $title
+                  ON CREATE SET b.title = $title, {_stamp_version('b')}
                 SET {_add_source('b', 'enriched')},
                     b.source_books = CASE WHEN $book IN coalesce(b.source_books,[])
                         THEN coalesce(b.source_books,[]) ELSE coalesce(b.source_books,[]) + [$book] END
-            """, aid=aid, title=obj, book=book)
+            """, aid=aid, title=obj, book=book, pipeline_version=pipeline_version)
             obj_match = "(b:BookArticle {article_id: $obj_key})"
             obj_key = aid
         elif ol in ("Person", "Scholar", "BiblicalPerson", "Entity"):
-            final_ol, obj = _merge_person(tx, t["object"], ol, "enriched", book)
+            final_ol, obj = _merge_person(tx, t["object"], ol, "enriched", book,
+                                          pipeline_version=pipeline_version)
             obj_match = f"(b:{final_ol} {{name: $obj_key}})"
             obj_key = obj
         else:
             resolved_obj = _resolve_place_name(tx, obj) if ol == "Place" else obj
             tx.run(f"""
                 MERGE (b:{ol} {{name: $name}})
+                  ON CREATE SET {_stamp_version('b')}
                 SET {_add_source('b', 'enriched')},
                     b.source_books = CASE WHEN $book IN coalesce(b.source_books,[])
                         THEN coalesce(b.source_books,[]) ELSE coalesce(b.source_books,[]) + [$book] END
-            """, name=resolved_obj, book=book)
+            """, name=resolved_obj, book=book, pipeline_version=pipeline_version)
             obj_match = f"(b:{ol} {{name: $obj_key}})"
             obj_key = resolved_obj
 
@@ -913,7 +946,8 @@ class AcademicKGImporter:
                             r.book_uuid  = $book_uuid,
                             r.page_uuid  = $page_uuid,
                             r.data_sources = ['enriched'],
-                            r.source_books = [$book]
+                            r.source_books = [$book],
+                            {_stamp_version('r')}
               ON MATCH SET r.source_books = CASE WHEN $book IN coalesce(r.source_books,[])
                   THEN coalesce(r.source_books,[]) ELSE coalesce(r.source_books,[]) + [$book] END,
                   r.book_uuid = coalesce(r.book_uuid, $book_uuid),
@@ -921,7 +955,8 @@ class AcademicKGImporter:
         """, subj_key=subj_key, obj_key=obj_key, book=book,
              evidence=t.get("evidence", ""), evidence_page=t.get("evidence_page"),
              confidence=t.get("confidence", "medium"),
-             book_uuid=book_uuid, page_uuid=page_uuid)
+             book_uuid=book_uuid, page_uuid=page_uuid,
+             pipeline_version=pipeline_version)
 
     @staticmethod
     def _mark_enriched(tx, name: str, label: str, books: List[str]) -> None:
@@ -1083,6 +1118,10 @@ class AcademicKGImporter:
 
         relations  = data.get("relations") or []
         source_book = data.get("source_book", path.parent.name)
+        # Each Pass-4 file records the generation that produced it; trust it
+        # over the code constant so ``--relations-root relations_v2`` stamps
+        # v2, not whatever PIPELINE_VERSION currently is.
+        pipeline_version = data.get("pipeline_version") or PIPELINE_VERSION
 
         if not relations:
             return {"skipped": 1}
@@ -1115,7 +1154,7 @@ class AcademicKGImporter:
                 page_uuid = _page_uuid_for(source_book, t["evidence_page"])
                 try:
                     s.execute_write(self._write_enriched_triplet, t, source_book,
-                                    book_uuid, page_uuid)
+                                    book_uuid, page_uuid, pipeline_version)
                     written += 1
                 except Exception as e:
                     logger.warning(f"  Relation write failed {t}: {e}")

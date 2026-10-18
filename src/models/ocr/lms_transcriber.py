@@ -31,7 +31,7 @@ import base64
 import mimetypes
 from pathlib import Path
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 import aiohttp
 
 
@@ -180,30 +180,35 @@ def _encode_image(image_path: str) -> tuple[str, str]:
 # Core transcription call
 # ============================================================================
 
-async def transcribe_with_lm_studio(
+def chat_payload(
     model_id: str,
-    image_path: str,
+    data_uri: str,
     prompt: str,
-    base_url: str = DEFAULT_CONFIG.base_url,
-    temperature: float = DEFAULT_CONFIG.temperature,
-    max_tokens: int = DEFAULT_CONFIG.max_tokens,
-    timeout: float = DEFAULT_CONFIG.timeout_s,
-    max_retries: int = DEFAULT_CONFIG.max_retries,
-    retry_delay: float = DEFAULT_CONFIG.retry_delay_s,
-) -> Optional[str]:
-    """Call a vision-capable model loaded in LM Studio and return the raw text.
+    temperature: float,
+    max_tokens: int,
+    extra_payload: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Build the OpenAI-compatible chat-completions body for one image + prompt.
 
-    The function sends the image as a base64 data URI inside a standard
-    OpenAI multimodal message.  The prompt should ask the model to return
-    JSON (section-aware Talmud prompts already do this).
-
-    Returns None on unrecoverable failure so the caller can log the error
-    and continue with other models.
+    :param model_id: LM Studio model key.
+    :type model_id: str
+    :param data_uri: The image as a ``data:<mime>;base64,...`` URI.
+    :type data_uri: str
+    :param prompt: Text prompt sent after the image.
+    :type prompt: str
+    :param temperature: Sampling temperature.
+    :type temperature: float
+    :param max_tokens: Output token budget.
+    :type max_tokens: int
+    :param extra_payload: Further request fields LM Studio accepts (``seed``,
+        ``repeat_penalty``, ``top_k``, ...); None or empty sends exactly the
+        body this module always sent.
+    :type extra_payload: Optional[Dict[str, Any]]
+    :return: Request body.
+    :rtype: Dict[str, Any]
+    :raises ValueError: When ``extra_payload`` tries to replace ``model`` or ``messages``.
     """
-    b64, mime = _encode_image(image_path)
-    data_uri = f"data:{mime};base64,{b64}"
-
-    payload = {
+    payload: Dict[str, Any] = {
         "model": model_id,
         "temperature": temperature,
         "max_tokens": max_tokens,
@@ -223,6 +228,44 @@ async def transcribe_with_lm_studio(
             }
         ],
     }
+    if extra_payload:
+        clash = sorted(set(extra_payload) & {"model", "messages"})
+        if clash:
+            raise ValueError(f"extra_payload may not replace {clash}")
+        payload.update(extra_payload)
+    return payload
+
+
+async def transcribe_with_lm_studio(
+    model_id: str,
+    image_path: str,
+    prompt: str,
+    base_url: str = DEFAULT_CONFIG.base_url,
+    temperature: float = DEFAULT_CONFIG.temperature,
+    max_tokens: int = DEFAULT_CONFIG.max_tokens,
+    timeout: float = DEFAULT_CONFIG.timeout_s,
+    max_retries: int = DEFAULT_CONFIG.max_retries,
+    retry_delay: float = DEFAULT_CONFIG.retry_delay_s,
+    extra_payload: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Call a vision-capable model loaded in LM Studio and return the raw text.
+
+    The function sends the image as a base64 data URI inside a standard
+    OpenAI multimodal message.  The prompt should ask the model to return
+    JSON (section-aware Talmud prompts already do this).
+
+    Returns None on unrecoverable failure so the caller can log the error
+    and continue with other models.
+
+    :param extra_payload: Further request fields (e.g. ``{"seed": 7}`` or
+        ``{"repeat_penalty": 1.1}``) merged into the body by
+        :func:`chat_payload`; None sends the usual body unchanged.
+    :type extra_payload: Optional[Dict[str, Any]]
+    """
+    b64, mime = _encode_image(image_path)
+    data_uri = f"data:{mime};base64,{b64}"
+
+    payload = chat_payload(model_id, data_uri, prompt, temperature, max_tokens, extra_payload)
 
     url = f"{base_url}/chat/completions"
     client_timeout = aiohttp.ClientTimeout(total=timeout)
