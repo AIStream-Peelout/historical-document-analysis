@@ -662,7 +662,8 @@ def test_document_canary_status(merged, es, records, canary_id, canary_text, lim
 
 def test_cli_defaults_follow_the_indexer_constants():
     args = uce.build_parser().parse_args([])
-    assert args.index == uce.DEFAULT_INDEX_NAME == "genizah_merged_v10" and args.merged == uce.DEFAULT_MERGED
+    assert args.index == uce.LIVE_INDEX_NAME == "genizah_merged_v10" and args.merged == uce.DEFAULT_MERGED
+    assert args.index in uce.LIVE_INDEX_NAMES          # the served index: a real run always needs --i-know-this-is-live
     assert args.text_version == "semantic_v4" and not args.dry_run and not args.allow_live
     assert (args.limit, args.skip, args.batch_size, args.report) == (None, 0, uce.DEFAULT_BATCH_SIZE, None)
     assert uce.build_parser().parse_args(["--i-know-this-is-live", "--dry-run"]).allow_live

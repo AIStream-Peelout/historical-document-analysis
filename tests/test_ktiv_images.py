@@ -157,12 +157,31 @@ def test_zip_member_cache_opens_an_archive_once_and_relists_it_when_its_size_cha
     assert ktiv_image_sources([str(zp)]) == ktiv_image_sources([str(zp)], cache=ZipMemberCache())   # same answer without a file
 
 
-def test_zip_member_cache_records_unreadable_and_missing_archives(tmp_path):
+def test_zip_member_cache_counts_but_never_records_unreadable_and_missing_archives(tmp_path):
     bad = tmp_path / f"ktiv_PNX_MANUSCRIPTS{SYS_B}-1_images.zip"
     bad.write_bytes(b"not a zip")
     cache = ZipMemberCache()
     assert ktiv_image_sources([str(bad)], cache=cache) == {}
-    assert cache.unreadable == 1 and cache.entries[ZipMemberCache.key(str(bad))] == []
-    assert cache.image_members(str(tmp_path / "gone.zip")) == [] and cache.unreadable == 2
+    assert cache.unreadable == 1 and cache.entries == {}
+    assert cache.image_members(str(tmp_path / "gone.zip")) == [] and cache.unreadable == 2 and cache.entries == {}
     cache.save()                                           # in-memory cache: no file written
     assert not list(tmp_path.glob("*.json*"))
+
+
+def test_zip_member_cache_retries_an_archive_whose_listing_failed_once(tmp_path, monkeypatch):
+    """A NAS read that fails during one merge must not be remembered as an empty archive: the unchanged archive is
+    opened again on the next run and its images come back."""
+    import src.datasets.merging.ktiv_images as ki
+
+    zp = tmp_path / f"ktiv_PNX_MANUSCRIPTS{SYS_A}-1_images.zip"
+    _make_zip(zp, ["a.jpg", "b.jpg"])
+    cache_path = str(tmp_path / "cache.json")
+    real = ki._list_image_members
+    monkeypatch.setattr(ki, "_list_image_members", lambda path: None)      # the NAS hiccup
+    first = ZipMemberCache.load(cache_path)
+    assert ktiv_image_sources([str(zp)], cache=first) == {} and first.unreadable == 1
+    first.save()
+    monkeypatch.setattr(ki, "_list_image_members", real)
+    second = ZipMemberCache.load(cache_path)
+    assert [m for _, m in ktiv_image_sources([str(zp)], cache=second)[SYS_A].entries] == ["a.jpg", "b.jpg"]
+    assert (second.hits, second.misses, second.unreadable) == (0, 1, 0) and second.stats()["entries"] == 1
