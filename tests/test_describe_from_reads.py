@@ -6,6 +6,7 @@
 No model and no network: every LM Studio exchange goes through a fake transport or a fake client.
 """
 import argparse
+import contextlib
 import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -464,6 +465,30 @@ def test_client_payload_text_only_schema_and_reasoning_off():
         dfr.LMStudioChatClient(reasoning="maybe")
     with pytest.raises(ValueError):
         dfr.text_chat_payload("m", MESSAGES, 0.1, 10, {"model": "other"})
+
+
+def test_client_yields_to_prod_chat_and_registers_its_own_call_per_request(monkeypatch):
+    """Each request waits on the yield gate with the client's URL and runs inside ``own_call(model)`` (a retry and
+    the schema fallback are requests too), so a description batch neither ignores an active prod chat nor passes
+    for one in other gated jobs."""
+    events = []
+    monkeypatch.setattr(dfr.lms_yield_gate, "wait_for_chat_idle",
+                        lambda site, base_url=None, **kw: events.append(("gate", site, base_url)) or 0.0)
+
+    @contextlib.contextmanager
+    def own_call(model, **kw):
+        events.append(("own", model, "start"))
+        yield
+        events.append(("own", model, "end"))
+
+    monkeypatch.setattr(dfr.lms_yield_gate, "own_call", own_call)
+    transport = FakeTransport([(500, "busy"), (200, ok_body('{"a": 1}'))])
+    client = dfr.LMStudioChatClient(base_url="http://localhost:1234/v1", transport=transport, max_retries=1,
+                                    sleep=lambda s: None)
+    assert client.chat(MESSAGES, schema={"type": "object"}).content == '{"a": 1}'
+    gate = ("gate", "describe_from_reads", "http://localhost:1234/v1")
+    assert events == [gate, ("own", dfr.DEFAULT_MODEL, "start"), ("own", dfr.DEFAULT_MODEL, "end")] * 2
+    assert len(transport.calls) == 2
 
 
 def test_client_falls_back_without_the_schema_when_the_server_refuses_it():

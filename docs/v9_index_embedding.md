@@ -46,7 +46,7 @@ It streams the merged file in chunks of 200 records and reads each document's in
 
 - `unchanged`: the four catalogue fields and the text match; nothing is written.
 - `update/reembed`: the text changed and is eligible. Writes `description`, `alt_titles`, `subjects`, `genres`, `full_text_content`, `embedding_vector` (the embedding of that text), `semantic_eligible: true`, `text_representation_version`, `embedded_text_sha256` and `catalogue_fields_updated_at`. A re-embed of a document the index held without a vector is an *eligibility flip*, the headline count.
-- `update/fields_only`: a catalogue field changed but the text is not eligible (or, with a stored hash, did not change). Writes the four catalogue fields, `full_text_content` and `catalogue_fields_updated_at`, no vector.
+- `update/fields_only`: a catalogue field changed but the text is not eligible (or, with a stored hash, did not change). Writes the four catalogue fields, `full_text_content`, `catalogue_fields_updated_at` and `embedded_text_sha256` (the hash of the current text, so the stored hash never goes stale on a document that stays without a vector), no vector.
 - `generated`: the vector comes from a machine-generated description (`description_source: generated_from_consensus`) and a catalogue field changed. Writes the four catalogue fields, `full_text_content` and `catalogue_fields_updated_at`, never the vector or the eligibility flags.
 - `refused:would_lose_vector`: the changed text is not eligible but the document holds a vector. Nothing is written (this should not happen: enrichment only adds text).
 - `missing`: the record is not in the index. Documents are never created.

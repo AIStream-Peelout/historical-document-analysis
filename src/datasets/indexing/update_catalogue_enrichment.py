@@ -22,9 +22,11 @@ the index (``--index``, default :data:`DEFAULT_INDEX_NAME`) on the catalogue fie
   ``full_text_content``, ``embedding_vector`` (the embedding of that text), ``semantic_eligible: true``,
   ``text_representation_version``, ``embedded_text_sha256`` and ``catalogue_fields_updated_at``. A document the index
   held without a vector gains one: an *eligibility flip*, the headline count;
-* otherwise, when a catalogue field differs: ``update/fields_only`` -- the catalogue fields, ``full_text_content`` and
-  ``catalogue_fields_updated_at``, no vector. A changed document whose text is not eligible but which holds a vector is
-  refused instead (``refused:would_lose_vector``; enrichment only adds text, so this should not happen);
+* otherwise, when a catalogue field differs: ``update/fields_only`` -- the catalogue fields, ``full_text_content``,
+  ``catalogue_fields_updated_at`` and ``embedded_text_sha256`` (the hash of the new text, so that the stored hash keeps
+  describing the document's current text and the next run finds it ``unchanged`` for the right reason), no vector,
+  no eligibility flag. A changed document whose text is not eligible but which holds a vector is refused instead
+  (``refused:would_lose_vector``; enrichment only adds text, so this should not happen);
 * a document whose vector comes from a machine-generated description (``description_source:
   generated_from_consensus``, :mod:`update_generated_descriptions`) gets the catalogue fields and
   ``full_text_content`` only (``generated``), never a new vector or eligibility flag;
@@ -490,7 +492,8 @@ def utc_now() -> str:
 
 
 def update_fields(record: EnrichedRecord, updated_at: str, vector: Optional[Any] = None,
-                  text_version: Optional[str] = None, dims: Optional[int] = None) -> Dict[str, Any]:
+                  text_version: Optional[str] = None, dims: Optional[int] = None,
+                  stamp_hash: bool = False) -> Dict[str, Any]:
     """The partial document written for one update.
 
     :param record: Target state.
@@ -498,6 +501,9 @@ def update_fields(record: EnrichedRecord, updated_at: str, vector: Optional[Any]
     :param vector: Embedding of ``record.text`` (``update/reembed`` only).
     :param text_version: The index's text version (with ``vector``).
     :param dims: Vector size the index expects (checked when given).
+    :param stamp_hash: Without a vector, also write ``embedded_text_sha256`` for the new text (``update/fields_only``:
+        the document's text changed or was never hashed; never for ``generated``, whose hash is the generated
+        description's).
     :return: Fields to merge into the document.
     :rtype: Dict[str, Any]
     :raises ValueError: When the vector has the wrong size.
@@ -507,6 +513,8 @@ def update_fields(record: EnrichedRecord, updated_at: str, vector: Optional[Any]
                               "genres": list(record.genres), "full_text_content": record.full_text_content,
                               UPDATED_AT_FIELD: updated_at}
     if vector is None:
+        if stamp_hash:
+            fields[TEXT_HASH_FIELD] = record.text_sha256
         return fields
     values = [float(v) for v in np.asarray(vector).reshape(-1)]
     if dims is not None and len(values) != dims:
@@ -534,7 +542,8 @@ def write_updates(es: Any, index: str, planned: Sequence[Tuple[EnrichedRecord, s
     """Embed the ``update/reembed`` texts in batches and write every planned update with bulk ``update`` actions.
 
     Each embedding batch is one bulk call (vector sizes checked before it is sent); the field-only updates
-    (``update/fields_only``, ``generated``) follow in one bulk call without a vector.
+    (``update/fields_only``, ``generated``) follow in one bulk call without a vector. ``update/fields_only`` also
+    stamps the hash of the new text (:data:`TEXT_HASH_FIELD`); ``generated`` leaves the stored hash alone.
 
     :param es: Elasticsearch client.
     :param index: Index.
@@ -560,8 +569,9 @@ def write_updates(es: Any, index: str, planned: Sequence[Tuple[EnrichedRecord, s
     plain = [(record, decision) for record, decision in planned if decision != REEMBED]
     if plain:
         updated_at = utc_now()
-        bulk(client=es, actions=[update_action(index, record.doc_id, update_fields(record, updated_at))
-                                 for record, _ in plain], refresh="wait_for")
+        bulk(client=es, actions=[update_action(index, record.doc_id,
+                                               update_fields(record, updated_at, stamp_hash=decision == FIELDS_ONLY))
+                                 for record, decision in plain], refresh="wait_for")
         for _, decision in plain:
             written[decision] += 1
     return written

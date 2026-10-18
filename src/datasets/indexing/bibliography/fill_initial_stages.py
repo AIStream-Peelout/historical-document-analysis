@@ -354,9 +354,10 @@ def plan_book(pdf: Path, root: Path, ocr_mode: str, metadata_override: Optional[
     if not ocr_missing_pages(pdf, book_dir):
         mode, reason = None, "OCR complete"
         suspect = existing_ocr_suspect(pdf, book_dir)
-    elif partial == "hybrid" and ocr_mode != "hybrid":
-        # Finishing a hybrid checkpoint in another mode would mix unrouted pages into it.
-        if ocr_mode == "auto":
+    elif partial == "hybrid":
+        # An unfinished hybrid checkpoint is finished in hybrid mode (asked for, or chosen by auto); finishing it in
+        # another mode would mix unrouted pages into it.
+        if ocr_mode in ("auto", "hybrid"):
             mode, reason = "hybrid", "resuming an unfinished hybrid OCR"
         else:
             mode, reason = None, "unfinished OCR in another mode"
@@ -365,7 +366,8 @@ def plan_book(pdf: Path, root: Path, ocr_mode: str, metadata_override: Optional[
     elif ocr_mode == "auto":
         mode, reason = choose_ocr_mode(pdf)
     elif ocr_mode == "hybrid" and partial is not None:
-        # Routing the rest of a text-only or Vision checkpoint would label a mixed file hybrid.
+        # Routing the rest of a text-only or Vision checkpoint would label a mixed file hybrid (a hybrid checkpoint
+        # was handled above).
         mode, reason = None, "unfinished OCR in another mode"
         blocked = (f"an unfinished {partial} OCR exists; finish it in that mode, or move "
                    f"{ocr_json_path(book_dir).name} aside to start over in hybrid mode")

@@ -87,6 +87,7 @@ from src.datasets.consensus.line_rule import line_status
 from src.datasets.document_models.genizah_document import _ktiv_alt_titles, _ktiv_scholarly_frames
 from src.embeddings.semantic_text import semantic_ineligible_reason
 from src.embeddings.text_representation import DEFAULT_TEXT_VERSION, embed_text_for_version
+from src.models.ocr import lms_yield_gate
 from src.models.ocr.lms_transcriber import DEFAULT_CONFIG
 
 PROMPT_VERSION = "gen-desc-v1-20261008"   # bump whenever SYSTEM_PROMPT, OUTPUT_INSTRUCTIONS or the user-prompt layout change
@@ -1318,6 +1319,9 @@ class LMStudioChatClient:
         token budget (``finish_reason == "length"``: thinking ran long, or the JSON is truncated) is asked again
         with the budget doubled, up to :data:`MAX_TOKENS_CEILING`.
 
+        Every request first yields to a production chat on the shared LM Studio (``lms_yield_gate``, fails open)
+        and runs as one of this repo's own calls on the model, so other gated jobs do not take it for prod chat.
+
         :param messages: Chat messages.
         :param schema: JSON schema for constrained output, or None.
         :return: The result; ``content`` is None on failure (``error`` says why).
@@ -1329,8 +1333,10 @@ class LMStudioChatClient:
         attempt = 0
         max_tokens = self.max_tokens
         while True:
-            status, body = self.transport(url, self.payload(messages, schema if use_schema else None, max_tokens),
-                                          self.timeout)
+            lms_yield_gate.wait_for_chat_idle(site="describe_from_reads", base_url=self.base_url)
+            with lms_yield_gate.own_call(self.model):
+                status, body = self.transport(url, self.payload(messages, schema if use_schema else None, max_tokens),
+                                              self.timeout)
             if status == 200 and isinstance(body, dict):
                 if fell_back:
                     self.schema_supported = False
