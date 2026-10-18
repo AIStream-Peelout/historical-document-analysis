@@ -33,8 +33,8 @@ new one and swap.
 Run (needs ES creds in env: ELASTIC_SEARCH_HOST / ELASTIC_USER / ELASTIC_PASSWORD,
 and HF1_TOKEN for the private model)::
 
-    python -m src.datasets.indexing.index_merged_genizah --index genizah_merged_v10 --text-version semantic_v4
-    python -m src.datasets.indexing.index_merged_genizah --index genizah_merged_v10_smoke --text-version semantic_v4 \\
+    python -m src.datasets.indexing.index_merged_genizah --index genizah_merged_v11 --text-version semantic_v4
+    python -m src.datasets.indexing.index_merged_genizah --index genizah_merged_v11_smoke --text-version semantic_v4 \\
         --limit 200
 """
 
@@ -70,11 +70,14 @@ DEFAULT_MERGED = os.path.join(
     _REPO_ROOT, "src", "datasets", "raw_data", "cairo_genizah",
     "merged", "merged_shelfmarks.jsonl",
 )
+#: The index the site serves. Only the in-place updaters (``update_catalogue_enrichment``,
+#: ``update_generated_descriptions``) target it, and only with ``--i-know-this-is-live``; move it on each swap.
+LIVE_INDEX_NAME = "genizah_merged_v10"
 # The live index and its predecessors: never written to by accident.
-LIVE_INDEX_NAMES = frozenset({"genizah_merged_v6", "genizah_merged_v7", "genizah_merged_v8"})
+LIVE_INDEX_NAMES = frozenset({"genizah_merged_v6", "genizah_merged_v7", "genizah_merged_v8", LIVE_INDEX_NAME})
 #: Destination of a build when ``--index`` is not given: bump it here for each new index (the live names
 #: above are refused unless ``--i-know-this-is-live`` is passed, so a stale default cannot hit production).
-DEFAULT_INDEX_NAME = "genizah_merged_v10"
+DEFAULT_INDEX_NAME = "genizah_merged_v11"
 #: Whether the merged index embeds the fragment text WITH the KTIV scholarly frames. It must match the text the pinned
 #: embedder was trained on (v10: ``semantic_v4`` without frames), so it flips only together with ``FINETUNED_MODEL_*``
 #: (``src.embeddings.qwen_text_embedding``) and ``DEFAULT_TEXT_VERSION`` (``src.embeddings.text_representation``).

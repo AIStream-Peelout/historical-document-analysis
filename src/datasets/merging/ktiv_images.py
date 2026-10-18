@@ -222,9 +222,11 @@ class ZipMemberCache:
 
     A merge opens every chosen archive only to list its images; with the archives on the NAS that is the slow part
     of a run, and the answer never changes for an archive of a given size. Keyed by basename and size, the cache
-    survives a move between the local folder and the NAS store, a re-downloaded or repaired copy (another size) is
-    listed again, and an unreadable archive is cached as empty for its size. Only archives never seen before (newly
-    scraped manuscripts) are opened.
+    survives a move between the local folder and the NAS store, and a re-downloaded or repaired copy (another size) is
+    listed again. Only successful listings are recorded (a genuinely imageless archive included): an archive that
+    cannot be read -- corrupt, or a NAS read that failed this time -- counts as ``unreadable`` for the run and is
+    tried again on the next merge, so a transient failure never freezes a manuscript's images out of the merge. Only
+    archives never listed before (newly scraped manuscripts) and those that failed last time are opened.
 
     :param path: JSON file the cache is read from and saved to (``None``: in-memory only).
     :param entries: Initial ``key -> members`` map.
@@ -263,7 +265,8 @@ class ZipMemberCache:
         """Image members of an archive, from the cache when its key is known, else listed and recorded.
 
         :param zip_path: Path to the archive.
-        :returns: Sorted member names (empty for an unreadable or imageless archive).
+        :returns: Sorted member names (empty for an unreadable or imageless archive; only a successful listing is
+            cached, so an unreadable archive is tried again next time).
         """
         try:
             key = self.key(zip_path)
@@ -277,7 +280,7 @@ class ZipMemberCache:
         members = _list_image_members(zip_path)
         if members is None:
             self.unreadable += 1
-            members = []
+            return []
         self.entries[key] = members
         return list(members)
 

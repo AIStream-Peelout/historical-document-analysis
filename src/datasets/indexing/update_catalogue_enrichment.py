@@ -13,7 +13,8 @@ levels and generic work titles), which reaches ``full_text_content`` and the ind
 re-merge can also change a record's ``description`` or ``alt_titles`` (e.g. which catalogue label the merge picks). An
 index built before that (``genizah_merged_v9``) holds the old values and vectors embedded from the old text. This
 updater streams the merged file (``--merged``) through the current document model and compares every record already in
-the index (``--index``, default :data:`DEFAULT_INDEX_NAME`) on the catalogue fields :data:`CATALOGUE_FIELDS`
+the index (``--index``, default :data:`LIVE_INDEX_NAME`, the served index, so ``--i-know-this-is-live`` is always
+needed for it) on the catalogue fields :data:`CATALOGUE_FIELDS`
 (``description``, ``alt_titles``, ``scholarly_frames``, ``subjects``, ``genres``), and on its embedding text
 (``embedding_text(doc, version)``) when the document carries ``embedded_text_sha256``:
 
@@ -102,8 +103,8 @@ from src.datasets.indexing.elastic_index_genizah import (
     read_index_meta,
 )
 from src.datasets.indexing.index_merged_genizah import (
-    DEFAULT_INDEX_NAME,
     DEFAULT_MERGED,
+    LIVE_INDEX_NAME,
     LIVE_INDEX_NAMES,
     iter_merged_documents,
 )
@@ -678,7 +679,7 @@ def checked_embedder(meta: Mapping[str, Any], index_name: str, name: str, revisi
 def update_catalogue_enrichment(
     merged_path: Any = DEFAULT_MERGED,
     *,
-    index_name: str = DEFAULT_INDEX_NAME,
+    index_name: str = LIVE_INDEX_NAME,
     text_version: str = DEFAULT_TEXT_VERSION,
     dry_run: bool = False,
     limit: Optional[int] = None,
@@ -695,7 +696,7 @@ def update_catalogue_enrichment(
     A dry run reads the index (guards, mapping, document fields) but never loads the embedder or writes.
 
     :param merged_path: Merged JSONL (default: the indexer's :data:`DEFAULT_MERGED`).
-    :param index_name: Target index (default :data:`DEFAULT_INDEX_NAME`, the code constant of the indexer).
+    :param index_name: Target index (default :data:`LIVE_INDEX_NAME`, the served index; needs ``allow_live``).
     :param text_version: Text version of the run (must match the index ``_meta``).
     :param dry_run: Report only.
     :param limit: Cap on merged records scanned.
@@ -778,8 +779,9 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--merged", default=DEFAULT_MERGED, help="Merged JSONL (default: DEFAULT_MERGED).")
-    parser.add_argument("--index", default=DEFAULT_INDEX_NAME,
-                        help="Target index (default: %(default)s, DEFAULT_INDEX_NAME in index_merged_genizah).")
+    parser.add_argument("--index", default=LIVE_INDEX_NAME,
+                        help="Target index (default: %(default)s, LIVE_INDEX_NAME in index_merged_genizah, the served "
+                             "index: pass --i-know-this-is-live to write to it).")
     parser.add_argument("--text-version", default=DEFAULT_TEXT_VERSION, choices=TEXT_VERSIONS)
     parser.add_argument("--dry-run", action="store_true",
                         help="Read the index and report per-document decisions; embed and write nothing.")

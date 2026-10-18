@@ -67,7 +67,7 @@ from src.datasets.indexing.elastic_index_genizah import (
     es_config_from_env,
     read_index_meta,
 )
-from src.datasets.indexing.index_merged_genizah import DEFAULT_INDEX_NAME, LIVE_INDEX_NAMES, check_index_name
+from src.datasets.indexing.index_merged_genizah import LIVE_INDEX_NAME, LIVE_INDEX_NAMES, check_index_name
 from src.embeddings.semantic_text import text_sha256
 from src.embeddings.text_representation import (
     DEFAULT_TEXT_VERSION,
@@ -460,7 +460,7 @@ def default_es_client() -> Any:
 def update_generated_descriptions(
     generated_path: Any,
     *,
-    index_name: str = DEFAULT_INDEX_NAME,
+    index_name: str = LIVE_INDEX_NAME,
     text_version: str = DEFAULT_TEXT_VERSION,
     dry_run: bool = False,
     limit: Optional[int] = None,
@@ -476,7 +476,7 @@ def update_generated_descriptions(
     A dry run reads the index (guards, document flags, mapping) but never loads the embedder or writes.
 
     :param generated_path: Generator output JSONL.
-    :param index_name: Target index (default :data:`DEFAULT_INDEX_NAME`, the code constant of the indexer).
+    :param index_name: Target index (default :data:`LIVE_INDEX_NAME`, the served index; needs ``allow_live``).
     :param text_version: Text version of the run (must match the index ``_meta``).
     :param dry_run: Print the plan only.
     :param limit: Cap on documents to update.
@@ -529,8 +529,9 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--generated", required=True, help="describe_from_reads output JSONL")
-    parser.add_argument("--index", default=DEFAULT_INDEX_NAME,
-                        help="Target index (default: %(default)s, DEFAULT_INDEX_NAME in index_merged_genizah).")
+    parser.add_argument("--index", default=LIVE_INDEX_NAME,
+                        help="Target index (default: %(default)s, LIVE_INDEX_NAME in index_merged_genizah, the served "
+                             "index: pass --i-know-this-is-live to write to it).")
     parser.add_argument("--text-version", default=DEFAULT_TEXT_VERSION, choices=TEXT_VERSIONS)
     parser.add_argument("--dry-run", action="store_true",
                         help="Print the plan (guards, per-document decisions); embed and write nothing.")

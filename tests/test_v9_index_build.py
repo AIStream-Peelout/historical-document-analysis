@@ -498,7 +498,7 @@ def test_legacy_processor_path_is_unchanged(fake_es):
 
 def test_cli_index_default_is_the_code_constant_and_never_a_live_name():
     args = img.build_parser().parse_args([])
-    assert args.index == img.DEFAULT_INDEX_NAME == "genizah_merged_v10"
+    assert args.index == img.DEFAULT_INDEX_NAME == "genizah_merged_v11"
     assert args.index not in img.LIVE_INDEX_NAMES and args.text_version == "semantic_v4"
 
 

@@ -378,6 +378,6 @@ def test_update_follows_the_index_text_version_and_writes_the_text_hash(tmp_path
 
 def test_cli_defaults_follow_the_indexer_constants():
     args = ugd.build_parser().parse_args(["--generated", "g.jsonl"])
-    assert args.index == ugd.DEFAULT_INDEX_NAME == "genizah_merged_v10"
+    assert args.index == ugd.LIVE_INDEX_NAME == "genizah_merged_v10" and args.index in ugd.LIVE_INDEX_NAMES
     assert args.text_version == "semantic_v4" and not args.dry_run and not args.allow_live
     assert ugd.build_parser().parse_args(["--generated", "g.jsonl", "--dry-run"]).dry_run

@@ -39,7 +39,7 @@ The verifier:
 
 ```bash
 python -m src.datasets.indexing.update_catalogue_enrichment --dry-run --report enrichment_dry_run.json   # reads only
-python -m src.datasets.indexing.update_catalogue_enrichment                                             # writes; DEFAULT_INDEX_NAME
+python -m src.datasets.indexing.update_catalogue_enrichment --i-know-this-is-live                       # writes; LIVE_INDEX_NAME (the served index)
 ```
 
 It streams the merged file in chunks of 200 records and reads each document's indexed `description`, `alt_titles`, `subjects`, `genres`, `semantic_eligible`, `description_source`, `text_representation_version` and `embedded_text_sha256` with `mget`. The text counts as changed when the stored `embedded_text_sha256` differs from the hash of `embedding_text(doc, version).text`. For a document without the hash (every document an indexer wrote, so all of v9 before the first run), it counts as changed when `description`, `alt_titles`, `subjects` or `genres` differs; `genres` is included there although it is never embedded. With the hash, a `genres`-only change leaves the text alone and is a field update. Per document:

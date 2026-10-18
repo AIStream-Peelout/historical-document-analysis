@@ -550,16 +550,21 @@ def test_only_fragment_documents_take_the_flag():
 
 
 # --------------------------------------------------------------------------------------------- index name
-def test_default_index_name_is_v10_and_every_parser_follows_it(monkeypatch):
+def test_v10_is_live_the_builder_defaults_to_v11_and_the_updaters_to_the_live_index(monkeypatch):
+    """The served index is protected like its predecessors; a default build goes to a new name; the in-place updaters
+    target the served index and therefore always need --i-know-this-is-live."""
     import dotenv
 
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *args, **kwargs: False)   # index_bibliography loads it on import
-    assert img.DEFAULT_INDEX_NAME == "genizah_merged_v10" and img.DEFAULT_INDEX_NAME not in img.LIVE_INDEX_NAMES
+    assert img.LIVE_INDEX_NAME == "genizah_merged_v10" and img.LIVE_INDEX_NAME in img.LIVE_INDEX_NAMES
+    assert img.DEFAULT_INDEX_NAME == "genizah_merged_v11" and img.DEFAULT_INDEX_NAME not in img.LIVE_INDEX_NAMES
     assert img.build_parser().parse_args([]).index == img.DEFAULT_INDEX_NAME
     assert vri.build_parser().parse_args([]).genizah_index == img.DEFAULT_INDEX_NAME
-    assert ugd.build_parser().parse_args(["--generated", "g.jsonl"]).index == img.DEFAULT_INDEX_NAME
-    with pytest.raises(ValueError, match="genizah_merged_v10"):
-        img.check_index_name("genizah_merged_v8")
+    assert ugd.build_parser().parse_args(["--generated", "g.jsonl"]).index == img.LIVE_INDEX_NAME
+    for live in ("genizah_merged_v8", "genizah_merged_v10"):
+        with pytest.raises(ValueError, match="genizah_merged_v11"):
+            img.check_index_name(live)
+    assert img.check_index_name("genizah_merged_v10", allow_live=True) == "genizah_merged_v10"
 
 
 # --------------------------------------------------------------------------------------------- the verifier
