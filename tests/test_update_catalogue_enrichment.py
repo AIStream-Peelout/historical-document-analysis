@@ -470,10 +470,12 @@ def test_real_run_writes_vectors_flags_hash_and_fields(merged, es, records):
     # and the text is still under it
     assert stored["Doc_ShortNoFlip"]["subjects"] == ["Poetry"]
     assert "embedding_vector" not in stored["Doc_ShortNoFlip"] and stored["Doc_ShortNoFlip"]["semantic_eligible"] is False
-    # fields only (a varying title that is itself a frozen label): no vector, flag and hash untouched
+    # fields only (a varying title that is itself a frozen label): no vector, flag untouched, the text hashed
     assert stored["Doc_FieldsOnly"]["alt_titles"] == ["Unidentified"]
     assert "embedding_vector" not in stored["Doc_FieldsOnly"] and stored["Doc_FieldsOnly"]["semantic_eligible"] is False
-    assert "embedded_text_sha256" not in stored["Doc_FieldsOnly"]
+    fields_only_text = embedding_text(document(records["Doc_FieldsOnly"]), "semantic_v3").text
+    assert stored["Doc_FieldsOnly"]["embedded_text_sha256"] == hashlib.sha256(
+        fields_only_text.encode("utf-8")).hexdigest()
     # a generated description keeps its vector and flags
     generated = stored["Doc_Generated"]
     assert generated["embedding_vector"] == before[INDEX]["Doc_Generated"]["embedding_vector"]
@@ -546,6 +548,27 @@ def test_a_genres_only_change_is_a_field_update_on_a_hashed_document(tmp_path, e
     unchanged_text = embedding_text(document(changed[5]), "semantic_v3").text
     assert embedder.documents == [CANARY, unchanged_text] and "Responsa" not in unchanged_text
     assert es.docs[INDEX]["Doc_Unchanged"]["genres"][-2:] == ["Halakhah", "Responsa"]
+
+
+def test_a_fields_only_update_refreshes_the_hash_of_an_ineligible_document(tmp_path, es, records):
+    """A changed description on a document that stays ineligible is a field update that also stamps the new text's
+    hash; without that, the stored hash kept describing the old text and the next run called the document unchanged
+    for the wrong reason (and the index's distinct-hash counts drifted)."""
+    run(write_merged(tmp_path / "first.jsonl", standard_records()), es, embedding_model=FakeEmbedder())
+    stored = es.docs[INDEX]["Doc_FieldsOnly"]
+    old_hash = stored["embedded_text_sha256"]
+    changed = standard_records()
+    changed[[r["canonical_id"] for r in changed].index("Doc_FieldsOnly")]["description"] = "Accounts."   # another frozen label
+    embedder = FakeEmbedder()
+    result = run(write_merged(tmp_path / "second.jsonl", changed), es, embedding_model=embedder)
+    assert result["examples"]["update/fields_only"] == ["Doc_FieldsOnly"] and result["changed"]["description"] == 1
+    assert result["flips"] == 0 and embedder.documents == [CANARY]
+    new_text = embedding_text(document(changed[3]), "semantic_v3").text
+    stored = es.docs[INDEX]["Doc_FieldsOnly"]
+    assert stored["description"] == "Accounts." and stored["semantic_eligible"] is False and "embedding_vector" not in stored
+    assert stored["embedded_text_sha256"] == hashlib.sha256(new_text.encode("utf-8")).hexdigest() != old_hash
+    again = run(write_merged(tmp_path / "third.jsonl", changed), es, embedding_model=FakeEmbedder())
+    assert again["counts"]["update/fields_only"] == 0 and "Doc_FieldsOnly" in again["examples"]["unchanged"]
 
 
 @pytest.mark.parametrize("text_version, decision", [("semantic_v3", "update/reembed"),

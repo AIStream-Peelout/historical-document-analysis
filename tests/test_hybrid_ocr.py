@@ -185,12 +185,16 @@ def test_hybrid_flags_reversed_hebrew_it_kept_from_the_layer(tmp_path):
 
 
 def test_unfinished_hybrid_resumes_as_hybrid(tmp_path):
-    """auto resumes an unfinished hybrid checkpoint in hybrid mode; a conflicting forced mode is refused."""
+    """auto and --ocr-mode hybrid (the documented re-run) both resume an unfinished hybrid checkpoint in hybrid
+    mode; a conflicting forced mode is refused."""
     pdf = _pdf(tmp_path / "book.pdf", [f"<p dir='rtl'>{HEBREW}</p>", ENGLISH])
     _service(_FakeVision(RuntimeError("quota"))).process_pdf_hybrid(
         str(pdf), str(tmp_path / "book"), str(tmp_path / "book" / "book_ocr_results.json"))
     assert ocr_checkpoint_mode(tmp_path / "book") == "hybrid"
-    assert plan_book(pdf, tmp_path, "auto", None, "{stem}_structured_x", False).ocr_mode == "hybrid"
+    for requested in ("auto", "hybrid"):
+        plan = plan_book(pdf, tmp_path, requested, None, "{stem}_structured_x", False)
+        assert plan.ocr_mode == "hybrid" and plan.blocked is None, requested
+        assert plan.ocr_reason == "resuming an unfinished hybrid OCR"
     forced = plan_book(pdf, tmp_path, "text", None, "{stem}_structured_x", False)
     assert forced.ocr_mode is None and "--ocr-mode hybrid" in forced.blocked
 
