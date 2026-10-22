@@ -65,6 +65,54 @@ PYTHON = "3.13"                                 # the Colab session ran 3.13.15
 #: The pins the notebook's first cell asserts (the ones whose drift would change the training path).
 KERNEL_GATE = ("unsloth", "unsloth_zoo", "transformers", "trl", "peft", "accelerate", "bitsandbytes")
 
+#: Package sets of the Lambda venvs by training stack (additive: :data:`PINS`, :data:`KERNEL_GATE` and the functions below
+#: stay the Qwen3-VL notebooks' default; nothing here reads this dict). Each set holds PEP 440 ``specifiers`` per
+#: distribution ('' = any version), the ``torch`` / ``torchvision`` specifiers, the ``python`` of the venv and its
+#: ``kernel_gate`` (the distributions a notebook asserts at runtime). ``status`` is ``exact`` when the versions are the ones
+#: a session ran with, ``placeholder`` when no session has run the stack yet: a placeholder set is resolved by its first
+#: install, asserted as ranges by the notebook's kernel gate, and rewritten here with the exact versions that install printed.
+#:
+#: * ``vlm`` -- the exact pins above (the Qwen3-VL runs).
+#: * ``text27b`` -- the Qwen3.8-27B text fine-tune (``derive_t27.py``; plan 2026-10-21 section 4): transformers 5.x for
+#:   qwen3_5, an unsloth 2026.10 release, trl >= 1.14, peft, bitsandbytes, and the Gated DeltaNet fast-path kernels
+#:   (flash-linear-attention, causal-conv1d). PLACEHOLDERS: which unsloth release loads Qwen3.8, and which versions of
+#:   the rest go with it, is recorded nowhere yet; rung 1 of the smoke ladder installs these ranges and records them.
+PIN_SETS: Dict[str, Dict[str, object]] = {
+    "vlm": {
+        "status": "exact",
+        "specifiers": {name: f"=={ver}" for name, ver in PINS.items()},
+        "torch": f"=={TORCH_VERSION}",
+        "torchvision": f"=={TORCHVISION_VERSION}",
+        "python": PYTHON,
+        "kernel_gate": KERNEL_GATE,
+    },
+    "text27b": {
+        "status": "placeholder",
+        "specifiers": {
+            "unsloth": "==2026.10.*",
+            "unsloth_zoo": "",
+            "transformers": ">=5,<6",
+            "trl": ">=1.14",
+            "peft": "",
+            "accelerate": "",
+            "bitsandbytes": "",
+            "flash-linear-attention": "",
+            "causal-conv1d": "",
+            "datasets": "",
+            "tokenizers": "",
+            "safetensors": "",
+            "huggingface_hub": "",
+            "hf_transfer": "",
+            "wandb": "",
+        },
+        "torch": "",
+        "torchvision": "",
+        "python": PYTHON,
+        "kernel_gate": ("unsloth", "unsloth_zoo", "transformers", "trl", "peft", "accelerate", "bitsandbytes",
+                        "flash-linear-attention", "causal-conv1d"),
+    },
+}
+
 LAUNCH_NOTES = """# {title} — **Lambda Cloud edition**
 
 Derived from the Colab notebook by `host_lambda.py`: same data, schedule, checkpoint repo and exact resume.
