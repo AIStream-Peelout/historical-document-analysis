@@ -75,8 +75,7 @@ KERNEL_GATE = ("unsloth", "unsloth_zoo", "transformers", "trl", "peft", "acceler
 #: * ``vlm`` -- the exact pins above (the Qwen3-VL runs).
 #: * ``text27b`` -- the Qwen3.8-27B text fine-tune (``derive_t27.py``; plan 2026-10-21 section 4): transformers 5.x for
 #:   qwen3_5, an unsloth 2026.10 release, trl >= 1.14, peft, bitsandbytes, and the Gated DeltaNet fast-path kernels
-#:   (flash-linear-attention, causal-conv1d). PLACEHOLDERS: which unsloth release loads Qwen3.8, and which versions of
-#:   the rest go with it, is recorded nowhere yet; rung 1 of the smoke ladder installs these ranges and records them.
+#:   (flash-linear-attention, causal-conv1d). Exact versions resolved by the text27b smoke environment.
 PIN_SETS: Dict[str, Dict[str, object]] = {
     "vlm": {
         "status": "exact",
@@ -87,26 +86,26 @@ PIN_SETS: Dict[str, Dict[str, object]] = {
         "kernel_gate": KERNEL_GATE,
     },
     "text27b": {
-        "status": "placeholder",
+        "status": "exact",
         "specifiers": {
-            "unsloth": "==2026.10.*",
-            "unsloth_zoo": "",
-            "transformers": ">=5,<6",
-            "trl": ">=1.14",
-            "peft": "",
-            "accelerate": "",
-            "bitsandbytes": "",
-            "flash-linear-attention": "",
-            "causal-conv1d": "",
-            "datasets": "",
-            "tokenizers": "",
-            "safetensors": "",
-            "huggingface_hub": "",
-            "hf_transfer": "",
-            "wandb": "",
+            "unsloth": "==2026.10.7",
+            "unsloth_zoo": "==2026.10.7",
+            "transformers": "==5.17.0",
+            "trl": "==1.15.0",
+            "peft": "==0.21.2",
+            "accelerate": "==1.15.0",
+            "bitsandbytes": "==0.50.2",
+            "flash-linear-attention": "==0.5.2",
+            "causal-conv1d": "==1.7.0",
+            "datasets": "==4.8.5",
+            "tokenizers": "==0.23.3",
+            "safetensors": "==0.8.0",
+            "huggingface_hub": "==1.33.0",
+            "hf_transfer": "==0.1.9",
+            "wandb": "==0.31.0",
         },
-        "torch": "",
-        "torchvision": "",
+        "torch": "==2.11.0+cu128",
+        "torchvision": "==0.26.0+cu128",
         "python": PYTHON,
         "kernel_gate": ("unsloth", "unsloth_zoo", "transformers", "trl", "peft", "accelerate", "bitsandbytes",
                         "flash-linear-attention", "causal-conv1d"),

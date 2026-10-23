@@ -43,9 +43,9 @@ vision-specific is replaced:
 ``train`` (the run; ``T27_ARM`` = ``t27a`` or ``t27b``). W&B project ``genizah-text27b`` (private), never
 ``qwen-hebrew-finetune``. New private checkpoint and merged repositories per arm; scratch repositories for the rungs.
 
-**Pins are placeholders.** ``PIN_SETS["text27b"]`` holds version ranges no session has run; rung 1 installs them
-(``lambda_setup_t27.sh``), G1 asserts them at runtime and prints what resolved, and those versions then become the
-exact pins. The notebook intro says so.
+``PIN_SETS["text27b"]`` records the resolved smoke-environment versions. G1 asserts the kernel pins at runtime.
+Setup preserves the pinned torch/CUDA build and compiles causal-conv1d against it. The model cell verifies both
+attribute-based and module-level kernel dispatch, repairing the known stale Unsloth recurrent wrapper before G4.
 
 Also here: **rung 0** (:func:`rung0`), the notebook's G2 / G5 logic run locally on a mixture file with the local
 tokenizer and chat template (no GPU, no network).
@@ -412,11 +412,29 @@ def lora_problems(lora_a_names: Sequence[str], layer_types: Sequence[str],
     return counts, problems
 
 
-def fast_path_problems(layer: Any, module_flag: Optional[bool]) -> List[str]:
+def repair_recurrent_kernel(modeling_module: Any, kernel_decorator: Callable[..., Any]) -> bool:
+    """Rebind Unsloth's stale recurrent wrapper using Transformers' correct FLA kernel name.
+
+    :param modeling_module: The loaded model's modeling module.
+    :param kernel_decorator: Transformers' ``use_kernel_func_from_hub_with_fallback`` factory.
+    :returns: Whether a known fallback wrapper was rebuilt; G4 still verifies the selected implementation.
+    """
+    import inspect
+    wrapper = getattr(modeling_module, "torch_recurrent_gated_delta_rule", None)
+    if not inspect.isfunction(wrapper) or not hasattr(wrapper, "__wrapped__"):
+        return False
+    if inspect.getclosurevars(wrapper).nonlocals.get("is_new_implementation") is not False:
+        return False
+    modeling_module.torch_recurrent_gated_delta_rule = kernel_decorator("fused_recurrent_gated_delta_rule", "fla")(wrapper.__wrapped__)
+    return True
+
+
+def fast_path_problems(layer: Any, module_flag: Optional[bool], modeling_module: Optional[Any] = None) -> List[str]:
     """G4: whether a Gated DeltaNet layer runs the fla / causal-conv1d kernels.
 
     :param layer: One ``linear_attn`` module (it holds its kernels as attributes, the torch fallbacks named ``torch_*``).
     :param module_flag: ``is_fast_path_available`` of its modeling module, or None when the module has none.
+    :param modeling_module: Modeling module for Transformers versions with module-level kernel dispatch wrappers.
     :returns: One line per problem; empty when the fast path is in use.
     """
     kernels = ("causal_conv1d_fn", "causal_conv1d_update", "chunk_gated_delta_rule", "recurrent_gated_delta_rule")
@@ -424,6 +442,26 @@ def fast_path_problems(layer: Any, module_flag: Optional[bool]) -> List[str]:
     problems: List[str] = []
     if module_flag is False:
         problems.append("the modeling module reports is_fast_path_available = False (fla / causal-conv1d not importable there)")
+    if not found and modeling_module is not None:
+        import inspect
+        wrappers = {"causal_conv1d_fn": "causal_conv1d", "causal_conv1d_update": "causal_conv1d",
+                    "torch_chunk_gated_delta_rule": "fla", "torch_recurrent_gated_delta_rule": "fla"}
+        for name, package in wrappers.items():
+            fn = getattr(modeling_module, name, None)
+            seen = set()
+            verified = False
+            while callable(fn) and id(fn) not in seen:
+                seen.add(id(fn))
+                captured = inspect.getclosurevars(fn).nonlocals if inspect.isfunction(fn) else {}
+                if "is_new_implementation" in captured:
+                    implementation = captured.get("implementation")
+                    verified = (captured["is_new_implementation"] is True and callable(implementation)
+                                and getattr(implementation, "__module__", "").split(".")[0] == package)
+                    break
+                fn = getattr(fn, "__wrapped__", None)
+            if not verified:
+                problems.append(f"{name}: cannot verify an active {package} kernel in the dispatch wrapper")
+        return problems
     if not found and module_flag is None:
         problems.append(f"{type(layer).__name__} exposes neither the kernel attributes {kernels} nor is_fast_path_available: "
                         "check the fast path by hand before the run")
@@ -898,10 +936,9 @@ scratch repositories; default: the launch time).
 | G9 | 6, 8 | rungs: timed steps, geometry sweep, peak VRAM, GO estimate; every fresh start: step-0 dev loss per family (the 2x alarm reference) |
 | G10 | 8, 9 | rungs: kill at step «KILL», exact resume from the Hub copy, end-of-run save, merge test (rung 1: reload + loss, scratch push) |
 
-**The pins are placeholders.** `host_lambda.PIN_SETS["«PIN_SET»"]` holds version ranges («PIN_LIST») that no session
-has run: which unsloth release loads Qwen3.8 is recorded nowhere yet. Rung 1's install resolves them; G1 asserts the
-ranges at runtime and prints the versions that resolved, which are then written into `PIN_SETS` as exact pins and this
-notebook regenerated before the run.
+**The pins are «PIN_STATUS».** `host_lambda.PIN_SETS["«PIN_SET»"]` holds the package specifications («PIN_LIST»).
+G1 asserts the specifications at runtime. Rung 1 resolves placeholder ranges; its versions are recorded as exact pins
+and this notebook regenerated before the run.
 
 **Data pins.** The data cell refuses to run until the arm's dataset revision (40-hex) and mixture fingerprint (64-hex) are
 pinned: push the local mixture, then `derive_t27.py --«PLACEHOLDER_ARM»-revision <sha> --«PLACEHOLDER_ARM»-mixture <the pushed file>`
@@ -932,12 +969,12 @@ def intro_md() -> str:
         B_BUDGET=str(T27B.lambda_budget_h), SMOKE_BASE=SMOKE_BASE_MODEL, LADDER=str(LADDER_STEPS), KILL=str(KILL_AT),
         TIMED=str(TIMED_STEPS), PRICE=f"{PRICE_PER_H}", PIN_SET=PIN_SET, EXPECTED=str(EXPECTED_LORA_A_27B),
         DECODE_K=str(DECODE_ROWS_PER_FAMILY), TOL_PCT=f"{LOSS_TOLERANCE:.0%}", PIN_LIST=listed, PLACEHOLDER_ARM="t27a",
-        WANDB=WANDB_PROJECT, PUBLIC_WANDB=PUBLIC_WANDB_PROJECT)
+        WANDB=WANDB_PROJECT, PUBLIC_WANDB=PUBLIC_WANDB_PROJECT, PIN_STATUS=str(pin_set()["status"]))
 
 
 INSTALL_TEMPLATE = r'''# Cell 1 — installs + env + run knobs + G1 (pin gate)
-# The text27b pin set (host_lambda.PIN_SETS["text27b"]) holds PLACEHOLDER version ranges: no session has run this stack.
-# Rung 1 installs them; G1 asserts the ranges at runtime and prints what resolved, which then become the exact pins.
+# The text27b pin set (host_lambda.PIN_SETS["text27b"]) controls the package versions.
+# G1 asserts its specifications at runtime; resolved smoke versions become exact pins before training.
 import os
 import time
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
@@ -1134,7 +1171,11 @@ print(f"G3 OK: {sum(LORA_COUNTS[_g] for _g in ('deltanet', 'attention', 'mlp'))}
 REQUIRE_FAST_PATH = True
 _lin = [_m for _n, _m in model.named_modules() if _n.endswith(".linear_attn")]
 assert _lin, "G4: no linear_attn modules — not a qwen3_5 model?"
-_problems = fast_path_problems(_lin[0], getattr(_inspect.getmodule(type(_lin[0])), "is_fast_path_available", None))
+_modeling_module = _inspect.getmodule(type(_lin[0]))
+from transformers.integrations.hub_kernels import use_kernel_func_from_hub_with_fallback
+if repair_recurrent_kernel(_modeling_module, use_kernel_func_from_hub_with_fallback):
+    print("Rebound the recurrent DeltaNet wrapper to fused_recurrent_gated_delta_rule; G4 verifies its implementation")
+_problems = fast_path_problems(_lin[0], getattr(_modeling_module, "is_fast_path_available", None), _modeling_module)
 if _problems and REQUIRE_FAST_PATH:
     raise AssertionError("G4 kernel fast-path gate FAILED:\n  - " + "\n  - ".join(_problems))
 print("G4 OK: the DeltaNet layers run the fla / causal-conv1d kernels" if not _problems else f"⚠️ G4 fast path missing: {_problems}")
@@ -1149,7 +1190,7 @@ def model_cell() -> str:
     """
     return _fill(MODEL_TEMPLATE, SMOKE_BASE=repr(SMOKE_BASE_MODEL), BASE=repr(BASE_MODEL), MAX_SEQ=str(MAX_SEQ),
                  RANK=str(LORA_RANK), ALPHA=str(LORA_ALPHA), REGEX=_raw_literal(LORA_REGEX), EXPECTED=str(EXPECTED_LORA_A_27B),
-                 SEED=str(SEED), FUNCS=inline_source(module_group, expected_lora_counts, lora_problems, fast_path_problems))
+                 SEED=str(SEED), FUNCS=inline_source(module_group, expected_lora_counts, lora_problems, repair_recurrent_kernel, fast_path_problems))
 
 
 COLLATOR_TEMPLATE = r'''# Cell 4 — render (enable_thinking=False) + tokenize once + response-only labels + collator + G5 (render, length, mask)
@@ -1503,7 +1544,24 @@ def sft_args(out_dir):
 
 
 FastModel.for_training(model)
-trainer = make_trainer(model=model, tokenizer=_tok, data_collator=collate, train_dataset=train_ds, eval_dataset=dev_sets,
+from datasets import Dataset as _HFDataset
+
+
+def trl_dataset(rows: TokenizedRows) -> _HFDataset:
+    """Expose pretokenized rows through TRL 1.15's supported dataset interface.
+
+    :param rows: Tokenized rows in their original order, with response-only labels.
+    :returns: A map-style Hugging Face dataset yielding the same tensors.
+    """
+    return _HFDataset.from_dict({
+        "input_ids": [row.tolist() for row in rows.ids],
+        "labels": [rows[i]["labels"].tolist() for i in range(len(rows))],
+    }).with_format("torch")
+
+
+_trl_train_ds = trl_dataset(train_ds)
+_trl_dev_sets = {family: trl_dataset(rows) for family, rows in dev_sets.items()}
+trainer = make_trainer(model=model, tokenizer=_tok, data_collator=collate, train_dataset=_trl_train_ds, eval_dataset=_trl_dev_sets,
                        args=sft_args(OUT_DIR))
 # schedule check (G8): make_sft_config drops kwargs this TRL does not know — the warm-up and the cosine must have survived
 assert trainer.args.get_warmup_steps(MAX_STEPS) == warmup_steps_for(MAX_STEPS, «WARMUP»), (
@@ -1573,7 +1631,7 @@ print("step-0 dev loss per family:", {_k: round(_v, 3) for _k, _v in sorted(STEP
 _a = trainer.args
 _order = list(range(len(train_ds))) * epochs_for(MAX_STEPS, len(train_ds), _a.per_device_train_batch_size, _a.gradient_accumulation_steps)
 _plan = build_session_plan(
-    _order, order="mixture file order", n_rows=len(train_ds), max_steps=_a.max_steps,
+    _order, order_description="mixture file order", n_rows=len(train_ds), max_steps=_a.max_steps,
     per_device_batch=_a.per_device_train_batch_size, grad_accum=_a.gradient_accumulation_steps,
     learning_rate=_a.learning_rate, warmup_ratio=«WARMUP», lr_scheduler_type=str(getattr(_a.lr_scheduler_type, "value", _a.lr_scheduler_type)),
     weight_decay=_a.weight_decay, optim=str(getattr(_a.optim, "value", _a.optim)), seed=_a.seed,
@@ -1664,7 +1722,7 @@ if STAGE != "train":
     del trainer                                                                      # a new session: nothing of the first trainer survives
     gc.collect()
     torch.cuda.empty_cache()
-    trainer = make_trainer(model=model, tokenizer=_tok, data_collator=collate, train_dataset=train_ds, eval_dataset=dev_sets,
+    trainer = make_trainer(model=model, tokenizer=_tok, data_collator=collate, train_dataset=_trl_train_ds, eval_dataset=_trl_dev_sets,
                            args=sft_args(_resumed_out))
     _order = lock_session_plan(CKPT_REPO, _plan, _order, has_checkpoint=True)      # the stored plan must match this session's
     _gate = add_callbacks(trainer)
@@ -1892,11 +1950,13 @@ def setup_script() -> str:
     main = " ".join(_requirement(d, s) for d, s in specs.items() if d != "causal-conv1d")
     gate = " ".join(pins["kernel_gate"])
     torch_req = _requirement("torch", pins["torch"]) + " " + _requirement("torchvision", pins["torchvision"])
+    cuda_pin = re.search(r"\+(cu\d+)$", str(pins["torch"]))
+    cuda_selection = (f"CUDA={cuda_pin.group(1)}" if cuda_pin else
+                      'if [ "$DRIVER" -ge 580 ]; then CUDA=cu130; else CUDA=cu128; fi')
     return f"""#!/bin/bash
 # {SETUP_SCRIPT} — one-time environment for the text27b notebook ({host_lambda.lambda_files(NOTEBOOK)[0]}) on a Lambda instance.
 # Generated by src/finetuning/qwen_hebrew/colab/derive_t27.py from host_lambda.PIN_SETS["{PIN_SET}"] (status: {pins["status"]}).
-# Those versions are PLACEHOLDER RANGES: no session has run this stack. This install resolves them (rung 1 of the smoke
-# ladder); the notebook's G1 gate asserts the ranges at runtime, and the versions printed below become the exact pins.
+# Exact pins record the resolved smoke environment; the notebook's G1 gate verifies them at runtime.
 # Usage (JupyterLab -> Terminal):   bash {SETUP_SCRIPT}
 set -euo pipefail
 VENV="{VENV}"
@@ -1904,17 +1964,17 @@ command -v nvidia-smi >/dev/null || {{ echo "nvidia-smi not found: this is not a
 ARCH=$(uname -m)
 [ "$ARCH" = "x86_64" ] || {{ echo "CPU architecture $ARCH is untested (GH200 is ARM): use an x86_64 instance"; exit 1; }}
 DRIVER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader | head -1 | cut -d. -f1)
-# torch wheels bundle their CUDA runtime; the driver decides which build can run (CUDA 13.0 needs driver >= 580)
-if [ "$DRIVER" -ge 580 ]; then CUDA=cu130; else CUDA=cu128; fi
+# An exact CUDA wheel pin selects its matching index; otherwise choose by driver capability.
+{cuda_selection}
 echo "driver $DRIVER -> torch for $CUDA"
 command -v uv >/dev/null || curl -LsSf https://astral.sh/uv/install.sh | sh
 export PATH="$HOME/.local/bin:$PATH"
 uv venv --python {pins["python"]} "$VENV"
 uv pip install --python "$VENV/bin/python" --index-url "https://download.pytorch.org/whl/$CUDA" {torch_req}
-uv pip install --python "$VENV/bin/python" {main} packaging ipykernel nbconvert
-# causal-conv1d compiles against the installed torch (placeholder: rung 1 confirms it builds here)
+uv pip install --python "$VENV/bin/python" {main} {torch_req} packaging ipykernel nbconvert
+# Compile against this torch/CUDA build without replacing torch or reusing an incompatible wheel.
 uv pip install --python "$VENV/bin/python" setuptools wheel ninja
-uv pip install --python "$VENV/bin/python" --no-build-isolation {_requirement("causal-conv1d", specs.get("causal-conv1d", ""))}
+CAUSAL_CONV1D_FORCE_BUILD=TRUE uv pip install --python "$VENV/bin/python" --no-deps --no-cache --no-binary causal-conv1d --no-build-isolation {_requirement("causal-conv1d", specs.get("causal-conv1d", ""))}
 "$VENV/bin/python" -m ipykernel install --user --name {KERNEL_NAME} --display-name "{KERNEL_DISPLAY}"
 mkdir -p "$HOME/genizah_work"
 uv pip freeze --python "$VENV/bin/python" > "$HOME/genizah_work/{RESOLVED_PINS_FILE}"

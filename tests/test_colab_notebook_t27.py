@@ -350,20 +350,22 @@ def test_lambda_launch_notes_and_wrapup(editions: Tuple) -> None:
 
 
 def test_pin_sets_are_additive() -> None:
-    """The VLM defaults are untouched; PIN_SETS mirrors them and adds the text27b placeholders."""
+    """The VLM defaults are untouched; text27b records exact smoke-environment versions."""
     from packaging.specifiers import SpecifierSet
     assert hl.PINS["transformers"] == "4.57.6" and hl.KERNEL_GATE[0] == "unsloth"
     vlm = hl.PIN_SETS["vlm"]
     assert vlm["status"] == "exact" and vlm["specifiers"] == {k: f"=={v}" for k, v in hl.PINS.items()}
     assert vlm["kernel_gate"] == hl.KERNEL_GATE and vlm["torch"] == f"=={hl.TORCH_VERSION}"
     t = hl.PIN_SETS["text27b"]
-    assert t["status"] == "placeholder" and set(t["kernel_gate"]) <= set(t["specifiers"])
+    assert t["status"] == "exact" and set(t["kernel_gate"]) <= set(t["specifiers"])
+    assert all(spec.startswith("==") and "*" not in spec for spec in t["specifiers"].values())
+    assert t["torch"] == "==2.11.0+cu128" and t["torchvision"] == "==0.26.0+cu128"
     for name in ("unsloth", "transformers", "trl", "peft", "bitsandbytes", "flash-linear-attention", "causal-conv1d"):
         assert name in t["kernel_gate"], name
     specs = {k: SpecifierSet(v) for k, v in t["specifiers"].items()}
-    assert "5.1.0" in specs["transformers"] and "4.57.6" not in specs["transformers"]
-    assert "2026.10.3" in specs["unsloth"] and "2026.8.9" not in specs["unsloth"]
-    assert "1.14.0" in specs["trl"] and "0.24.0" not in specs["trl"]
+    assert "5.17.0" in specs["transformers"] and "5.17.1" not in specs["transformers"]
+    assert "2026.10.7" in specs["unsloth"] and "2026.10.8" not in specs["unsloth"]
+    assert "1.15.0" in specs["trl"] and "1.15.1" not in specs["trl"]
     assert "text27b" not in hl.setup_script()
 
 
@@ -385,11 +387,11 @@ def test_install_cells_install_and_gate_the_pin_set(editions: Tuple) -> None:
     _, colab, lam = editions
     c1, l1 = _src(colab, 1), _src(lam, 1)
     pip = [l for l in c1.splitlines() if l.startswith("%pip")]
-    assert pip[0].startswith('%pip install -q "unsloth[colab-new]==2026.10.*"') and '"transformers>=5,<6"' in pip[0]
-    assert '"trl>=1.14"' in pip[0] and '"flash-linear-attention"' in pip[0]
-    assert pip[1].startswith('%pip install -q --no-build-isolation "causal-conv1d"')
+    assert pip[0].startswith('%pip install -q "unsloth[colab-new]==2026.10.7"') and '"transformers==5.17.0"' in pip[0]
+    assert '"trl==1.15.0"' in pip[0] and '"flash-linear-attention==0.5.2"' in pip[0]
+    assert pip[1].startswith('%pip install -q --no-build-isolation "causal-conv1d==1.7.0"')
     for c in (c1, l1):
-        assert f"T27_KERNEL_PINS = {d.kernel_pins()!r}" in c and "T27_PIN_STATUS = 'placeholder'" in c
+        assert f"T27_KERNEL_PINS = {d.kernel_pins()!r}" in c and "T27_PIN_STATUS = 'exact'" in c
         assert "pin_problems(T27_KERNEL_PINS, version)" in c and '("fla", "causal_conv1d")' in c
         assert "write these resolved versions into host_lambda.PIN_SETS['text27b']" in c
         assert "WANDB_PROJECT = 'genizah-text27b'" in c and 'os.environ.get("T27_STAGE", "rung1")' in c
@@ -420,10 +422,11 @@ def test_setup_script_builds_the_text27b_venv(tmp_path: Path) -> None:
     """The t27 venv: its own name and kernel, the placeholder ranges, causal-conv1d built in place, the resolved
     versions written out; valid bash."""
     sh = d.setup_script()
-    assert sh.startswith("#!/bin/bash") and "set -euo pipefail" in sh and "PLACEHOLDER RANGES" in sh
+    assert sh.startswith("#!/bin/bash") and "set -euo pipefail" in sh and "status: exact" in sh
     assert f'VENV="{d.VENV}"' in sh and f"--name {d.KERNEL_NAME}" in sh and d.RESOLVED_PINS_FILE in sh
-    assert '"unsloth==2026.10.*"' in sh and '"transformers>=5,<6"' in sh and '"trl>=1.14"' in sh
-    assert '--no-build-isolation "causal-conv1d"' in sh and "cu130" in sh and "x86_64" in sh and "xformers" not in sh
+    assert '"unsloth==2026.10.7"' in sh and '"transformers==5.17.0"' in sh and '"trl==1.15.0"' in sh
+    assert '--no-build-isolation "causal-conv1d==1.7.0"' in sh and "CUDA=cu128" in sh and "x86_64" in sh and "xformers" not in sh
+    assert "CAUSAL_CONV1D_FORCE_BUILD=TRUE" in sh and "--no-deps --no-cache --no-binary causal-conv1d" in sh
     assert "genizah-venv" not in sh.replace(d.VENV, "")                          # never the Qwen3-VL venv
     script = tmp_path / d.SETUP_SCRIPT
     script.write_text(sh, encoding="utf-8")
@@ -552,7 +555,7 @@ def test_model_cell_loads_the_planned_base_and_adapter(editions: Tuple) -> None:
     assert ast.literal_eval(regex_line.split(" = ", 1)[1]) == d.LORA_REGEX
     for needle in ("load_in_4bit=True", "finetune_vision_layers=False", "target_modules=LORA_REGEX", "lora_dropout=0.0",
                    "random_state=3407", "lora_problems(_lora_a, LAYER_TYPES, EXPECTED_LORA_A)", "REQUIRE_FAST_PATH = True",
-                   'getattr(_inspect.getmodule(type(_lin[0])), "is_fast_path_available", None)'):
+                   'getattr(_modeling_module, "is_fast_path_available", None), _modeling_module)'):
         assert needle in c3, needle
 
 
@@ -635,6 +638,70 @@ def test_fast_path_problems_tells_kernels_from_torch_fallbacks() -> None:
     problems = d.fast_path_problems(slow, False)
     assert len(problems) == 3 and any("torch fallback" in p for p in problems) and any("None" in p for p in problems)
     assert "check the fast path by hand" in d.fast_path_problems(SimpleNamespace(), None)[0]
+
+
+def test_fast_path_checks_module_dispatch_implementations() -> None:
+    """G4 verifies the selected kernel, rejecting fallbacks, unknown packages and missing wrappers."""
+
+    def dispatch(package: str, enabled: bool = True) -> Any:
+        """Build a stand-in for Transformers' captured kernel dispatch.
+
+        :param package: Package providing the selected implementation.
+        :param enabled: Whether the wrapper selected an external implementation.
+        :returns: A dispatch wrapper.
+        """
+        def implementation() -> None:
+            """Stand-in external kernel.
+
+            :returns: None.
+            """
+        implementation.__module__ = f"{package}.kernel"
+        is_new_implementation = enabled
+
+        def wrapped() -> None:
+            """Dispatch to the selected implementation.
+
+            :returns: None.
+            """
+            if is_new_implementation:
+                implementation()
+
+        wrapped.__wrapped__ = implementation
+        return wrapped
+
+    module = SimpleNamespace(causal_conv1d_fn=dispatch("causal_conv1d"), causal_conv1d_update=dispatch("causal_conv1d"),
+                             torch_chunk_gated_delta_rule=dispatch("fla"), torch_recurrent_gated_delta_rule=dispatch("fla"))
+    assert d.fast_path_problems(SimpleNamespace(), None, module) == []
+    for bad in (dispatch("transformers"), dispatch("fla", False), None):
+        module.torch_chunk_gated_delta_rule = bad
+        problems = d.fast_path_problems(SimpleNamespace(), None, module)
+        assert len(problems) == 1 and "torch_chunk_gated_delta_rule" in problems[0]
+
+    def rebuild(name: str, package: str) -> Any:
+        """Stand-in official decorator with the correct exported kernel name.
+
+        :param name: FLA's exported kernel name.
+        :param package: Kernel package.
+        :returns: Decorator selecting the external kernel.
+        """
+        assert (name, package) == ("fused_recurrent_gated_delta_rule", "fla")
+
+        def decorate(original: Any) -> Any:
+            """Replace the reference implementation's wrapper.
+
+            :param original: Wrapped reference implementation.
+            :returns: A fast dispatch wrapper.
+            """
+            return dispatch(package)
+
+        return decorate
+
+    module.torch_chunk_gated_delta_rule = dispatch("fla")
+    module.torch_recurrent_gated_delta_rule = dispatch("transformers", False)
+    assert d.repair_recurrent_kernel(module, rebuild)
+    assert d.fast_path_problems(SimpleNamespace(), None, module) == []
+    assert not d.repair_recurrent_kernel(module, rebuild)
+    assert not d.repair_recurrent_kernel(SimpleNamespace(), rebuild)
 
 
 # ----------------------------------------------------------------------------- render, tokenize, mask (cell 4, G5)
@@ -732,6 +799,46 @@ def test_cell4_renders_tokenizes_masks_and_collates(editions: Tuple, capsys: pyt
     short = len(ds[0]["input_ids"])
     assert int(batch["attention_mask"][0].sum()) == short and (batch["labels"][0, short:] == -100).all()
     assert (batch["input_ids"][0, short:] == ns["PAD_ID"]).all()
+
+
+def test_trl_dataset_preserves_row_order_and_response_masks(editions: Tuple) -> None:
+    """TRL's supported dataset interface preserves the exact tensors used by the dataloader gates.
+
+    :param editions: Source and derived notebook editions.
+    """
+    from datasets import Dataset
+    _, colab, _ = editions
+    ns = _run_cell4(colab, [chat_row("translate_en", 1), chat_row("translate_he", 2, answer="אמת")], [])
+    ns["_HFDataset"] = Dataset
+    node = next(node for node in ast.parse(_src(colab, 8)).body if isinstance(node, ast.FunctionDef) and node.name == "trl_dataset")
+    exec(compile(ast.Module(body=[node], type_ignores=[]), "trl_dataset", "exec"), ns)
+    converted = ns["trl_dataset"](ns["train_ds"])
+    assert isinstance(converted, Dataset) and len(converted) == len(ns["train_ds"])
+    for i in range(len(converted)):
+        for key in ("input_ids", "labels"):
+            assert ns["torch"].equal(converted[i][key], ns["train_ds"][i][key])
+    actual = ns["collate"]([converted[i] for i in range(len(converted))])
+    expected = ns["collate"]([ns["train_ds"][i] for i in range(len(converted))])
+    assert all(ns["torch"].equal(actual[key], expected[key]) for key in expected)
+
+
+def test_training_session_plan_executes_with_the_shared_helper(editions: Tuple) -> None:
+    """The generated session-plan call binds its row order once and preserves schedule metadata.
+
+    :param editions: Source and derived notebook editions.
+    """
+    from src.finetuning.qwen_hebrew.train_session import build_session_plan, order_fingerprint
+    _, colab, _ = editions
+    node = next(node for node in ast.parse(_src(colab, 8)).body if isinstance(node, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == "_plan" for target in node.targets))
+    ns = dict(_order=[2, 0, 1], train_ds=[None] * 3, build_session_plan=build_session_plan,
+              _a=SimpleNamespace(max_steps=15, per_device_train_batch_size=1, gradient_accumulation_steps=16,
+                                 learning_rate=1e-4, lr_scheduler_type="cosine", weight_decay=0.01, optim="adamw_8bit", seed=3407),
+              DATA_REPO=d.DATA_REPO, DATA_REVISION=SHA, MIXTURE_FINGERPRINT=FP, BASE_MODEL=d.BASE_MODEL,
+              LORA_RANK=16, LORA_ALPHA=16, LORA_REGEX=d.LORA_REGEX, MAX_SEQ=6144)
+    exec(compile(ast.Module(body=[node], type_ignores=[]), "session_plan", "exec"), ns)
+    assert ns["_plan"]["order_sha256"] == order_fingerprint([2, 0, 1])
+    assert ns["_plan"]["order_description"] == "mixture file order" and ns["_plan"]["max_steps"] == 15
 
 
 def test_cell4_refuses_thinking_renders_and_overlong_rows(editions: Tuple) -> None:
@@ -845,7 +952,7 @@ def test_training_cell_schedule_names_and_privacy(editions: Tuple) -> None:
                    'lr_scheduler_type="cosine", weight_decay=0.01', '{"warmup_ratio": 0.03}', "optim='adamw_8bit', seed=3407, data_seed=3407",
                    "hub_private_repo=True", "hub_always_push=True", 'accelerator_config={"dispatch_batches": False}',
                    '"skip_prepare_dataset": True', "max_seq_length=MAX_SEQ", "wandb.init(project=WANDB_PROJECT, name=RUN_NAME",
-                   "_order = list(range(len(train_ds))) * epochs_for(", 'order="mixture file order"',
+                   "_order = list(range(len(train_ds))) * epochs_for(", 'order_description="mixture file order"',
                    "rows_sha256=MIXTURE_FINGERPRINT", 'render="enable_thinking=False"', "lock_session_plan(CKPT_REPO, _plan, _order",
                    "family_quota(Counter(train_ds.column(\"family\")), 32)", "prepared_row_problems(",
                    "abs(_lp - _ld) <= 0.05 * max(1.0, _ld)", "trainer.evaluate()", 'STEP0_FILE = "step0_dev_loss.json"',
@@ -893,7 +1000,7 @@ def test_intro_describes_the_run_and_says_the_pins_are_placeholders(editions: Tu
     """The intro names the plan's settings, the ladder, every gate, and that the pins are placeholders asserted at runtime."""
     _, colab, _ = editions
     intro = _src(colab, 0)
-    for needle in ("The pins are placeholders", "G1 asserts the", "at runtime", "enable_thinking=False", "rung1", "rung2",
+    for needle in ("The pins are exact", "G1 asserts the", "at runtime", "enable_thinking=False", "rung1", "rung2",
                    "genizah-text27b", "never `qwen-hebrew-finetune`", d.BASE_MODEL, d.SMOKE_BASE_MODEL, "LR 1e-4", "3% warm-up",
                    "refuses to run", "To resume after a session ends"):
         assert needle in intro, needle
