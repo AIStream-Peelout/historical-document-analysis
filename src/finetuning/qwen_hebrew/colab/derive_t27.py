@@ -978,6 +978,9 @@ INSTALL_TEMPLATE = r'''# Cell 1 — installs + env + run knobs + G1 (pin gate)
 import os
 import time
 os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "1"
+# Optional regional compilation stalls on symbolic shapes in this torch/Unsloth stack.
+# The FLA/causal-conv1d kernels remain enabled and mandatory (G4); G9 measures this configuration.
+os.environ["UNSLOTH_BLOCK_COMPILE"] = "0"
 WANDB_PROJECT = «WANDB»   # private project; never the public «PUBLIC_WANDB» (its watcher follows the newest run)
 assert WANDB_PROJECT != «PUBLIC_WANDB», "text27b runs must not log to the public project"
 os.environ["WANDB_PROJECT"] = WANDB_PROJECT
@@ -1153,7 +1156,6 @@ model = FastModel.get_peft_model(
     use_gradient_checkpointing="unsloth",
 )
 «FUNCS»
-
 # ---- G3: a language-only adapter — 0 vision / MTP / in_proj_a|b LoRA tensors, the planned lora_A count per module group ----
 _text_cfg = getattr(model.config, "text_config", None) or model.config
 LAYER_TYPES = list(_text_cfg.layer_types)
@@ -1190,7 +1192,8 @@ def model_cell() -> str:
     """
     return _fill(MODEL_TEMPLATE, SMOKE_BASE=repr(SMOKE_BASE_MODEL), BASE=repr(BASE_MODEL), MAX_SEQ=str(MAX_SEQ),
                  RANK=str(LORA_RANK), ALPHA=str(LORA_ALPHA), REGEX=_raw_literal(LORA_REGEX), EXPECTED=str(EXPECTED_LORA_A_27B),
-                 SEED=str(SEED), FUNCS=inline_source(module_group, expected_lora_counts, lora_problems, repair_recurrent_kernel, fast_path_problems))
+                 SEED=str(SEED), FUNCS=inline_source(module_group, expected_lora_counts, lora_problems,
+                                                   repair_recurrent_kernel, fast_path_problems))
 
 
 COLLATOR_TEMPLATE = r'''# Cell 4 — render (enable_thinking=False) + tokenize once + response-only labels + collator + G5 (render, length, mask)

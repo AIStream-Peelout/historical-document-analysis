@@ -395,6 +395,7 @@ def test_install_cells_install_and_gate_the_pin_set(editions: Tuple) -> None:
         assert "pin_problems(T27_KERNEL_PINS, version)" in c and '("fla", "causal_conv1d")' in c
         assert "write these resolved versions into host_lambda.PIN_SETS['text27b']" in c
         assert "WANDB_PROJECT = 'genizah-text27b'" in c and 'os.environ.get("T27_STAGE", "rung1")' in c
+        assert 'os.environ["UNSLOTH_BLOCK_COMPILE"] = "0"' in c
 
 
 def test_pin_problems_checks_ranges_and_missing_distributions() -> None:
