@@ -79,6 +79,7 @@ from src.models.ocr.lms_transcriber import (
     check_lm_studio_health,
     LMStudioConfig,
 )
+from src.models.ocr import lms_yield_gate
 
 # Claude (flag-gated — expensive, off by default)
 from src.models.llm.transcription.claude_transcriber import (
@@ -800,6 +801,8 @@ async def _call_lms_text_only(
     Used when an open-source text model is preferred over Gemini Flash
     for the OCR segmentation step.
     """
+    # Yield to prod chat first (fails open, never raises); the POST below is our own call.
+    await lms_yield_gate.await_chat_idle(site="talmud_seg", base_url=base_url)
     import aiohttp as _aiohttp
     payload = {
         "model": model_id,
@@ -808,15 +811,16 @@ async def _call_lms_text_only(
         "temperature": 0.1,
     }
     try:
-        async with _aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{base_url}/chat/completions",
-                json=payload,
-                timeout=_aiohttp.ClientTimeout(total=timeout),
-            ) as resp:
-                resp.raise_for_status()
-                data = await resp.json()
-                return (data["choices"][0]["message"]["content"] or "").strip() or None
+        with lms_yield_gate.own_call(model_id):
+            async with _aiohttp.ClientSession() as session:
+                async with session.post(
+                    f"{base_url}/chat/completions",
+                    json=payload,
+                    timeout=_aiohttp.ClientTimeout(total=timeout),
+                ) as resp:
+                    resp.raise_for_status()
+                    data = await resp.json()
+                    return (data["choices"][0]["message"]["content"] or "").strip() or None
     except Exception as e:
         print(f"    ✗ LMS text-only failed ({model_id}): {e}")
         return None

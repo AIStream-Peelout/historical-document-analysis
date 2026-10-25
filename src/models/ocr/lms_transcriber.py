@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 import aiohttp
 
+from src.models.ocr import lms_yield_gate
+
 
 # ============================================================================
 # Config
@@ -312,6 +314,8 @@ async def transcribe_with_lm_studio_meta(
     # Hold the module-wide lock for the entire call (retries included):
     # LM Studio must never see two inference requests at once.
     async with _get_lms_lock():
+        # Yield to prod chat first (once per call, not per retry); fails open, never raises.
+        await lms_yield_gate.await_chat_idle(site=f"transcribe:{model_id}", base_url=base_url)
         last_exc: Optional[Exception] = None
         for attempt in range(max_retries + 1):
             try:
@@ -431,15 +435,19 @@ async def complete_text(
     # Same module-wide lock as image transcription — LM Studio must never
     # see two inference requests at once (limited RAM, model eviction).
     async with _get_lms_lock():
+        # Yield to prod chat first; the request itself is marked as our own, because the judge and
+        # segmentation may run on a prod chat model (own_call is a no-op for any other model).
+        await lms_yield_gate.await_chat_idle(site=f"complete_text:{model_id}", base_url=base_url)
         try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=timeout)
-            ) as session:
-                async with session.post(f"{base_url}/chat/completions", json=payload) as resp:
-                    resp.raise_for_status()
-                    data = await resp.json()
-                    content = data["choices"][0]["message"]["content"] or ""
-                    return content.strip() or None
+            with lms_yield_gate.own_call(model_id):
+                async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=timeout)
+                ) as session:
+                    async with session.post(f"{base_url}/chat/completions", json=payload) as resp:
+                        resp.raise_for_status()
+                        data = await resp.json()
+                        content = data["choices"][0]["message"]["content"] or ""
+                        return content.strip() or None
         except Exception as exc:
             print(f"    ✗ LM Studio text-only failed ({model_id}): {exc}")
             return None

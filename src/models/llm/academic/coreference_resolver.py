@@ -87,6 +87,7 @@ from src.datasets.document_models import biblical_person_classifier as bib  # no
 from src.datasets.document_models.scholar_normalizer import ScholarRegistry  # noqa: E402
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
 from src.models.llm.academic.entity_tagger import _is_leaked_entity  # noqa: E402
+from src.models.ocr import lms_yield_gate  # noqa: E402
 
 # Roles (from Pass 2 tagging) that mark a person as a modern, post-discovery
 # figure → Scholar.  Includes manuscript dealers/collectors, who align with
@@ -347,50 +348,54 @@ def _call_lms(prompt: str, lms_url: str, lms_model: str, timeout: int) -> Option
 
     url = f"{lms_url.rstrip('/')}/chat/completions"
     max_tokens = 16384
+    # Yield to prod chat before the request; the POST + retry block is our own call on a (possibly prod)
+    # chat model. Fails open, never raises.
+    lms_yield_gate.wait_for_chat_idle(site="coreference_resolver", base_url=lms_url)
     try:
-        for attempt in range(3):
-            r = requests.post(url, json=_payload(max_tokens), timeout=timeout)
+        with lms_yield_gate.own_call(lms_model):
+            for attempt in range(3):
+                r = requests.post(url, json=_payload(max_tokens), timeout=timeout)
 
-            if r.status_code == 400:
-                # Genuine context overflow (prompt + reservation > window).
-                # Shrink the reservation rather than dropping the batch.
-                if attempt < 2:
-                    max_tokens //= 2
-                    logger.warning(f"  400 from LM Studio ({(r.text or '')[:160]}); "
-                                   f"retrying with max_tokens={max_tokens}")
-                    continue
+                if r.status_code == 400:
+                    # Genuine context overflow (prompt + reservation > window).
+                    # Shrink the reservation rather than dropping the batch.
+                    if attempt < 2:
+                        max_tokens //= 2
+                        logger.warning(f"  400 from LM Studio ({(r.text or '')[:160]}); "
+                                       f"retrying with max_tokens={max_tokens}")
+                        continue
+                    r.raise_for_status()
+
                 r.raise_for_status()
+                choice  = r.json()["choices"][0]
+                message = choice.get("message", {})
+                content = (message.get("content") or "").strip()
 
-            r.raise_for_status()
-            choice  = r.json()["choices"][0]
-            message = choice.get("message", {})
-            content = (message.get("content") or "").strip()
+                if content:
+                    return content
 
-            if content:
-                return content
+                # 200 OK but no content — reasoning ate the whole budget.
+                reasoning = message.get("reasoning_content") or ""
+                if choice.get("finish_reason") == "length" and attempt < 2:
+                    max_tokens *= 2
+                    logger.warning(
+                        f"  Empty content (finish_reason=length, "
+                        f"{len(reasoning)} reasoning chars) — the model spent the "
+                        f"token budget reasoning. Retrying with max_tokens={max_tokens}."
+                    )
+                    continue
 
-            # 200 OK but no content — reasoning ate the whole budget.
-            reasoning = message.get("reasoning_content") or ""
-            if choice.get("finish_reason") == "length" and attempt < 2:
-                max_tokens *= 2
-                logger.warning(
-                    f"  Empty content (finish_reason=length, "
-                    f"{len(reasoning)} reasoning chars) — the model spent the "
-                    f"token budget reasoning. Retrying with max_tokens={max_tokens}."
-                )
-                continue
-
-            # Deliberately NO fallback to reasoning_content here. A truncated
-            # reasoning trace often contains a complete-looking DRAFT grouping
-            # the model then retracted ("...wait, Abraham Maimonides is his
-            # SON, a different person") — cut off before the correction, that
-            # draft parses cleanly and silently merges two different real
-            # people (reproduced in the 2026-08 audit). A dropped batch is
-            # recoverable; a wrong merge is silent data corruption.
-            logger.error(f"  LM Studio returned no usable content "
-                         f"(finish_reason={choice.get('finish_reason')}, "
-                         f"{len(reasoning)} reasoning chars)")
-            return None
+                # Deliberately NO fallback to reasoning_content here. A truncated
+                # reasoning trace often contains a complete-looking DRAFT grouping
+                # the model then retracted ("...wait, Abraham Maimonides is his
+                # SON, a different person") — cut off before the correction, that
+                # draft parses cleanly and silently merges two different real
+                # people (reproduced in the 2026-08 audit). A dropped batch is
+                # recoverable; a wrong merge is silent data corruption.
+                logger.error(f"  LM Studio returned no usable content "
+                             f"(finish_reason={choice.get('finish_reason')}, "
+                             f"{len(reasoning)} reasoning chars)")
+                return None
     except Exception as e:
         logger.error(f"  LM Studio call failed: {e}")
         return None
@@ -451,11 +456,13 @@ def _classify_ambiguous_llm(
         "max_tokens":  1024,
         "response_format": {"type": "json_object"},
     }
+    lms_yield_gate.wait_for_chat_idle(site="coreference_resolver:classify", base_url=lms_url)
     try:
-        r = requests.post(f"{lms_url.rstrip('/')}/chat/completions", json=payload, timeout=timeout)
-        if r.status_code == 400 and "response_format" in payload:
-            del payload["response_format"]
+        with lms_yield_gate.own_call(lms_model):
             r = requests.post(f"{lms_url.rstrip('/')}/chat/completions", json=payload, timeout=timeout)
+            if r.status_code == 400 and "response_format" in payload:
+                del payload["response_format"]
+                r = requests.post(f"{lms_url.rstrip('/')}/chat/completions", json=payload, timeout=timeout)
         r.raise_for_status()
         raw = r.json()["choices"][0]["message"]["content"]
     except Exception as e:

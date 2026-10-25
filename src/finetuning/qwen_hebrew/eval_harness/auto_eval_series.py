@@ -45,6 +45,10 @@ PY = str(REPO / ".venv/bin/python")
 REFERENCE = "qwen3-vl-8b-heb-v20a-step1800"
 KEEP_LOCAL = {"qwen3-vl-8b-heb-v19a-step1300", REFERENCE, "qwen3-vl-8b-heb-v21b-step1200"}   # flagship rule: never delete these copies
 
+if str(REPO) not in sys.path:   # keep direct script runs working: the yield gate lives under src/
+    sys.path.append(str(REPO))
+from src.models.ocr import lms_yield_gate  # noqa: E402
+
 
 def log(msg: str) -> None:
     """Timestamped line to stdout (nohup redirects it to the log file).
@@ -278,6 +282,8 @@ def main() -> int:
                 log(f"gate blocked ({why}) — retry in {a.poll}s")
                 break
             log(f"gates OK ({why})")
+            # Yield to prod chat before the checkpoint's GPU stages (cap 15 min, then proceed).
+            lms_yield_gate.wait_for_chat_idle(site=f"auto_eval_series:step{step}")
             full = step in a.full_steps
             res = process(step, shas[step], a.ver, full, a, box=not only_cer)
             key = str(step)

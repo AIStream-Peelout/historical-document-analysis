@@ -18,8 +18,10 @@ import os
 import base64
 import time
 import re
+import contextlib
+import sys
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Union
+from typing import AsyncIterator, Dict, List, Optional, Any, Union
 from PIL import Image
 
 import dotenv
@@ -30,6 +32,12 @@ from pydantic_ai.models.openai import OpenAIChatModel
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.providers.ollama import OllamaProvider
+
+# The LM Studio yield gate lives under src/; keep this file runnable as a plain script too.
+_REPO_ROOT = Path(__file__).resolve().parents[4]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.append(str(_REPO_ROOT))
+from src.models.ocr import lms_yield_gate  # noqa: E402
 
 # Load environment variables from project root
 project_root = Path(__file__).parent.parent.parent.parent.parent.parent
@@ -125,6 +133,7 @@ class StructuredJSONLLM:
         self.use_gemini = use_gemini
         self.book_metadata = book_metadata
         self.model_name = model_name
+        self.lm_studio_url = lm_studio_url
 
         # Set up model and agent
         if self.use_gemini:
@@ -150,6 +159,25 @@ class StructuredJSONLLM:
             provider=OllamaProvider(base_url=lm_studio_url)
         )
         self.model_name = model_name
+
+    @contextlib.asynccontextmanager
+    async def _lm_studio_call(self) -> AsyncIterator[None]:
+        """Yield to prod chat, then mark the wrapped LM Studio request as this repo's own call.
+
+        Pass 1 runs on the 35B prod chat model, so every LM Studio ``agent.run`` goes through here, whichever
+        driver calls the page methods (``process_ocr_results``, ``fill_initial_stages``). A no-op on Gemini.
+        The gate fails open and never raises.
+
+        :returns: Async context manager around one LM Studio request.
+        :rtype: AsyncIterator[None]
+        """
+        if self.use_gemini:
+            yield
+            return
+        await lms_yield_gate.await_chat_idle(site="structured_json_llm",
+                                             base_url=getattr(self, "lm_studio_url", None))
+        with lms_yield_gate.own_call(self.model_name):
+            yield
 
     def _setup_gemini(self, gemini_model: str, gemini_api_key: Optional[str],
                       gemini_safety_settings: Optional[List[Dict[str, str]]]):
@@ -579,14 +607,15 @@ Extract the structured data according to the schema. Return ONLY valid JSON, no 
             try:
                 if not self.use_gemini:
                     # LM Studio approach - pass image as base64 in the prompt context
-                    result = await agent.run(
-                        prompt,
-                        message_history=[{
-                            'role': 'user',
-                            'content': prompt,
-                            'images': [image_b64]
-                        }]
-                    )
+                    async with self._lm_studio_call():
+                        result = await agent.run(
+                            prompt,
+                            message_history=[{
+                                'role': 'user',
+                                'content': prompt,
+                                'images': [image_b64]
+                            }]
+                        )
                 else:
                     # Gemini approach - use PIL Image
                     pil_image = Image.open(image_path)
@@ -747,7 +776,8 @@ Extract the structured data according to the schema. Return ONLY valid JSON, no 
 
             # Run agent without image
             try:
-                result = await agent.run(prompt)
+                async with self._lm_studio_call():
+                    result = await agent.run(prompt)
 
                 # Successfully validated!
                 structured_data = result.output.model_dump()

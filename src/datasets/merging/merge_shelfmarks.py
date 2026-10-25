@@ -40,7 +40,7 @@ import json
 import os
 import re
 import sys
-from typing import Dict, FrozenSet, Iterable, List, Optional, Tuple
+from typing import Sequence, Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 # Anchor everything to the repo root (three levels up from this file) so the
 # script works regardless of the current working directory, and add it to
@@ -53,6 +53,10 @@ if _REPO_ROOT not in sys.path:
 from src.datasets.document_models.genizah_normalizer import (  # noqa: E402
     OxfordShelfmark,
     ShelfmarkNormalizer,
+)
+from src.datasets.document_models.genizah_document import (  # noqa: E402
+    is_ktiv_label_title,
+    ktiv_varying_title,
 )
 from src.datasets.merging.institution_tokens import (  # noqa: E402
     BL_TOKEN,
@@ -74,6 +78,8 @@ from src.datasets.merging.ktiv_images import (  # noqa: E402
     gcs_url,
     image_folders,
     ktiv_image_sources,
+    ZIP_CACHE_FILE,
+    ZipMemberCache,
 )
 
 RAW_DIR = os.path.join(_REPO_ROOT, "src", "datasets", "raw_data", "cairo_genizah")
@@ -394,15 +400,49 @@ def fjp_canonical_id(mark: str, rec: dict) -> str:
 _KTIV_ZIP_SYSNUM_RE = re.compile(r"(\d{15,})")
 
 
-def index_ktiv_zips(pattern: str = KTIV_ZIP_GLOB) -> Dict[str, List[str]]:
+def ktiv_zip_paths(patterns: Optional[Sequence[str]] = None) -> List[str]:
+    """Every KTIV image zip, local scrape folder first, then the NAS store the zip mover fills.
+
+    Settled zips are moved to ``/Volumes/home/studio_offload/ktiv_zips/<bucket>/`` by
+    ``src.datasets.tools.ktiv_zip_mover`` (bucketed layout), so a merge run after a move must
+    look in both places. The search directories come from ``$KTIV_ZIP_DIRS`` (colon-separated,
+    the mover's convention) or default to the local folder then the NAS; each directory is
+    globbed flat (``<dir>/*.zip``) and bucketed (``<dir>/*/*.zip``). Order is preserved and a
+    basename seen earlier wins, so the local copy of a zip takes precedence over the NAS copy
+    and ``_pick_zip_per_sysnum`` keeps its "first listed" behaviour.
+
+    :param patterns: Explicit glob patterns, searched in order (tests); ``None`` = the
+        ``KTIV_ZIP_DIRS`` search path.
+    :type patterns: Optional[Sequence[str]]
+    :returns: Zip paths, de-duplicated by basename, in search order.
+    :rtype: List[str]
+    """
+    if patterns is None:
+        from src.datasets.tools.ktiv_zip_mover import zip_search_dirs
+        dirs = zip_search_dirs()
+        missing = [str(d) for d in dirs if not d.is_dir()]
+        if missing and not os.environ.get("KTIV_ALLOW_MISSING_ZIP_DIRS"):
+            # An unmounted NAS would silently turn 21k manuscripts imageless and fill the backlog.
+            raise FileNotFoundError(f"KTIV zip directory not available: {', '.join(missing)} "
+                                    "(mount it, or set KTIV_ALLOW_MISSING_ZIP_DIRS=1 to merge without it)")
+        patterns = [pat for d in dirs for pat in (os.path.join(str(d), "*.zip"), os.path.join(str(d), "*", "*.zip"))]
+    seen: Dict[str, str] = {}
+    for pattern in patterns:
+        for zpath in sorted(glob.glob(pattern)):
+            seen.setdefault(os.path.basename(zpath), zpath)
+    return list(seen.values())
+
+
+def index_ktiv_zips(pattern: Optional[str] = None) -> Dict[str, List[str]]:
     """Index KTIV image-zip filenames by manuscript ``sys_num``.
 
-    :param pattern: Glob for KTIV ``*.zip`` archives.
+    :param pattern: Glob for KTIV ``*.zip`` archives (tests); ``None`` = every zip
+        :func:`ktiv_zip_paths` finds, local folder and NAS store alike.
     :returns: Mapping ``sys_num -> sorted list of zip basenames`` (multiple when
         the same manuscript was downloaded more than once, e.g. ``...(1).zip``).
     """
     by_sysnum: Dict[str, List[str]] = collections.defaultdict(list)
-    for zpath in glob.glob(pattern):
+    for zpath in (glob.glob(pattern) if pattern is not None else ktiv_zip_paths()):
         name = os.path.basename(zpath)
         m = _KTIV_ZIP_SYSNUM_RE.search(name)
         if m:
@@ -1185,7 +1225,7 @@ def build_merged_record(
     text_tei = tei if folio_verified else None
     description = _first(
         next((d.get("description") for d in pgp_docs if d.get("description")), None),
-        (ktiv.get("basic_catalog") or {}).get("title"),
+        ktiv_description(ktiv),
         tei_description(text_tei),
         fjp0.get("description"),
     )
@@ -1303,6 +1343,23 @@ def build_merged_record(
 
 
 _KTIV_UNKNOWN_DATES = {"unknown", "לא ידוע", "unknown/לא ידוע"}
+
+
+def ktiv_description(ktiv: Optional[dict]) -> Optional[str]:
+    """KTIV's candidate for the merged ``description``.
+
+    The catalogue title, unless it is a subject-heading label (NLI titles most Genizah fragments with headings:
+    "פיוט;תפילה וברכות;תפילות קבע", "מקרא [טקסט"), in which case the catalogued varying title
+    ("Common Prayers: Sukkot Amidah", "Bible: Genesis 12:3 – 14:2") replaces it; the headings themselves become the
+    document's subjects in the document model. A label without a usable varying title stays the description.
+
+    :param ktiv: The record's KTIV block, or ``None`` / ``{}``.
+    :returns: The description candidate, or ``None`` when KTIV has no title.
+    """
+    title = ((ktiv or {}).get("basic_catalog") or {}).get("title")
+    if is_ktiv_label_title(title):
+        return ktiv_varying_title(ktiv) or title
+    return title
 
 
 def _ktiv_date(value: Optional[str]) -> Optional[str]:
@@ -1463,7 +1520,7 @@ def diff_against_snapshot(state: dict, prev: Optional[dict]) -> dict:
     }
 
 
-def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
+def merge(out_dir: str = DEFAULT_OUT_DIR, zip_cache: bool = True) -> dict:
     """Run the full merge and write the JSONL, report, image-gap worklist and diff.
 
     Outputs in *out_dir*: ``merged_shelfmarks.jsonl`` (the corpus),
@@ -1475,6 +1532,8 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
     ``merge_state.json`` (id-set snapshot used for the next run's diff).
 
     :param out_dir: Output directory.
+    :param zip_cache: Reuse / fill ``<out_dir>/ktiv_zip_members_cache.json`` so only archives never listed before
+        are opened (``False``: open every archive, as before 2026-10-10).
     :returns: The report dict.
     """
     os.makedirs(out_dir, exist_ok=True)
@@ -1484,9 +1543,15 @@ def merge(out_dir: str = DEFAULT_OUT_DIR) -> dict:
     ktiv_zips = index_ktiv_zips()
     # Image pointers come from the zip archives AND the loose-image folders the
     # scraper's IIIF fallback leaves behind (zip wins when both exist).
+    # Archives already listed in an earlier run are not opened again (ZipMemberCache, keyed by name + size);
+    # only newly scraped or re-downloaded zips are read.
+    cache = ZipMemberCache.load(os.path.join(out_dir, ZIP_CACHE_FILE)) if zip_cache else None
     ktiv_sources = ktiv_image_sources(
-        glob.glob(KTIV_ZIP_GLOB), image_folders(KTIV_DIR)
+        ktiv_zip_paths(), image_folders(KTIV_DIR), cache   # local scrape folder first, then the NAS zip store
     )
+    if cache is not None:
+        cache.save()
+        ktiv_stats["zip_cache"] = {"path": cache.path, **cache.stats()}
     ktiv_images = {
         sys_num: [object_path for object_path, _ in source.entries]
         for sys_num, source in ktiv_sources.items()
@@ -1736,6 +1801,8 @@ def main() -> None:
     """CLI entry point: run the merge and print the report (or a top-collections rollup)."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, help="Output directory.")
+    parser.add_argument("--no-zip-cache", dest="zip_cache", action="store_false",
+                        help="Open every KTIV image archive instead of reusing <out-dir>/ktiv_zip_members_cache.json.")
     parser.add_argument(
         "--top",
         type=int,
@@ -1744,7 +1811,7 @@ def main() -> None:
         help="Print the top N collections by rich-but-imageless count and exit.",
     )
     args = parser.parse_args()
-    report = merge(args.out_dir)
+    report = merge(args.out_dir, zip_cache=args.zip_cache)
 
     if args.top:
         ig = report["image_gap"]

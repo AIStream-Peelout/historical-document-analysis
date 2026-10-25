@@ -5,6 +5,7 @@ several fragments in one string (joins / ranges). Those must be exploded so each
 constituent shelfmark is captured rather than lost to a garbage canonical id.
 """
 
+import os
 import json
 
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer as SN
@@ -24,6 +25,7 @@ from src.datasets.merging.merge_shelfmarks import (
     build_merged_record,
     diff_against_snapshot,
     index_ktiv_zips,
+    ktiv_zip_paths,
     load_bodleian,
     load_ktiv_transcriptions,
     looks_multi,
@@ -624,3 +626,36 @@ def test_record_has_image_counts_populated_bodleian_only():
                                         "bodleian": {"populated": True}}})
     assert not record_has_image({"images": {"fjp": [], "ktiv": None,
                                             "bodleian": {"populated": False}}})
+
+
+def test_ktiv_zip_paths_searches_local_then_nas_and_local_wins(tmp_path):
+    """After the zip mover runs, zips live in <nas>/<bucket>/; the merge must see both places, local first."""
+    local = tmp_path / "ktiv"; nas = tmp_path / "nas"
+    (local).mkdir(); (nas / "9900").mkdir(parents=True)
+    (local / "ktiv_PNX_MANUSCRIPTS990000000000001-1_images.zip").write_bytes(b"local")
+    (nas / "9900" / "ktiv_PNX_MANUSCRIPTS990000000000002-1_images.zip").write_bytes(b"nas")
+    (nas / "9900" / "ktiv_PNX_MANUSCRIPTS990000000000001-1_images.zip").write_bytes(b"nas-copy")   # same basename as the local one
+    patterns = [str(local / "*.zip"), str(local / "*" / "*.zip"), str(nas / "*.zip"), str(nas / "*" / "*.zip")]
+    paths = ktiv_zip_paths(patterns)
+    assert [os.path.basename(p) for p in paths] == ["ktiv_PNX_MANUSCRIPTS990000000000001-1_images.zip", "ktiv_PNX_MANUSCRIPTS990000000000002-1_images.zip"]
+    assert paths[0].startswith(str(local))                                   # local copy wins over the NAS copy
+    index = index_ktiv_zips(str(nas / "*" / "*.zip"))
+    assert set(index) == {"990000000000001", "990000000000002"}
+
+
+def test_ktiv_zip_paths_refuses_a_missing_search_directory(monkeypatch, tmp_path):
+    """An unmounted NAS must stop the merge instead of silently producing an imageless corpus."""
+    import pathlib
+    import pytest
+    from src.datasets.merging import merge_shelfmarks as ms
+    from src.datasets.tools import ktiv_zip_mover
+    present = tmp_path / "local"
+    present.mkdir()
+    (present / "ktiv_PNX_MANUSCRIPTS990000000000000001-1_images.zip").write_bytes(b"")
+    missing = tmp_path / "nas"
+    monkeypatch.setattr(ktiv_zip_mover, "zip_search_dirs", lambda env_value=None: [pathlib.Path(present), pathlib.Path(missing)])
+    monkeypatch.delenv("KTIV_ALLOW_MISSING_ZIP_DIRS", raising=False)
+    with pytest.raises(FileNotFoundError, match="nas"):
+        ms.ktiv_zip_paths()
+    monkeypatch.setenv("KTIV_ALLOW_MISSING_ZIP_DIRS", "1")
+    assert [os.path.basename(p) for p in ms.ktiv_zip_paths()] == ["ktiv_PNX_MANUSCRIPTS990000000000000001-1_images.zip"]

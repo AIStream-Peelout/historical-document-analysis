@@ -15,7 +15,9 @@ from src.embeddings.qwen_text_embedding import (
 from src.datasets.indexing.elastic_index_genizah import (
     ElasticsearchGenizahProcessor,
     es_config_from_env,
+    pick_document_canary,
 )
+from src.embeddings.text_representation import DEFAULT_TEXT_VERSION, check_text_version
 
 dotenv.load_dotenv()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s', force=True)
@@ -177,6 +179,7 @@ def index_bibliography_to_elasticsearch(
         embedding_mode: Literal["text_only", "image_only", "hybrid"] = "text_only",
         image_dir: Optional[str] = None,
         embeddings_model: Optional[QwenTextEmbedding] = None,
+        text_version: str = DEFAULT_TEXT_VERSION,
 ) -> None:
     """Index academic literature structured pages using Qwen text embeddings.
 
@@ -198,6 +201,11 @@ def index_bibliography_to_elasticsearch(
     :param embeddings_model: Optional pre-initialized embedding model to reuse
                              across calls (avoids reloading the model per book).
     :type embeddings_model: Optional[QwenTextEmbedding]
+    :param text_version: Embedding text version (``src.embeddings.text_representation``). ``semantic_v3`` embeds
+                         each page without its ``Source PDF:`` line and keeps ``Shelf marks mentioned:``; the stored
+                         ``full_text_content`` stays the full page text. An existing index is only added to when
+                         its ``_meta`` has the same model, revision and text version.
+    :type text_version: str
     :return: None
     :rtype: None
 
@@ -218,21 +226,13 @@ def index_bibliography_to_elasticsearch(
             f"embedding_mode={embedding_mode!r} is no longer supported: "
             "embeddings are text-only (Qwen3-Embedding-0.6B)."
         )
+    check_text_version(text_version)
 
     if embeddings_model is None:
         logger.info(f"Initializing embeddings model for bibliography indexing with mode: {embedding_mode}...")
         embeddings_model = QwenTextEmbedding()
 
     elastic_config: Dict[str, Any] = es_config_from_env()
-
-    logger.info("Initializing Elasticsearch processor for bibliography index...")
-    processor = ElasticsearchGenizahProcessor(
-        embedding_model=embeddings_model,
-        elasticsearch_config=elastic_config,
-        index_name=index_name,
-        embedding_dims=EMBEDDING_DIMS,
-        index_meta=build_index_meta(embeddings_model),
-    )
 
     # Load book metadata
     logger.info(f"Loading book metadata from {metadata_file}...")
@@ -312,6 +312,19 @@ def index_bibliography_to_elasticsearch(
         if embedding_mode == "image_only" and images_missing_count > 0:
             logger.warning \
                 (f"Warning: {images_missing_count} documents missing images in image_only mode. These will use text-only embeddings as fallback.")
+
+    # Built after parsing so the _meta document canary is a real page of this book. The processor
+    # refuses an existing index whose _meta has another model, revision or text version.
+    logger.info("Initializing Elasticsearch processor for bibliography index...")
+    processor = ElasticsearchGenizahProcessor(
+        embedding_model=embeddings_model,
+        elasticsearch_config=elastic_config,
+        index_name=index_name,
+        embedding_dims=EMBEDDING_DIMS,
+        index_meta=build_index_meta(
+            embeddings_model, text_version, pick_document_canary(documents, text_version)),
+        text_version=text_version,
+    )
 
     # Resume support: skip pages that a previous (possibly interrupted) run
     # already indexed — ids are stable, so re-runs only embed what's missing.
