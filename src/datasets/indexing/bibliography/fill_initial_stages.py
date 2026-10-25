@@ -73,11 +73,16 @@ _HEBREW_WORD = re.compile(r"[א-ת]{2,}")
 _FINAL_FORMS = set("ךםןףץ")
 # Matched case-insensitively against the first line of a fallback's error message
 # (a provider refusal appends the whole response body after the first line).
+# "event loop is closed": a pooled connection from an earlier event loop in
+# pydantic-ai's process-wide cached httpx client; the failed request drops it,
+# so a retry opens a fresh connection.
 _TRANSIENT = re.compile(
     r"\b(429|500|502|503|504)\b|resource_exhausted|unavailable|deadline_exceeded|timed out|timeout|"
-    r"overloaded|not reachable|connection|disconnected|nodename nor servname|name or service not known",
+    r"overloaded|not reachable|connection|disconnected|nodename nor servname|name or service not known|"
+    r"event loop is closed",
     re.IGNORECASE,
 )
+RETRY_BASE_WAIT_S = 15  # transient-failure backoff: 15 s, 45 s, 135 s, ...
 
 
 @dataclass
@@ -353,6 +358,15 @@ def run_ocr(plan: BookPlan, credentials: Optional[str]) -> None:
         service.process_pdf_to_file(str(plan.pdf), output_path=str(plan.book_dir))
 
 
+def _error_first_line(result: Dict[str, Any]) -> str:
+    """Return the first line of a page result's error message ('' when there is none).
+
+    :param result: Page result from ``StructuredJSONLLM``.
+    :returns: First line of ``metadata.error_message``.
+    """
+    return str(result.get("metadata", {}).get("error_message", "")).split("\n", 1)[0]
+
+
 def _is_transient(result: Dict[str, Any]) -> bool:
     """Return True when a fallback page looks like a retryable API/transport error.
 
@@ -362,9 +376,8 @@ def _is_transient(result: Dict[str, Any]) -> bool:
     :param result: Page result from ``StructuredJSONLLM``.
     :returns: Whether a retry is worthwhile.
     """
-    meta = result.get("metadata", {})
-    first_line = str(meta.get("error_message", "")).split("\n", 1)[0]
-    return bool(meta.get("validation_failed")) and bool(_TRANSIENT.search(first_line))
+    validation_failed = bool(result.get("metadata", {}).get("validation_failed"))
+    return validation_failed and bool(_TRANSIENT.search(_error_first_line(result)))
 
 
 async def _process_one(llm: Any, page: int, text: str, image: Path, pdf_name: str, out_dir: Path,
@@ -392,14 +405,15 @@ async def _process_one(llm: Any, page: int, text: str, image: Path, pdf_name: st
                 result = await llm.process_page_text_only(text, page, pdf_name)
             if not _is_transient(result) or attempt == retries:
                 break
-            wait = 15 * (3 ** attempt)
-            logger.warning(f"{pdf_name} p{page}: transient failure, retry {attempt + 1}/{retries} in {wait}s")
+            wait = RETRY_BASE_WAIT_S * (3 ** attempt)
+            logger.warning(f"{pdf_name} p{page}: transient failure ({_error_first_line(result)[:120]}), "
+                           f"retry {attempt + 1}/{retries} in {wait}s")
             await asyncio.sleep(wait)
     failed = bool(result.get("metadata", {}).get("validation_failed"))
     result["full_main_text"] = text  # step 2.5
     (out_dir / f"page_{page:03d}_structured.json").write_text(
         json.dumps(result, indent=2, ensure_ascii=False), encoding="utf-8")
-    logger.info(f"{pdf_name} p{page}: {'FAILED' if failed else 'ok'}")
+    logger.info(f"{pdf_name} p{page}: {'FAILED' if failed else 'ok'}" + (f" (retries: {attempt})" if attempt else ""))
     return not failed
 
 
@@ -498,13 +512,15 @@ def _rel(path: Optional[Path], root: Path) -> Optional[str]:
     return path.relative_to(root).as_posix() if path.is_relative_to(root) else str(path)
 
 
-def process_book(pdf: Path, root: Path, args: argparse.Namespace, variant_name: str) -> int:
+def process_book(pdf: Path, root: Path, args: argparse.Namespace, variant_name: str,
+                 runner: asyncio.Runner) -> int:
     """Plan and run OCR, Pass 1 and step 2.5 for one PDF.
 
     :param pdf: Source PDF.
     :param root: Corpus root.
     :param args: Parsed CLI arguments.
     :param variant_name: Structured directory name template for a fresh book.
+    :param runner: Event loop shared by every book in the batch (see :func:`main`).
     :returns: Number of problems (failed pages, OCR errors, skips); -1 when the disk floor stops the run.
     """
     plan = plan_book(pdf, root, args.ocr_mode, args.metadata, variant_name, args.new_variant)
@@ -544,7 +560,7 @@ def process_book(pdf: Path, root: Path, args: argparse.Namespace, variant_name: 
         metadata = load_metadata(plan.metadata_path) if usable_meta else None
         llm = build_llm(args.backend, args.lms_model, args.gemini_model, metadata)
         t0 = time.time()
-        ok, bad = asyncio.run(run_pass1(plan, llm, args.concurrency, args.retries))
+        ok, bad = runner.run(run_pass1(plan, llm, args.concurrency, args.retries))
         problems += bad
         print(f"  pass1: {ok} ok, {bad} failed in {time.time() - t0:.0f}s -> {_rel(plan.variant_dir, root)}")
     ocr_pages = load_ocr_pages(plan.book_dir)
@@ -602,11 +618,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     variant_name = default_variant_name(args.backend, args.lms_model, args.gemini_model)
     problems = 0
-    for pdf in pdfs:
-        result = process_book(pdf, root, args, variant_name)
-        if result < 0:
-            return 2
-        problems += result
+    # One event loop for the whole batch: pydantic-ai keeps one httpx client per
+    # provider for the life of the process, and its pooled connections die with the
+    # loop that opened them, so a fresh asyncio.run() per book failed each later
+    # book's first pages with "Event loop is closed".
+    with asyncio.Runner() as runner:
+        for pdf in pdfs:
+            result = process_book(pdf, root, args, variant_name, runner)
+            if result < 0:
+                return 2
+            problems += result
     return 1 if problems else 0
 
 
