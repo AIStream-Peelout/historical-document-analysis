@@ -1,0 +1,22 @@
+# File name: Dockerfile.k711
+# Date: 10/19/26
+# Author: Isaac Godfried. Coded originally by Claude Opus 5.5.
+#
+# kraken 7.1.1 CPU image for the Arabic recogniser fine-tune (finetune_arabic.sh): ketos compile / test /
+# train plus gate_lines.py.  PP-OCRv6 base models need kraken >= 7.1, so the 7.0.3 :8002 service image
+# cannot be used.  The PP-OCRv6 trainer calls torch.compile, which needs a working C++ compiler (g++);
+# finetune_arabic.sh sets TORCH_COMPILE_DISABLE=1 unless COMPILE=1.  A tool image, not a service: no port,
+# and finetune_arabic.sh runs every stage with --rm.
+#
+# Build (repo root; the context is this directory):
+#   docker build -f src/finetuning/kraken/Dockerfile.k711 -t kraken-train:k711 src/finetuning/kraken
+FROM python:3.12-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git g++ libgeos-dev libgl1 libglib2.0-0 \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+RUN pip install --no-cache-dir --extra-index-url https://download.pytorch.org/whl/cpu "kraken==7.1.1" pyarrow pillow
+# A baked-in copy for standalone use; finetune_arabic.sh runs the repo copy mounted read-only at /work.
+COPY gate_lines.py /app/gate_lines.py
+# glibc heap: fewer arenas and mmap/trim thresholds so freed buffers go back to the OS (as in the k7 service image)
+ENV MALLOC_ARENA_MAX=2 MALLOC_MMAP_THRESHOLD_=131072 MALLOC_TRIM_THRESHOLD_=131072 PYTHONUNBUFFERED=1
+CMD ["ketos", "--help"]
