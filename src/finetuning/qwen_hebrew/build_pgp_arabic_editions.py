@@ -63,7 +63,7 @@ from src.datasets.evaluations.benchmark_registry import registered_benchmark_doc
 from src.datasets.evaluations.helper_eval_scripts import build_arabic_benchmark as bab
 from src.finetuning.qwen_hebrew import build_documentary_grounding as bdg
 from src.finetuning.qwen_hebrew.build_pgp_editions import save_dataset
-from src.finetuning.qwen_hebrew.prompts import FRAGMENT_TRANSCRIBE_PROMPT
+from src.finetuning.qwen_hebrew.prompts import ARABIC_FRAGMENT_PROMPT, FRAGMENT_TRANSCRIBE_PROMPT, HEBREW_SCRIPT_CLAUSE
 
 DEFAULT_OUT = bab.NAS_DATASETS / "pgp_arabic_editions_v1"
 GAP = "[...]"
@@ -74,8 +74,7 @@ SAME_TEXT_F1 = 0.5              # two editions with this much letter 5-gram over
 TASK = "fragment_transcribe"
 SECTION = "pgp_arabic_page"
 LABEL_SOURCE = "pgp_edition"
-_HEBREW_SCRIPT_CLAUSE = "handwritten Hebrew script (the language may be Hebrew, Judeo-Arabic, or Aramaic)"
-ARABIC_FRAGMENT_PROMPT = FRAGMENT_TRANSCRIBE_PROMPT.replace(_HEBREW_SCRIPT_CLAUSE, "handwritten Arabic script")
+_HEBREW_SCRIPT_CLAUSE = HEBREW_SCRIPT_CLAUSE       # the prompts now live in ``prompts``; the names stay for older callers
 assert ARABIC_FRAGMENT_PROMPT != FRAGMENT_TRANSCRIBE_PROMPT, "the fragment prompt no longer names its script the way this builder expects"
 
 
