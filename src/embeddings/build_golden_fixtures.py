@@ -25,13 +25,23 @@ document-model change can change which records a rebuild samples, never the expe
 ``tests/test_semantic_v4.py`` recomputes every row with the live functions. Records whose text names an excluded
 source (:data:`EXCLUDED_TEXT_RE`) are never sampled: the fixtures live in a public repo.
 
-Run (about 5 minutes for the whole file; ``--limit`` for a smoke run that must not overwrite the fixtures)::
+For the same reason no edition text is stored. :func:`mask_edition_text` replaces every letter of the
+``Transcription:`` and ``Translation:`` values with a letter of the same script and case, chosen from the record id
+and the position. Length, spacing, punctuation, brackets and the editor credits the text functions strip stay as
+they are. The rows are computed from the masked text, so they still pin the text functions on the real record shapes.
+The mask depends only on the position, so it is idempotent: ``tests/test_build_golden_fixtures.py`` checks that
+masking a committed fixture's text leaves it unchanged.
+
+Run (about 5 minutes for the whole file; ``--limit`` for a smoke run that must not overwrite the fixtures;
+``--mask-existing`` re-masks the committed fixtures in place without reading the merged file)::
 
     .venv/bin/python -m src.embeddings.build_golden_fixtures
     .venv/bin/python -m src.embeddings.build_golden_fixtures --limit 2000 --out-dir /tmp/golden_smoke
+    .venv/bin/python -m src.embeddings.build_golden_fixtures --mask-existing
 """
 
 import argparse
+import hashlib
 import json
 import random
 import re
@@ -43,8 +53,10 @@ from src.datasets.indexing.index_merged_genizah import DEFAULT_MERGED, iter_merg
 from src.embeddings.semantic_text import (
     ALT_PREFIX,
     DESC_PREFIX,
+    EDITOR_RE,
     MASK,
     MAX_ALT_CHARS,
+    PGP_EDITOR_RE,
     V4_DROP_PREFIXES,
     fold_field_lines,
     merge_title_parts,
@@ -84,6 +96,15 @@ STRATA: Tuple[Tuple[str, int], ...] = (
 )
 # Never sampled: a record whose production text names one of these sources (the fixtures are published).
 EXCLUDED_TEXT_RE = re.compile(r"friedberg|fjms|fjp|fgp|genizah\.org", re.IGNORECASE)
+#: Field labels whose value is edition text (a transcription, or a translation of one): :func:`mask_edition_text`.
+EDITION_FIELD_PREFIXES: Tuple[str, ...] = ("Transcription:", "Translation:")
+# Letter classes and the letters that replace them: same script and case, so the text functions see the same shape.
+_MASK_ALPHABETS: Tuple[Tuple["re.Pattern[str]", str], ...] = (
+    (re.compile(r"[א-ת]"), "אבגדהוזחטיכלמנסעפצקרשת"),
+    (re.compile(r"[ء-غف-يٱ-ۓ]"), "ابتثجحخدذرزسشصضطظعغفقكلمنهوي"),
+    (re.compile(r"[a-z]"), "abcdefghijklmnopqrstuvwxyz"),
+    (re.compile(r"[A-Z]"), "ABCDEFGHIJKLMNOPQRSTUVWXYZ"),
+)
 # Line breaks that str.splitlines() (and some editors) honour but json.dumps(ensure_ascii=False) leaves raw inside a
 # string; written as JSON escapes so that one row is always one physical line.
 _RAW_LINE_BREAK_ESCAPES = {0x85: "\\u0085", 0x2028: "\\u2028", 0x2029: "\\u2029"}
@@ -104,6 +125,50 @@ class ScannedRecord(NamedTuple):
     strata: FrozenSet[str]
     v3_reason: str
     v4_reason: str
+
+
+def _mask_letter(ch: str, doc_id: str, pos: int) -> str:
+    """The letter that replaces ``ch`` at a position of a record's text (non-letters are returned unchanged).
+
+    :param ch: One character.
+    :param doc_id: Record id (part of the seed, so records do not share a pattern).
+    :param pos: Character offset in the record's text.
+    :returns: A letter of the same script and case as ``ch``, or ``ch`` itself.
+    :rtype: str
+    """
+    for pattern, alphabet in _MASK_ALPHABETS:
+        if pattern.fullmatch(ch):
+            digest = hashlib.blake2b(f"{doc_id}:{pos}".encode("utf-8"), digest_size=4).digest()
+            return alphabet[int.from_bytes(digest, "big") % len(alphabet)]
+    return ch
+
+
+def mask_edition_text(v8_text: str, doc_id: str) -> str:
+    """Replace the letters of a text's edition fields (:data:`EDITION_FIELD_PREFIXES`), keeping their shape.
+
+    Only the value of a line that starts with an edition label is changed; the label, every non-letter character and
+    the editor credits the text functions strip (``EDITOR_RE``, ``PGP_EDITOR_RE``) are kept. The replacement depends
+    on the record id and the position only, so masking a masked text returns it unchanged.
+
+    :param v8_text: Production text of one record.
+    :param doc_id: The record's id.
+    :returns: The text with its transcription and translation letters replaced.
+    :rtype: str
+    """
+    out: List[str] = []
+    offset = 0
+    for line in v8_text.split("\n"):
+        prefix = next((p for p in EDITION_FIELD_PREFIXES if line.startswith(p)), None)
+        if prefix is not None:
+            kept = [m.span() for rx in (EDITOR_RE, PGP_EDITOR_RE) for m in rx.finditer(line)]
+            chars = list(line)
+            for i in range(len(prefix), len(line)):
+                if not any(start <= i < end for start, end in kept):
+                    chars[i] = _mask_letter(line[i], doc_id, offset + i)
+            line = "".join(chars)
+        out.append(line)
+        offset += len(line) + 1
+    return "\n".join(out)
 
 
 def field_value(text: str, prefix: str) -> Optional[str]:
@@ -295,8 +360,39 @@ def summary(records: Sequence[ScannedRecord], drawn: Dict[int, str], excluded: C
     }
 
 
+def mask_existing(out_dir: Path) -> Dict[str, int]:
+    """Mask the edition text of fixtures already written (:func:`mask_edition_text`) and recompute their rows.
+
+    The v4 fixture supplies each row's id, stratum and text; the v3 fixture must hold the same records in the same
+    order. Both files are rewritten.
+
+    :param out_dir: Directory holding both fixtures.
+    :returns: ``{"rows", "masked", "v4_reason_changed", "v3_reason_changed"}`` counts.
+    :rtype: Dict[str, int]
+    :raises ValueError: When the two fixtures do not list the same records in the same order.
+    """
+    with open(out_dir / V4_FIXTURE_NAME, encoding="utf-8") as fh:
+        old_v4 = [json.loads(line) for line in fh if line.strip()]
+    with open(out_dir / V3_FIXTURE_NAME, encoding="utf-8") as fh:
+        old_v3 = [json.loads(line) for line in fh if line.strip()]
+    if [r["doc_id"] for r in old_v4] != [r["doc_id"] for r in old_v3]:
+        raise ValueError("the v3 and v4 fixtures do not hold the same records in the same order")
+    counts = Counter(rows=len(old_v4))
+    rows = []
+    for v4, v3 in zip(old_v4, old_v3):
+        masked = mask_edition_text(v4["v8_text"], v4["doc_id"])
+        counts["masked"] += masked != v4["v8_text"]
+        new_v4, new_v3 = fixture_rows(masked, v4["doc_id"], v4["stratum"])
+        counts["v4_reason_changed"] += new_v4["reason"] != v4["reason"]
+        counts["v3_reason_changed"] += new_v3["reason"] != v3["reason"]
+        rows.append((new_v4, new_v3))
+    write_jsonl(out_dir / V4_FIXTURE_NAME, (v4 for v4, _ in rows))
+    write_jsonl(out_dir / V3_FIXTURE_NAME, (v3 for _, v3 in rows))
+    return dict(counts)
+
+
 def main(argv: Optional[Sequence[str]] = None) -> None:
-    """Scan the merged file, sample, and write both fixtures.
+    """Scan the merged file, sample, and write both fixtures (or re-mask the existing ones).
 
     :param argv: Command-line arguments (``None``: ``sys.argv``).
     """
@@ -306,13 +402,19 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     parser.add_argument("--total", type=int, default=DEFAULT_TOTAL, help="sample size (strata first)")
     parser.add_argument("--limit", type=int, default=None, help="scan only the first N records (smoke runs)")
+    parser.add_argument("--mask-existing", action="store_true",
+                        help="mask the edition text of the fixtures in --out-dir and recompute them; no merged file")
     args = parser.parse_args(argv)
+    if args.mask_existing:
+        print(json.dumps(mask_existing(args.out_dir), indent=1))
+        return
     if args.limit is not None and args.out_dir.resolve() == DEFAULT_OUT_DIR.resolve():
         parser.error("--limit samples a prefix of the file: pass --out-dir so the committed fixtures are kept")
     excluded: Counter = Counter()
     records = scan_records(iter_merged_documents(args.merged, limit=args.limit), excluded)
     drawn = draw_sample(records, args.seed, args.total)
-    rows = [fixture_rows(records[i].v8_text, records[i].doc_id, stratum) for i, stratum in drawn.items()]
+    rows = [fixture_rows(mask_edition_text(records[i].v8_text, records[i].doc_id), records[i].doc_id, stratum)
+            for i, stratum in drawn.items()]
     write_jsonl(args.out_dir / V4_FIXTURE_NAME, (v4 for v4, _ in rows))
     write_jsonl(args.out_dir / V3_FIXTURE_NAME, (v3 for _, v3 in rows))
     print(json.dumps(summary(records, drawn, excluded), indent=1, ensure_ascii=False))
