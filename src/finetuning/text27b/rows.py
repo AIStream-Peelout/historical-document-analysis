@@ -503,7 +503,8 @@ def check_render(rendered: str, messages: Sequence[Dict[str, Any]], add_generati
 
 
 def render_chat(messages: Sequence[Dict[str, Any]], enable_thinking: bool = False, add_generation_prompt: bool = False,
-                template_path: Optional[Union[str, Path]] = None, check: bool = True) -> str:
+                template_path: Optional[Union[str, Path]] = None, check: bool = True,
+                reasoning_effort: Optional[str] = None) -> str:
     """Render messages with the local chat template.
 
     :param messages: Chat turns (``role`` / ``content``).
@@ -511,12 +512,15 @@ def render_chat(messages: Sequence[Dict[str, Any]], enable_thinking: bool = Fals
     :param add_generation_prompt: Append the assistant header (for prompts without a target).
     :param template_path: Explicit ``chat_template.jinja``; defaults to ``paths.chat_template``.
     :param check: Run :func:`check_render` (only meaningful with ``enable_thinking=False``).
+    :param reasoning_effort: Template variable for thinking renders (``low`` / ``medium`` / ``xhigh``; None leaves the
+        template default). Only passed when given, so training renders are unchanged.
     :returns: The rendered string.
     :raises RenderError: When ``check`` is on and the contract is broken.
     """
     template = load_chat_template(template_path)
+    extra = {"reasoning_effort": reasoning_effort} if reasoning_effort is not None else {}
     rendered = template.render(messages=list(messages), enable_thinking=enable_thinking,
-                               add_generation_prompt=add_generation_prompt, tools=None)
+                               add_generation_prompt=add_generation_prompt, tools=None, **extra)
     if check and not enable_thinking:
         check_render(rendered, messages, add_generation_prompt)
     return rendered

@@ -18,8 +18,10 @@ Sets
       every ``test_indist`` translate document of the L5 file (own split, decision D14).
     * **E2-read** -- every ``read`` row of the vision-benchmark hold-outs (``heldout_vision``, plus
       ``heldout`` rows carrying ``held_out_vision_benchmark`` -- the PGP-131 documents; plan B10).
-    * **E3 dev-monitor** -- all dev translate rows (PGP + L5) + 40 catalogue + 20 relations, exposed
-      reads removed; materialised as ``dev/dev_monitor.jsonl`` (the harness ``DEV_FILE``).
+    * **E3 dev-monitor** -- all dev translate rows (PGP + L5) + 40 catalogue + 20 relations, and (prep pass 2026-10-26)
+      every dev analysis and rag row, 60 dev canon_diff rows, up to 60 domain_reading probe chunks and the pd_editions
+      dev rows; exposed reads and rows sharing a document / group / manuscript / page with the t27b epoch removed;
+      materialised as ``dev/dev_monitor.jsonl`` (the harness ``DEV_FILE``).
     * **E4 PGP-131** -- the 131 benchmark ids with their pgpids and keys from ``holdouts.json``.
     * **E5 excluded treatments** -- book treatment spans with a ≥300-character human analysis
       target whose document is held out / test / dev (dev = monitor only), with the non-train
@@ -27,6 +29,9 @@ Sets
     * **E6 RAG** -- test documents with leak-safe discussion pages (``rag_test_docs.json``).
     * **E7 noise bands** -- vision-benchmark hold-out documents (as E2-read), best unexposed read per
       document with coverage 0.6–1.5 and CER ≤ 0.9, binned by CER (0–.15 / .15–.3 / .3–.45 / .45–.6 / .6–.9).
+    * **E9 thinking on / off** (prep pass 2026-10-26) -- 20 E5 analysis + 20 E6 RAG + 20 E8 canon_diff + 20 C1 catalogue
+      items with their prompts rendered thinking off / low / medium (files under ``out_dir/e9/``, README with the run
+      recipe; nothing is run by the build).
     * **E8 canon** (2026-10-26) -- every ``heldout`` row of the canon-comparison families (``canon_identify``,
       ``canon_diff``: KTIV manuscripts held out by benchmark sys_num, H or GT overlap), per family with work and
       hold-out-reason counts, plus a seeded work-stratified sample of chunks shared by both families; scored by the
@@ -145,7 +150,8 @@ class RowRef:
 
     ``doc`` is the document identity (the pgpid, else the row's ``doc_id`` / ``doc_key``); ``origin`` the
     family file the row came from; ``split_file`` the file's split when ``split`` was overridden by a
-    ``split_conflict`` exclusion (None otherwise).
+    ``split_conflict`` exclusion (None otherwise); ``group`` the shelfmark group (joins), ``sys_num`` the KTIV manuscript
+    of a canon row, ``page_keys`` the literature pages the row draws on (the train-overlap check of the dev monitor).
     """
 
     row_id: str
@@ -164,6 +170,9 @@ class RowRef:
     tokens: Optional[int] = None
     origin: str = ""
     split_file: Optional[str] = None
+    group: str = ""
+    sys_num: str = ""
+    page_keys: Tuple[str, ...] = ()
 
 
 def sha256_file(path: Path) -> str:
@@ -275,7 +284,23 @@ def ref_from_row(row: Mapping[str, Any], family: Optional[str] = None, origin: s
                   held_out_vision=bool(m.get("held_out_vision_benchmark")), side=m.get("side"),
                   doc=pid or str(m.get("doc_id") or m.get("doc_key") or ""),
                   tokens=int(tokens) if isinstance(tokens, (int, float)) else None, origin=origin,
-                  split_file=split if split_override and split_override != split else None)
+                  split_file=split if split_override and split_override != split else None,
+                  group=str(m.get("shelfmark_group") or ""), sys_num=str(m.get("sys_num") or ""),
+                  page_keys=tuple(sorted(row_page_keys(m))))
+
+
+def row_page_keys(meta: Mapping[str, Any]) -> Set[str]:
+    """Literature page keys a row draws on (``page_keys``, ``provenance.page_keys``, ``lit_sources``).
+
+    :param meta: Row meta.
+    :returns: Page keys.
+    """
+    keys = {str(k) for k in meta.get("page_keys") or []}
+    prov = meta.get("provenance")
+    if isinstance(prov, dict):
+        keys |= {str(k) for k in prov.get("page_keys") or []}
+    keys |= {str(x["page_key"]) for x in meta.get("lit_sources") or [] if isinstance(x, dict) and x.get("page_key")}
+    return keys
 
 
 def doc_hash(doc: str) -> str:
@@ -606,16 +631,107 @@ def build_e2_read(refs: Mapping[str, Sequence[RowRef]]) -> Dict[str, Any]:
 
 
 # ========================================================================================== E3
-E3_DEF = ("Dev monitor for checkpoint choice only: all dev translate_en / translate_he rows (PGP and the L5 new-book "
-          "dev documents) + a seeded 40 catalogue_json and 20 extract_relations dev rows; real-read rows tagged "
-          "reader_exposed=True removed; rows longer than the harness max_seq and rows whose split was overridden "
-          "are skipped (counted). Materialised as dev/dev_monitor.jsonl (the harness DEV_FILE).")
+E3_DEF = ("Dev monitor for checkpoint choice only, one block per mixture family: all dev translate_en / translate_he "
+          "rows (PGP and the L5 new-book dev documents) + a seeded 40 catalogue_json and 20 extract_relations dev rows "
+          "(the original monitor); every dev analyse_document row (L2 + L5 analysis), every dev rag_context row (dev "
+          "documents with their own leak-safe discussion pages that no train row uses), a seeded 60 of the dev "
+          "canon_diff rows, up to 60 domain_reading in-run probe chunks (split probe, never trained; relabelled "
+          "split dev in the monitor file with meta.split_source = probe) and every pd_editions dev row (prep pass "
+          "2026-10-26). Real-read rows tagged reader_exposed=True removed; rows longer than the harness max_seq, rows "
+          "whose split was overridden and rows sharing a document, shelfmark group, KTIV manuscript or literature "
+          "page with any train row of the t27b epoch are skipped (counted). Materialised as dev/dev_monitor.jsonl "
+          "(the harness DEV_FILE).")
+#: New dev-monitor blocks (prep pass 2026-10-26): block → (row split, sample size or None = all).
+E3_MONITOR: Dict[str, Tuple[str, Optional[int]]] = {"analyse_document": ("dev", None), "rag_context": ("dev", None),
+                                                    "canon_diff": ("dev", 60), "domain_reading": ("probe", 60),
+                                                    "pd_editions": ("dev", None)}
+#: Family file of each new monitor block (``analyse_document`` also reads the L5 file).
+E3_MONITOR_FILES: Dict[str, Tuple[str, ...]] = {"analyse_document": (ANALYSE_V2, "analyse_document", BOOK_PAIRS),
+                                                "rag_context": ("rag_context",), "canon_diff": ("canon_diff",),
+                                                "domain_reading": ("domain_reading",), "pd_editions": ("pd_editions",)}
+#: The epoch the dev monitor must not overlap (document, group, manuscript, page).
+E3_TRAIN_MIXTURE = "mixtures/t27b_epoch1.jsonl"
+
+
+def load_monitor_refs(families_dir: Path, overrides: Optional[Mapping[str, str]] = None
+                      ) -> Dict[str, List[RowRef]]:
+    """Row references of the new dev-monitor blocks (:data:`E3_MONITOR`), each from its own file(s).
+
+    :param families_dir: ``out_dir/families``.
+    :param overrides: :func:`split_overrides` output.
+    :returns: ``{block: [RowRef]}`` for the files found (``analyse_document`` from the L2 file -- the v0_1-carried
+        file only when there is no L2 file -- plus the L5 analysis rows).
+    """
+    out: Dict[str, List[RowRef]] = {}
+    for block, stems in E3_MONITOR_FILES.items():
+        refs: List[RowRef] = []
+        seen: Set[str] = set()
+        for stem in stems:
+            if stem == "analyse_document" and (Path(families_dir) / f"{ANALYSE_V2}.jsonl").exists():
+                continue
+            f = Path(families_dir) / f"{stem}.jsonl"
+            if not f.exists():
+                continue
+            fam = "analyse_document" if block == "analyse_document" else None
+            for fam_name, rs in load_refs_file(f, overrides).items():
+                if block == "analyse_document" and fam_name != fam:
+                    continue
+                for r in rs:
+                    if r.row_id not in seen:
+                        seen.add(r.row_id)
+                        refs.append(r)
+        if refs:
+            out[block] = refs
+    return out
+
+
+def train_identities(mixture: Path) -> Dict[str, Set[str]]:
+    """Identities of the train rows of an epoch: documents (pgpid / doc_id), shelfmark groups, KTIV manuscripts, pages.
+
+    :param mixture: Materialised epoch (``mixtures/t27b_epoch1.jsonl``).
+    :returns: ``{"docs", "groups", "sys_nums", "pages"}``.
+    """
+    ids: Dict[str, Set[str]] = {"docs": set(), "groups": set(), "sys_nums": set(), "pages": set()}
+    for r in _rows.read_jsonl(mixture):
+        m = r.get("meta") or {}
+        for k in ("pgpid", "doc_id"):
+            if m.get(k) not in (None, ""):
+                ids["docs"].add(str(m[k]))
+        if m.get("shelfmark_group") not in (None, ""):
+            ids["groups"].add(str(m["shelfmark_group"]))
+        if m.get("sys_num") not in (None, ""):
+            ids["sys_nums"].add(str(m["sys_num"]))
+        ids["pages"] |= row_page_keys(m)
+    return ids
+
+
+def train_overlap(ref: RowRef, ids: Optional[Mapping[str, Set[str]]]) -> Optional[str]:
+    """Why a monitor row overlaps the train epoch (``document`` / ``group`` / ``manuscript`` / ``page``), or None.
+
+    :param ref: Row reference.
+    :param ids: :func:`train_identities` output (None = no check).
+    :returns: Reason or None.
+    """
+    if not ids:
+        return None
+    if ref.doc and ref.doc in ids["docs"]:
+        return "document"
+    if ref.group and ref.group in ids["groups"]:
+        return "group"
+    if ref.sys_num and ref.sys_num in ids["sys_nums"]:
+        return "manuscript"
+    if ref.page_keys and set(ref.page_keys) & ids["pages"]:
+        return "page"
+    return None
 
 
 def build_e3(refs: Mapping[str, Sequence[RowRef]], seed: int = SEED,
              samples: Mapping[str, int] = E3_SAMPLES,
              new_book_refs: Optional[Mapping[str, Sequence[RowRef]]] = None,
-             max_tokens: Optional[int] = MAX_SEQ) -> Dict[str, Any]:
+             max_tokens: Optional[int] = MAX_SEQ,
+             monitor_refs: Optional[Mapping[str, Sequence[RowRef]]] = None,
+             monitor: Mapping[str, Tuple[str, Optional[int]]] = E3_MONITOR,
+             train_ids: Optional[Mapping[str, Set[str]]] = None) -> Dict[str, Any]:
     """E3 dev-monitor.
 
     :param refs: Family row references.
@@ -624,31 +740,42 @@ def build_e3(refs: Mapping[str, Sequence[RowRef]], seed: int = SEED,
     :param new_book_refs: L5 row references (:func:`load_new_book_refs`); their dev translate rows join the
         translate lists.
     :param max_tokens: Longest rendered row (``meta.tokens``) kept; None = no limit.
-    :returns: The set dict (``row_ids`` per family, counts per family and origin, exposure bookkeeping).
+    :param monitor_refs: References of the new monitor blocks (:func:`load_monitor_refs`; prep pass 2026-10-26).
+    :param monitor: Block → (split taken, sample size or None = all).
+    :param train_ids: :func:`train_identities` of the train epoch; rows overlapping it are skipped (None = no check).
+    :returns: The set dict (``row_ids`` per block, counts per block and origin, exposure / overlap bookkeeping).
     """
     items: Dict[str, List[str]] = {}
-    removed, unknown, too_long, overridden = Counter(), Counter(), Counter(), Counter()
+    removed, unknown, too_long, overridden, overlap = Counter(), Counter(), Counter(), Counter(), Counter()
     origins: Dict[str, Counter] = defaultdict(Counter)
 
-    def usable(r: RowRef) -> bool:
-        """Dev row that is not an exposed real read, fits the harness and keeps its own split.
+    def usable(r: RowRef, split: str = "dev", block: Optional[str] = None) -> bool:
+        """Monitor row that is not an exposed real read, fits the harness, keeps its own split and shares nothing
+        with the train epoch.
 
         :param r: Row reference.
+        :param split: The split the block takes.
+        :param block: Block name for the counters (default the row's family).
         :returns: True when usable.
         """
-        if r.split != "dev":
+        name = block or r.family
+        if r.split != split:
             return False
         if r.split_file is not None:
-            overridden[r.family] += 1
+            overridden[name] += 1
             return False
         if r.condition in REAL_READ_CONDITIONS:
             if r.reader_exposed:
-                removed[r.family] += 1
+                removed[name] += 1
                 return False
             if r.reader_exposed is None:
-                unknown[r.family] += 1
+                unknown[name] += 1
         if max_tokens is not None and r.tokens is not None and r.tokens > max_tokens:
-            too_long[r.family] += 1
+            too_long[name] += 1
+            return False
+        why = train_overlap(r, train_ids)
+        if why:
+            overlap[f"{name}:{why}"] += 1
             return False
         return True
 
@@ -661,11 +788,20 @@ def build_e3(refs: Mapping[str, Sequence[RowRef]], seed: int = SEED,
         sel = sorted(pool, key=lambda r: seeded_rank(seed, fam, r.row_id))[:k]
         items[fam] = [r.row_id for r in sel]
         origins[fam].update(r.origin or fam for r in sel)
+    for block, (split, k) in monitor.items():
+        pool = [r for r in (monitor_refs or {}).get(block) or [] if usable(r, split, block)]
+        sel = sorted(pool, key=lambda r: seeded_rank(seed, block, r.row_id))
+        sel = sel[:k] if k is not None else sorted(sel, key=lambda r: r.row_id)
+        if sel:
+            items[block] = [r.row_id for r in sel]
+            origins[block].update(r.origin or block for r in sel)
     counts = {f: len(v) for f, v in items.items()}
     return {"status": "ready" if not sum(unknown.values()) else "provisional", "definition": E3_DEF, "seed": seed,
             "counts": counts, "rows": sum(counts.values()), "origins": {f: dict(c) for f, c in origins.items()},
             "max_tokens": max_tokens, "exposed_removed": dict(removed), "exposure_unknown_read_rows": dict(unknown),
-            "over_max_tokens": dict(too_long), "split_overridden": dict(overridden), "row_ids": items}
+            "over_max_tokens": dict(too_long), "split_overridden": dict(overridden),
+            "train_overlap_removed": dict(overlap), "train_overlap_checked": train_ids is not None,
+            "monitor_blocks": {b: {"split": sp, "sample": k} for b, (sp, k) in monitor.items()}, "row_ids": items}
 
 
 # ========================================================================================== E4
@@ -969,6 +1105,232 @@ def build_e8(families_dir: Path, seed: int = SEED, sample: int = E8_SAMPLE) -> D
             "scorer_version": _scorer.CANON_SCORER_VERSION, "prompt_version": canon_prompt_version()}
 
 
+# ========================================================================================== E9
+E9_DEF = ("Thinking on / off probe (prep pass 2026-10-26; frozen, for after the run, nothing run now): 20 E5 held-out "
+          "analysis items, 20 E6 literature-in-context items (test documents with their leak-safe pages), 20 E8 "
+          "held-out canon_diff items and 20 C1 catalogue probe items. Each item's prompt is stored as messages and "
+          "rendered with the model's chat template three ways: thinking off (enable_thinking=False, the training "
+          "render), thinking on with reasoning_effort low, and with reasoning_effort medium. Compare the modes per "
+          "source with the scorer of that source; strip the think block before scoring.")
+#: Items per E9 source.
+E9_SIZES: Dict[str, int] = {"E5_analysis": 20, "E6_rag": 20, "E8_canon_diff": 20, "C1_catalogue": 20}
+#: Render modes: name → (enable_thinking, reasoning_effort).
+E9_MODES: Dict[str, Tuple[bool, Optional[str]]] = {"off": (False, None), "low": (True, "low"), "medium": (True, "medium")}
+#: Folder of the E9 files under ``out_dir`` (local: the items quote held-out rows).
+E9_DIR = "e9"
+#: Scorer entry per E9 source (named in the README and the manifest).
+E9_SCORERS: Dict[str, str] = {
+    "E5_analysis": "chrF++ against the editor's commentary + the judge-based invented-specifics count (E5 bar)",
+    "E6_rag": "score_v2 of the base family (describe / catalogue fields / translate chrF++) with vs without context",
+    "E8_canon_diff": "scorer.canon_diff_metrics (typed variant P / R / F1, agreement and lacuna errors)",
+    "C1_catalogue": "score_v2 catalogue field accuracy (type, date ±2y, people / places recall, JSON validity)"}
+
+
+def _pick_spread(rows: Sequence[Dict[str, Any]], n: int, seed: int, salt: str, key: str = "work") -> List[Dict[str, Any]]:
+    """Seeded pick of ``n`` rows, one per document first, spread round-robin over ``meta[key]``.
+
+    :param rows: Candidate rows.
+    :param n: Rows wanted.
+    :param seed: Seed.
+    :param salt: Source name.
+    :param key: Meta field to spread over (rows without it form one group).
+    :returns: Picked rows.
+    """
+    def doc_of(r: Mapping[str, Any]) -> str:
+        """Document identity of a row.
+
+        :param r: Row.
+        :returns: pgpid / doc id / sys_num / row id.
+        """
+        m = r["meta"]
+        return str(m.get("pgpid") or m.get("doc_id") or m.get("sys_num") or m.get("row_id"))
+
+    groups: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    for r in sorted(rows, key=lambda r: seeded_rank(seed, "E9", salt, r["meta"]["row_id"])):
+        groups[str(r["meta"].get(key) or "")].append(r)
+    picked: List[Dict[str, Any]] = []
+    docs: Set[str] = set()
+    for allow_same_doc in (False, True):
+        queues = {g: list(v) for g, v in sorted(groups.items())}
+        while len(picked) < n and any(queues.values()):
+            for g in sorted(queues):
+                q = queues[g]
+                while q and len(picked) < n:
+                    r = q.pop(0)
+                    if r in picked or (not allow_same_doc and doc_of(r) in docs):
+                        continue
+                    picked.append(r)
+                    docs.add(doc_of(r))
+                    break
+    return picked[:n]
+
+
+def build_e9(sets: Mapping[str, Any], families_dir: Path, e6_rows: Optional[Path], seed: int = SEED,
+             sizes: Mapping[str, int] = E9_SIZES) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
+    """Select the E9 items from the built E1 / E5 / E6 / E8 sets.
+
+    * E5_analysis -- the non-dev ``analyse_document`` rows attached to E5 (edition condition first), one per document;
+    * E6_rag -- rows of ``rag_e6_rows.jsonl`` (rag_l3), spread over families, one per document;
+    * E8_canon_diff -- ``canon_diff`` rows of the E8 quick sample, spread over works, one per manuscript;
+    * C1_catalogue -- ``catalogue_json`` edition rows of the C1 probe documents.
+
+    :param sets: ``eval_v1.json`` sets (E1, E5, E8 built).
+    :param families_dir: ``out_dir/families``.
+    :param e6_rows: ``out_dir/rag_e6_rows.jsonl`` (None / missing: no E6 items).
+    :param seed: Seed.
+    :param sizes: Items per source.
+    :returns: ``(set dict, item records with messages and reference)``.
+    """
+    fam_dir = Path(families_dir)
+    pools: Dict[str, List[Dict[str, Any]]] = {}
+    e5 = sets.get("E5_excluded_treatments") or {}
+    e5_ids = {rid for a in e5.get("analysis_rows") or [] if a.get("split") != "dev" for rid in a.get("row_ids") or []}
+    rows5 = []
+    for stem in (ANALYSE_V2, BOOK_PAIRS):
+        f = fam_dir / f"{stem}.jsonl"
+        if f.exists():
+            rows5 += [r for r in _rows.read_jsonl(f) if r["meta"].get("row_id") in e5_ids
+                      and r["meta"].get("family") == "analyse_document"]
+    rows5.sort(key=lambda r: (r["meta"].get("condition") != "edition", r["meta"]["row_id"]))
+    pools["E5_analysis"] = rows5
+    pools["E6_rag"] = list(_rows.read_jsonl(e6_rows)) if e6_rows and Path(e6_rows).exists() else []
+    e8_ids = set(((sets.get("E8_canon") or {}).get("sample") or {}).get("row_ids", {}).get("canon_diff") or [])
+    f8 = fam_dir / "canon_diff.jsonl"
+    pools["E8_canon_diff"] = [r for r in _rows.read_jsonl(f8) if r["meta"].get("row_id") in e8_ids] if f8.exists() else []
+    c1 = (((sets.get("E1_probe_clean") or {}).get("items") or {}).get("C1_catalogue") or {}).get("pgpids") or []
+    fc = fam_dir / "catalogue_json.jsonl"
+    pools["C1_catalogue"] = ([r for r in _rows.read_jsonl(fc) if str(r["meta"].get("pgpid")) in set(map(str, c1))
+                              and r["meta"].get("condition") == "edition"] if fc.exists() else [])
+    spread_key = {"E5_analysis": "source", "E6_rag": "task", "E8_canon_diff": "work", "C1_catalogue": "lang_class"}
+    items: List[Dict[str, Any]] = []
+    counts: Dict[str, Any] = {}
+    for src, n in sizes.items():
+        pool = pools.get(src) or []
+        if src == "E5_analysis":
+            first: Dict[str, Dict[str, Any]] = {}
+            for r in pool:
+                first.setdefault(str(r["meta"].get("pgpid") or r["meta"].get("doc_id")), r)
+            pool = list(first.values())
+        picked = _pick_spread(pool, n, seed, src, spread_key[src])
+        counts[src] = {"pool": len(pool), "picked": len(picked),
+                       "by_split": dict(Counter(str(r["meta"].get("split")) for r in picked)),
+                       "by_family": dict(Counter(str(r["meta"].get("task") or r["meta"].get("family")) for r in picked))}
+        for i, r in enumerate(picked):
+            m = r["meta"]
+            doc = str(m.get("pgpid") or m.get("doc_id") or m.get("sys_num") or "")
+            items.append({"item_id": f"E9-{src}-{i + 1:02d}", "source": src, "row_id": m["row_id"],
+                          "family": m.get("family"), "task": m.get("task"), "condition": m.get("condition"),
+                          "split": m.get("split"), "doc": doc_hash(doc) if doc else None, "work": m.get("work"),
+                          "messages": [x for x in r["messages"] if x.get("role") in ("system", "user")],
+                          "reference": next(x["content"] for x in r["messages"] if x.get("role") == "assistant")})
+    e9 = {"status": "ready" if all(c["picked"] == sizes[s] for s, c in counts.items()) else "short",
+          "definition": E9_DEF, "seed": seed, "sizes": dict(sizes), "counts": counts,
+          "modes": {k: {"enable_thinking": v[0], "reasoning_effort": v[1]} for k, v in E9_MODES.items()},
+          "scorers": dict(E9_SCORERS), "items": [{k: it[k] for k in ("item_id", "source", "row_id", "split", "doc")}
+                                                  for it in items]}
+    return e9, items
+
+
+def e9_readme(e9: Mapping[str, Any], files: Mapping[str, Any]) -> str:
+    """README of the E9 folder: what the set is and how to run it (nothing is run by the build).
+
+    :param e9: The E9 set dict.
+    :param files: ``{name: file_sig}`` of the written files.
+    :returns: Markdown.
+    """
+    rows = "\n".join(f"| {s} | {c['picked']} | {c['pool']} | {E9_SCORERS[s]} |" for s, c in e9["counts"].items())
+    flist = "\n".join(f"| `{n}` | {f.get('rows', '–')} | `{str(f.get('sha256'))[:16]}` |" for n, f in files.items())
+    return f"""# E9 — thinking on / off probe (frozen {e9.get('built_at', '')})
+
+{E9_DEF}
+
+| source | items | pool | score with |
+|---|---:|---:|---|
+{rows}
+
+## Files
+
+| file | rows | sha256 (first 16) |
+|---|---:|---|
+{flist}
+
+* `items.jsonl` — one record per item: `item_id`, `source`, `row_id` (family-file row), `split`, `doc` (hash id),
+  `messages` (system + user, exactly as the model sees them) and `reference` (the human / deterministic target).
+* `prompts_off.jsonl`, `prompts_low.jsonl`, `prompts_medium.jsonl` — the same prompts rendered by the model's chat
+  template with `add_generation_prompt=True`: `off` = `enable_thinking=False` (an empty think block is pre-filled,
+  as in training); `low` / `medium` = `enable_thinking=True` with `reasoning_effort` low / medium (the template opens
+  a think block and, for `low`, adds its effort sentence to the system turn). Each record: `item_id`, `mode`,
+  `enable_thinking`, `reasoning_effort`, `prompt`, `prompt_tokens`.
+
+## How to run it (after training; not run by the build)
+
+Serve the merged checkpoint (or the stock model, for the baseline) with its own chat template behind an
+OpenAI-compatible endpoint, then for every item and every mode:
+
+1. **Chat route (preferred).** Send `messages` from `items.jsonl` with
+   * off: `chat_template_kwargs = {{"enable_thinking": false}}`;
+   * low: `chat_template_kwargs = {{"enable_thinking": true, "reasoning_effort": "low"}}`;
+   * medium: `chat_template_kwargs = {{"enable_thinking": true, "reasoning_effort": "medium"}}`
+   (servers that expose a native `reasoning_effort` request field take `low` / `medium` there, and thinking off is
+   the template switch above). Check once per server that the request renders byte-identically to the matching
+   `prompts_<mode>.jsonl` record (a server that ignores the template switch silently runs another mode).
+2. **Raw-completion route.** Send `prompt` from `prompts_<mode>.jsonl` verbatim to a completion endpoint (no template
+   applied by the server); stop on `<|im_end|>`.
+
+Decoding: temperature 0 (greedy), the same seed for every mode; max new tokens 2,048 (off) / 8,192 (low) / 16,384
+(medium). Record per output: the thinking text (between `<think>` and `</think>`), its token count, the answer after
+`</think>`, wall-clock, and whether the answer is empty, looped or cut off. Score only the answer, with the scorer
+named in the table; report per source and mode, and the paired difference low − off and medium − off with a
+document-level bootstrap CI (`scorer` helpers). Run the three modes sequentially, never alongside other evaluations.
+"""
+
+
+def materialise_e9(manifest: Dict[str, Any], p: _paths.Paths, families_dir: Optional[Path] = None,
+                   out: Optional[Path] = None, seed: int = SEED) -> Dict[str, Any]:
+    """Build E9 from a built manifest and write its files (items, three prompt renders, README) under ``out_dir/e9``.
+
+    :param manifest: Output of :func:`build_manifest` (E1 / E5 / E8 built; E6 rows from rag_l3).
+    :param p: Build paths.
+    :param families_dir: Family files (default ``out_dir/families``).
+    :param out: Output folder (default ``out_dir/e9``).
+    :param seed: Seed.
+    :returns: The E9 set (also stored in ``manifest["sets"]["E9_thinking"]``); ``pending`` when the chat template or
+        tokenizer is missing (nothing to render with).
+    """
+    from src.finetuning.text27b import rag_l3 as _rag  # noqa: WPS433 (file name constant only)
+    if not Path(p.chat_template).exists() or not Path(p.tokenizer_json).exists():
+        e9 = _pending(E9_DEF, [str(Path(p.chat_template).name), str(Path(p.tokenizer_json).name)])
+        manifest["sets"]["E9_thinking"] = e9
+        manifest["status"]["E9_thinking"] = e9["status"]
+        return e9
+    fam = Path(families_dir or p.out("families"))
+    e9, items = build_e9(manifest["sets"], fam, p.out(_rag.E6_ROWS_FILE), seed)
+    folder = Path(out or p.out(E9_DIR))
+    folder.mkdir(parents=True, exist_ok=True)
+    files: Dict[str, Any] = {}
+    _rows.write_jsonl(folder / "items.jsonl", items)
+    files["items.jsonl"] = {**file_sig(folder / "items.jsonl", p.repo), "rows": len(items)}
+    for mode, (think, effort) in E9_MODES.items():
+        recs = []
+        for it in items:
+            prompt = _rows.render_chat(it["messages"], enable_thinking=think, add_generation_prompt=True,
+                                       check=not think, reasoning_effort=effort)
+            recs.append({"item_id": it["item_id"], "mode": mode, "enable_thinking": think, "reasoning_effort": effort,
+                         "prompt": prompt, "prompt_tokens": _rows.count_tokens(prompt)})
+        name = f"prompts_{mode}.jsonl"
+        _rows.write_jsonl(folder / name, recs)
+        files[name] = {**file_sig(folder / name, p.repo), "rows": len(recs),
+                       "max_prompt_tokens": max((r["prompt_tokens"] for r in recs), default=0)}
+    e9["built_at"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    (folder / "README.md").write_text(e9_readme(e9, files), encoding="utf-8")
+    files["README.md"] = file_sig(folder / "README.md", p.repo)
+    e9["files"] = files
+    e9["chat_template"] = file_sig(Path(p.chat_template), p.repo)
+    manifest["sets"]["E9_thinking"] = e9
+    manifest["status"]["E9_thinking"] = e9["status"]
+    return e9
+
+
 # ========================================================================================== E7
 E7_DEF = ("Noise bands: vision-benchmark hold-out documents (split heldout_vision, plus split heldout with "
           "held_out_vision_benchmark: plan §9.1 'test ∩ held-out-vision ∩ reader-unexposed') with an edition row in "
@@ -1236,12 +1598,14 @@ def build_manifest(p: Optional[_paths.Paths] = None, families_dir: Optional[Path
 
     # family-based sets
     new_book: Dict[str, List[RowRef]] = {}
+    overrides_map: Dict[str, str] = {}
     if dry_run_v01:
         refs = load_v01_refs(p.text_ft_v0_1)
         fam_sources = _sigs([p.text_ft_v0_1 / "dev.jsonl", p.text_ft_v0_1 / "test.jsonl"], repo)
     else:
         excluded_rows = p.out("excluded_rows.json")
         overrides = split_overrides(excluded_rows)
+        overrides_map = overrides
         refs = load_family_refs(families_dir, overrides=overrides)
         new_book = load_new_book_refs(families_dir, overrides)
         extra = ([families_dir / f"{BOOK_PAIRS}.jsonl"] if new_book else []) + ([excluded_rows] if overrides else [])
@@ -1265,7 +1629,12 @@ def build_manifest(p: Optional[_paths.Paths] = None, families_dir: Optional[Path
         elif name == "E2_read":
             sets[name] = build_e2_read(refs)
         elif name == "E3_dev_monitor":
-            sets[name] = build_e3(refs, seed=seed, new_book_refs=new_book)
+            mix = p.out(E3_TRAIN_MIXTURE)
+            monitor_refs = {} if dry_run_v01 else load_monitor_refs(families_dir, overrides_map)
+            sets[name] = build_e3(refs, seed=seed, new_book_refs=new_book, monitor_refs=monitor_refs,
+                                  train_ids=train_identities(mix) if (mix.exists() and not dry_run_v01) else None)
+            if mix.exists() and not dry_run_v01:
+                sets[name]["train_mixture"] = file_sig(mix, repo)
         else:
             exposure = None if dry_run_v01 else load_exposure(exposure_path)
             pool = {r.pgpid for f in E7_FAMILIES for r in refs.get(f) or [] if is_vision_holdout(r)}
@@ -1371,15 +1740,32 @@ def select_rows(files: Sequence[Path], row_ids: Sequence[str]) -> List[Dict[str,
 
 
 def dev_monitor_rows(e3: Mapping[str, Any], families_dir: Path) -> List[Dict[str, Any]]:
-    """The E3 rows, translate families first, each family in E3 order.
+    """The E3 rows, translate families first, each block in E3 order.
 
-    :param e3: The built E3 set (``row_ids`` per family).
+    In-run probe rows of ``domain_reading`` (``split = probe``, never trained) are copied with ``meta.split = dev`` and
+    ``meta.split_source = probe`` so the monitor file keeps one split (the harness G2 contract); the family file is
+    not changed.
+
+    :param e3: The built E3 set (``row_ids`` per block).
     :param families_dir: ``out_dir/families`` (the family files and the L5 file).
     :returns: Full rows.
     """
-    fams = [f for f in E3_TRANSLATE if f in e3["row_ids"]] + [f for f in e3["row_ids"] if f not in E3_TRANSLATE]
-    files = [family_file(families_dir, f) for f in fams] + [Path(families_dir) / f"{BOOK_PAIRS}.jsonl"]
-    return select_rows(files, [rid for f in fams for rid in e3["row_ids"][f]])
+    blocks = [f for f in E3_TRANSLATE if f in e3["row_ids"]] + [f for f in e3["row_ids"] if f not in E3_TRANSLATE]
+    files: List[Path] = []
+    for b in blocks:
+        cand = ([Path(families_dir) / f"{stem}.jsonl" for stem in E3_MONITOR_FILES[b]] if b in E3_MONITOR_FILES
+                else [family_file(families_dir, b)])
+        files += [f for f in cand if f not in files]
+    bp = Path(families_dir) / f"{BOOK_PAIRS}.jsonl"
+    if bp not in files:
+        files.append(bp)
+    rows = select_rows(files, [rid for b in blocks for rid in e3["row_ids"][b]])
+    out = []
+    for r in rows:
+        if (r.get("meta") or {}).get("split") == "probe":
+            r = {**r, "meta": {**r["meta"], "split": "dev", "split_source": "probe"}}
+        out.append(r)
+    return out
 
 
 def dev_monitor_problems(rows: Sequence[Mapping[str, Any]], max_tokens: Optional[int] = MAX_SEQ) -> List[str]:
@@ -1387,7 +1773,8 @@ def dev_monitor_problems(rows: Sequence[Mapping[str, Any]], max_tokens: Optional
 
     :param rows: Dev-monitor rows.
     :param max_tokens: Longest rendered row (``meta.tokens``); None = unchecked.
-    :returns: One line per problem (empty = clean): split dev, build, family, condition, roles, row id present and
+    :returns: One line per problem (empty = clean): split dev (``split_source = probe`` only on domain_reading probe
+        chunks), build, family, condition, roles, row id present and
         unique, no vision-benchmark flag, a ``reader_exposed`` tag on every row (a bool on real reads), no exposed
         read, known token length within ``max_tokens``, NFC message contents, no project-name string anywhere in the row.
     """
@@ -1402,6 +1789,9 @@ def dev_monitor_problems(rows: Sequence[Mapping[str, Any]], max_tokens: Optional
             problems.append(f"{tag}: roles {roles}")
         if m.get("split") != "dev":
             problems.append(f"{tag}: split {m.get('split')!r}")
+        if m.get("split_source") not in (None, "probe") or (m.get("split_source") == "probe"
+                                                             and m.get("family") != "domain_reading"):
+            problems.append(f"{tag}: split_source {m.get('split_source')!r} on family {m.get('family')!r}")
         if m.get("build") != _rows.BUILD:
             problems.append(f"{tag}: build {m.get('build')!r}")
         if m.get("family") not in _rows.FAMILIES:
@@ -1853,12 +2243,17 @@ def summary_lines(manifest: Mapping[str, Any]) -> List[str]:
             out.append(f"{name}: {s['rows']} rows {s['counts']}; origins {s.get('origins')}; exposed removed "
                        f"{s['exposed_removed']}; exposure unknown {s['exposure_unknown_read_rows']}; over max tokens "
                        f"{s.get('over_max_tokens')}; split overridden {s.get('split_overridden')}")
+            if s.get("train_overlap_removed") is not None:
+                out.append(f"  train-overlap removed {s['train_overlap_removed']} (checked: {s.get('train_overlap_checked')})")
             if s.get("materialised"):
                 out.append(f"  materialised {s['materialised']['path']} ({s['materialised']['rows']} rows)")
         elif name == "E8_canon":
             out.append(f"{name}: rows {s['counts']['rows']}, manuscripts {s['counts']['manuscripts']}, sample "
                        f"{s['counts']['sample_chunks']} chunks {s['sample']['by_work']}, train overlap "
                        f"{s['train_manuscripts_overlap']}")
+        elif name == "E9_thinking":
+            out.append(f"{name} [{s['status']}]: " + ", ".join(f"{k} {v['picked']}/{v['pool']}" for k, v in s["counts"].items())
+                       + f"; files {sorted(s.get('files', {}))}")
         elif name == "E7_noise_bands":
             out.append(f"{name} [{s['status']}]: " + "; ".join(f"{f} {list(v['bands'].values())} (plan {list(v['plan_estimate'].values())})"
                                                               for f, v in s["families"].items()))
@@ -1908,6 +2303,7 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                    help="draw E2/E2-read/E3/E7 from the v0_1 build (writes eval_v1_dryrun_v01.json)")
     b.add_argument("--e2-no-top-up", action="store_true", help="E2 from test_indist only")
     b.add_argument("--no-dev-monitor", action="store_true", help="do not write dev/dev_monitor.jsonl")
+    b.add_argument("--no-e9", action="store_true", help="do not build the E9 thinking on/off set (out_dir/e9/)")
     h = sub.add_parser("hub")
     h.add_argument("--eval", type=Path, default=None, help="eval manifest (default out_dir/eval_v1.json)")
     h.add_argument("--out", type=Path, default=None, help="Hub folder (default out_dir/hub/genizah_text27b)")
@@ -1931,6 +2327,8 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                        () if args.e2_no_top_up else E2_TOP_UP)
     if not args.dry_run_v01 and not args.no_dev_monitor:
         materialise_dev_monitor(m, p, args.families)
+    if not args.dry_run_v01 and not args.no_e9:
+        materialise_e9(m, p, args.families, seed=args.seed)
     out = args.out or p.out("eval_v1_dryrun_v01.json" if args.dry_run_v01 else EVAL_FILE)
     write_manifest(m, out)
     for line in summary_lines(m):

@@ -1078,7 +1078,7 @@ ARM_REQUIRED = «ARM_REQUIRED»
 FAMILIES = «FAMILIES»
 CONDITIONS = «CONDITIONS»
 BUILD = «BUILD»
-DEV_FILE = «DEV_FILE»   # E3 dev monitor: all dev translate + 40 catalogue + 20 relations rows, reader-exposed reads removed
+DEV_FILE = «DEV_FILE»   # E3 dev monitor: a block per mixture family (eval_sets E3), reader-exposed reads and train overlap removed
 TRAIN_FILE, MANIFEST_FILE = f"{ARM}/train.jsonl", f"{ARM}/mixture_manifest.json"
 «FUNCS»
 # never train on an unpinned or unverified mixture: derive_t27.py writes both pins after the push

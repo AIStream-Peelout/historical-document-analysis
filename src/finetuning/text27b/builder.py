@@ -70,6 +70,7 @@ from src.finetuning.text27b import builder_v0 as bv
 from src.finetuning.text27b import paths as _paths
 from src.finetuning.text27b import rows as _rows
 from src.finetuning.text27b import shelfmarks as _sm
+from src.finetuning.text27b import target_hygiene as _th
 from src.finetuning.text27b import textnorm as tn
 
 LOG = logging.getLogger(__name__)
@@ -79,6 +80,8 @@ F1_BAND: Dict[str, Tuple[float, float]] = {"en": (0.5, 2.5), "he": (0.5, 2.0)}
 #: Families whose targets get the B4 citation strip (catalogue_json via its summary).
 B4_FAMILIES: Tuple[str, ...] = ("describe_pgp", "catalogue_json", "analyse_document")
 ANALYSIS_MIN_CHARS = 200
+#: Prep pass 2026-10-26: an analysis target shorter than this after the evidence strip is dropped.
+ANALYSIS_EVIDENCE_MIN_CHARS = _th.MIN_CHARS_AFTER
 MAX_ROW_TOKENS = 6144
 EXPOSED_NEAR_DUP_CER = 0.05
 AUDIT_SIZE = 50
@@ -176,6 +179,28 @@ def strip_analysis_extras(text: str) -> Tuple[str, List[str]]:
                 ops.append(f"B4:{name}")
             text = re.sub(r"[ \t]{2,}", " ", new)
     return (_tidy(text), ops) if ops else (text, ops)
+
+
+def analysis_evidence_strip(target: str, min_chars: int = ANALYSIS_EVIDENCE_MIN_CHARS
+                            ) -> Tuple[Optional[str], List[str], Dict[str, Any]]:
+    """Prep-pass strip of an ``analyse_document`` target: sentences resting on evidence the input lacks.
+
+    Applied after :func:`clean_target` and the :data:`ANALYSIS_MIN_CHARS` floor (both unchanged): physical description,
+    cross-references to numbered documents / plates and bibliographic apparatus go
+    (:func:`target_hygiene.strip_unavailable_evidence`); a target left shorter than ``min_chars`` is dropped.
+
+    :param target: Analysis target after the v0_2 strips.
+    :param min_chars: Shortest target kept after this strip.
+    :returns: ``(target or None when dropped, ops, info)``; ``info`` = ``{"removed_by_reason": {...},
+        "chars_before": n, "chars_after": m}`` (counts only -- the removed sentences stay out of ``meta``; the pre-strip
+        text is ``meta.target_raw``).
+    """
+    out, ops, removed = _th.strip_unavailable_evidence(target)
+    info: Dict[str, Any] = {"removed_by_reason": dict(collections.Counter(w for w, _ in removed)),
+                            "chars_before": len(target), "chars_after": len(out)}
+    if len(out) < min_chars:
+        return None, ops, info
+    return out, ops, info
 
 
 def clean_target(text: str, family: str) -> Tuple[str, List[str]]:
@@ -765,6 +790,11 @@ def carry_forward_analysis(b: BuilderV2, v01: Dict[str, Dict[str, Any]], docinfo
         if len(target) < ANALYSIS_MIN_CHARS:
             rep["dropped_short_after_strip"] += 1
             continue
+        target, eops, _ev = analysis_evidence_strip(target)
+        if target is None:
+            rep["dropped_short_after_evidence_strip"] += 1
+            continue
+        ops = ops + eops
         if ops:
             b.strip_records.append({"family": "analyse_document", "pgpid": pgpid, "split": doc["split_v2"], "ops": ops,
                                     "before": src["target"], "after": target})

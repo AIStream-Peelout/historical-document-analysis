@@ -1835,7 +1835,7 @@ class PgpTranslations:
         :param text: Book translation.
         :param lang: ``en`` / ``he``.
         :param k: Number of documents returned.
-        :returns: ``[(pgpid, containment)]``, best first.
+        :returns: ``[(pgpid, containment)]``, best first (ties by pgpid, so the choice is stable across runs).
         """
         g = _grams(independence_tokens(text))
         if not g:
@@ -1845,7 +1845,9 @@ class PgpTranslations:
         for x in g:
             for pid in idx.get(x, ()):
                 c[pid] += 1
-        return [(pid, round(n / len(g), 4)) for pid, n in c.most_common(k)]
+        # ties broken by pgpid (Counter.most_common keeps insertion order, which follows set iteration and so varies
+        # between interpreter runs)
+        return [(pid, round(n / len(g), 4)) for pid, n in sorted(c.items(), key=lambda kv: (-kv[1], str(kv[0])))[:k]]
 
 
 def _ratio(a: str, b: str) -> float:
@@ -2176,6 +2178,10 @@ def analyse_rows(doc: BookDoc, text: Optional[str], raw: Optional[str], origin: 
     ops = list(doc.provenance.get("intro_ops") or []) + ops if origin == "intro" else ops
     if len(target) < ANALYSIS_MIN_CHARS:
         return [], {"drop": "analysis_short_after_strip"}
+    target, eops, evidence = _bd.analysis_evidence_strip(target)
+    if target is None:
+        return [], {"drop": "analysis_short_after_evidence_strip", "evidence_strip": evidence}
+    ops = ops + eops
     ok, missing = words_subset(target, raw or text)
     if not ok:
         return [], {"drop": "target_words_not_in_source", "missing": missing}
@@ -2204,6 +2210,8 @@ def analyse_rows(doc: BookDoc, text: Optional[str], raw: Optional[str], origin: 
     base.update({"target_lang": "en" if re.search(r"[A-Za-z]{3}", target) else "he", "grounding_share": round(share, 3),
                  "grounding_candidates": n_c, "grounding_tier": tier, "analysis_source": origin,
                  "target_raw": (raw if doc.located and raw else text) if ops else None, "strip_ops": ops})
+    if eops:
+        base["evidence_strip"] = evidence
     rows = []
     for cond, inp, script, mx in _input_variants(doc, doc.edition, "analyse_document", split, ctx, None):
         if cond == "edition_rescript":

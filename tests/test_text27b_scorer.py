@@ -503,3 +503,14 @@ def test_score_output_routes_canon_families() -> None:
     assert scored[0]["ref_exact"] and scored[0]["work"] == "Mishnah" and scored[1]["typed"]["f1"] == 1.0
     cells = {c["family"]: c for c in S.aggregate_scored(scored)}
     assert cells["canon_identify"]["ref_exact"] == 1.0 and cells["canon_diff"]["typed"]["f1"] is None
+
+
+def test_canon_type_alias_and_renamed_type() -> None:
+    """Prep pass 2026-10-26: ``orthographic_or_minor`` is the type; a legacy ``orthographic`` label scores as it."""
+    assert "orthographic_or_minor" in S.CANON_VARIANT_TYPES and "orthographic" not in S.CANON_VARIANT_TYPES
+    gold = {"variants": [{"type": "orthographic_or_minor", "fragment": "היא", "canon": "היה", "pos": "1:1"}]}
+    for label in ("orthographic", "Orthographic_or_minor", "orthographic or minor"):
+        pred = {"variants": [{"type": label, "fragment": "היא", "canon": "היה", "pos": "1:1"}]}
+        m = S.canon_diff_metrics(json.dumps(pred, ensure_ascii=False), gold)
+        assert m["typed"]["f1"] == 1.0 and m["by_type"]["orthographic_or_minor"]["tp"] == 1, label
+    assert S.CANON_SCORER_VERSION.startswith("canon_v2")

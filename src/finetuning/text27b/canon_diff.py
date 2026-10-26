@@ -23,7 +23,8 @@ Mishneh Torah, Mishnah); anchor search (rare word trigrams of consonant skeleton
 corpus, preferring the catalogue's tractate when it scores within :data:`PRIOR_MARGIN`; word alignment
 (:class:`difflib.SequenceMatcher` on skeleton keys) inside a padded window; variant typing with the skeleton rule
 (:func:`skeleton`: final forms folded, internal ו/י dropped, word-final א≡ה, abbreviation and acronym expansion,
-word division) -- ``orthographic`` when the consonant skeletons agree, else ``substitution`` / ``omission`` /
+word division) -- ``orthographic_or_minor`` (renamed from ``orthographic`` on 2026-10-26: the skeleton rule is a
+heuristic, not a judgement of insignificance) when the consonant skeletons agree, else ``substitution`` / ``omission`` /
 ``addition`` / ``order``. Canonical words facing a lacuna (``[...]``) or a word with illegible letters (dots) are
 counted as lacuna words, never as variants. A chunk becomes rows only when its similarity (share of the fragment's
 legible words matched in order) reaches the floor (:data:`DEFAULT_FLOOR`, chosen from the 30-page audit).
@@ -46,6 +47,7 @@ CLI::
     python -m src.finetuning.text27b.canon_diff build [--floor 0.5] [--limit-mss N] [--corpus bavli ...]
     python -m src.finetuning.text27b.canon_diff audit [--n 30]
     python -m src.finetuning.text27b.canon_diff pd
+    python -m src.finetuning.text27b.canon_diff expert-set [--n 20]   # audit/canon_expert_set_60.jsonl (labels empty)
 """
 from __future__ import annotations
 
@@ -81,7 +83,14 @@ LOG = logging.getLogger(__name__)
 FAMILY_IDENTIFY = "canon_identify"
 FAMILY_DIFF = "canon_diff"
 FAMILY_PD = "pd_editions"
-VARIANT_TYPES: Tuple[str, ...] = ("omission", "addition", "substitution", "orthographic", "order")
+#: The skeleton-rule variant type (prep pass 2026-10-26: renamed from ``orthographic``). Matching consonant skeletons
+#: (:func:`skeleton`) is a heuristic: plene / defective spelling, final letters, abbreviations and word division
+#: usually, but a pair such as a changed internal vowel letter can still be a real (minor) reading difference --
+#: the label does not claim philological insignificance; ``audit/canon_expert_set_60.jsonl`` is for adjudication.
+ORTHO = "orthographic_or_minor"
+#: Earlier name of :data:`ORTHO` (rows built before 2026-10-26; the scorer maps it).
+ORTHO_LEGACY = "orthographic"
+VARIANT_TYPES: Tuple[str, ...] = ("omission", "addition", "substitution", ORTHO, "order")
 #: Similarity floor (share of the fragment's legible words matched in order); see the audit in the report.
 DEFAULT_FLOOR = 0.5
 #: A chunk shorter than this many legible words is not aligned (too little to locate).
@@ -134,8 +143,9 @@ INSTRUCTION_DIFF = ("Compare this Genizah fragment ({script}) with the canonical
                     "variant readings. Return only a JSON object with the keys canonical_ref, agreement_ratio, "
                     "lacuna_words, variants and summary. Each variant is {{\"type\", \"fragment\", \"canon\", "
                     "\"pos\"}}: type is omission (canonical words missing from the fragment), addition (words only "
-                    "in the fragment), substitution, orthographic (same consonants: plene or defective spelling, "
-                    "final letters, abbreviations, word division) or order (transposed words); pos is line:word of "
+                    "in the fragment), substitution, orthographic_or_minor (the consonant skeletons agree: plene "
+                    "or defective spelling, final letters, abbreviations, word division, or a minor vowel-letter "
+                    "difference) or order (transposed words); pos is line:word of "
                     "the fragment where the variant starts (for an omission, the word before which text is "
                     "missing). The canonical passage may run a little beyond the fragment: compare only the part "
                     "the fragment preserves, and do not count canonical words that fall in its lacunae.")
@@ -1051,7 +1061,7 @@ def _classify_block(ftoks: Sequence[FTok], craw: Sequence[str], f0: int, c0: int
     if not craw:
         return [Variant("addition", _join(fr), "", ftoks[0].pos, (f0, f0 + len(fr)), (c0, c0))]
     if ortho_equal(fr, craw):
-        return [Variant("orthographic", _join(fr), _join(craw), ftoks[0].pos, (f0, f0 + len(fr)), (c0, c0 + len(craw)))]
+        return [Variant(ORTHO, _join(fr), _join(craw), ftoks[0].pos, (f0, f0 + len(fr)), (c0, c0 + len(craw)))]
     fs = sorted(skeleton(t.norm) for t in ftoks)
     cs = sorted(skeleton(norm_word(t)) for t in craw)
     if len(fr) >= 2 and fs == cs:
@@ -1066,7 +1076,7 @@ def _classify_block(ftoks: Sequence[FTok], craw: Sequence[str], f0: int, c0: int
         if step is None:
             break
         a, b = step
-        out_head.append(Variant("orthographic", _join(fr[i:i + a]), _join(craw[j:j + b]), ftoks[i].pos,
+        out_head.append(Variant(ORTHO, _join(fr[i:i + a]), _join(craw[j:j + b]), ftoks[i].pos,
                                 (f0 + i, f0 + i + a), (c0 + j, c0 + j + b)))
         i, j = i + a, j + b
     while fi > i and cj > j:
@@ -1074,7 +1084,7 @@ def _classify_block(ftoks: Sequence[FTok], craw: Sequence[str], f0: int, c0: int
         if step is None:
             break
         a, b = step
-        out_tail.insert(0, Variant("orthographic", _join(fr[fi - a:fi]), _join(craw[cj - b:cj]), ftoks[fi - a].pos,
+        out_tail.insert(0, Variant(ORTHO, _join(fr[fi - a:fi]), _join(craw[cj - b:cj]), ftoks[fi - a].pos,
                                    (f0 + fi - a, f0 + fi), (c0 + cj - b, c0 + cj)))
         fi, cj = fi - a, cj - b
     mid_f, mid_c = ftoks[i:fi], craw[j:cj]
@@ -1092,7 +1102,7 @@ def _classify_block(ftoks: Sequence[FTok], craw: Sequence[str], f0: int, c0: int
                                    (f0 + i + a, f0 + i + b), (c0 + j + a, c0 + j + b)))
                 run = []
             if k < len(mid_f):
-                mid.append(Variant("orthographic", mid_f[k].raw, mid_c[k], mid_f[k].pos,
+                mid.append(Variant(ORTHO, mid_f[k].raw, mid_c[k], mid_f[k].pos,
                                    (f0 + i + k, f0 + i + k + 1), (c0 + j + k, c0 + j + k + 1)))
     elif mid_f and mid_c:
         mid.append(Variant("substitution", _join(t.raw for t in mid_f), _join(mid_c), mid_f[0].pos,
@@ -1303,7 +1313,7 @@ def align_window(toks: Sequence[FTok], index: CanonIndex, lo: int, hi: int) -> O
             ok += j2 - j1
             for k in range(i2 - i1):
                 if toks[i1 + k].norm != norm_word(craw[j1 + k]):
-                    variants.append(Variant("orthographic", toks[i1 + k].raw, craw[j1 + k], toks[i1 + k].pos,
+                    variants.append(Variant(ORTHO, toks[i1 + k].raw, craw[j1 + k], toks[i1 + k].pos,
                                             (i1 + k, i1 + k + 1), (j1 + k, j1 + k + 1)))
             continue
         block = list(toks[i1:i2])
@@ -1313,7 +1323,7 @@ def align_window(toks: Sequence[FTok], index: CanonIndex, lo: int, hi: int) -> O
             continue
         pos_at = toks[i1].pos if i1 < len(toks) else (toks[-1].pos if toks else "1:1")
         vs = _classify_block(block, craw[j1:j2], i1, j1, pos_at)
-        ok += sum(v.c_range[1] - v.c_range[0] for v in vs if v.type == "orthographic")
+        ok += sum(v.c_range[1] - v.c_range[0] for v in vs if v.type == ORTHO)
         variants.extend(vs)
     torn = torn_margin(variants, toks, fa, fb)
     if torn:
@@ -1547,7 +1557,7 @@ def summary_sentence(ref: str, al: Alignment) -> str:
     :returns: Sentence.
     """
     c = al.counts()
-    names = (("orthographic", "orthographic", "orthographic"), ("substitution", "substitution", "substitutions"),
+    names = ((ORTHO, "orthographic-or-minor", "orthographic-or-minor"), ("substitution", "substitution", "substitutions"),
              ("omission", "omission", "omissions"), ("addition", "addition", "additions"),
              ("order", "transposition", "transpositions"))
     parts = [f"{c[k]} {one if c[k] == 1 else many}" for k, one, many in names if c[k]]
@@ -2272,6 +2282,172 @@ def build_pd(p: Optional[_paths.Paths] = None, seed: int = 3407) -> Dict[str, An
 
 
 # ---------------------------------------------------------------------------------------- CLI
+# ---------------------------------------------------------------------------------------- expert set
+#: Strata of the expert adjudication set (prep pass 2026-10-26): name → (variant types, works or None = all works).
+EXPERT_STRATA: Tuple[Tuple[str, Tuple[str, ...], Optional[Tuple[str, ...]]], ...] = (
+    ("talmud_substitution", ("substitution",), ("Talmud Bavli",)),
+    ("orthographic_or_minor", (ORTHO, ORTHO_LEGACY), None),
+    ("omission_addition", ("omission", "addition"), None),
+)
+#: Canonical words shown on each side of a located variant in ``canon_line``.
+EXPERT_CONTEXT_WORDS = 8
+_DOC_BLOCK = re.compile(r"<document>\n(.*?)\n</document>", re.S)
+_CANON_BLOCK = re.compile(r"\n\nCanonical text \(([^)\n]*)\):\n(.*)\Z", re.S)
+
+
+def split_diff_prompt(user: str) -> Tuple[List[str], str, str]:
+    """The fragment lines, canonical reference and canonical passage of a ``canon_diff`` user message.
+
+    :param user: User message (:func:`diff_messages`).
+    :returns: ``(fragment lines, canonical ref, canonical text)`` (empty values when a block is missing).
+    """
+    m = _DOC_BLOCK.search(user)
+    c = _CANON_BLOCK.search(user)
+    return (m.group(1).split("\n") if m else []), (c.group(1) if c else ""), (c.group(2).strip() if c else "")
+
+
+def canon_window(canon_text: str, variant: Mapping[str, Any], fragment_line: str,
+                 width: int = EXPERT_CONTEXT_WORDS) -> Tuple[str, str]:
+    """The canonical words facing a variant, for a reader who compares it by eye.
+
+    The fragment line is first placed in the passage (the window sharing most consonant skeletons with it). A variant
+    with canonical words is then located at the exact occurrence of its word sequence nearest to that place and shown
+    with ``width`` words each side; otherwise (an addition, or canonical words not found verbatim) the placed window
+    itself is shown.
+
+    :param canon_text: Canonical passage of the row.
+    :param variant: ``{"type", "fragment", "canon", "pos"}``.
+    :param fragment_line: The fragment line the variant starts on.
+    :param width: Context words each side.
+    :returns: ``(window text, method)`` with method ``located`` / ``best_overlap`` / ``none``.
+    """
+    words = canon_text.split()
+    if not words:
+        return "", "none"
+    frag = [skeleton(w) for w in fragment_line.split() if skeleton(w)]
+    span = len(frag) + 2 * width
+    best, best_i = -1, 0
+    if frag:
+        sk = [skeleton(w) for w in words]
+        fset = set(frag)
+        for i in range(0, max(1, len(words) - span + 1)):
+            score = sum(1 for x in sk[i:i + span] if x in fset)
+            if score > best:
+                best, best_i = score, i
+    centre = best_i + span // 2
+    target = str(variant.get("canon") or "").split()
+    if target:
+        hits = [i for i in range(len(words) - len(target) + 1) if words[i:i + len(target)] == target]
+        if hits:
+            i = min(hits, key=lambda h: (abs(h - centre), h)) if frag else hits[0]
+            return " ".join(words[max(0, i - width):i + len(target) + width]), "located"
+    if not frag:
+        return "", "none"
+    return " ".join(words[best_i:best_i + span]), "best_overlap"
+
+
+def expert_candidates(rows: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
+    """Every variant of the held-out ``canon_diff`` rows as an adjudication record (labels left empty).
+
+    :param rows: ``canon_diff`` family rows (non-``heldout`` rows are skipped).
+    :returns: Records with the row / manuscript identity, the automatic label, the fragment line and the canonical
+        context; ``expert_label`` / ``expert_note`` are None (to be filled by an expert, never by the pipeline).
+    """
+    out: List[Dict[str, Any]] = []
+    for r in rows:
+        m = r.get("meta") or {}
+        if m.get("family") != FAMILY_DIFF or m.get("split") != "heldout":
+            continue
+        msgs = r.get("messages") or []
+        user = next((x["content"] for x in msgs if x.get("role") == "user"), "")
+        tgt = next((x["content"] for x in msgs if x.get("role") == "assistant"), "")
+        try:
+            apparatus = json.loads(tgt)
+        except json.JSONDecodeError:
+            continue
+        lines, ref, canon_text = split_diff_prompt(user)
+        for k, v in enumerate(apparatus.get("variants") or []):
+            pos = str(v.get("pos") or "")
+            ln = int(pos.split(":")[0]) if pos.split(":")[0].isdigit() else 0
+            frag_line = lines[ln - 1] if 0 < ln <= len(lines) else ""
+            window, how = canon_window(canon_text, v, frag_line)
+            out.append({"item_id": hashlib.sha1(f"{m.get('row_id')}|{k}".encode()).hexdigest()[:16],
+                        "row_id": m.get("row_id"), "variant_index": k, "sys_num": m.get("sys_num"),
+                        "work": m.get("work"), "title": m.get("catalogue_title") or (ref.split(" ")[0] if ref else None),
+                        "canonical_ref": ref or m.get("canonical_ref"), "heldout_reason": m.get("heldout_reason"),
+                        "type_auto": ORTHO if v.get("type") == ORTHO_LEGACY else v.get("type"),
+                        "fragment": v.get("fragment"), "canon": v.get("canon"), "pos": pos,
+                        "fragment_line": frag_line, "canon_line": window, "canon_line_method": how,
+                        "expert_label": None, "expert_significant": None, "expert_note": None})
+    return out
+
+
+def _spread_pick(pool: Sequence[Dict[str, Any]], n: int, seed: int, salt: str) -> List[Dict[str, Any]]:
+    """Seeded pick of ``n`` records spread over works (round robin) and manuscripts (one per manuscript first).
+
+    :param pool: Candidate records.
+    :param n: Records wanted.
+    :param seed: Seed.
+    :param salt: Stratum name (keeps strata independent).
+    :returns: Picked records (fewer when the pool is smaller).
+    """
+    def rank(rec: Mapping[str, Any]) -> str:
+        """Seeded order key.
+
+        :param rec: Record.
+        :returns: Hex digest.
+        """
+        return hashlib.sha1(f"{seed}|{salt}|{rec['item_id']}".encode()).hexdigest()
+
+    by_work: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
+    for rec in sorted(pool, key=rank):
+        by_work[str(rec.get("work"))].append(rec)
+    picked: List[Dict[str, Any]] = []
+    used_ms: Set[Tuple[str, str]] = set()
+    for allow_repeat_ms in (False, True):
+        queues = {w: list(v) for w, v in sorted(by_work.items())}
+        while len(picked) < n and any(queues.values()):
+            for w in sorted(queues):
+                if len(picked) >= n:
+                    break
+                q = queues[w]
+                while q:
+                    rec = q.pop(0)
+                    key = (str(rec.get("sys_num")), str(rec["item_id"]))
+                    if rec in picked or (not allow_repeat_ms and any(m == key[0] for m, _ in used_ms)):
+                        continue
+                    picked.append(rec)
+                    used_ms.add(key)
+                    break
+    return picked[:n]
+
+
+def expert_set(rows: Iterable[Mapping[str, Any]], n_per_stratum: int = 20, seed: int = 3407) -> List[Dict[str, Any]]:
+    """The frozen expert-adjudication set: ``n_per_stratum`` held-out variants per stratum of :data:`EXPERT_STRATA`
+    (Talmud substitutions; orthographic-or-minor pairs over every work; omissions / additions over every work, split
+    evenly between the two types), spread over works and manuscripts, seeded.
+
+    :param rows: ``canon_diff`` family rows.
+    :param n_per_stratum: Variants per stratum.
+    :param seed: Seed.
+    :returns: Records with a ``stratum`` field, labels empty.
+    """
+    cands = expert_candidates(rows)
+    out: List[Dict[str, Any]] = []
+    for name, types, works in EXPERT_STRATA:
+        norm = {ORTHO if t == ORTHO_LEGACY else t for t in types}
+        pool = [c for c in cands if c["type_auto"] in norm and (works is None or c["work"] in works)]
+        if name == "omission_addition":
+            half = n_per_stratum // 2
+            picks = (_spread_pick([c for c in pool if c["type_auto"] == "omission"], half, seed, name + ":om")
+                     + _spread_pick([c for c in pool if c["type_auto"] == "addition"], n_per_stratum - half, seed,
+                                    name + ":add"))
+        else:
+            picks = _spread_pick(pool, n_per_stratum, seed, name)
+        out.extend({**c, "stratum": name} for c in picks)
+    return out
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """Command-line entry point.
 
@@ -2291,6 +2467,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     a.add_argument("--out", help="output jsonl (default audit/canon_audit_sample_new.jsonl; the hand-checked "
                                  "audit/canon_audit_30.jsonl is never overwritten by default)")
     sub.add_parser("pd", help="assess the public-domain editions and build their pairs")
+    e = sub.add_parser("expert-set", help="write the frozen expert-adjudication set of held-out variants")
+    e.add_argument("--n", type=int, default=20, help="variants per stratum")
+    e.add_argument("--seed", type=int, default=3407)
+    e.add_argument("--out", help="output jsonl (default audit/canon_expert_set_60.jsonl)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
     p = _paths.load_paths()
@@ -2305,6 +2485,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         out = Path(args.out) if args.out else p.out("audit", "canon_audit_sample_new.jsonl")
         R.write_jsonl(out, sample)
         print(f"{len(sample)} audit records -> {out}")
+    elif args.cmd == "expert-set":
+        recs = expert_set(R.read_jsonl(p.out("families", f"{FAMILY_DIFF}.jsonl")), args.n, args.seed)
+        out = Path(args.out) if args.out else p.out("audit", "canon_expert_set_60.jsonl")
+        R.write_jsonl(out, recs)
+        print(json.dumps({"records": len(recs), "by_stratum": dict(collections.Counter(r["stratum"] for r in recs)),
+                          "by_stratum_work": dict(collections.Counter(f"{r['stratum']}|{r['work']}" for r in recs)),
+                          "by_type": dict(collections.Counter(r["type_auto"] for r in recs)),
+                          "manuscripts": len({r["sys_num"] for r in recs}), "out": out.name}, ensure_ascii=False, indent=1))
     else:
         print(json.dumps(build_pd(p), ensure_ascii=False, indent=1)[:6000])
     return 0

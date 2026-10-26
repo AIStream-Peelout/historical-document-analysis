@@ -206,6 +206,27 @@ def test_doc_key_and_cond_class() -> None:
     assert M.cond_class("literature") is None
 
 
+def test_t27b_drops_read_partial_by_default(tmp_path: Path) -> None:
+    """Prep pass 2026-10-26: t27b never draws read_partial rows (condition default or ``meta.mixture_excluded`` tag);
+    the document falls back to its own edition / read / noised rows; read_hard slice rows still swap in."""
+    files = base_t27b_files()
+    files["noise_slice"] = [mk("describe_pgp", 12, "read_partial", read_model="a50", mixture_excluded="read_partial"),
+                            mk("catalogue_json", 14, "read_partial", read_model="a50"),
+                            mk("catalogue_json", 13, "read_hard", read_model="v21b")]
+    assert M.default_config("t27b").exclude_conditions == ("read_partial",)
+    assert M.default_config("t27a").exclude_conditions == ()
+    res = build(tmp_path, "t27b", files)
+    rows, sec = res["rows"], res["section"]
+    assert not any(r["meta"]["condition"] == "read_partial" for r in rows)
+    chosen = {r["meta"]["pgpid"]: r["meta"]["condition"] for r in rows if r["meta"]["family"] in M.ONE_PER_DOC_FAMILIES}
+    assert chosen["13"] == "read_hard" and chosen["12"] in ("edition", "read", "noised_edition")
+    assert sec["load"]["dropped"]["condition_excluded:read_partial"] == 2
+    kept = build(tmp_path / "keep", "t27b", files, exclude_conditions=())
+    assert not any(r["meta"]["pgpid"] == "12" and r["meta"]["condition"] == "read_partial"
+                   for r in kept["rows"])  # the tagged row stays out even without the condition default
+    assert any(r["meta"]["pgpid"] == "14" and r["meta"]["condition"] == "read_partial" for r in kept["rows"])
+
+
 def test_default_config_values_and_validation() -> None:
     """Plan defaults: t27a translate ×2 without slice; t27b weights 0.4/0.4/0.2, relations 0.4; bad input rejected."""
     a = M.default_config("t27a")
@@ -337,7 +358,7 @@ def test_one_row_per_document_across_catalogue_and_describe(tmp_path: Path) -> N
     files = base_t27b_files()
     files["noise_slice"] = [mk("describe_pgp", 12, "read_partial", read_model="a50"),
                             mk("catalogue_json", 13, "read_hard", read_model="v21b")]
-    res = build(tmp_path, "t27b", files)
+    res = build(tmp_path, "t27b", files, exclude_conditions=())  # the policy itself; the prep-pass default drops partials
     rows, sec = res["rows"], res["section"]
     cd = [r for r in rows if r["meta"]["family"] in M.ONE_PER_DOC_FAMILIES]
     per_doc = Counter(r["meta"]["pgpid"] for r in cd)

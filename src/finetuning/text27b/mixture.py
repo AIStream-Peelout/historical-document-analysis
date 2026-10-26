@@ -50,6 +50,8 @@ Swap rule (plan §9.1 "swap, don't add")
     row(s) of the same (document, family): those noised rows leave the pool and the slice row takes their
     place. A slice row whose (document, family) has no noised copy is kept and counted
     (``slice_without_noised``).
+    Prep pass 2026-10-26: t27b never draws ``read_partial`` rows (:data:`T27B_EXCLUDE_CONDITIONS`; they stay in the
+    family file tagged ``meta.mixture_excluded``), so the noised copy of their (document, family) stays in the pool.
 
 One-condition rule (catalogue ∪ describe, relations)
     Per document, the candidate rows are grouped into condition classes ``edition`` (edition,
@@ -172,6 +174,10 @@ TOKENS_PER_STEP = 16_600
 MAX_SEQ = 6144
 #: B2: reader-exposed reads this close to the edition are near-duplicates of the edition row.
 EXPOSED_NEAR_DUP_CER = 0.05
+#: Slice conditions left out of the t27b epoch (prep pass 2026-10-26: partial reads cannot support a whole-document
+#: target; their rows stay in ``families/noise_slice.jsonl`` with ``meta.mixture_excluded``). Rows whose
+#: ``meta.mixture_excluded`` is set are dropped too.
+T27B_EXCLUDE_CONDITIONS: Tuple[str, ...] = ("read_partial",)
 #: Plan §9.1 gate for the noise-slice token share of t27b (informational warning).
 SLICE_SHARE_BAND: Tuple[float, float] = (0.05, 0.08)
 MANIFEST_NAME = "mixture_manifest.json"
@@ -189,7 +195,8 @@ class MixConfig:
     fraction of its rows whose count of documents is drawn (one row each); ``token_caps`` maps a family to
     its token budget per epoch (a seeded subsample of its rows, :func:`apply_token_caps`; ``cap_weights`` maps a
     capped family to per-work sampling weights, ``cap_cover`` lists capped families that keep every (work, title)
-    stratum); ``literature_floor`` (``min_share``, ``l1_tolerance``) is the gate on the literature components
+    stratum); ``exclude_conditions`` lists conditions never drawn (t27b: ``read_partial``, prep pass 2026-10-26; rows
+    tagged ``meta.mixture_excluded`` are never drawn either); ``literature_floor`` (``min_share``, ``l1_tolerance``) is the gate on the literature components
     (:data:`LITERATURE_COMPONENTS`) and the L1 budget (F13; empty = no gate), computed on the epoch minus the
     ``additive_components`` (the canon block, design owner 2026-10-26).
     """
@@ -221,6 +228,7 @@ class MixConfig:
     cap_weights: Dict[str, Dict[str, float]] = field(default_factory=dict)
     cap_cover: Tuple[str, ...] = ()
     additive_components: Tuple[str, ...] = ADDITIVE_COMPONENTS
+    exclude_conditions: Tuple[str, ...] = ()
 
 
 def default_config(name: str, **overrides: Any) -> MixConfig:
@@ -244,7 +252,8 @@ def default_config(name: str, **overrides: Any) -> MixConfig:
                                              "pd_editions": 2, CANON_DIFF_FILE: 1},
                          subsample={"extract_relations": 0.4}, max_copies_per_target=5,
                          token_caps=dict(T27B_TOKEN_CAPS), literature_floor=dict(T27B_LITERATURE_FLOOR),
-                         cap_weights={k: dict(v) for k, v in T27B_CAP_WEIGHTS.items()}, cap_cover=T27B_CAP_COVER)
+                         cap_weights={k: dict(v) for k, v in T27B_CAP_WEIGHTS.items()}, cap_cover=T27B_CAP_COVER,
+                         exclude_conditions=T27B_EXCLUDE_CONDITIONS)
     else:
         raise ValueError(f"unknown mixture {name!r}; expected one of {MIXTURES}")
     for key in ("repeats", "subsample", "class_weights", "token_caps"):
@@ -507,7 +516,8 @@ def load_pool(families_dir: Union[str, Path], cfg: MixConfig,
 
     Dropped (and counted): rows whose split is not ``train`` (dev, test_indist, heldout,
     heldout_vision, probe, missing), rows flagged ``held_out_vision_benchmark``, families outside the
-    mixture, slice rows when ``include_slice`` is off, unrenderable rows, reader-exposed ``read`` rows
+    mixture, slice rows when ``include_slice`` is off, rows of ``cfg.exclude_conditions`` or tagged
+    ``meta.mixture_excluded`` (``condition_excluded:<reason>``), unrenderable rows, reader-exposed ``read`` rows
     with ``input_cer`` below ``exposed_near_dup_cer`` (B2 near-duplicates), rows listed in
     ``exclude_rows`` (D5) and exact duplicates (same row id and same messages). Rows that share a row
     id but differ in content are kept and reported (``row_id_collisions``). A file superseded by a
@@ -560,6 +570,9 @@ def load_pool(families_dir: Union[str, Path], cfg: MixConfig,
                 continue
             if meta.get("condition") in SLICE_CONDITIONS and not cfg.include_slice:
                 stats["dropped"]["slice_not_in_mixture"] += 1
+                continue
+            if meta.get("condition") in cfg.exclude_conditions or meta.get("mixture_excluded"):
+                stats["dropped"][f"condition_excluded:{meta.get('mixture_excluded') or meta.get('condition')}"] += 1
                 continue
             fatal, other = _structural_problems(row, fam)
             for p in other:
@@ -1425,6 +1438,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--literature-floor", nargs="*", default=None,
                     help=f"min_share=x l1_tolerance=y gate on the literature components and the L1 budget (t27b default "
                          f"{T27B_LITERATURE_FLOOR}; fix pass F13); 'none' switches it off (synthetic tests)")
+    ap.add_argument("--exclude-conditions", nargs="*", default=None,
+                    help=f"conditions never drawn (t27b default {list(T27B_EXCLUDE_CONDITIONS)}; 'none' = keep all)")
     ap.add_argument("--without", nargs="*", default=None,
                     help="optional family file stems left out (e.g. book_pairs analyse_document_v2 while their agents run)")
     ap.add_argument("-v", "--verbose", action="store_true")
@@ -1467,6 +1482,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                                      "token_caps": _parse_kv(args.token_caps, int)}
         if args.max_copies_per_target is not None:
             overrides["max_copies_per_target"] = args.max_copies_per_target
+        if args.exclude_conditions is not None:
+            overrides["exclude_conditions"] = () if args.exclude_conditions in ([], ["none"]) else \
+                tuple(args.exclude_conditions)
         if args.literature_floor is not None:
             overrides["literature_floor"] = {} if args.literature_floor in ([], ["none"]) else \
                 _parse_kv(args.literature_floor, float)
