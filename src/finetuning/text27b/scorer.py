@@ -22,6 +22,12 @@ Ported from the 2026-10-18 probe scorer (``score_probe.py``) with the v2 changes
   "in neither" (:func:`specifics_split`). No judge calls are made.
 * Relations: micro precision / recall / F1 over (subject, predicate, object) with name and place
   normalisation (:func:`relations_prf`).
+* Canon comparison (E8, :data:`CANON_SCORER_VERSION`; deterministic, no judge): ``canon_identify`` -- exact reference
+  (normalised string), same work / title, same section (same title and overlapping daf-amud / chapter ranges), anchor
+  word F1 and the over-quoting rate (an anchor longer than 12 words recites the canon); ``canon_diff`` -- precision /
+  recall / F1 of the predicted variant multiset against the deterministic apparatus, typed ``(type, fragment, canon)``
+  (headline), untyped ``(fragment, canon)`` and strict (``+ pos``), per variant type, plus reference, agreement-ratio
+  and lacuna-count errors (:func:`canon_identify_metrics`, :func:`canon_diff_metrics`).
 
 Public API
     Text: :func:`clean_translation`, :func:`script_shares`, :func:`repetition_stats`,
@@ -36,6 +42,9 @@ Public API
     :func:`dictionary_people`, :class:`SourceIndex`, :func:`name_grounded`,
     :func:`people_grounding`, :func:`specifics_split`, :func:`catalogue_metrics`.
     Relations: :func:`parse_relations`, :func:`relations_prf`.
+    Canon: :func:`canon_norm`, :func:`norm_ref`, :func:`parse_canon_ref`, :func:`section_key`, :func:`same_section`,
+    :func:`canon_identify_metrics`, :func:`variant_keys`, :func:`multiset_prf`, :func:`canon_diff_metrics`,
+    :func:`aggregate_canon_identify`, :func:`aggregate_canon_diff`.
     v0_2 rows: :func:`document_of`, :func:`score_output`, :func:`aggregate_scored`.
     Probe rescore: :func:`rescore` (CLI ``rescore``) → ``scores_v2/<system>.json``,
     ``scores_v2/summary_v2.json`` and ``BASELINES_v2.md`` under ``paths.out_dir``.
@@ -78,6 +87,12 @@ SCORER_VERSION = "score_v2-20261022"
 PROBE_PROMPT_VERSION = "probe-v1-20261018"
 #: Judge version of the 2026-10-18 cache (read only; v2 makes no judge calls).
 JUDGE_VERSION_V1 = "judge-v1-20261018"
+#: Version of the canon-comparison metrics (E8).
+CANON_SCORER_VERSION = "canon_v1-20261026"
+#: Longest anchor (words) a canon_identify answer may quote; longer = recitation of the canon (over-quoting).
+CANON_ANCHOR_WORDS = 12
+#: The canon_diff variant types.
+CANON_VARIANT_TYPES: Tuple[str, ...] = ("omission", "addition", "substitution", "orthographic", "order")
 
 CHRFPP = CHRF(word_order=2)
 CHRF_PLAIN = CHRF()
@@ -1143,6 +1158,224 @@ def micro_prf(cells: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
             "parse_ok": sum(1 for c in cells if c.get("parse_ok"))}
 
 
+# ================================================================================ canon (E8)
+_HE_POINTS = re.compile(r"[\u0591-\u05C7]")
+_DASHES = re.compile(r"[\u2010-\u2015\u2212]")
+_CANON_LOCUS = re.compile(r"^(?P<s1>\d+[ab]?)(?::(?P<l1>\d+))?(?:-(?:(?P<s2>\d+[ab]?):)?(?P<l2>\d+[ab]?))?$")
+
+
+def canon_norm(text: Any) -> str:
+    """Normalise a canon string for matching: NFC, Hebrew points removed, whitespace collapsed.
+
+    :param text: Text (non-strings become '').
+    :returns: Normalised text.
+    """
+    if not isinstance(text, str):
+        return ""
+    return " ".join(_HE_POINTS.sub("", unicodedata.normalize("NFC", text)).split())
+
+
+def norm_ref(ref: Any) -> str:
+    """Normalise a Sefaria-style reference: case-folded, dashes unified, whitespace collapsed, no space around ``-``.
+
+    :param ref: Reference (``Niddah 27b:16-28a:7``).
+    :returns: Normalised reference ('' for a non-string).
+    """
+    if not isinstance(ref, str):
+        return ""
+    t = " ".join(_DASHES.sub("-", ref).casefold().split())
+    return re.sub(r"\s*-\s*", "-", t)
+
+
+def section_key(section: str) -> Tuple[int, int]:
+    """Order key of a section: daf + amud (``27b`` → (27, 1)) or a chapter number (``4`` → (4, 0)).
+
+    :param section: Section label.
+    :returns: ``(number, amud)``.
+    """
+    m = re.match(r"^(\d+)([ab]?)$", section)
+    if not m:
+        raise ValueError(f"not a section label: {section!r}")
+    return int(m.group(1)), (1 if m.group(2) == "b" else 0)
+
+
+def parse_canon_ref(ref: Any) -> Optional[Dict[str, Any]]:
+    """Parse ``<title> <section>[:<line>][-[<section>:]<line>]`` (the canon builder's reference format).
+
+    :param ref: Reference (``Niddah 27b:16-28a:7``, ``Yevamot 110b:6-12``, ``Mishneh Torah, Foundations of the
+        Torah 4:11``, ``Pirkei Avot 1:14-2:2``).
+    :returns: ``{"title", "start", "end"}`` with sections as :func:`section_key` tuples, or None when unparseable.
+    """
+    t = norm_ref(ref)
+    if " " not in t:
+        return None
+    title, locus = t.rsplit(" ", 1)
+    m = _CANON_LOCUS.match(locus)
+    if not m:
+        return None
+    try:
+        s1 = section_key(m.group("s1"))
+        if m.group("s2"):
+            s2 = section_key(m.group("s2"))
+        elif m.group("l2") and m.group("l1") is None:  # "27a-28b" or "4-5": a range of whole sections
+            s2 = section_key(m.group("l2"))
+        else:
+            s2 = s1
+    except ValueError:
+        return None
+    return {"title": title, "start": s1, "end": max(s1, s2)}
+
+
+def same_section(pred_ref: Any, gold_ref: Any) -> bool:
+    """Whether a predicted reference names the gold title and a section range overlapping the gold one.
+
+    :param pred_ref: Predicted reference.
+    :param gold_ref: Gold reference.
+    :returns: True on the same title with overlapping daf-amud / chapter ranges.
+    """
+    a, b = parse_canon_ref(pred_ref), parse_canon_ref(gold_ref)
+    if a is None or b is None or a["title"] != b["title"]:
+        return False
+    return a["start"] <= b["end"] and b["start"] <= a["end"]
+
+
+def _words(text: Any) -> List[str]:
+    """Words of a normalised canon string.
+
+    :param text: Text.
+    :returns: Words.
+    """
+    return canon_norm(text).split()
+
+
+def canon_identify_metrics(hyp_raw: Optional[str], gold: Dict[str, Any]) -> Dict[str, Any]:
+    """Deterministic metrics of one ``canon_identify`` answer.
+
+    :param hyp_raw: Raw model output (a JSON object with work, title, he_title, ref, he_ref, anchor).
+    :param gold: The gold target object.
+    :returns: ``json_ok``, ``work_ok``, ``title_ok``, ``ref_exact``, ``same_section``, ``anchor_f1`` (word bag F1
+        against the gold anchor), ``anchor_words`` and ``over_quoted`` (anchor longer than :data:`CANON_ANCHOR_WORDS`).
+    """
+    pred = parse_json_lenient(hyp_raw, required_key="ref") or {}
+    title_ok = bool(pred) and norm_ref(pred.get("title")) == norm_ref(gold.get("title"))
+    pw, gw = _words(pred.get("anchor")), _words(gold.get("anchor"))
+    common = sum((Counter(pw) & Counter(gw)).values())
+    f1 = 2 * common / (len(pw) + len(gw)) if (pw or gw) else 1.0
+    return {"json_ok": bool(pred), "work_ok": bool(pred) and norm_ref(pred.get("work")) == norm_ref(gold.get("work")),
+            "title_ok": title_ok, "ref_exact": bool(pred) and norm_ref(pred.get("ref")) == norm_ref(gold.get("ref")),
+            "same_section": bool(pred) and same_section(pred.get("ref"), gold.get("ref")),
+            "anchor_f1": round(f1, 4), "anchor_words": len(pw), "over_quoted": len(pw) > CANON_ANCHOR_WORDS}
+
+
+def variant_keys(variants: Any, mode: str = "typed") -> Counter:
+    """Multiset of variant identities of an apparatus.
+
+    :param variants: List of ``{"type", "fragment", "canon", "pos"}`` (non-dicts are skipped).
+    :param mode: ``typed`` = (type, fragment, canon); ``untyped`` = (fragment, canon); ``strict`` = typed + pos.
+    :returns: Counter of identities.
+    :raises ValueError: On an unknown mode.
+    """
+    if mode not in ("typed", "untyped", "strict"):
+        raise ValueError(f"unknown variant key mode {mode!r}")
+    out: Counter = Counter()
+    for v in variants if isinstance(variants, list) else []:
+        if not isinstance(v, dict):
+            continue
+        frag, canon = canon_norm(v.get("fragment")), canon_norm(v.get("canon"))
+        typ = str(v.get("type") or "").strip().lower()
+        key: Tuple[str, ...] = (frag, canon) if mode == "untyped" else (typ, frag, canon)
+        if mode == "strict":
+            key = key + (str(v.get("pos") or "").strip(),)
+        out[key] += 1
+    return out
+
+
+def multiset_prf(pred: Counter, gold: Counter) -> Dict[str, Any]:
+    """Precision / recall / F1 of a predicted multiset against a gold multiset.
+
+    :param pred: Predicted identities.
+    :param gold: Gold identities.
+    :returns: ``{"tp", "fp", "fn", "precision", "recall", "f1"}`` (ratios None on a 0 denominator; F1 of two empty
+        sets is 1.0).
+    """
+    tp = sum((pred & gold).values())
+    fp, fn = sum(pred.values()) - tp, sum(gold.values()) - tp
+    prec = tp / (tp + fp) if (tp + fp) else None
+    rec = tp / (tp + fn) if (tp + fn) else None
+    if not (tp + fp + fn):
+        f1: Optional[float] = 1.0
+    else:
+        f1 = 2 * tp / (2 * tp + fp + fn)
+    return {"tp": tp, "fp": fp, "fn": fn, "precision": prec, "recall": rec, "f1": f1}
+
+
+def canon_diff_metrics(hyp_raw: Optional[str], gold: Dict[str, Any]) -> Dict[str, Any]:
+    """Deterministic metrics of one ``canon_diff`` answer against the alignment's apparatus.
+
+    :param hyp_raw: Raw model output (JSON object with canonical_ref, agreement_ratio, lacuna_words, variants, summary).
+    :param gold: The gold target object.
+    :returns: ``json_ok``, ``ref_exact``, ``typed`` / ``untyped`` / ``strict`` (:func:`multiset_prf`), ``by_type``
+        (typed counts per gold / predicted type), ``agreement_abs_err``, ``lacuna_abs_err``, ``n_pred``, ``n_gold``.
+    """
+    pred = parse_json_lenient(hyp_raw, required_key="variants")
+    pv = (pred or {}).get("variants") or []
+    gv = gold.get("variants") or []
+    out: Dict[str, Any] = {"json_ok": pred is not None,
+                           "ref_exact": pred is not None and norm_ref(pred.get("canonical_ref")) == norm_ref(gold.get("canonical_ref")),
+                           "n_pred": len(pv) if isinstance(pv, list) else 0, "n_gold": len(gv)}
+    for mode in ("typed", "untyped", "strict"):
+        out[mode] = multiset_prf(variant_keys(pv, mode), variant_keys(gv, mode))
+    pk, gk = variant_keys(pv), variant_keys(gv)
+    out["by_type"] = {t: multiset_prf(Counter({k: n for k, n in pk.items() if k[0] == t}),
+                                      Counter({k: n for k, n in gk.items() if k[0] == t})) for t in CANON_VARIANT_TYPES}
+    for key, name in (("agreement_ratio", "agreement_abs_err"), ("lacuna_words", "lacuna_abs_err")):
+        a, b = (pred or {}).get(key), gold.get(key)
+        out[name] = (abs(float(a) - float(b)) if isinstance(a, (int, float)) and not isinstance(a, bool)
+                     and isinstance(b, (int, float)) else None)
+    return out
+
+
+def aggregate_canon_identify(rs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """E8 identify accuracies over scored rows.
+
+    :param rs: :func:`canon_identify_metrics` results (via :func:`score_output`).
+    :returns: ``n`` and the rate of every boolean field, mean anchor F1.
+    """
+    out: Dict[str, Any] = {"n": len(rs)}
+    for k in ("json_ok", "work_ok", "title_ok", "ref_exact", "same_section", "over_quoted"):
+        out[k] = _rate(rs, k)
+    out["anchor_f1"] = mean(r.get("anchor_f1") for r in rs)
+    return out
+
+
+def aggregate_canon_diff(rs: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """E8 apparatus scores over scored rows: micro P / R / F1 per key mode and per type, mean errors.
+
+    :param rs: :func:`canon_diff_metrics` results (via :func:`score_output`).
+    :returns: ``n``, ``json_ok``, ``ref_exact``, ``typed`` / ``untyped`` / ``strict`` and ``by_type`` micro scores,
+        mean ``agreement_abs_err`` / ``lacuna_abs_err``.
+    """
+    def micro(cells: Iterable[Dict[str, Any]]) -> Dict[str, Any]:
+        """Micro P / R / F1 of :func:`multiset_prf` cells.
+
+        :param cells: Cells.
+        :returns: Micro scores.
+        """
+        cells = list(cells)
+        tp, fp, fn = (sum(c[k] for c in cells) for k in ("tp", "fp", "fn"))
+        return {"tp": tp, "fp": fp, "fn": fn, "precision": tp / (tp + fp) if (tp + fp) else None,
+                "recall": tp / (tp + fn) if (tp + fn) else None,
+                "f1": 2 * tp / (2 * tp + fp + fn) if (tp + fp + fn) else None}
+
+    out: Dict[str, Any] = {"n": len(rs), "json_ok": _rate(rs, "json_ok"), "ref_exact": _rate(rs, "ref_exact")}
+    for mode in ("typed", "untyped", "strict"):
+        out[mode] = micro(r[mode] for r in rs)
+    out["by_type"] = {t: micro(r["by_type"][t] for r in rs) for t in CANON_VARIANT_TYPES}
+    out["agreement_abs_err"] = mean(r.get("agreement_abs_err") for r in rs)
+    out["lacuna_abs_err"] = mean(r.get("lacuna_abs_err") for r in rs)
+    return out
+
+
 # ================================================================================ v0_2 rows
 def document_of(row: Dict[str, Any]) -> str:
     """The ``<document>`` text of a v0_2 row's user turn (the input the model sees).
@@ -1193,6 +1426,12 @@ def score_output(row: Dict[str, Any], hyp: Optional[str], scholar_names: Iterabl
     elif family == "extract_relations":
         gold_rel = parse_relations(gold) or []
         out.update(relations_prf(parse_relations(hyp), gold_rel))
+    elif family == "canon_identify":
+        out.update(canon_identify_metrics(hyp, strict_json(gold) or {}))
+        out["work"] = meta.get("work")
+    elif family == "canon_diff":
+        out.update(canon_diff_metrics(hyp, strict_json(gold) or {}))
+        out["work"] = meta.get("work")
     else:
         raise ValueError(f"no scorer for family {family!r}")
     return out
@@ -1340,6 +1579,10 @@ def aggregate_scored(scored: Sequence[Dict[str, Any]], keys: Sequence[str] = ("f
             cell.update(aggregate_catalogue_cell(rs))
         elif family == "extract_relations":
             cell.update(micro_prf(rs))
+        elif family == "canon_identify":
+            cell.update(aggregate_canon_identify(rs))
+        elif family == "canon_diff":
+            cell.update(aggregate_canon_diff(rs))
         else:
             sp = [r["specifics"] for r in rs]
             cell.update({"n": len(rs), "doc_chrfpp_mean": mean(r["chrfpp"] for r in rs),

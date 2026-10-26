@@ -20,7 +20,21 @@ writes one seeded, fully materialised epoch per mixture:
     * extract_relations: ``round(0.4 × rows)`` documents (seeded), one row each, same rule;
     * analyse_document ×2 (``families/analyse_document_v2.jsonl``, the widened L2 file, replaces the
       v0_1-carried ``analyse_document.jsonl`` when present); rag_context all; domain_reading train rows
-      (``probe`` excluded) within a 2.70 M token budget per epoch (seeded row subsample, fix pass F5).
+      (``probe`` excluded) within a 2.70 M token budget per epoch (seeded row subsample, fix pass F5);
+    * the public-domain edition pairs (``families/pd_editions.jsonl``, translate_en rows of :mod:`canon_diff`'s PD
+      step) ×2 as component ``pd_editions``, counted as L5 literature (design owner, 2026-10-26: book-sourced human
+      translation pairs);
+    * ``canon_diff`` (canon fold-in, 2026-10-26) within a 2.50 M token budget per epoch, drawn by a WORK-WEIGHTED
+      seeded subsample (:func:`apply_token_caps`: Talmud Bavli rows weight 3, Mishnah 2, Mishneh Torah 1, as
+      sampling-probability multipliers; every (work, title) -- tractate / book of hilkhot -- of the pool keeps at
+      least one row). ``canon_identify`` stays out of the mixtures (its family file and eval set E8 serve probes).
+
+Canon block and the literature floor (design-owner decision, 2026-10-26)
+    The canon components (:data:`ADDITIVE_COMPONENTS`) are a user-approved additive block with their own token caps.
+    The F13 literature floor is applied to the CORE epoch (the epoch minus that block), so the approved documentary +
+    literature core keeps exactly its verified composition; the gate's ``share`` is the core share. The manifest
+    reports three shares side by side (``literature_shares``): literature share of the core (gated, ≥ 17.5 %), of
+    the whole epoch, and literature-plus-canon share of the whole epoch.
 
 Exclusions and caps (decisions D5 / D11)
     Rows listed in ``excluded_rows.json`` (contamination module: train rows whose target leaks an eval
@@ -68,7 +82,7 @@ CLI::
     .venv/bin/python -m src.finetuning.text27b.mixture --mixture t27a t27b --seed 3407
         [--slice-policy single] [--exclude-rows auto|none|FILE] [--max-copies-per-target 5]
         [--without book_pairs analyse_document_v2]   # leave optional files out (e.g. while their agents run)
-        [--token-caps domain_reading=2700000]       # per-epoch family token budgets (t27b default; fix pass F5)
+        [--token-caps domain_reading=2700000 canon_diff=2500000]   # per-epoch family token budgets (t27b default)
         [--literature-floor min_share=0.175 l1_tolerance=0.01 | none]   # literature floor gate (t27b default; F13)
 
 Public API: :data:`MIXTURES`, :class:`MixConfig`, :func:`default_config`, :class:`Item`,
@@ -125,11 +139,25 @@ REPLACES: Dict[str, str] = {ANALYSE_V2_FILE: "analyse_document"}
 EXCLUDED_ROWS_FILE = "excluded_rows.json"
 #: Families whose identical targets are capped per epoch (D11).
 CAP_FAMILIES: Tuple[str, ...] = ("extract_relations",)
-#: Per-epoch token budgets of t27b (fix pass F5: the L1 budget, ≈ 10 % of the epoch as approved).
-T27B_TOKEN_CAPS: Dict[str, int] = {"domain_reading": 2_700_000}
-#: Components that carry literature text: L1 ``domain_reading``, L3 ``rag_context``, L2 / L5 ``analyse_document`` and
-#: the L5 translate pairs ``book_pairs``.
-LITERATURE_COMPONENTS: Tuple[str, ...] = ("domain_reading", "rag_context", "analyse_document", "book_pairs")
+#: The public-domain edition pairs (:mod:`canon_diff` PD step): translate_en rows, component ``pd_editions`` (L5).
+PD_EDITIONS_FILE = "pd_editions"
+#: The canon-comparison apparatus family (fold-in 2026-10-26; ``canon_identify`` is not mixed).
+CANON_DIFF_FILE = "canon_diff"
+#: Per-epoch token budgets of t27b (fix pass F5: the L1 budget, ≈ 10 % of the epoch as approved; canon fold-in
+#: 2026-10-26: canon_diff 2.50 M, user-approved).
+T27B_TOKEN_CAPS: Dict[str, int] = {"domain_reading": 2_700_000, CANON_DIFF_FILE: 2_500_000}
+#: Work weights of the canon subsample (sampling-probability multipliers by ``meta.work``; works not listed weigh 1).
+T27B_CAP_WEIGHTS: Dict[str, Dict[str, float]] = {CANON_DIFF_FILE: {"Talmud Bavli": 3.0, "Mishnah": 2.0,
+                                                                   "Mishneh Torah": 1.0}}
+#: Families whose capped subsample keeps at least one row of every (work, title) stratum of the pool.
+T27B_CAP_COVER: Tuple[str, ...] = (CANON_DIFF_FILE,)
+#: Components outside the core epoch on which the literature floor is computed (the canon block; design owner
+#: 2026-10-26).
+ADDITIVE_COMPONENTS: Tuple[str, ...] = tuple(R.CANON_FAMILIES)
+#: Components that carry literature text: L1 ``domain_reading``, L3 ``rag_context``, L2 / L5 ``analyse_document``,
+#: the L5 translate pairs ``book_pairs`` and the public-domain edition pairs ``pd_editions`` (L5, 2026-10-26).
+LITERATURE_COMPONENTS: Tuple[str, ...] = ("domain_reading", "rag_context", "analyse_document", "book_pairs",
+                                          "pd_editions")
 #: The t27b literature floor as restated by the design owner (fix pass 2, F13): the L1 budget held within ±1 %
 #: (``l1_tolerance``) and the literature components ≥ 17.5 % of the epoch's tokens (``min_share``). The strict
 #: leak and page rules cut L2 / L3 / L5 below their plan-estimate yields, so the earlier ≥ 18 % figure was restated.
@@ -137,7 +165,7 @@ T27B_LITERATURE_FLOOR: Dict[str, float] = {"min_share": 0.175, "l1_tolerance": 0
 T27A_FILES: Tuple[str, ...] = TRANSLATE_FAMILIES + (BOOK_PAIRS_FILE,)
 T27B_FILES: Tuple[str, ...] = ("translate_en", "translate_he", "catalogue_json", "describe_pgp", "extract_relations",
                                "analyse_document", ANALYSE_V2_FILE, NOISE_SLICE_FILE, BOOK_PAIRS_FILE, "rag_context",
-                               "domain_reading")
+                               "domain_reading", PD_EDITIONS_FILE, CANON_DIFF_FILE)
 T27B_REQUIRED: Tuple[str, ...] = ("translate_en", "translate_he", "catalogue_json", "describe_pgp", "extract_relations")
 ROWS_PER_STEP = 16
 TOKENS_PER_STEP = 16_600
@@ -159,9 +187,11 @@ class MixConfig:
     ``repeats`` is keyed by component (``translate_en``, ``translate_he``, ``book_pairs``,
     ``analyse_document``, ``rag_context``, ``domain_reading``); ``subsample`` maps a family to the
     fraction of its rows whose count of documents is drawn (one row each); ``token_caps`` maps a family to
-    its token budget per epoch (a seeded subsample of its rows, :func:`apply_token_caps`); ``literature_floor``
-    (``min_share``, ``l1_tolerance``) is the gate on the literature components (:data:`LITERATURE_COMPONENTS`) and the
-    L1 budget (F13; empty = no gate).
+    its token budget per epoch (a seeded subsample of its rows, :func:`apply_token_caps`; ``cap_weights`` maps a
+    capped family to per-work sampling weights, ``cap_cover`` lists capped families that keep every (work, title)
+    stratum); ``literature_floor`` (``min_share``, ``l1_tolerance``) is the gate on the literature components
+    (:data:`LITERATURE_COMPONENTS`) and the L1 budget (F13; empty = no gate), computed on the epoch minus the
+    ``additive_components`` (the canon block, design owner 2026-10-26).
     """
 
     name: str
@@ -188,6 +218,9 @@ class MixConfig:
     exclude_rows_file: Optional[str] = None
     token_caps: Dict[str, int] = field(default_factory=dict)
     literature_floor: Dict[str, float] = field(default_factory=dict)
+    cap_weights: Dict[str, Dict[str, float]] = field(default_factory=dict)
+    cap_cover: Tuple[str, ...] = ()
+    additive_components: Tuple[str, ...] = ADDITIVE_COMPONENTS
 
 
 def default_config(name: str, **overrides: Any) -> MixConfig:
@@ -207,9 +240,11 @@ def default_config(name: str, **overrides: Any) -> MixConfig:
                          subsample={})
     elif name == "t27b":
         base = MixConfig(name=name, repeats={"translate_en": 2, "translate_he": 2, "book_pairs": 2,
-                                             "analyse_document": 2, "rag_context": 1, "domain_reading": 1},
+                                             "analyse_document": 2, "rag_context": 1, "domain_reading": 1,
+                                             "pd_editions": 2, CANON_DIFF_FILE: 1},
                          subsample={"extract_relations": 0.4}, max_copies_per_target=5,
-                         token_caps=dict(T27B_TOKEN_CAPS), literature_floor=dict(T27B_LITERATURE_FLOOR))
+                         token_caps=dict(T27B_TOKEN_CAPS), literature_floor=dict(T27B_LITERATURE_FLOOR),
+                         cap_weights={k: dict(v) for k, v in T27B_CAP_WEIGHTS.items()}, cap_cover=T27B_CAP_COVER)
     else:
         raise ValueError(f"unknown mixture {name!r}; expected one of {MIXTURES}")
     for key in ("repeats", "subsample", "class_weights", "token_caps"):
@@ -280,13 +315,15 @@ class Item:
 
     @property
     def component(self) -> str:
-        """Mixture component (§9.3 row): L5 translate rows are ``book_pairs``, catalogue / describe
-        share ``catalogue_describe``, everything else is its family.
+        """Mixture component (§9.3 row): L5 translate rows are ``book_pairs``, the public-domain edition pairs
+        ``pd_editions``, catalogue / describe share ``catalogue_describe``, everything else is its family.
 
         :returns: Component name.
         """
         if self.src == BOOK_PAIRS_FILE and self.family in TRANSLATE_FAMILIES:
             return "book_pairs"
+        if self.src == PD_EDITIONS_FILE and self.family in TRANSLATE_FAMILIES:
+            return "pd_editions"
         if self.family in ONE_PER_DOC_FAMILIES:
             return "catalogue_describe"
         return self.family
@@ -724,37 +761,103 @@ def select_subsample(items: Sequence[Item], cfg: MixConfig, family: str, frac: f
     return chosen, stats
 
 
-def apply_token_caps(items: Sequence[Item], cfg: MixConfig) -> Tuple[List[Item], Dict[str, Any]]:
-    """Seeded subsample of the families with a token budget (``cfg.token_caps``; fix pass F5).
+def stratum_of(meta: Mapping[str, Any]) -> Tuple[str, str]:
+    """Coverage stratum of a row: its work and title (for canon rows the Sefaria title -- tractate / book of hilkhot).
 
-    The family's rows are ranked by a seeded hash of their uid and taken in that order while the
-    epoch tokens (row tokens × the component's repeat count) stay within the cap; a row that would
-    overshoot is skipped and the walk goes on, so smaller rows still fill the budget. Rows of other
-    families pass unchanged.
+    :param meta: Row meta.
+    :returns: ``(work, title)`` (``''`` parts when absent).
+    """
+    prov = meta.get("provenance") if isinstance(meta.get("provenance"), Mapping) else {}
+    title = prov.get("sefaria_title") or meta.get("catalogue_title") or meta.get("page_range") or ""
+    return str(meta.get("work") or ""), str(title)
+
+
+def weighted_rank_key(u: float, weight: float) -> float:
+    """Sort key of weighted sampling without replacement (Efraimidis–Spirakis, exponential form): ascending
+    ``-ln(u) / w`` orders the rows as successive draws with probability proportional to ``w``.
+
+    :param u: Seeded uniform number in [0, 1).
+    :param weight: The row's weight (> 0).
+    :returns: The key (smaller = drawn earlier).
+    :raises ValueError: On a non-positive weight.
+    """
+    if weight <= 0:
+        raise ValueError(f"weight must be positive, got {weight}")
+    return -math.log(max(u, 1e-300)) / weight
+
+
+def apply_token_caps(items: Sequence[Item], cfg: MixConfig) -> Tuple[List[Item], Dict[str, Any]]:
+    """Seeded subsample of the families with a token budget (``cfg.token_caps``; fix pass F5, canon fold-in).
+
+    The family's rows are ranked by a seeded hash of their uid -- uniformly, or, when ``cfg.cap_weights`` names
+    the family, by weighted sampling without replacement over ``meta.work`` (:func:`weighted_rank_key`; works not
+    listed weigh 1). For a family in ``cfg.cap_cover`` the best-ranked row of every (work, title) stratum
+    (:func:`stratum_of`) moves to the front, so each tractate / book keeps a row. Rows are then taken in that order
+    while the epoch tokens (row tokens × the component's repeat count) stay within the cap; a row that would
+    overshoot is skipped and the walk goes on, so smaller rows still fill the budget. Rows of other families pass
+    unchanged.
 
     :param items: Pool items (after the swap).
     :param cfg: Mixture configuration.
-    :returns: ``(kept items, {family: {"cap", "rows_offered", "rows_kept", "tokens_offered", "tokens_kept"}})``.
+    :returns: ``(kept items, {family: {"cap", "rows_offered", "rows_kept", "tokens_offered", "tokens_kept", ...}})``;
+        weighted families add ``weights`` and ``by_work`` (rows / tokens offered and kept per work), covered ones
+        ``strata_offered``, ``strata_kept`` and ``strata_missing``.
     """
-    stats: Dict[str, Dict[str, int]] = {}
+    stats: Dict[str, Dict[str, Any]] = {}
     drop: set = set()
     for fam, cap in sorted(cfg.token_caps.items()):
         fam_items = [it for it in items if it.family == fam]
         if not fam_items:
             continue
-        ranked = sorted(fam_items, key=lambda it: (unit_hash(cfg.seed, cfg.epoch, cfg.name, "token_cap", fam, it.uid),
-                                                   it.uid))
+        weights = cfg.cap_weights.get(fam)
+
+        def key(it: Item) -> Tuple[float, str]:
+            """Rank key of one row.
+
+            :param it: Item.
+            :returns: ``(key, uid)``.
+            """
+            u = unit_hash(cfg.seed, cfg.epoch, cfg.name, "token_cap", fam, it.uid)
+            if weights is None:
+                return u, it.uid
+            return weighted_rank_key(u, float(weights.get(str(it.meta.get("work")), 1.0))), it.uid
+
+        ranked = sorted(fam_items, key=key)
+        if fam in cfg.cap_cover:
+            firsts: Dict[Tuple[str, str], Item] = {}
+            for it in ranked:
+                firsts.setdefault(stratum_of(it.meta), it)
+            lead = {it.uid for it in firsts.values()}
+            ranked = [it for it in ranked if it.uid in lead] + [it for it in ranked if it.uid not in lead]
         used = kept = offered = 0
+        work_c: Dict[str, Counter] = defaultdict(Counter)
+        kept_strata: set = set()
         for it in ranked:
             t = int(it.tokens or 0) * max(1, int(cfg.repeats.get(it.component, 1) or 1))
             offered += t
+            w = str(it.meta.get("work"))
+            work_c[w]["rows_offered"] += 1
+            work_c[w]["tokens_offered"] += t
             if used + t <= cap:
                 used += t
                 kept += 1
+                work_c[w]["rows_kept"] += 1
+                work_c[w]["tokens_kept"] += t
+                kept_strata.add(stratum_of(it.meta))
             else:
                 drop.add(it.uid)
-        stats[fam] = {"cap": int(cap), "rows_offered": len(fam_items), "rows_kept": kept, "tokens_offered": offered,
-                      "tokens_kept": used}
+        st: Dict[str, Any] = {"cap": int(cap), "rows_offered": len(fam_items), "rows_kept": kept,
+                              "tokens_offered": offered, "tokens_kept": used}
+        if weights is not None:
+            st["weights"] = dict(weights)
+            st["by_work"] = {w: {k: int(c[k]) for k in ("rows_offered", "rows_kept", "tokens_offered", "tokens_kept")}
+                             for w, c in sorted(work_c.items())}
+        if fam in cfg.cap_cover:
+            strata = {stratum_of(it.meta) for it in fam_items}
+            st["strata_offered"] = len(strata)
+            st["strata_kept"] = len(kept_strata)
+            st["strata_missing"] = sorted("|".join(x) for x in strata - kept_strata)
+        stats[fam] = st
     return [it for it in items if it.uid not in drop], stats
 
 
@@ -1039,31 +1142,44 @@ def render_check(ordered: Sequence[Instance], cfg: MixConfig, template_path: Opt
 
 # ----------------------------------------------------------------------------------------- gates
 def literature_floor_check(ordered: Sequence[Instance], cfg: MixConfig) -> Dict[str, Any]:
-    """The literature floor of an epoch (F13): literature components' share of the epoch's tokens ≥ ``min_share`` and
-    the L1 (``domain_reading``) tokens within ``l1_tolerance`` of its token budget (when it has one).
+    """The literature floor of an epoch (F13): literature components' share of the CORE epoch's tokens ≥ ``min_share``
+    and the L1 (``domain_reading``) tokens within ``l1_tolerance`` of its token budget (when it has one).
+
+    The core epoch is the epoch minus ``cfg.additive_components`` (the canon block; design-owner decision 2026-10-26:
+    the canon families are a user-approved additive component with their own caps, so the documentary + literature
+    core keeps its verified composition). Three shares are reported side by side: ``share_core`` (gated; also
+    ``share``), ``share_whole_epoch`` and ``share_literature_plus_additive_whole_epoch``.
 
     :param ordered: Instances in epoch order.
-    :param cfg: Mixture configuration (``literature_floor``, ``token_caps``).
-    :returns: ``{"pass", "violations", "share", "min_share", "l1_tokens", "l1_budget", "l1_tolerance",
-        "tokens_by_component", "share_by_component"}`` (the per-family yields of L1 / L2+L5 / L3 / L5 pairs).
+    :param cfg: Mixture configuration (``literature_floor``, ``token_caps``, ``additive_components``).
+    :returns: ``{"pass", "violations", "share", "share_core", "share_whole_epoch",
+        "share_literature_plus_additive_whole_epoch", "min_share", "l1_tokens", "l1_budget", "l1_tolerance",
+        "core_tokens", "additive_tokens", "tokens_by_component", "share_by_component"}`` (component shares of the core).
     """
     total = sum(_tok(i) for i in ordered)
+    additive = set(cfg.additive_components)
+    add_tok = sum(_tok(i) for i in ordered if i.item.component in additive)
+    core = total - add_tok
     by: Counter = Counter()
     for i in ordered:
         if i.item.component in LITERATURE_COMPONENTS:
             by[i.item.component] += _tok(i)
     lit = sum(by.values())
-    share = lit / total if total else 0.0
+    share = lit / core if core else 0.0
     min_share = float(cfg.literature_floor.get("min_share", 0.0))
     tol = float(cfg.literature_floor.get("l1_tolerance", 0.0))
     budget = cfg.token_caps.get("domain_reading")
     l1_ok = budget is None or abs(by["domain_reading"] - budget) <= tol * budget
     ok = share >= min_share and l1_ok
     return {"pass": ok, "violations": int(share < min_share) + int(not l1_ok), "share": round(share, 5),
-            "min_share": min_share, "literature_tokens": lit, "total_tokens": total, "l1_tokens": by["domain_reading"],
+            "gated_on": "core epoch (epoch minus additive components)", "share_core": round(share, 5),
+            "share_whole_epoch": round(lit / total, 5) if total else 0.0,
+            "share_literature_plus_additive_whole_epoch": round((lit + add_tok) / total, 5) if total else 0.0,
+            "min_share": min_share, "literature_tokens": lit, "total_tokens": total, "core_tokens": core,
+            "additive_components": sorted(additive), "additive_tokens": add_tok, "l1_tokens": by["domain_reading"],
             "l1_budget": budget, "l1_tolerance": tol,
             "tokens_by_component": {c: by[c] for c in LITERATURE_COMPONENTS},
-            "share_by_component": {c: round(by[c] / total, 5) if total else 0.0 for c in LITERATURE_COMPONENTS}}
+            "share_by_component": {c: round(by[c] / core, 5) if core else 0.0 for c in LITERATURE_COMPONENTS}}
 
 
 def check_gates(ordered: Sequence[Instance], cfg: MixConfig, summary: Mapping[str, Any],
@@ -1215,6 +1331,11 @@ def build_mixture(cfg: MixConfig, families_dir: Union[str, Path], out_dir: Union
     if render is not None:
         _merge_section(mix_dir / RENDER_CHECK_NAME, cfg.name, render)
     gates = check_gates(ordered, cfg, summary, render)
+    lf = literature_floor_check(ordered, cfg)
+    summary["literature_shares"] = {k: lf[k] for k in ("share_core", "share_whole_epoch",
+                                                       "share_literature_plus_additive_whole_epoch", "literature_tokens",
+                                                       "core_tokens", "additive_tokens", "total_tokens",
+                                                       "additive_components")}
     try:
         families_rel = str(Path(families_dir).resolve().relative_to(out.resolve()))
     except ValueError:
@@ -1299,7 +1420,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="cap identical targets of the capped families per epoch (t27b default 5; 0 disables)")
     ap.add_argument("--cap-families", nargs="*", default=None, help=f"families the cap applies to (default {list(CAP_FAMILIES)})")
     ap.add_argument("--token-caps", nargs="*", default=None,
-                    help=f"family=tokens budgets per epoch, seeded subsample (t27b default {T27B_TOKEN_CAPS}; 0 removes a cap)")
+                    help=f"family=tokens budgets per epoch, seeded subsample (t27b default {T27B_TOKEN_CAPS}, "
+                         f"work weights {T27B_CAP_WEIGHTS}; 0 removes a cap)")
     ap.add_argument("--literature-floor", nargs="*", default=None,
                     help=f"min_share=x l1_tolerance=y gate on the literature components and the L1 budget (t27b default "
                          f"{T27B_LITERATURE_FLOOR}; fix pass F13); 'none' switches it off (synthetic tests)")

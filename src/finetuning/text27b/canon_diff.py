@@ -9,7 +9,11 @@ boxes, reading order rebuilt by :mod:`src.finetuning.qwen_hebrew.ktiv_layout`) a
 (no-self-labels rule).
 
 * ``canon_identify`` -- input: one page column of a fragment (≤ :data:`MAX_CHUNK_WORDS` words); target: a JSON
-  object naming the canonical work, title, reference range and the matched canonical span.
+  object naming the canonical work, title and reference range (tractate / book, daf or chapter, line or halakha range)
+  plus an ``anchor``: at most the first :data:`IDENTIFY_ANCHOR_WORDS` words of the matched canonical span. The full
+  span is kept in ``meta.canon_span`` for the eval only (design decision 2026-10-26: a target that reproduces the
+  whole canonical span teaches recitation of the canon rather than identification, and a model leaning toward the
+  canon is the "hallucinated canonical reading" failure to avoid on noisy fragment reads).
 * ``canon_diff`` -- input: the same chunk plus the aligned canonical passage in a ``Canonical text`` block (as a
   retrieval step would supply it at inference); target: a JSON variant apparatus ``{canonical_ref,
   agreement_ratio, lacuna_words, variants: [{type, fragment, canon, pos}], summary}``.
@@ -25,9 +29,10 @@ counted as lacuna words, never as variants. A chunk becomes rows only when its s
 legible words matched in order) reaches the floor (:data:`DEFAULT_FLOOR`, chosen from the 30-page audit).
 
 Splits: a manuscript in the hold-out set -- KTIV system numbers of the religious-140 and sealed benchmarks and the
-benchmark registries, :class:`holdouts.Holdouts` by pgpid / canonical id / shelfmark key (both tiers), or a page whose
-25-letter shingles overlap a benchmark ground truth by ≥ :data:`GT_OVERLAP_HOLD` -- is ``heldout``; the rest by
-``sha1(sys_num)`` 80/10/10 → ``train`` / ``dev`` / ``test_indist``.
+benchmark registries, :class:`holdouts.Holdouts` by pgpid / canonical id / shelfmark key (both tiers), or a manuscript
+with a chunk whose 25-letter shingles overlap a benchmark ground truth by ≥ :data:`GT_OVERLAP_HOLD` (the whole
+manuscript, :func:`manuscript_gt_overlap`) -- is ``heldout``; the rest by ``sha1(sys_num)`` 80/10/10 → ``train`` /
+``dev`` / ``test_indist``.
 
 Rows carry ``meta.condition`` (``edition`` now; a ``read`` twin with our VLM reads as input can reuse the same target
 and :func:`diff_messages` / :func:`identify_messages` with ``condition="read"``).
@@ -65,6 +70,7 @@ from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Seque
 import numpy as np
 import orjson
 
+from src.finetuning.text27b import builder as _builder
 from src.finetuning.text27b import paths as _paths
 from src.finetuning.text27b import rows as R
 from src.finetuning.text27b import sefaria as S
@@ -84,6 +90,9 @@ MIN_LEGIBLE_WORDS = 12
 MAX_CHUNK_WORDS = 320
 #: Rendered-row token cap (build brief).
 MAX_ROW_TOKENS = 6000
+#: Words of the matched canonical span the ``canon_identify`` target quotes as its anchor (the full span stays in
+#: ``meta.canon_span``).
+IDENTIFY_ANCHOR_WORDS = 12
 #: An omission / addition longer than this many words marks a layout jump, an unmarked lost margin or an abbreviated
 #: citation the alignment cannot tell apart: such chunks are not turned into rows.
 MAX_BLOCK_WORDS = 40
@@ -117,9 +126,10 @@ NOTE_EDITION = ("The text below is a diplomatic transcription of one manuscript 
 NOTE: Dict[str, str] = {"edition": NOTE_EDITION}
 NOTE.update({c: R.READ_NOTE_V2 for c in R.READ_LIKE_CONDITIONS})
 INSTRUCTION_IDENTIFY = ("Identify the canonical text this Genizah fragment ({script}) preserves. Return only a JSON "
-                        "object with the keys work, title, he_title, ref, he_ref and canonical_text: the work and "
-                        "tractate or book, the reference range in the standard printed text (Sefaria-style), and the "
-                        "printed text from the first to the last word the fragment preserves.")
+                        "object with the keys work, title, he_title, ref, he_ref and anchor: the work and tractate or "
+                        "book, the reference range in the standard printed text (Sefaria-style: daf and line, or "
+                        "chapter and halakha / mishnah), and as the anchor the first words (at most 12) of the printed "
+                        "text where the fragment's text begins. Do not quote more of the printed text.")
 INSTRUCTION_DIFF = ("Compare this Genizah fragment ({script}) with the canonical text given after it and list its "
                     "variant readings. Return only a JSON object with the keys canonical_ref, agreement_ratio, "
                     "lacuna_words, variants and summary. Each variant is {{\"type\", \"fragment\", \"canon\", "
@@ -1434,6 +1444,20 @@ def shingle_share(text: str, shingles: Set[str], n: int = GT_SHINGLE) -> float:
     return sum(1 for x in mine if x in shingles) / len(mine) if mine else 0.0
 
 
+def manuscript_gt_overlap(chunks: Iterable[Chunk], shingles: Set[str], hold: float = GT_OVERLAP_HOLD) -> bool:
+    """Whether any chunk of a manuscript shares at least ``hold`` of its letter shingles with a benchmark ground truth.
+
+    Such a manuscript is held out WHOLE (2026-10-26: the overlap shows the manuscript, or a leaf of it, is a benchmark
+    document under another record; a chunk-level hold-out left its other chunks in train).
+
+    :param chunks: The manuscript's chunks.
+    :param shingles: Benchmark GT shingles (:func:`shingle_set`).
+    :param hold: Share threshold.
+    :returns: True when some chunk overlaps.
+    """
+    return bool(shingles) and any(shingle_share(ch.text, shingles) >= hold for ch in chunks)
+
+
 def split_of(sys_num: str) -> str:
     """Deterministic 80/10/10 split of a manuscript.
 
@@ -1469,11 +1493,28 @@ def _script() -> str:
     return R.SCRIPT_NAME["hebrew"]
 
 
+def identify_target(work: str, title: str, he_title: str, ref: str, he_ref: str, span_words: Sequence[str],
+                    anchor_words: int = IDENTIFY_ANCHOR_WORDS) -> Dict[str, Any]:
+    """The ``canon_identify`` target: the canonical reference plus a short anchor (never the whole span).
+
+    :param work: Work (``Talmud Bavli``, ``Mishneh Torah``, ``Mishnah`` ...).
+    :param title: Sefaria title (tractate / book of hilkhot).
+    :param he_title: Hebrew title.
+    :param ref: Sefaria-style reference range of the matched span.
+    :param he_ref: Hebrew reference.
+    :param span_words: Words of the matched canonical span.
+    :param anchor_words: Words of the span quoted as the anchor.
+    :returns: ``{work, title, he_title, ref, he_ref, anchor}``.
+    """
+    return {"work": work, "title": title, "he_title": he_title, "ref": ref, "he_ref": he_ref,
+            "anchor": " ".join(list(span_words)[:max(0, anchor_words)])}
+
+
 def identify_messages(fragment: str, target: Mapping[str, Any], condition: str = "edition") -> List[R.Message]:
     """Messages of a ``canon_identify`` row.
 
     :param fragment: Chunk text (transcription or read).
-    :param target: Target object (work, title, he_title, ref, he_ref, canonical_text).
+    :param target: Target object (work, title, he_title, ref, he_ref, anchor).
     :param condition: Input condition (selects the note).
     :returns: Messages.
     """
@@ -1709,8 +1750,8 @@ def make_rows(res: Mapping[str, Any], index: CanonIndex, split: str, held: Optio
     text = index.texts[al.text_index]
     ref, he_ref = index.ref_range(al.start, al.end)
     spec = S.CORPORA.get(index.corpus)
-    ident = {"work": spec.work if spec else index.corpus, "title": text.title, "he_title": text.he_title,
-             "ref": ref, "he_ref": he_ref, "canonical_text": " ".join(index.raw[al.start:al.end])}
+    span_words = index.raw[al.start:al.end]
+    ident = identify_target(spec.work if spec else index.corpus, text.title, text.he_title, ref, he_ref, span_words)
     ctx_ref, ctx_text = _context(index, al)
     dtarget = diff_target(ref, al)
     prior: CatRef = res["prior"]
@@ -1724,8 +1765,8 @@ def make_rows(res: Mapping[str, Any], index: CanonIndex, split: str, held: Optio
                   catalogue_section_agrees=res.get("section_agrees"),
                   similarity=al.similarity, agreement_ratio=al.agreement_ratio, variant_counts=al.counts(),
                   lacuna_words=al.lacuna_words, torn_margin=al.torn_margin, heldout_reason=held,
-                  canonical_version=version,
-                  provenance={"ktiv_sys_num": ch.sys_num, "ktiv_fl": ch.fl, "column": ch.column, "part": ch.part,
+                  canonical_version=version, canonical_id=rec.canonical_id,
+                  provenance={"ktiv_sys_num": ch.sys_num, "catalogue_pgpids": list(rec.pgpids), "ktiv_fl": ch.fl, "column": ch.column, "part": ch.part,
                               "layout_mode": ch.mode, "sefaria_title": text.title, "sefaria_version": version,
                               "canonical_span": [al.start - index.bounds(al.text_index)[0],
                                                  al.end - index.bounds(al.text_index)[0]],
@@ -1734,7 +1775,8 @@ def make_rows(res: Mapping[str, Any], index: CanonIndex, split: str, held: Optio
     rows = []
     for fam, msgs in ((FAMILY_IDENTIFY, identify_messages(ch.text, ident, condition)),
                       (FAMILY_DIFF, diff_messages(ch.text, ctx_ref, ctx_text, dtarget, condition))):
-        row = {"messages": msgs, "meta": _base_meta(fam, ch, split, condition, **common)}
+        extra = {"canon_span": " ".join(span_words)} if fam == FAMILY_IDENTIFY else {}
+        row = {"messages": msgs, "meta": _base_meta(fam, ch, split, condition, **common, **extra)}
         _finish(row, tokenizer, template)
         if row["meta"]["tokens"] <= MAX_ROW_TOKENS:
             rows.append(row)
@@ -1812,7 +1854,10 @@ def build(cfg: BuildConfig, p: Optional[_paths.Paths] = None) -> Dict[str, Any]:
         if cfg.limit_mss and sum(1 for _ in {c[0].sys_num for c in by_corpus[prior.corpus]}) >= cfg.limit_mss:
             continue
         ms_stats[f"manuscripts:{prior.corpus}"] += 1
-        for ch in page_chunks(bundle, sn, cfg.max_words):
+        chunks = page_chunks(bundle, sn, cfg.max_words)
+        if sn not in held_ms and manuscript_gt_overlap(chunks, gt_sh):
+            held_ms[sn] = "gt_overlap"
+        for ch in chunks:
             by_corpus[prior.corpus].append((ch, rec, prior))
     tok_path = p.tokenizer_json
     tpl_path = p.chat_template
@@ -1884,6 +1929,13 @@ def build(cfg: BuildConfig, p: Optional[_paths.Paths] = None) -> Dict[str, Any]:
         "counts": _counts(all_rows),
         "self_labels": "none: every target is computed deterministically from the KTIV human transcription and "
                        "the Sefaria text by word alignment; no model output is used as input or target",
+        "identify_target": {"keys": ["work", "title", "he_title", "ref", "he_ref", "anchor"],
+                            "anchor_words": IDENTIFY_ANCHOR_WORDS, "full_span_in": "meta.canon_span",
+                            "decision": "2026-10-26 design owner: the target is the canonical reference plus an anchor "
+                                        "of at most the first 12 words of the matched span, never the whole span "
+                                        "(a full-span target is mostly canonical text: it teaches recitation of the "
+                                        "canon rather than identification, the hallucinated-canonical-reading "
+                                        "failure); the span stays in meta for the eval"},
         "condition": {"built": ["edition"], "planned": ["read (same targets, VLM read as input)"]},
         "manuscripts": dict(ms_stats), "chunks_by_corpus": {k: len(v) for k, v in by_corpus.items()},
         "rejected_chunks": dict(reject),
@@ -1912,7 +1964,15 @@ def build(cfg: BuildConfig, p: Optional[_paths.Paths] = None) -> Dict[str, Any]:
                                               "bucket_last_export", "version_preferences")},
         "build_args": dataclasses.asdict(cfg),
     }
-    _atomic_json(p.out("canon_manifest.json"), manifest)
+    man_path = p.out("canon_manifest.json")
+    if man_path.exists():  # the PD-editions section is written by build_pd; keep it across a rebuild
+        prev = json.loads(man_path.read_text(encoding="utf-8"))
+        if "pd_editions" in prev:
+            manifest["pd_editions"] = prev["pd_editions"]
+            for key in ("families", "counts"):
+                if FAMILY_PD in (prev.get(key) or {}):
+                    manifest[key][FAMILY_PD] = prev[key][FAMILY_PD]
+    _atomic_json(man_path, manifest)
     return manifest
 
 
@@ -2076,7 +2136,10 @@ def pd_pairs(he: S.CanonText, en: S.CanonText, ocr_text: str, slug: str, licence
 
     Consecutive verses of a chapter are grouped (up to ``group``) so a row is a passage; a pair is kept when the
     English is verified in the book's own text layer (word 4-gram containment ≥ ``min_containment``) and the
-    length ratio (normalised English / Hebrew characters) is inside ``band``.
+    length ratio (normalised English / Hebrew characters) is inside ``band``. The target then gets the builder's
+    translate-target strips (:func:`builder.clean_target`: B3 line markers -- the ``(n)`` verse numbers -- and the
+    project-name scrub), with the pre-strip text in ``meta.target_raw`` and the ops in ``meta.strip_ops``, so the rows
+    pass the same marker gate as every other translate row; the input keeps its verse numbers.
 
     :param he: Hebrew version.
     :param en: English version.
@@ -2116,6 +2179,7 @@ def pd_pairs(he: S.CanonText, en: S.CanonText, ocr_text: str, slug: str, licence
                 continue
             ref = f"{he.title} {sec}:{g[0].seg}" + (f"-{g[-1].seg}" if len(g) > 1 else "")
             user = R.user_prompt("translate_en", "edition", "hebrew", src)
+            clean, ops = _builder.clean_target(tgt, "translate_en")  # B3 (verse-number markers) + name scrub
             key = f"book:{slug}:{ref}"
             meta = R.new_meta("translate_en", "edition", "train", key)
             meta.update({"lang_class": "HE", "pgpid": None, "shelfmark": None, "shelfmark_group": None,
@@ -2126,9 +2190,10 @@ def pd_pairs(he: S.CanonText, en: S.CanonText, ocr_text: str, slug: str, licence
                          "provenance": {"sefaria_title": he.title, "he_version": he.version, "en_version": en.version,
                                         "pair_type": pair_type,
                                         "text_layer_containment": round(cont, 3), "length_ratio": round(ratio, 3)},
-                         "target_origin": "edition_translation", "self_label": False, "target_raw": None,
-                         "strip_ops": [], "reader_exposed": None, "exposure_level": None, "family_file": FAMILY_PD})
-            row = {"messages": R.make_messages(user, tgt), "meta": meta}
+                         "target_origin": "edition_translation", "self_label": False,
+                         "target_raw": tgt if ops else None, "strip_ops": ops, "reader_exposed": None,
+                         "exposure_level": None, "family_file": FAMILY_PD})
+            row = {"messages": R.make_messages(user, clean), "meta": meta}
             _finish(row, tokenizer, template)
             if row["meta"]["tokens"] > MAX_ROW_TOKENS:
                 drops["over_token_cap"] += 1

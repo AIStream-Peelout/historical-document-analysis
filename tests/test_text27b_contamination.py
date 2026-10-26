@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional
 import numpy as np
 import pytest
 
+from src.finetuning.text27b import canon_diff as CD
 from src.finetuning.text27b import contamination as C
 from src.finetuning.text27b import holdouts as H
 from src.finetuning.text27b import pages as PG
@@ -759,13 +760,68 @@ def test_rescan_checks(cworld: P.Paths, cheld: H.Holdouts, tmp_path: Path) -> No
     v = {k: c["value"] for k, c in rep["checks"].items()}
     assert v == {"benchmark_meta_hits": 1, "eval_split_meta_hits": 1, "excluded_page_hits": 1,
                  "benchmark_text_mentions": 1, "literature_text_mentions": 0, "unmapped_entry_rows": 0, "scrub_rows": 1,
-                 "non_nfc_rows": 0, "literature_ngram_leaks": 1}
+                 "non_nfc_rows": 0, "literature_ngram_leaks": 1, "canon_holdout_hits": 0}
     assert not rep["ok"]
     assert rep["reported"]["extra_benchmark_meta_hits"] == 1
     assert rep["reported"]["literature_rows_pages_unchecked"] == 1
     assert rep["ngram_leak_rows_by_family"]["translate_en"] == {"target": 1}
     assert rep["examples"]["benchmark_meta_hits"][0]["reason"] == "key:pgp131"
     assert "content" not in json.dumps(rep["examples"])
+
+
+def test_canon_holdout_route(cworld: P.Paths, cheld: H.Holdouts, tmp_path: Path) -> None:
+    """Canon rows are checked by KTIV system number, by H over pgpid / catalogue pgpids / canonical id / shelfmark key
+    (both tiers) and by GT shingle overlap, in the re-scan and in the row exclusions.
+
+    :param cworld: Paths.
+    :param cheld: Hold-out set.
+    :param tmp_path: Pytest temporary directory.
+    :returns: None.
+    """
+    gt = "אבגדהוזחטיכלמנסעפצקרשת" * 3
+    ktiv = ({"990000000000000001": "ktiv_benchmark:religious_synth"}, CD.shingle_set([gt]))
+    frag = "<document>\nשלום שלום\n</document>"
+
+    def canon(fam: str, sys_num: str, **meta: Any) -> Dict[str, Any]:
+        """A canon-family row.
+
+        :param fam: Family.
+        :param sys_num: KTIV system number.
+        :param meta: Extra meta fields.
+        :returns: The row.
+        """
+        prov = {"ktiv_sys_num": sys_num, "catalogue_pgpids": meta.pop("catalogue_pgpids", [])}
+        return _row(fam, meta.pop("pgpid", None), meta.pop("shelfmark", None), "{}", user=meta.pop("user", frag),
+                    sys_num=sys_num, provenance=prov, row_id=f"c{sys_num[-2:]}{fam[6:9]}", **meta)
+
+    clean = [canon("canon_diff", "990000000000000002"), canon("canon_identify", "990000000000000002")]
+    bad = clean + [
+        canon("canon_diff", "990000000000000001"),                                    # KTIV benchmark sys_num
+        canon("canon_diff", "990000000000000003", catalogue_pgpids=["9020"]),         # eval-tier pgpid (2nd id)
+        canon("canon_diff", "990000000000000004", canonical_id="Oxford_Bodleian_Bodl_MS_heb_d_99_7"),  # PGP-131 id
+        canon("canon_identify", "990000000000000005", shelfmark="Bodl. MS heb. d 99/7"),              # shelfmark key
+        canon("canon_identify", "990000000000000006", user=f"<document>\n{gt}\n</document>"),       # GT overlap
+    ]
+    assert C.canon_holdout_reason(bad[2]["meta"], frag, cheld, ktiv) == "sys_num:ktiv_benchmark:religious_synth"
+    assert C.canon_holdout_reason(bad[3]["meta"], frag, cheld, ktiv).startswith("id:")
+    assert C.canon_holdout_reason(bad[6]["meta"], bad[6]["messages"][1]["content"], cheld, ktiv) == "gt_overlap"
+    assert C.canon_holdout_reason(clean[0]["meta"], frag, cheld, ktiv) is None
+    f, g = tmp_path / "clean.jsonl", tmp_path / "bad.jsonl"
+    f.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in clean), encoding="utf-8")
+    g.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in bad), encoding="utf-8")
+    rep = C.rescan(f, cworld, cheld, use_ngram=False, ktiv=ktiv)
+    assert rep["ok"] and rep["reported"]["canon_rows_checked"] == 2
+    rep = C.rescan(g, cworld, cheld, use_ngram=False, ktiv=ktiv)
+    assert rep["checks"]["canon_holdout_hits"]["value"] == 5 and not rep["ok"]
+    fam_dir = tmp_path / "fam"
+    fam_dir.mkdir()
+    (fam_dir / "canon_diff.jsonl").write_text(g.read_text(encoding="utf-8"), encoding="utf-8")
+    idx = C.build_reference_index(cworld, cheld)
+    out, man = C.build_excluded_rows(fam_dir, idx, holdouts=cheld, ktiv=ktiv, split_conflicts=False)
+    assert sorted(v.split(":")[0] for v in out.values()) == [C.CANON_HOLDOUT_REASON] * 5
+    assert man["excluded_by_kind"][C.CANON_HOLDOUT_REASON] == 5
+    assert "canon_diff" in C.ROW_SCAN_FAMILIES and "canon_identify" in C.ROW_SCAN_FAMILIES
+    assert "pd_editions.jsonl" in C.TRAIN_DUP_EXTRA_FILES and "canon_diff" not in C.TRAIN_DUP_FAMILIES
 
 
 def test_rescan_without_excluded_or_ngram(cworld: P.Paths, cheld: H.Holdouts, tmp_path: Path) -> None:

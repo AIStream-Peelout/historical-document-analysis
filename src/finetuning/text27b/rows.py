@@ -11,7 +11,7 @@ the assistant turn opens with exactly one empty think block (``<think>\\n\\n</th
 Public API (other text27b modules import these names):
 
 Constants
-    :data:`BUILD`, :data:`PGP_FAMILIES`, :data:`LITERATURE_FAMILIES`, :data:`FAMILIES`,
+    :data:`BUILD`, :data:`PGP_FAMILIES`, :data:`LITERATURE_FAMILIES`, :data:`CANON_FAMILIES`, :data:`FAMILIES`,
     :data:`CONDITIONS`, :data:`READ_LIKE_CONDITIONS`, :data:`SPLITS`, :data:`TRAIN_SPLITS`,
     :data:`EVAL_SPLITS`, :data:`EXPOSURE_LEVELS`, :data:`LICENCE_CLASSES`, :data:`V01_META_FIELDS`,
     :data:`EMPTY_THINK`, :data:`EFFORT_MARKER`.
@@ -56,7 +56,10 @@ PGP_FAMILIES: Tuple[str, ...] = ("translate_en", "translate_he", "catalogue_json
                                  "extract_relations", "analyse_document")
 #: Families built from the academic literature.
 LITERATURE_FAMILIES: Tuple[str, ...] = ("domain_reading", "rag_context")
-FAMILIES: Tuple[str, ...] = PGP_FAMILIES + LITERATURE_FAMILIES
+#: Canon-comparison families (:mod:`canon_diff`): KTIV human transcriptions aligned to Sefaria canonical texts; the
+#: targets are computed by deterministic alignment (no model output).
+CANON_FAMILIES: Tuple[str, ...] = ("canon_identify", "canon_diff")
+FAMILIES: Tuple[str, ...] = PGP_FAMILIES + LITERATURE_FAMILIES + CANON_FAMILIES
 CONDITIONS: Tuple[str, ...] = ("edition", "noised_edition", "read", "read_hard", "read_partial",
                                "edition_rescript", "literature")
 #: Conditions whose input is (or imitates) a machine read; they share one prompt note.

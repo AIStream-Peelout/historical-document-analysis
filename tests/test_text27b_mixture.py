@@ -475,8 +475,9 @@ def test_analyse_twice_rag_and_domain_reading_once(tmp_path: Path) -> None:
 def test_token_cap_subsamples_domain_reading_seeded(tmp_path: Path) -> None:
     """F5: the t27b L1 budget (default 2.70 M) keeps a seeded subsample within the cap, the same rows on a rebuild;
     t27a has no cap; a cap of 0 removes it."""
-    assert M.default_config("t27b").token_caps == {"domain_reading": 2_700_000} and M.default_config("t27a").token_caps == {}
-    assert M.default_config("t27b", token_caps={"domain_reading": 0}).token_caps == {}
+    assert M.default_config("t27b").token_caps == {"domain_reading": 2_700_000, "canon_diff": 2_500_000}
+    assert M.default_config("t27a").token_caps == {}
+    assert M.default_config("t27b", token_caps={"domain_reading": 0}).token_caps == {"canon_diff": 2_500_000}
     files = base_t27b_files()
     files["domain_reading"] = [mk("domain_reading", f"w/p{i}", "literature", lang="EN", tokens=100 + 10 * (i % 3))
                                for i in range(20)]
@@ -522,6 +523,94 @@ def test_literature_floor_gate() -> None:
     low = M.literature_floor_check(base + [inst("catalogue_json", 2000)], cfg)
     assert not low["pass"] and low["violations"] == 1
     assert M.literature_floor_check(base, M.default_config("t27b", token_caps={"domain_reading": 0}))["pass"]
+
+
+def canon_rows(n_per_title: int = 12) -> List[Dict[str, Any]]:
+    """Synthetic canon_diff train rows: three works, several titles each, equal row lengths.
+
+    :param n_per_title: Rows per title.
+    :returns: Rows.
+    """
+    titles = {"Talmud Bavli": ["Berakhot", "Shabbat", "Eruvin"], "Mishneh Torah": [f"MT {k}" for k in range(6)],
+              "Mishnah": ["Pirkei Avot"]}
+    out = []
+    for work, ts in titles.items():
+        for t in ts:
+            for i in range(n_per_title if work != "Mishnah" else 2):
+                out.append(mk("canon_diff", f"{t}-{i}", "edition", lang="HE", tokens=100, work=work,
+                              provenance={"sefaria_title": t, "ktiv_sys_num": f"99{i}"}))
+    return out
+
+
+def test_weighted_rank_key_prefers_heavier_rows() -> None:
+    """Weighted sampling without replacement: weight-3 rows come first more often; a weight ≤ 0 is refused."""
+    us = [M.unit_hash(1, "w", i) for i in range(4000)]
+    keys = sorted([(M.weighted_rank_key(u, 3.0 if i % 2 else 1.0), i % 2) for i, u in enumerate(us)])
+    first = [heavy for _, heavy in keys[:1000]]
+    assert sum(first) / len(first) > 0.65
+    with pytest.raises(ValueError):
+        M.weighted_rank_key(0.5, 0.0)
+    assert M.stratum_of({"work": "W", "provenance": {"sefaria_title": "T"}}) == ("W", "T")
+
+
+def test_canon_diff_work_weighted_cap_keeps_every_title(tmp_path: Path) -> None:
+    """Canon fold-in: canon_diff within its budget, Bavli weighted 3× over the Mishneh Torah, every (work, title)
+    kept, per-work rows / tokens in the manifest; canon_identify is not mixed; PD pairs ×2 count as literature."""
+    cfg = M.default_config("t27b")
+    assert cfg.cap_weights["canon_diff"] == {"Talmud Bavli": 3.0, "Mishnah": 2.0, "Mishneh Torah": 1.0}
+    assert "canon_identify" not in cfg.files and "canon_diff" in cfg.files and "pd_editions" in cfg.files
+    assert "canon_diff" in M.ADDITIVE_COMPONENTS and "pd_editions" in M.LITERATURE_COMPONENTS
+    files = base_t27b_files()
+    files["canon_diff"] = canon_rows()
+    files["canon_identify"] = [mk("canon_identify", "Berakhot-0", "edition", lang="HE", work="Talmud Bavli")]
+    files["pd_editions"] = [mk("translate_en", "pd1", "edition", lang="HE", source="book:pd")]
+    res = build(tmp_path, "t27b", files, token_caps={"canon_diff": 4000})
+    rows = res["rows"]
+    canon = [r for r in rows if r["meta"]["family"] == "canon_diff"]
+    st = res["section"]["selection"]["token_caps"]["canon_diff"]
+    assert sum(r["meta"]["tokens"] for r in canon) == st["tokens_kept"] <= 4000 and len(canon) == 40
+    assert st["strata_offered"] == 10 and st["strata_kept"] == 10 and st["strata_missing"] == []
+    bw = st["by_work"]
+    assert sum(v["rows_kept"] for v in bw.values()) == 40 and bw["Mishnah"]["rows_kept"] >= 1
+    assert bw["Talmud Bavli"]["rows_kept"] / bw["Talmud Bavli"]["rows_offered"] > \
+        bw["Mishneh Torah"]["rows_kept"] / bw["Mishneh Torah"]["rows_offered"]
+    assert not any(r["meta"]["family"] == "canon_identify" for r in rows)
+    assert "canon_identify.jsonl" in res["section"]["load"]["ignored_files"]
+    pd = [r for r in rows if r["meta"]["mix_component"] == "pd_editions"]
+    assert len(pd) == 2 and {r["meta"]["family"] for r in pd} == {"translate_en"}
+    sh = res["section"]["literature_shares"]
+    assert sh["additive_tokens"] == st["tokens_kept"] and sh["core_tokens"] + sh["additive_tokens"] == sh["total_tokens"]
+    again = build(tmp_path / "again", "t27b", files, token_caps={"canon_diff": 4000})
+    assert sorted(r["meta"]["row_id"] for r in again["rows"] if r["meta"]["family"] == "canon_diff") == \
+        sorted(r["meta"]["row_id"] for r in canon)
+    assert res["section"]["gates"]["checks"]["token_cap_canon_diff"]["pass"]
+
+
+def test_literature_floor_on_core_epoch() -> None:
+    """Design owner 2026-10-26: the floor is gated on the epoch minus the canon block; the whole-epoch share and the
+    literature-plus-canon share are reported beside it."""
+    cfg = M.default_config("t27b", token_caps={"domain_reading": 1000})
+
+    def inst(family: str, tokens: int, src: Optional[str] = None) -> M.Instance:
+        """One instance with a token count.
+
+        :param family: Family.
+        :param tokens: Tokens.
+        :param src: Source file stem.
+        :returns: Instance.
+        """
+        r = mk(family, 1, "edition")
+        r["meta"]["tokens"] = tokens
+        return M.Instance(item=item(r, src), rule="test", copy=0, repeats=1)
+
+    core = [inst("domain_reading", 1000), inst("translate_en", 50, src="pd_editions"), inst("catalogue_json", 4950)]
+    chk = M.literature_floor_check(core + [inst("canon_diff", 2000)], cfg)
+    assert chk["pass"] and chk["share_core"] == chk["share"] == round(1050 / 6000, 5)
+    assert chk["share_whole_epoch"] == round(1050 / 8000, 5) < cfg.literature_floor["min_share"]
+    assert chk["share_literature_plus_additive_whole_epoch"] == round(3050 / 8000, 5)
+    assert chk["tokens_by_component"]["pd_editions"] == 50 and chk["additive_tokens"] == 2000
+    whole = M.literature_floor_check(core + [inst("canon_diff", 2000)], M.replace(cfg, additive_components=()))
+    assert not whole["pass"]  # without the core rule the canon block would dilute the floor
 
 
 def test_nfc_and_scrub_gates(tmp_path: Path) -> None:

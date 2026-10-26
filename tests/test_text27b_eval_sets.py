@@ -16,6 +16,7 @@ import pytest
 from src.finetuning.text27b import eval_sets as E
 from src.finetuning.text27b import paths as P
 from src.finetuning.text27b import rows as R
+from src.finetuning.text27b import scorer as S
 
 EDITION = "כתאבי אליך מן אלאסכנדריה יום אלג׳מעה ווצל אלמרכב מן צקליה באלכתאן ואלפלפל"
 
@@ -444,9 +445,58 @@ def write_fixture(tmp_path: Path, with_families: bool) -> Path:
                                                row(f, "2", "heldout_vision", "read", read_model="a50", exposed=False)])
         (out / "holdouts.json").write_text(json.dumps(holdouts_dict()), encoding="utf-8")
         R.write_jsonl(out / "exposure.jsonl", [{"pgpid": "1", "read_model": "a50", "level": "page"}])
+        write_canon(fam)
     f = tmp_path / "paths.json"
     f.write_text(json.dumps(cfg), encoding="utf-8")
     return f
+
+
+def canon_row(fam: str, sys_num: str, column: int, split: str, work: str, reason: Optional[str] = None) -> Dict[str, Any]:
+    """A canon-family row (one chunk of a KTIV manuscript).
+
+    :param fam: ``canon_identify`` / ``canon_diff``.
+    :param sys_num: Manuscript system number.
+    :param column: Page column (chunk key part).
+    :param split: Split.
+    :param work: Canonical work.
+    :param reason: Hold-out reason.
+    :returns: The row.
+    """
+    meta = R.new_meta(fam, "edition", split, f"{sys_num}:{column}", work=work, sys_num=sys_num, fl="FL1",
+                      column=column, part=1, heldout_reason=reason, tokens=50)
+    return {"messages": R.make_messages("<document>\nטקסט\n</document>", "{}"), "meta": meta}
+
+
+def write_canon(fam_dir: Path) -> None:
+    """Canon family files: three held-out chunks (two Bavli, one Mishnah) and one train chunk.
+
+    :param fam_dir: ``families`` directory.
+    :returns: None.
+    """
+    spec = [("9901", 1, "heldout", "Talmud Bavli", "ktiv_benchmark:religious"),
+            ("9901", 2, "heldout", "Talmud Bavli", "ktiv_benchmark:religious"),
+            ("9902", 1, "heldout", "Mishnah", "gt_overlap"), ("9903", 1, "train", "Mishneh Torah", None)]
+    for fam in ("canon_identify", "canon_diff"):
+        R.write_jsonl(fam_dir / f"{fam}.jsonl", [canon_row(fam, *x) for x in spec])
+
+
+def test_build_e8_canon(tmp_path: Path) -> None:
+    """E8: every heldout canon row per family, work / reason counts, a paired stratified sample, no train overlap."""
+    write_canon(tmp_path)
+    e8 = E.build_e8(tmp_path, sample=2)
+    assert e8["status"] == "ready" and e8["counts"]["rows"] == {"canon_identify": 3, "canon_diff": 3}
+    assert e8["counts"]["manuscripts"] == 2 and e8["train_manuscripts_overlap"] == 0
+    fi = e8["families"]["canon_identify"]
+    assert fi["by_work"] == {"Mishnah": 1, "Talmud Bavli": 2} and fi["by_reason"] == {"gt_overlap": 1, "ktiv_benchmark": 2}
+    assert fi["in_mixtures"] == [] and e8["families"]["canon_diff"]["in_mixtures"] == ["t27b"]
+    samp = e8["sample"]
+    assert samp["chunks"] == 3 and samp["by_work"] == {"Talmud Bavli": 2, "Mishnah": 1}  # ≥ 2 per work when available
+    assert len(samp["row_ids"]["canon_identify"]) == len(samp["row_ids"]["canon_diff"]) == 3
+    assert e8["scorer_version"] == S.CANON_SCORER_VERSION and e8["prompt_version"].startswith("canon-prompt-")
+    rows = R.load_jsonl(tmp_path / "canon_diff.jsonl")
+    rows[3]["meta"]["sys_num"] = "9901"  # a train chunk of a held manuscript is reported
+    R.write_jsonl(tmp_path / "canon_diff.jsonl", rows)
+    assert E.build_e8(tmp_path)["train_manuscripts_overlap"] == 1
 
 
 def test_build_manifest_pending_then_ready(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -476,6 +526,8 @@ def test_build_manifest_pending_then_ready(tmp_path: Path, monkeypatch: pytest.M
     out = E.write_manifest(m2, p2.out("eval_v1.json"))
     assert json.loads(out.read_text(encoding="utf-8"))["name"] == "eval_v1"
     assert any(line.startswith("E7_noise_bands") for line in E.summary_lines(m2))
+    assert m["status"]["E8_canon"] == "pending" and m2["sets"]["E8_canon"]["counts"]["rows"]["canon_diff"] == 3
+    assert any(line.startswith("E8_canon") for line in E.summary_lines(m2))
     mat = E.materialise_dev_monitor(m2, p2)
     assert mat["rows"] == 4 and mat["path"] == str(Path("out") / "v0_2" / "dev" / "dev_monitor.jsonl")
     assert m2["sets"]["E3_dev_monitor"]["materialised"]["sha256"] == E.sha256_file(p2.out(E.DEV_MONITOR_FILE))

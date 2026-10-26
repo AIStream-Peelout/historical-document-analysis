@@ -72,8 +72,11 @@ Public API (other text27b modules import these names):
   must carry its entry's page keys; one that cannot be mapped is excluded (``unmapped_entry_pages``) and counted by the
   re-scan (``unmapped_entry_rows``).
 * :func:`row_source_scan` -- project-name strings anywhere in a row (messages and meta).
+* Canon rows (2026-10-26): :data:`CANON_FAMILIES`, :func:`load_ktiv_benchmarks`, :func:`canon_holdout_reason` -- a canon
+  row's manuscript is checked by KTIV system number, by H over pgpid / catalogue pgpids / canonical id / shelfmark key
+  and by GT shingle overlap (row exclusions and re-scan).
 * :func:`rescan` -- the mixture re-scan (zero H hits, zero literature mentions of held documents, zero unmapped
-  parsed-entry rows, zero project-name strings, zero non-NFC rows, n-gram report).
+  parsed-entry rows, zero project-name strings, zero non-NFC rows, zero held-out canon manuscripts, n-gram report).
 
 CLI::
 
@@ -1183,8 +1186,14 @@ def build_reference_index(p: Optional[_paths.Paths] = None, holdouts: Optional[_
 # ============================================================================== train-target dedupe + row exclusions (D5)
 #: Families whose TRAIN targets literature pages are deduplicated against (plan §9.4.6, decision D5).
 TRAIN_DUP_FAMILIES: Tuple[str, ...] = ("translate_en", "translate_he", "analyse_document")
-#: Further family files whose translate / analyse TRAIN rows count when present (L5 pairs, widened L2).
-TRAIN_DUP_EXTRA_FILES: Tuple[str, ...] = ("book_pairs.jsonl", "analyse_document_v2.jsonl")
+#: Further family files whose translate / analyse TRAIN rows count when present (L5 pairs, widened L2, the
+#: public-domain edition pairs of :mod:`canon_diff`, which t27b trains as L5 translate rows).
+#: The canon-comparison families are deliberately NOT part of the dedupe (decision 2026-10-26): their targets are
+#: deterministic derivations of public canonical texts (an apparatus of short variant pairs, a reference with a
+#: 12-word anchor), not human-written targets the model must learn to produce, and a literature page quoting a
+#: Talmud or Mishneh Torah passage would otherwise be dropped for quoting the canon (a 12-word anchor has five
+#: word 8-grams: one shared 8-gram is 20 %). The eval-leak gates (excluded rows, re-scan) do cover canon rows.
+TRAIN_DUP_EXTRA_FILES: Tuple[str, ...] = ("book_pairs.jsonl", "analyse_document_v2.jsonl", "pd_editions.jsonl")
 #: A page duplicates a train target when it holds at least this share of the target's word 8-grams.
 TRAIN_DUP_SHARE = 0.20
 #: Reason prefix of a page dropped by the dedupe pass.
@@ -1195,7 +1204,14 @@ TRAIN_DUP_REASON = "train_target_dup"
 L1_ONLY_REASONS: Tuple[str, ...] = (TRAIN_DUP_REASON,)
 #: Families whose TRAIN rows are scanned for eval-reference leaks of their target (D5 row exclusions);
 #: ``domain_reading`` is literature text, excluded page by page instead.
-ROW_SCAN_FAMILIES: Tuple[str, ...] = tuple(_rows.PGP_FAMILIES) + ("rag_context",)
+ROW_SCAN_FAMILIES: Tuple[str, ...] = tuple(_rows.PGP_FAMILIES) + ("rag_context",) + tuple(_rows.CANON_FAMILIES)
+#: Families whose rows are built from one KTIV manuscript (``meta.sys_num``): the re-scan and the row exclusions
+#: check them against the KTIV hold-outs (:func:`canon_holdout_reason`).
+CANON_FAMILIES: Tuple[str, ...] = tuple(_rows.CANON_FAMILIES)
+#: Reason prefix of a TRAIN canon row whose manuscript is held out (KTIV benchmark sys_num, H by id, GT overlap).
+CANON_HOLDOUT_REASON = "canon_holdout"
+#: Share of a fragment's 25-letter shingles found in a KTIV benchmark ground truth that holds it out (as the builder).
+CANON_GT_SHARE = 0.5
 EXCLUDED_ROWS_FILE = "excluded_rows.json"
 EXCLUDED_ROWS_MANIFEST_FILE = "excluded_rows_manifest.json"
 #: Splits that hold a document out of training in every family (cross-family split check).
@@ -1227,6 +1243,55 @@ def unmapped_entry_row(meta: Mapping[str, Any]) -> Optional[str]:
         str(meta.get("source") or "").startswith("book:") and prov.get("entry_no") not in (None, "")
         and not prov.get("work_pages"))
     return "no_page_keys" if entry and not _as_list(meta.get("page_keys")) else None
+
+
+def load_ktiv_benchmarks(p: _paths.Paths) -> Tuple[Dict[str, str], Set[str]]:
+    """KTIV hold-outs of the canon families: benchmark / registry system numbers and the GT letter shingles.
+
+    The religious-140 and sealed-literary files and the registries' ``sys_nums``, read exactly as the canon builder
+    does (:func:`canon_diff.ktiv_benchmark_sysnums`, :func:`canon_diff.shingle_set`).
+
+    :param p: Build paths.
+    :returns: ``({sys_num: reason}, GT shingles)``.
+    """
+    from src.finetuning.text27b import canon_diff as _cd
+
+    held, gts = _cd.ktiv_benchmark_sysnums(p)
+    return held, _cd.shingle_set(gts)
+
+
+def canon_holdout_reason(meta: Mapping[str, Any], user: str, holdouts: _ho.Holdouts,
+                         ktiv: Optional[Tuple[Mapping[str, str], Set[str]]], gt_share: float = CANON_GT_SHARE) -> Optional[str]:
+    """Why a canon row's manuscript is held out, or None: by KTIV system number (religious-140, sealed, registries),
+    by H over every identifier the row carries (pgpid, the catalogue's pgpids, canonical id, shelfmark key; both
+    tiers, as the builder holds them out), or by the fragment's GT shingle overlap.
+
+    :param meta: Row meta (``sys_num`` / ``provenance.ktiv_sys_num``, ``pgpid``, ``provenance.catalogue_pgpids``,
+        ``canonical_id``, ``shelfmark``).
+    :param user: The row's user turn (its ``<document>`` is the fragment).
+    :param holdouts: Hold-out set.
+    :param ktiv: :func:`load_ktiv_benchmarks` output (None skips the sys_num and GT routes).
+    :param gt_share: Shingle share that holds a fragment out.
+    :returns: ``sys_num:<reason>``, ``id:<hold-out reason>``, ``gt_overlap`` or None.
+    """
+    prov = meta.get("provenance") if isinstance(meta.get("provenance"), Mapping) else {}
+    held, shingles = ktiv if ktiv is not None else ({}, set())
+    sn = str(meta.get("sys_num") or prov.get("ktiv_sys_num") or "")
+    if sn and sn in held:
+        return f"sys_num:{held[sn]}"
+    pgpids = [x for x in [meta.get("pgpid")] + list(prov.get("catalogue_pgpids") or []) + list(meta.get("pgpids") or [])
+              if x not in (None, "", "None")]
+    r = holdouts.match_any(pgpids=pgpids, canonicals=[c for c in [meta.get("canonical_id")] if c],
+                           shelfmarks=[s for s in [meta.get("shelfmark")] if s], include_eval=True)
+    if r:
+        return f"id:{r}"
+    if shingles:
+        from src.finetuning.text27b import canon_diff as _cd
+
+        doc = document_input(user)
+        if doc and _cd.shingle_share(doc, shingles) >= gt_share:
+            return "gt_overlap"
+    return None
 
 
 def doc_identities(meta: Mapping[str, Any]) -> Set[str]:
@@ -1325,7 +1390,8 @@ def build_excluded_rows(families_dir: Union[str, Path], index: NgramIndex,
                         families: Sequence[str] = ROW_SCAN_FAMILIES,
                         holdouts: Optional[_ho.Holdouts] = None,
                         split_conflicts: bool = True,
-                        excluded_pages: Optional[Mapping[str, Sequence[str]]] = None) -> Tuple[Dict[str, str], Dict[str, Any]]:
+                        excluded_pages: Optional[Mapping[str, Sequence[str]]] = None,
+                        ktiv: Optional[Tuple[Mapping[str, str], Set[str]]] = None) -> Tuple[Dict[str, str], Dict[str, Any]]:
     """D5 row exclusions: TRAIN rows whose target leaks an eval reference (the n-gram rule of the index)
     and, with ``holdouts``, TRAIN rows whose text (input or target) names a benchmark-tier document (the
     re-scan's ``benchmark_text_mentions`` rule, :func:`text_mention_reason`: spaced spellings included, F1;
@@ -1351,6 +1417,9 @@ def build_excluded_rows(families_dir: Union[str, Path], index: NgramIndex,
     :param holdouts: Hold-out set for the mention rule (None skips it).
     :param split_conflicts: Apply the cross-family split check.
     :param excluded_pages: Page exclusions (``excluded_pages.json``) for the page rule (None skips it).
+    :param ktiv: KTIV hold-outs (:func:`load_ktiv_benchmarks`); with ``holdouts``, a TRAIN canon row whose manuscript
+        is held out (:func:`canon_holdout_reason`) is excluded (``canon_holdout:<why>``; the builder already puts such
+        rows in ``heldout``, so this is the second line).
     :returns: ``(row_id → reason, manifest)``; the reason is ``ngram_target:<ref>#<kind>`` (worst reference),
         ``benchmark_text_mention:<hold-out reason>``, ``literature_text_mention:<hold-out reason>``,
         ``excluded_page:<page key>``, ``unmapped_entry_pages:<why>`` or ``split_conflict:<split>:<identity>``.
@@ -1396,6 +1465,16 @@ def build_excluded_rows(families_dir: Union[str, Path], index: NgramIndex,
                     if len(examples) < MAX_EXAMPLES:
                         examples.append({"row_id": rid, "family": fam, "condition": cond, "pgpid": m.get("pgpid"),
                                          "mention": rb})
+                    continue
+            if not lk and holdouts is not None and fam in CANON_FAMILIES:
+                rc = canon_holdout_reason(m, _msg(r, "user"), holdouts, ktiv)
+                if rc:
+                    out[rid] = f"{CANON_HOLDOUT_REASON}:{rc}"
+                    hit[f"{fam}|{cond}"] += 1
+                    by_kind[CANON_HOLDOUT_REASON] += 1
+                    if len(examples) < MAX_EXAMPLES:
+                        examples.append({"row_id": rid, "family": fam, "condition": cond, "sys_num": m.get("sys_num"),
+                                         "canon_holdout": rc})
                     continue
             if not lk and holdouts is not None and fam in LITERATURE_FAMILIES:
                 rl = text_mention_reason([_literature_part(r, fam)], holdouts)
@@ -2029,7 +2108,8 @@ def _literature_part(row: Mapping[str, Any], family: str) -> str:
 
 def rescan(mixture: Union[str, Path], p: Optional[_paths.Paths] = None, holdouts: Optional[_ho.Holdouts] = None,
            index: Optional[NgramIndex] = None, excluded: Optional[Mapping[str, List[str]]] = None,
-           resolver: Optional[PageResolver] = None, use_ngram: bool = True) -> Dict[str, Any]:
+           resolver: Optional[PageResolver] = None, use_ngram: bool = True,
+           ktiv: Optional[Tuple[Mapping[str, str], Set[str]]] = None) -> Dict[str, Any]:
     """Re-scan a materialised mixture: zero H hits, zero project-name strings, n-gram report (plan §9.4.7).
 
     Checks (each must be 0): ``benchmark_meta_hits`` (row pgpid / shelfmark in the benchmark tier),
@@ -2040,7 +2120,10 @@ def rescan(mixture: Union[str, Path], p: Optional[_paths.Paths] = None, holdouts
     literature text of an L1 / RAG row -- whole row / ``[SOURCE n]`` block -- naming a held document of EITHER tier,
     F10), ``unmapped_entry_rows`` (a parsed-entry row without literature page keys, F11: :func:`unmapped_entry_row`),
     ``scrub_rows`` (any project-name string anywhere in the row, meta included: :func:`row_source_scan`), ``non_nfc_rows`` (a
-    message content not in NFC), ``literature_ngram_leaks`` (literature text leaking an eval reference). Reported,
+    message content not in NFC), ``literature_ngram_leaks`` (literature text leaking an eval reference),
+    ``canon_holdout_hits`` (a canon-family row -- or any row naming a KTIV ``sys_num`` -- whose manuscript is held out:
+    KTIV system number of religious-140 / sealed / the registries, H by pgpid / catalogue pgpids / canonical id /
+    shelfmark key in either tier, or ≥ 50 % GT shingle overlap; :func:`canon_holdout_reason`). Reported,
     not checked: n-gram leaks of PGP-family targets / inputs, eval-tier text mentions (whole row text), extra-benchmark
     meta hits, literature rows whose pages could not be checked, rows with page keys per family. ``distinct_rows`` gives each check's count
     over distinct row ids (a ×2 row counts once there).
@@ -2052,6 +2135,7 @@ def rescan(mixture: Union[str, Path], p: Optional[_paths.Paths] = None, holdouts
     :param excluded: Page exclusions (default ``out_dir/excluded_pages.json`` when present).
     :param resolver: Page-key resolver for literature meta (default: keys as written).
     :param use_ngram: Run the n-gram scan.
+    :param ktiv: KTIV hold-outs (default: :func:`load_ktiv_benchmarks`, loaded at the first canon row).
     :returns: The report (also what the CLI writes to ``rescan_report.json``).
     """
     p = p or _paths.load_paths()
@@ -2139,6 +2223,15 @@ def rescan(mixture: Union[str, Path], p: Optional[_paths.Paths] = None, holdouts
                 ex("literature_text_mentions", {"row_id": rid, "family": fam, "reason": rl,
                                                 "mentions": [(m_, k_) for m_, k_, _ in
                                                              mention_index(holdouts).find(lt_text)][:3]})
+        if fam in CANON_FAMILIES or meta.get("sys_num"):
+            if ktiv is None:
+                ktiv = load_ktiv_benchmarks(p)
+            report["canon_rows_checked"] += 1
+            rc = canon_holdout_reason(meta, texts[1] if len(texts) > 1 else "", holdouts, ktiv)
+            if rc:
+                checks["canon_holdout_hits"] += 1
+                distinct["canon_holdout_hits"].add(str(rid))
+                ex("canon_holdout_hits", {"row_id": rid, "family": fam, "sys_num": meta.get("sys_num"), "reason": rc})
         why = unmapped_entry_row(meta)
         if why:
             checks["unmapped_entry_rows"] += 1
@@ -2176,7 +2269,8 @@ def rescan(mixture: Union[str, Path], p: Optional[_paths.Paths] = None, holdouts
                     ex(f"ngram_{part}", {"row_id": rid, "family": fam, "pgpid": pg, "ref": lk[0][0], "kind": lk[0][1],
                                          "shared": lk[0][2], "share": round(lk[0][3], 4)})
     names = ("benchmark_meta_hits", "eval_split_meta_hits", "excluded_page_hits", "benchmark_text_mentions",
-             "literature_text_mentions", "unmapped_entry_rows", "scrub_rows", "non_nfc_rows", "literature_ngram_leaks")
+             "literature_text_mentions", "unmapped_entry_rows", "scrub_rows", "non_nfc_rows", "literature_ngram_leaks",
+             "canon_holdout_hits")
     check_block = {k: {"value": int(checks.get(k, 0)), "ok": checks.get(k, 0) == 0,
                        "skipped": (k == "excluded_page_hits" and excluded is None) or
                                   (k == "literature_ngram_leaks" and not use_ngram)} for k in names}
@@ -2263,7 +2357,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ep = None if a.excluded_pages == "none" else (p.out(EXCLUDED_PAGES_FILE) if a.excluded_pages == "auto"
                                                       else Path(a.excluded_pages))
         ex_pages = load_excluded_pages(ep) if ep is not None and ep.exists() else None
-        ex_rows, manifest = build_excluded_rows(fdir, idx, holdouts=h, excluded_pages=ex_pages)
+        ex_rows, manifest = build_excluded_rows(fdir, idx, holdouts=h, excluded_pages=ex_pages,
+                                                ktiv=load_ktiv_benchmarks(p))
         manifest["build_args"] = {"families_dir": fdir.name, "excluded_pages": ep.name if ex_pages is not None else None,
                                   **idx_kwargs}
         out_dir = Path(a.out) if a.out else p.out_dir

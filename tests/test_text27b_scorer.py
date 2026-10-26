@@ -428,3 +428,78 @@ def test_token_found_short_names_and_possessives() -> None:
     assert S.is_generic("judaeo arabic") and S.is_generic("iyyar") and not S.is_generic("iyyar yosef")
     sp = S.specifics_split("It is dated Thursday in Iyyar by Yosef.", "כתב יוסף")
     assert sp["generic_skipped"] >= 1 and sp["in_neither"] == 0
+
+
+# ------------------------------------------------------------------------------ canon (E8)
+def test_parse_canon_ref_and_same_section() -> None:
+    """Bavli daf-amud, chapter and whole-section ranges parse; same section means same title and overlapping range."""
+    assert S.parse_canon_ref("Niddah 27b:16-28a:7") == {"title": "niddah", "start": (27, 1), "end": (28, 0)}
+    assert S.parse_canon_ref("Yevamot 110b:6-12")["end"] == (110, 1)
+    assert S.parse_canon_ref("Mishneh Torah, Foundations of the Torah 4:11")["title"] == "mishneh torah, foundations of the torah"
+    assert S.parse_canon_ref("Pirkei Avot 1:14–2:2")["end"] == (2, 0)  # en dash
+    assert S.parse_canon_ref("Berakhot 4a-5b") == {"title": "berakhot", "start": (4, 0), "end": (5, 1)}
+    assert S.parse_canon_ref("nonsense") is None and S.parse_canon_ref(None) is None
+    assert S.same_section("Niddah 28a:1-3", "Niddah 27b:16-28a:7")
+    assert not S.same_section("Niddah 29a:1", "Niddah 27b:16-28a:7")
+    assert not S.same_section("Sotah 28a:1", "Niddah 27b:16-28a:7")
+    assert S.norm_ref(" Niddah  27b:16 – 28a:7 ") == "niddah 27b:16-28a:7"
+
+
+def test_canon_identify_metrics() -> None:
+    """Exact reference, same section, anchor F1 and over-quoting of a recited span."""
+    gold = {"work": "Talmud Bavli", "title": "Niddah", "he_title": "נדה", "ref": "Niddah 27b:16-28a:7",
+            "he_ref": "נדה כז ע״ב", "anchor": "היה וטמאו לו פתחים גדולים וטהרו"}
+    exact = S.canon_identify_metrics(json.dumps(gold, ensure_ascii=False), gold)
+    assert exact["json_ok"] and exact["ref_exact"] and exact["same_section"] and exact["anchor_f1"] == 1.0
+    near = dict(gold, ref="Niddah 28a:2-9", anchor="הָיָה וטמאו לו " + "מלה " * 20)  # points ignored, 23 words
+    m = S.canon_identify_metrics("```json\n" + json.dumps(near, ensure_ascii=False) + "\n```", gold)
+    assert not m["ref_exact"] and m["same_section"] and m["title_ok"] and m["over_quoted"]
+    assert 0 < m["anchor_f1"] < 1
+    bad = S.canon_identify_metrics("I think it is the Talmud.", gold)
+    assert not bad["json_ok"] and not bad["same_section"] and bad["anchor_f1"] == 0.0
+    cells = S.aggregate_canon_identify([exact, m, bad])
+    assert cells["n"] == 3 and cells["ref_exact"] == pytest.approx(1 / 3) and cells["same_section"] == pytest.approx(2 / 3)
+
+
+def test_canon_diff_metrics_prf() -> None:
+    """Variant multiset P / R / F1 against the apparatus: typed, untyped (type ignored), strict (pos too), by type."""
+    gold = {"canonical_ref": "Niddah 27b:16-28a:7", "agreement_ratio": 0.8, "lacuna_words": 2, "variants": [
+        {"type": "orthographic", "fragment": "היא", "canon": "היה", "pos": "1:1"},
+        {"type": "substitution", "fragment": "קטנים", "canon": "גדולים", "pos": "1:5"},
+        {"type": "omission", "fragment": "", "canon": "וקא", "pos": "2:1"},
+        {"type": "orthographic", "fragment": "היא", "canon": "היה", "pos": "3:1"}]}
+    perfect = S.canon_diff_metrics(json.dumps(gold, ensure_ascii=False), gold)
+    assert perfect["typed"]["f1"] == 1.0 and perfect["strict"]["f1"] == 1.0 and perfect["ref_exact"]
+    assert perfect["agreement_abs_err"] == 0.0 and perfect["lacuna_abs_err"] == 0.0
+    pred = {"canonical_ref": "Niddah 27b:16-28a:7", "agreement_ratio": 0.7, "lacuna_words": 2, "variants": [
+        {"type": "orthographic", "fragment": "הִיא", "canon": "היה", "pos": "1:1"},          # points ignored
+        {"type": "orthographic", "fragment": "קטנים", "canon": "גדולים", "pos": "1:5"},     # wrong type
+        {"type": "addition", "fragment": "גם", "canon": "", "pos": "2:4"}]}                  # spurious
+    m = S.canon_diff_metrics(json.dumps(pred, ensure_ascii=False), gold)
+    assert m["typed"] == {"tp": 1, "fp": 2, "fn": 3, "precision": 1 / 3, "recall": 0.25, "f1": pytest.approx(2 / 7)}
+    assert m["untyped"]["tp"] == 2 and m["strict"]["tp"] == 1
+    assert m["by_type"]["substitution"]["fn"] == 1 and m["by_type"]["addition"]["fp"] == 1
+    assert m["agreement_abs_err"] == pytest.approx(0.1) and m["n_pred"] == 3 and m["n_gold"] == 4
+    none = S.canon_diff_metrics("no json", gold)
+    assert not none["json_ok"] and none["typed"]["recall"] == 0.0 and none["typed"]["precision"] is None
+    empty = S.canon_diff_metrics(json.dumps({"variants": []}), {"variants": []})
+    assert empty["typed"]["f1"] == 1.0
+    agg = S.aggregate_canon_diff([perfect, m, none])
+    assert agg["n"] == 3 and agg["typed"]["tp"] == 5 and agg["typed"]["fn"] == 7
+    with pytest.raises(ValueError):
+        S.variant_keys([], "fuzzy")
+
+
+def test_score_output_routes_canon_families() -> None:
+    """score_output picks the canon metrics by family and aggregate_scored groups them."""
+    gold_i = {"work": "Mishnah", "title": "Pirkei Avot", "he_title": "אבות", "ref": "Pirkei Avot 2:9-13",
+              "he_ref": "אבות ב", "anchor": "אמר להם צאו וראו"}
+    gold_d = {"canonical_ref": "Pirkei Avot 2:9-13", "agreement_ratio": 1.0, "lacuna_words": 0, "variants": []}
+    rows = [{"messages": [{"role": "user", "content": "<document>\nאמר\n</document>"},
+                          {"role": "assistant", "content": json.dumps(g, ensure_ascii=False)}],
+             "meta": {"family": fam, "row_id": fam, "condition": "edition", "lang_class": "HE", "split": "heldout",
+                      "work": "Mishnah"}} for fam, g in (("canon_identify", gold_i), ("canon_diff", gold_d))]
+    scored = [S.score_output(r, r["messages"][1]["content"]) for r in rows]
+    assert scored[0]["ref_exact"] and scored[0]["work"] == "Mishnah" and scored[1]["typed"]["f1"] == 1.0
+    cells = {c["family"]: c for c in S.aggregate_scored(scored)}
+    assert cells["canon_identify"]["ref_exact"] == 1.0 and cells["canon_diff"]["typed"]["f1"] is None

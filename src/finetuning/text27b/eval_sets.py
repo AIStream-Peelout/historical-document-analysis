@@ -27,6 +27,12 @@ Sets
     * **E6 RAG** -- test documents with leak-safe discussion pages (``rag_test_docs.json``).
     * **E7 noise bands** -- vision-benchmark hold-out documents (as E2-read), best unexposed read per
       document with coverage 0.6–1.5 and CER ≤ 0.9, binned by CER (0–.15 / .15–.3 / .3–.45 / .45–.6 / .6–.9).
+    * **E8 canon** (2026-10-26) -- every ``heldout`` row of the canon-comparison families (``canon_identify``,
+      ``canon_diff``: KTIV manuscripts held out by benchmark sys_num, H or GT overlap), per family with work and
+      hold-out-reason counts, plus a seeded work-stratified sample of chunks shared by both families; scored by the
+      deterministic canon metrics of :mod:`scorer` (identify: exact reference / same-section accuracy; diff:
+      variant-set precision / recall / F1 against the alignment's apparatus). ``canon_identify`` is not in any
+      mixture (stock-model probe); ``canon_diff`` is in t27b.
     * ``thresholds`` -- the §5 / §9 bars (structured, plus the plan text verbatim when the local
       plan file is found) and the v2 re-based stock bars from ``scores_v2/summary_v2.json``.
 
@@ -46,7 +52,7 @@ no quoted rows) and ``SHA256SUMS``. The pre-strip target can name documents the 
 trained text, so it stays with the build.
 
 Public API: :func:`build_manifest`, :func:`write_manifest`, the set builders :func:`build_e1` …
-:func:`build_e7` and :func:`build_e2_new_books`, :func:`thresholds`, loaders :func:`load_family_refs`,
+:func:`build_e8` and :func:`build_e2_new_books`, :func:`canon_prompt_version`, :func:`canon_chunk_key`, :func:`thresholds`, loaders :func:`load_family_refs`,
 :func:`load_new_book_refs`, :func:`load_refs_file`, :func:`load_v01_refs`, :func:`split_overrides`,
 :func:`load_exposure`, :func:`doc_reads`; dev monitor :func:`dev_monitor_rows`,
 :func:`dev_monitor_problems`, :func:`write_dev_monitor`, :func:`materialise_dev_monitor`; Hub
@@ -868,6 +874,101 @@ def build_e6(rag_test_docs: Mapping[str, Any]) -> Dict[str, Any]:
             "counts": {"docs": len(items), "docs_per_family": dict(counts)}, "items": items}
 
 
+# ========================================================================================== E8
+E8_DEF = ("Canon comparison: every heldout row of canon_identify and canon_diff (KTIV human transcriptions of held-out "
+          "manuscripts -- religious-140 / sealed / registry sys_nums, H by id or key, GT shingle overlap -- aligned to "
+          "the Sefaria text). Identify: exact reference and same-section accuracy (same title, overlapping daf-amud / "
+          "chapter range), anchor F1, over-quoting rate. Diff: micro precision / recall / F1 of the variant multiset "
+          "(type, fragment, canon) against the deterministic apparatus, plus untyped / strict (with pos) and per type. "
+          "A seeded work-stratified sample of chunks (both families on the same chunks) serves quick checkpoints.")
+#: Canon families of E8 (row files under ``families/``).
+E8_FAMILIES: Tuple[str, ...] = ("canon_identify", "canon_diff")
+#: Chunks of the quick E8 sample (both families on the same chunks).
+E8_SAMPLE = 200
+#: Which canon families the mixtures train on (canon_identify stays a probe; design owner 2026-10-26).
+E8_IN_MIXTURE: Dict[str, Tuple[str, ...]] = {"canon_identify": (), "canon_diff": ("t27b",)}
+
+
+def canon_prompt_version() -> str:
+    """Version tag of the canon-family prompts (hash of the instructions and notes of :mod:`canon_diff`).
+
+    :returns: ``canon-prompt-<sha12>``.
+    """
+    from src.finetuning.text27b import canon_diff as _cd
+
+    blob = json.dumps({"identify": _cd.INSTRUCTION_IDENTIFY, "diff": _cd.INSTRUCTION_DIFF, "note": _cd.NOTE},
+                      ensure_ascii=False, sort_keys=True)
+    return "canon-prompt-" + hashlib.sha256(blob.encode("utf-8")).hexdigest()[:12]
+
+
+def canon_chunk_key(meta: Mapping[str, Any]) -> str:
+    """Identity of the fragment chunk a canon row was built from (shared by its identify and diff rows).
+
+    :param meta: Row meta.
+    :returns: ``sys_num|fl|column|part``.
+    """
+    return "|".join(str(meta.get(k)) for k in ("sys_num", "fl", "column", "part"))
+
+
+def build_e8(families_dir: Path, seed: int = SEED, sample: int = E8_SAMPLE) -> Dict[str, Any]:
+    """E8: the heldout canon rows of both families, their work / reason counts and a seeded stratified sample.
+
+    :param families_dir: ``out_dir/families`` (reads ``canon_identify.jsonl`` and ``canon_diff.jsonl``).
+    :param seed: Sampling seed.
+    :param sample: Chunks in the quick sample (allocated to works in proportion, at least 2 per work when available).
+    :returns: The set dict (``families`` → row ids + counts, ``sample`` → row ids per family, ``counts``,
+        ``train_manuscripts_overlap`` = held manuscripts that also have train rows: must be 0).
+    """
+    fams: Dict[str, Dict[str, Any]] = {}
+    chunk_rows: Dict[str, Dict[str, str]] = defaultdict(dict)
+    chunk_work: Dict[str, str] = {}
+    held_ms: Set[str] = set()
+    train_ms: Set[str] = set()
+    for fam in E8_FAMILIES:
+        ids: List[str] = []
+        by_work: Counter = Counter()
+        by_reason: Counter = Counter()
+        tokens = 0
+        for r in _rows.read_jsonl(Path(families_dir) / f"{fam}.jsonl"):
+            m = r.get("meta") or {}
+            if m.get("split") == "train":
+                train_ms.add(str(m.get("sys_num")))
+            if m.get("split") != "heldout":
+                continue
+            rid = str(m.get("row_id"))
+            ids.append(rid)
+            by_work[str(m.get("work"))] += 1
+            by_reason[str(m.get("heldout_reason") or "").split(":")[0] or "unknown"] += 1
+            tokens += int(m.get("tokens") or 0)
+            held_ms.add(str(m.get("sys_num")))
+            ck = canon_chunk_key(m)
+            chunk_rows[ck][fam] = rid
+            chunk_work[ck] = str(m.get("work"))
+        fams[fam] = {"rows": len(ids), "tokens": tokens, "by_work": dict(sorted(by_work.items())),
+                     "by_reason": dict(sorted(by_reason.items())), "row_ids": sorted(ids),
+                     "in_mixtures": list(E8_IN_MIXTURE.get(fam, ()))}
+    paired = sorted(ck for ck, v in chunk_rows.items() if len(v) == len(E8_FAMILIES))
+    by_w: Dict[str, List[str]] = defaultdict(list)
+    for ck in paired:
+        by_w[chunk_work[ck]].append(ck)
+    n_all = len(paired)
+    picked: List[str] = []
+    for w, cks in sorted(by_w.items()):
+        quota = min(len(cks), max(2, int(round(sample * len(cks) / n_all)))) if n_all else 0
+        picked += sorted(cks, key=lambda c: seeded_rank(seed, "E8", c))[:quota]
+    samp = {fam: sorted(chunk_rows[ck][fam] for ck in picked) for fam in E8_FAMILIES}
+    return {"status": "ready", "definition": E8_DEF, "seed": seed, "families": fams,
+            "sample": {"chunks": len(picked), "by_work": dict(Counter(chunk_work[c] for c in picked)), "row_ids": samp},
+            "counts": {"rows": {f: fams[f]["rows"] for f in E8_FAMILIES}, "manuscripts": len(held_ms),
+                       "paired_chunks": n_all, "sample_chunks": len(picked)},
+            "train_manuscripts_overlap": len(held_ms & train_ms),
+            "metrics": {"canon_identify": ["ref_exact", "same_section", "title_ok", "work_ok", "anchor_f1", "over_quoted",
+                                           "json_ok"],
+                        "canon_diff": ["typed P/R/F1 (headline)", "untyped P/R/F1", "strict P/R/F1", "by_type",
+                                       "agreement_abs_err", "lacuna_abs_err", "ref_exact", "json_ok"]},
+            "scorer_version": _scorer.CANON_SCORER_VERSION, "prompt_version": canon_prompt_version()}
+
+
 # ========================================================================================== E7
 E7_DEF = ("Noise bands: vision-benchmark hold-out documents (split heldout_vision, plus split heldout with "
           "held_out_vision_benchmark: plan §9.1 'test ∩ held-out-vision ∩ reader-unexposed') with an edition row in "
@@ -1212,6 +1313,14 @@ def build_manifest(p: Optional[_paths.Paths] = None, families_dir: Optional[Path
         sets["E6_rag"]["prompt_version"] = train_prompt_version()
     else:
         sets["E6_rag"] = _pending(E6_DEF, [rel(rag)])
+
+    # E8
+    canon_files = [families_dir / f"{f}.jsonl" for f in E8_FAMILIES]
+    if all(f.exists() for f in canon_files):
+        sets["E8_canon"] = build_e8(families_dir, seed=seed)
+        sets["E8_canon"]["source_files"] = _sigs(canon_files, repo)
+    else:
+        sets["E8_canon"] = _pending(E8_DEF, [rel(f) for f in canon_files if not f.exists()])
 
     sources["plan"] = Path(plan_path).name if plan_path else None
     return {"name": EVAL_VERSION, "build": _rows.BUILD,
@@ -1568,7 +1677,10 @@ def readme_text(arms: Sequence[Mapping[str, Any]], dev: Mapping[str, Any], e3: M
     lines += ["", "`t27a` = the translate rows (every condition, ×2) plus the new-book translate pairs (×2): the "
               "translation pilot and the no-slice, no-literature baseline. `t27b` = the joint mixture: translate ×2, "
               "catalogue ∪ describe one row per document, relations 40 %, analysis ×2, literature-conditioned rows, "
-              "domain reading, with the noise slice swapped in for noised copies.", "",
+              "domain reading, with the noise slice swapped in for noised copies, public-domain edition translation "
+              "pairs ×2, and canon-comparison rows (`canon_diff`: a fragment's variant apparatus against the canonical "
+              "text given in the prompt, computed by deterministic alignment of a scholar's transcription; capped per "
+              "epoch, work-weighted).", "",
               "## Row schema", "",
               "`{\"messages\": [system, user, assistant], \"meta\": {...}}`. Render with the model's chat template and "
               "`enable_thinking=False` (one empty think block, no reasoning-effort sentence); loss on the assistant "
@@ -1743,6 +1855,10 @@ def summary_lines(manifest: Mapping[str, Any]) -> List[str]:
                        f"{s.get('over_max_tokens')}; split overridden {s.get('split_overridden')}")
             if s.get("materialised"):
                 out.append(f"  materialised {s['materialised']['path']} ({s['materialised']['rows']} rows)")
+        elif name == "E8_canon":
+            out.append(f"{name}: rows {s['counts']['rows']}, manuscripts {s['counts']['manuscripts']}, sample "
+                       f"{s['counts']['sample_chunks']} chunks {s['sample']['by_work']}, train overlap "
+                       f"{s['train_manuscripts_overlap']}")
         elif name == "E7_noise_bands":
             out.append(f"{name} [{s['status']}]: " + "; ".join(f"{f} {list(v['bands'].values())} (plan {list(v['plan_estimate'].values())})"
                                                               for f, v in s["families"].items()))

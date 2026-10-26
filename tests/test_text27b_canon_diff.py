@@ -369,16 +369,24 @@ def test_build_end_to_end(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
     assert by_sys["990000000000000022"]["meta"]["held_out_vision_benchmark"] is True
     assert by_sys["990000000000000011"]["meta"]["split"] == C.split_of("990000000000000011")
     for r in ident + diff:
-        problems = [x for x in R.validate_row(r) if not x.startswith("meta.family=")]
-        assert problems == []
+        assert R.validate_row(r) == []  # canon_identify / canon_diff are registered families
         assert r["meta"]["condition"] == "edition" and r["meta"]["self_label"] is False
         assert r["meta"]["tokens"] > 0 and r["meta"]["licence_class"] == "cc-by"
     t = json.loads(by_sys["990000000000000011"]["messages"][2]["content"])
     assert set(t) == {"canonical_ref", "agreement_ratio", "lacuna_words", "variants", "summary"}
     assert t["canonical_ref"].startswith("Sanhedrin 19b:1")
     assert "Canonical text (Sanhedrin 19b:" in by_sys["990000000000000011"]["messages"][1]["content"]
-    it = json.loads([r for r in ident if r["meta"]["sys_num"] == "990000000000000011"][0]["messages"][2]["content"])
-    assert it["work"] == "Talmud Bavli" and it["title"] == "Sanhedrin" and it["canonical_text"].startswith("אמר רבי")
+    irow = [r for r in ident if r["meta"]["sys_num"] == "990000000000000011"][0]
+    it = json.loads(irow["messages"][2]["content"])
+    assert set(it) == {"work", "title", "he_title", "ref", "he_ref", "anchor"}
+    assert it["work"] == "Talmud Bavli" and it["title"] == "Sanhedrin" and it["anchor"].startswith("אמר רבי")
+    assert len(it["anchor"].split()) <= C.IDENTIFY_ANCHOR_WORDS
+    span = irow["meta"]["canon_span"]  # the full matched span stays in meta (eval), never in the target
+    assert span.startswith(it["anchor"]) and len(span.split()) > C.IDENTIFY_ANCHOR_WORDS
+    assert span not in irow["messages"][2]["content"]
+    assert irow["meta"]["canonical_id"] is not None and "catalogue_pgpids" in irow["meta"]["provenance"]
+    assert "canon_span" not in by_sys["990000000000000011"]["meta"]
+    assert man["identify_target"]["anchor_words"] == C.IDENTIFY_ANCHOR_WORDS
     assert man["manuscripts"]["no_canonical_work"] == 1
     assert man["holdouts"]["benchmark_sysnums_in_non_heldout_rows"] == []
     assert man["counts"]["canon_diff"]["Talmud Bavli"]["heldout"]["rows"] == 1
@@ -394,6 +402,33 @@ def test_audit_sample_stratifies() -> None:
     out = C.audit_sample(pool, n=6, seed=1)
     assert len(out) == 6 and {r["corpus"] for r in out} == {"a", "b"}
     assert out == sorted(out, key=lambda r: (r["corpus"], r["similarity"]))
+
+
+def test_manuscript_gt_overlap_holds_whole_manuscript() -> None:
+    """One chunk overlapping a benchmark GT holds the manuscript out; no overlap or no GT does not."""
+    gt = "אבגדהוזחטיכלמנסעפצקרשת" * 3
+    sh = C.shingle_set([gt])
+
+    def chunk(text: str) -> Any:
+        """A chunk stand-in with the one attribute the rule reads.
+
+        :param text: Chunk text.
+        :returns: Object with ``text``.
+        """
+        return type("Ch", (), {"text": text})()
+
+    assert C.manuscript_gt_overlap([chunk("שלום עולם"), chunk(gt)], sh)
+    assert not C.manuscript_gt_overlap([chunk("שלום עולם")], sh)
+    assert not C.manuscript_gt_overlap([chunk(gt)], set())
+
+
+def test_identify_target_anchor_only() -> None:
+    """The identify target names the reference and quotes at most the first 12 span words."""
+    words = [f"מלה{i}" for i in range(40)]
+    t = C.identify_target("Mishnah", "Pirkei Avot", "אבות", "Pirkei Avot 2:9-13", "אבות ב", words)
+    assert t["anchor"] == " ".join(words[:12]) and "canonical_text" not in t
+    assert C.identify_target("W", "T", "ט", "T 1:1", "ט א", words[:5])["anchor"] == " ".join(words[:5])
+    assert "anchor" in C.INSTRUCTION_IDENTIFY and "canonical_text" not in C.INSTRUCTION_IDENTIFY
 
 
 def test_identify_and_diff_messages_read_condition() -> None:
@@ -444,7 +479,9 @@ def test_pd_pairs_verification_and_band(tmp_path: Path) -> None:
     assert len(rows) == 2 and drops == {"unverified_in_text_layer": 1}
     m = rows[0]["meta"]
     assert m["family"] == "translate_en" and m["source"] == "book:slug" and m["lang_class"] == "HE"
-    assert m["licence_class"] == "pd" and rows[0]["messages"][2]["content"].startswith("(1) Honour")
+    assert m["licence_class"] == "pd" and rows[0]["messages"][2]["content"].startswith("Honour")
+    assert m["target_raw"].startswith("(1) Honour") and m["strip_ops"] == ["B3:paren_line_number"]
+    assert rows[0]["messages"][1]["content"].count("(1) ") == 1  # the input keeps its verse number
     rows2, drops2 = C.pd_pairs(he, en, ocr, "slug", "public domain", tmp_path / "tok.json", tpl, group=1,
                                band=(5.0, 6.0))
     assert rows2 == [] and drops2.get("length_band") == 2
