@@ -22,7 +22,7 @@ exactly (the bracketed originals were destroyed by cleaning), so it is
 re-estimated by attributing the doc's reconstruction chars to each copy in
 proportion to its GAP count; docs whose estimate crosses the original
 ``is_training_clean`` gate (0.10) are flagged for review, never silently
-dropped.
+dropped...
 
 Usage::
 
