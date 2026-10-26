@@ -85,7 +85,7 @@ CLI::
         [--slice-policy single] [--exclude-rows auto|none|FILE] [--max-copies-per-target 5]
         [--without book_pairs analyse_document_v2]   # leave optional files out (e.g. while their agents run)
         [--token-caps domain_reading=2700000 canon_diff=2500000]   # per-epoch family token budgets (t27b default)
-        [--literature-floor min_share=0.175 l1_tolerance=0.01 | none]   # literature floor gate (t27b default; F13)
+        [--literature-floor min_share=0.175 l1_whole_pool=1 | none]   # literature floor gate (t27b default; F13 restated)
 
 Public API: :data:`MIXTURES`, :class:`MixConfig`, :func:`default_config`, :class:`Item`,
 :class:`Instance`, :func:`unit_hash`, :func:`pick_weighted`, :func:`doc_key`, :func:`cond_class`,
@@ -133,6 +133,9 @@ ONE_PER_DOC_FAMILIES: Tuple[str, ...] = ("catalogue_json", "describe_pgp")
 #: Family files under ``families/`` (stems). ``noise_slice`` and ``book_pairs`` hold rows of PGP families.
 NOISE_SLICE_FILE = "noise_slice"
 BOOK_PAIRS_FILE = "book_pairs"
+#: The web translation pairs (:mod:`web_pairs`, 2026-10-26): translate rows ×2 in t27b, component ``web_pairs``
+#: (counted with the L5 literature pairs); not part of t27a (t27a stays as pinned).
+WEB_PAIRS_FILE = "web_pairs"
 #: The widened L2 analysis file; when present it replaces the v0_1-carried ``analyse_document`` file.
 ANALYSE_V2_FILE = "analyse_document_v2"
 #: Family file stems that a present replacement file supersedes (replacement → replaced).
@@ -157,17 +160,20 @@ T27B_CAP_COVER: Tuple[str, ...] = (CANON_DIFF_FILE,)
 #: 2026-10-26).
 ADDITIVE_COMPONENTS: Tuple[str, ...] = tuple(R.CANON_FAMILIES)
 #: Components that carry literature text: L1 ``domain_reading``, L3 ``rag_context``, L2 / L5 ``analyse_document``,
-#: the L5 translate pairs ``book_pairs`` and the public-domain edition pairs ``pd_editions`` (L5, 2026-10-26).
+#: the L5 translate pairs ``book_pairs``, the public-domain edition pairs ``pd_editions`` (L5, 2026-10-26) and the
+#: web translation pairs ``web_pairs`` (human translations printed in articles / posts, 2026-10-26).
 LITERATURE_COMPONENTS: Tuple[str, ...] = ("domain_reading", "rag_context", "analyse_document", "book_pairs",
-                                          "pd_editions")
-#: The t27b literature floor as restated by the design owner (fix pass 2, F13): the L1 budget held within ±1 %
-#: (``l1_tolerance``) and the literature components ≥ 17.5 % of the epoch's tokens (``min_share``). The strict
-#: leak and page rules cut L2 / L3 / L5 below their plan-estimate yields, so the earlier ≥ 18 % figure was restated.
-T27B_LITERATURE_FLOOR: Dict[str, float] = {"min_share": 0.175, "l1_tolerance": 0.01}
+                                          "pd_editions", "web_pairs")
+#: The t27b literature floor (fix pass 2, F13, restated 2026-10-26): the literature components ≥ 17.5 % of the core
+#: epoch's tokens (``min_share``) and the L1 rule. F13 held L1 at its 2.70 M budget ± 1 % (``l1_tolerance``); the
+#: design owner reverted the per-work L1 cap to 0.30 M (concentration of one monograph) and restated the L1 gate as
+#: "L1 = the whole filtered pool after the per-work caps, ≤ 2.70 M, reported" (``l1_whole_pool``: every offered L1
+#: row is in the epoch when the pool fits the budget; no floor). ``l1_tolerance`` is still honoured when given.
+T27B_LITERATURE_FLOOR: Dict[str, float] = {"min_share": 0.175, "l1_whole_pool": 1.0}
 T27A_FILES: Tuple[str, ...] = TRANSLATE_FAMILIES + (BOOK_PAIRS_FILE,)
 T27B_FILES: Tuple[str, ...] = ("translate_en", "translate_he", "catalogue_json", "describe_pgp", "extract_relations",
-                               "analyse_document", ANALYSE_V2_FILE, NOISE_SLICE_FILE, BOOK_PAIRS_FILE, "rag_context",
-                               "domain_reading", PD_EDITIONS_FILE, CANON_DIFF_FILE)
+                               "analyse_document", ANALYSE_V2_FILE, NOISE_SLICE_FILE, BOOK_PAIRS_FILE, WEB_PAIRS_FILE,
+                               "rag_context", "domain_reading", PD_EDITIONS_FILE, CANON_DIFF_FILE)
 T27B_REQUIRED: Tuple[str, ...] = ("translate_en", "translate_he", "catalogue_json", "describe_pgp", "extract_relations")
 ROWS_PER_STEP = 16
 TOKENS_PER_STEP = 16_600
@@ -247,7 +253,7 @@ def default_config(name: str, **overrides: Any) -> MixConfig:
                          one_per_doc=(),
                          subsample={})
     elif name == "t27b":
-        base = MixConfig(name=name, repeats={"translate_en": 2, "translate_he": 2, "book_pairs": 2,
+        base = MixConfig(name=name, repeats={"translate_en": 2, "translate_he": 2, "book_pairs": 2, "web_pairs": 2,
                                              "analyse_document": 2, "rag_context": 1, "domain_reading": 1,
                                              "pd_editions": 2, CANON_DIFF_FILE: 1},
                          subsample={"extract_relations": 0.4}, max_copies_per_target=5,
@@ -325,7 +331,7 @@ class Item:
     @property
     def component(self) -> str:
         """Mixture component (§9.3 row): L5 translate rows are ``book_pairs``, the public-domain edition pairs
-        ``pd_editions``, catalogue / describe share ``catalogue_describe``, everything else is its family.
+        ``pd_editions``, the web translation pairs ``web_pairs``, catalogue / describe share ``catalogue_describe``, everything else is its family.
 
         :returns: Component name.
         """
@@ -333,6 +339,8 @@ class Item:
             return "book_pairs"
         if self.src == PD_EDITIONS_FILE and self.family in TRANSLATE_FAMILIES:
             return "pd_editions"
+        if self.src == WEB_PAIRS_FILE and self.family in TRANSLATE_FAMILIES:
+            return "web_pairs"
         if self.family in ONE_PER_DOC_FAMILIES:
             return "catalogue_describe"
         return self.family
@@ -1154,9 +1162,12 @@ def render_check(ordered: Sequence[Instance], cfg: MixConfig, template_path: Opt
 
 
 # ----------------------------------------------------------------------------------------- gates
-def literature_floor_check(ordered: Sequence[Instance], cfg: MixConfig) -> Dict[str, Any]:
-    """The literature floor of an epoch (F13): literature components' share of the CORE epoch's tokens ≥ ``min_share``
-    and the L1 (``domain_reading``) tokens within ``l1_tolerance`` of its token budget (when it has one).
+def literature_floor_check(ordered: Sequence[Instance], cfg: MixConfig,
+                           cap_stats: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    """The literature floor of an epoch (F13, restated 2026-10-26): literature components' share of the CORE epoch's
+    tokens ≥ ``min_share`` and the L1 (``domain_reading``) rule: with ``l1_whole_pool``, L1 ≤ its token budget and,
+    when the offered pool fits the budget, every offered token is in the epoch (no floor); with ``l1_tolerance``
+    (F13 as first written), L1 within that fraction of its budget.
 
     The core epoch is the epoch minus ``cfg.additive_components`` (the canon block; design-owner decision 2026-10-26:
     the canon families are a user-approved additive component with their own caps, so the documentary + literature
@@ -1165,9 +1176,11 @@ def literature_floor_check(ordered: Sequence[Instance], cfg: MixConfig) -> Dict[
 
     :param ordered: Instances in epoch order.
     :param cfg: Mixture configuration (``literature_floor``, ``token_caps``, ``additive_components``).
+    :param cap_stats: :func:`apply_token_caps` statistics (``tokens_offered`` of the L1 pool; None = unknown).
     :returns: ``{"pass", "violations", "share", "share_core", "share_whole_epoch",
         "share_literature_plus_additive_whole_epoch", "min_share", "l1_tokens", "l1_budget", "l1_tolerance",
-        "core_tokens", "additive_tokens", "tokens_by_component", "share_by_component"}`` (component shares of the core).
+        "l1_rule", "l1_pool_tokens", "core_tokens", "additive_tokens", "tokens_by_component", "share_by_component"}``
+        (component shares of the core).
     """
     total = sum(_tok(i) for i in ordered)
     additive = set(cfg.additive_components)
@@ -1181,8 +1194,19 @@ def literature_floor_check(ordered: Sequence[Instance], cfg: MixConfig) -> Dict[
     share = lit / core if core else 0.0
     min_share = float(cfg.literature_floor.get("min_share", 0.0))
     tol = float(cfg.literature_floor.get("l1_tolerance", 0.0))
+    whole = bool(cfg.literature_floor.get("l1_whole_pool", 0.0))
     budget = cfg.token_caps.get("domain_reading")
-    l1_ok = budget is None or abs(by["domain_reading"] - budget) <= tol * budget
+    pool = (cap_stats or {}).get("domain_reading", {}).get("tokens_offered") if cap_stats else None
+    l1 = by["domain_reading"]
+    if whole:
+        rule = "whole_pool_le_budget"
+        l1_ok = (budget is None or l1 <= budget) and (pool is None or (budget is not None and pool > budget)
+                                                       or l1 == pool)
+    elif tol:
+        rule = "budget_tolerance"
+        l1_ok = budget is None or abs(l1 - budget) <= tol * budget
+    else:
+        rule, l1_ok = "none", True
     ok = share >= min_share and l1_ok
     return {"pass": ok, "violations": int(share < min_share) + int(not l1_ok), "share": round(share, 5),
             "gated_on": "core epoch (epoch minus additive components)", "share_core": round(share, 5),
@@ -1190,19 +1214,20 @@ def literature_floor_check(ordered: Sequence[Instance], cfg: MixConfig) -> Dict[
             "share_literature_plus_additive_whole_epoch": round((lit + add_tok) / total, 5) if total else 0.0,
             "min_share": min_share, "literature_tokens": lit, "total_tokens": total, "core_tokens": core,
             "additive_components": sorted(additive), "additive_tokens": add_tok, "l1_tokens": by["domain_reading"],
-            "l1_budget": budget, "l1_tolerance": tol,
+            "l1_budget": budget, "l1_tolerance": tol, "l1_rule": rule, "l1_pool_tokens": pool,
             "tokens_by_component": {c: by[c] for c in LITERATURE_COMPONENTS},
             "share_by_component": {c: round(by[c] / core, 5) if core else 0.0 for c in LITERATURE_COMPONENTS}}
 
 
 def check_gates(ordered: Sequence[Instance], cfg: MixConfig, summary: Mapping[str, Any],
-                render: Optional[Mapping[str, Any]]) -> Dict[str, Any]:
+                render: Optional[Mapping[str, Any]], cap_stats: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """Hard gates of the materialised epoch (plus informational warnings).
 
     :param ordered: Instances in epoch order.
     :param cfg: Mixture configuration.
     :param summary: Output of :func:`summarise`.
     :param render: Output of :func:`render_check`, or None when skipped.
+    :param cap_stats: :func:`apply_token_caps` statistics (the L1 pool for the literature floor's L1 rule).
     :returns: ``{"ok", "checks": {name: {"pass", ...}}, "warnings": [...]}``.
     """
     checks: Dict[str, Dict[str, Any]] = {}
@@ -1237,7 +1262,7 @@ def check_gates(ordered: Sequence[Instance], cfg: MixConfig, summary: Mapping[st
         used = sum(_tok(i) for i in ordered if i.item.family == fam)
         checks[f"token_cap_{fam}"] = {"pass": used <= cap, "violations": int(used > cap), "tokens": used, "cap": cap}
     if cfg.literature_floor:
-        checks["literature_floor"] = literature_floor_check(ordered, cfg)
+        checks["literature_floor"] = literature_floor_check(ordered, cfg, cap_stats)
     distinct = list({i.item.uid: i.item for i in ordered}.values())
     non_nfc = sorted({it.row_id for it in distinct if R.non_nfc_roles(it.row)})
     checks["nfc_messages"] = {"pass": not non_nfc, "violations": len(non_nfc), "examples": non_nfc[:20]}
@@ -1307,6 +1332,23 @@ def _plain(obj: Any) -> Any:
     return obj
 
 
+def l1_build_info(families_dir: Path) -> Optional[Dict[str, Any]]:
+    """The L1 build parameters recorded in the mixture manifest (per-work token cap, works, offered train tokens).
+
+    :param families_dir: Directory of the family files (``domain_reading_manifest.json``).
+    :returns: ``{"per_work_token_cap", "works", "train_rows", "train_tokens", "capped_rows", "fingerprint"}`` or None.
+    """
+    path = Path(families_dir) / "domain_reading_manifest.json"
+    if not path.exists():
+        return None
+    m = json.loads(path.read_text(encoding="utf-8"))
+    args = m.get("build_args") or {}
+    tot = m.get("totals") or {}
+    return {"per_work_token_cap": args.get("token_cap"), "works": len(args.get("works") or m.get("works") or []),
+            "train_rows": tot.get("train_rows"), "train_tokens": tot.get("train_row_tokens"),
+            "capped_rows": m.get("capped_rows"), "fingerprint": m.get("fingerprint")}
+
+
 def build_mixture(cfg: MixConfig, families_dir: Union[str, Path], out_dir: Union[str, Path],
                   template_path: Optional[Union[str, Path]] = None,
                   tokenizer_path: Optional[Union[str, Path]] = None, run_render_check: bool = True,
@@ -1343,12 +1385,14 @@ def build_mixture(cfg: MixConfig, families_dir: Union[str, Path], out_dir: Union
     render = render_check(ordered, cfg, template_path, tokenizer_path) if run_render_check else None
     if render is not None:
         _merge_section(mix_dir / RENDER_CHECK_NAME, cfg.name, render)
-    gates = check_gates(ordered, cfg, summary, render)
-    lf = literature_floor_check(ordered, cfg)
+    gates = check_gates(ordered, cfg, summary, render, sel_stats.get("token_caps"))
+    lf = literature_floor_check(ordered, cfg, sel_stats.get("token_caps"))
     summary["literature_shares"] = {k: lf[k] for k in ("share_core", "share_whole_epoch",
                                                        "share_literature_plus_additive_whole_epoch", "literature_tokens",
                                                        "core_tokens", "additive_tokens", "total_tokens",
-                                                       "additive_components")}
+                                                       "additive_components", "l1_tokens", "l1_pool_tokens", "l1_rule",
+                                                       "l1_budget")}
+    summary["l1_build"] = l1_build_info(Path(families_dir))
     try:
         families_rel = str(Path(families_dir).resolve().relative_to(out.resolve()))
     except ValueError:
@@ -1436,8 +1480,9 @@ def build_parser() -> argparse.ArgumentParser:
                     help=f"family=tokens budgets per epoch, seeded subsample (t27b default {T27B_TOKEN_CAPS}, "
                          f"work weights {T27B_CAP_WEIGHTS}; 0 removes a cap)")
     ap.add_argument("--literature-floor", nargs="*", default=None,
-                    help=f"min_share=x l1_tolerance=y gate on the literature components and the L1 budget (t27b default "
-                         f"{T27B_LITERATURE_FLOOR}; fix pass F13); 'none' switches it off (synthetic tests)")
+                    help=f"min_share=x [l1_whole_pool=1 | l1_tolerance=y] gate on the literature components and the L1 rule "
+                         f"(t27b default {T27B_LITERATURE_FLOOR}; F13 restated 2026-10-26); 'none' switches it off "
+                         f"(synthetic tests)")
     ap.add_argument("--exclude-conditions", nargs="*", default=None,
                     help=f"conditions never drawn (t27b default {list(T27B_EXCLUDE_CONDITIONS)}; 'none' = keep all)")
     ap.add_argument("--without", nargs="*", default=None,

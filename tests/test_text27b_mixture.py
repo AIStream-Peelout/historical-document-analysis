@@ -10,6 +10,7 @@ through the real local Qwen3.8 template / tokenizer named in ``paths.json`` and 
 import codecs
 import ast
 import json
+from dataclasses import replace
 import logging
 import random
 from collections import Counter, defaultdict
@@ -516,13 +517,16 @@ def test_token_cap_subsamples_domain_reading_seeded(tmp_path: Path) -> None:
 
 
 def test_literature_floor_gate() -> None:
-    """F13: the t27b floor passes when the literature components hold ≥ 17.5 % of the tokens and L1 sits within ±1 %
-    of its budget; either miss fails it; per-component yields are reported.
+    """F13 restated (2026-10-26): the t27b floor passes when the literature components hold ≥ 17.5 % of the core tokens
+    and L1 is the whole offered pool (≤ its budget); a pool larger than the budget only needs L1 ≤ budget; the legacy
+    ±1 % rule still works when configured; web pairs count as a literature component.
 
     :returns: None.
     """
     cfg = M.default_config("t27b", token_caps={"domain_reading": 1000})
-    assert cfg.literature_floor == M.T27B_LITERATURE_FLOOR == {"min_share": 0.175, "l1_tolerance": 0.01}
+    assert cfg.literature_floor == M.T27B_LITERATURE_FLOOR == {"min_share": 0.175, "l1_whole_pool": 1.0}
+    assert cfg.repeats["web_pairs"] == 2 and M.WEB_PAIRS_FILE in cfg.files
+    assert M.WEB_PAIRS_FILE not in M.default_config("t27a").files
 
     def inst(family: str, tokens: int, src: Optional[str] = None) -> M.Instance:
         """One instance with a token count.
@@ -538,12 +542,21 @@ def test_literature_floor_gate() -> None:
 
     base = [inst("domain_reading", 995), inst("rag_context", 100), inst("analyse_document", 50),
             inst("translate_en", 80, src="book_pairs"), inst("catalogue_json", 4000)]
-    chk = M.literature_floor_check(base, cfg)
+    pool = {"domain_reading": {"tokens_offered": 995}}
+    chk = M.literature_floor_check(base, cfg, pool)
     assert chk["pass"] and chk["share"] == round(1225 / 5225, 5) and chk["tokens_by_component"]["book_pairs"] == 80
-    assert not M.literature_floor_check(base[1:] + [inst("domain_reading", 980)], cfg)["pass"]       # L1 off by 2 %
-    low = M.literature_floor_check(base + [inst("catalogue_json", 2000)], cfg)
+    assert chk["l1_rule"] == "whole_pool_le_budget" and chk["l1_pool_tokens"] == 995
+    short = base[1:] + [inst("domain_reading", 980)]
+    assert not M.literature_floor_check(short, cfg, pool)["pass"]                              # pool not all in
+    assert M.literature_floor_check(short, cfg, {"domain_reading": {"tokens_offered": 1500}})["pass"]  # pool > budget
+    assert not M.literature_floor_check(base[1:] + [inst("domain_reading", 1005)], cfg, None)["pass"]  # over budget
+    legacy = replace(cfg, literature_floor={"min_share": 0.175, "l1_tolerance": 0.01})
+    assert not M.literature_floor_check(short, legacy)["pass"] and M.literature_floor_check(base, legacy)["pass"]
+    low = M.literature_floor_check(base + [inst("catalogue_json", 2000)], cfg, pool)
     assert not low["pass"] and low["violations"] == 1
     assert M.literature_floor_check(base, M.default_config("t27b", token_caps={"domain_reading": 0}))["pass"]
+    web = M.literature_floor_check(base + [inst("translate_en", 40, src="web_pairs")], cfg, pool)
+    assert web["tokens_by_component"]["web_pairs"] == 40 and web["pass"]
 
 
 def canon_rows(n_per_title: int = 12) -> List[Dict[str, Any]]:

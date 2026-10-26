@@ -1187,13 +1187,15 @@ def build_reference_index(p: Optional[_paths.Paths] = None, holdouts: Optional[_
 #: Families whose TRAIN targets literature pages are deduplicated against (plan §9.4.6, decision D5).
 TRAIN_DUP_FAMILIES: Tuple[str, ...] = ("translate_en", "translate_he", "analyse_document")
 #: Further family files whose translate / analyse TRAIN rows count when present (L5 pairs, widened L2, the
-#: public-domain edition pairs of :mod:`canon_diff`, which t27b trains as L5 translate rows).
+#: public-domain edition pairs of :mod:`canon_diff`, which t27b trains as L5 translate rows, and the web translation
+#: pairs of :mod:`web_pairs`, 2026-10-26).
 #: The canon-comparison families are deliberately NOT part of the dedupe (decision 2026-10-26): their targets are
 #: deterministic derivations of public canonical texts (an apparatus of short variant pairs, a reference with a
 #: 12-word anchor), not human-written targets the model must learn to produce, and a literature page quoting a
 #: Talmud or Mishneh Torah passage would otherwise be dropped for quoting the canon (a 12-word anchor has five
 #: word 8-grams: one shared 8-gram is 20 %). The eval-leak gates (excluded rows, re-scan) do cover canon rows.
-TRAIN_DUP_EXTRA_FILES: Tuple[str, ...] = ("book_pairs.jsonl", "analyse_document_v2.jsonl", "pd_editions.jsonl")
+TRAIN_DUP_EXTRA_FILES: Tuple[str, ...] = ("book_pairs.jsonl", "analyse_document_v2.jsonl", "pd_editions.jsonl",
+                                          "web_pairs.jsonl")
 #: A page duplicates a train target when it holds at least this share of the target's word 8-grams.
 TRAIN_DUP_SHARE = 0.20
 #: Reason prefix of a page dropped by the dedupe pass.
@@ -1218,6 +1220,11 @@ EXCLUDED_ROWS_MANIFEST_FILE = "excluded_rows_manifest.json"
 NON_TRAIN_SPLITS: Tuple[str, ...] = ("dev", "test_indist", "heldout_vision", "heldout")
 #: Reason prefix of a TRAIN row whose document another family file holds out.
 SPLIT_CONFLICT_REASON = "split_conflict"
+#: ``meta.split_reason`` values of a SOURCE-level hold-out (2026-10-26, :mod:`web_pairs`: every pair of a web item that
+#: names a held document is an eval-only reference, whatever its document): the document itself is not held out, so
+#: such rows do not put the document's rows in other families into a split conflict (their own TRAIN twins never
+#: exist: the whole item is held out).
+SOURCE_LEVEL_SPLIT_REASONS: Tuple[str, ...] = ("item_mention",)
 #: ``meta.page_keys_source`` of rows built from a parsed book-edition entry (L5 / L2, fix pass F11).
 NAS_PAGE_SOURCE = "nas_entry"
 #: Reason of a TRAIN parsed-entry row whose entry could not be mapped to literature pages (F11: never ungated).
@@ -1299,14 +1306,15 @@ def doc_identities(meta: Mapping[str, Any]) -> Set[str]:
 
     :param meta: Row meta.
     :returns: ``pgpid:<id>`` for ``pgpid`` and every ``pgpids`` entry, plus ``book:<source>:<doc>`` for a
-        new-book document (a ``doc_id`` written as ``book:…``, or ``provenance.book`` + ``provenance.entry_no``).
+        new-book document (a ``doc_id`` written as ``book:…``, or ``provenance.book`` + ``provenance.entry_no``) and the
+        ``web:…`` doc id of a web-pair document.
     """
     out: Set[str] = set()
     for pg in [meta.get("pgpid")] + list(meta.get("pgpids") or []):
         if pg not in (None, "", "None"):
             out.add(f"pgpid:{pg}")
     did = str(meta.get("doc_id") or "")
-    if did.startswith("book:"):
+    if did.startswith(("book:", "web:")):
         out.add(did)
     prov = meta.get("provenance") if isinstance(meta.get("provenance"), Mapping) else {}
     if prov.get("book") and prov.get("entry_no") not in (None, ""):
@@ -1404,7 +1412,8 @@ def build_excluded_rows(families_dir: Union[str, Path], index: NgramIndex,
     (``unmapped_entry_pages:<why>``, F11: :func:`unmapped_entry_row`).
     With ``split_conflicts``, a TRAIN row not excluded otherwise is excluded when another family file
     holds the same document out (:func:`doc_identities` match against a row in :data:`NON_TRAIN_SPLITS`;
-    e.g. L5 and L2 hashing one new-book document into different splits).
+    e.g. L5 and L2 hashing one new-book document into different splits); source-level hold-outs
+    (:data:`SOURCE_LEVEL_SPLIT_REASONS`) hold out their source, not the document, and are not counted.
 
     Every ``*.jsonl`` family file under ``families_dir`` is read (builder families, the noise slice,
     L5 / L2 files and ``rag_context`` when present); a row counts when its split is ``train`` and its
@@ -1440,7 +1449,8 @@ def build_excluded_rows(families_dir: Union[str, Path], index: NgramIndex,
         for r in _rows.read_jsonl(f):
             m = r.get("meta") or {}
             fam = str(m.get("family") or m.get("task") or "")
-            if split_conflicts and m.get("split") in NON_TRAIN_SPLITS:
+            if split_conflicts and m.get("split") in NON_TRAIN_SPLITS and \
+                    m.get("split_reason") not in SOURCE_LEVEL_SPLIT_REASONS:
                 for ident in doc_identities(m):
                     non_train.setdefault(ident, str(m.get("split")))
             if m.get("split") != "train" or fam not in families:

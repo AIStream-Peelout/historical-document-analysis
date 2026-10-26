@@ -131,6 +131,8 @@ VISION_SPLITS: Tuple[str, ...] = ("heldout_vision", "heldout")
 ANALYSE_V2 = "analyse_document_v2"
 #: The L5 file (rows of several families: translate_en / translate_he / analyse_document).
 BOOK_PAIRS = "book_pairs"
+#: The web translation pairs (:mod:`web_pairs`, 2026-10-26); their dev translate rows join the E3 translate blocks.
+WEB_PAIRS = "web_pairs"
 #: Families of the new-book (L5) rows that E2 / E3 use.
 NEW_BOOK_TRANSLATE: Tuple[str, ...] = ("translate_en", "translate_he")
 #: Prefix of the ``excluded_rows.json`` reason of a row whose document another family file holds out.
@@ -392,6 +394,30 @@ def load_new_book_refs(families_dir: Path, overrides: Optional[Mapping[str, str]
     return load_refs_file(f, overrides) if f.exists() else {}
 
 
+def load_web_pair_refs(families_dir: Path, overrides: Optional[Mapping[str, str]] = None) -> Dict[str, List[RowRef]]:
+    """Row references of the web translation pairs (``web_pairs.jsonl``), grouped by family; empty when it is absent.
+
+    :param families_dir: ``out_dir/families``.
+    :param overrides: :func:`split_overrides` output.
+    :returns: ``{family: [RowRef]}``.
+    """
+    f = Path(families_dir) / f"{WEB_PAIRS}.jsonl"
+    return load_refs_file(f, overrides) if f.exists() else {}
+
+
+def merge_refs(*parts: Mapping[str, Sequence[RowRef]]) -> Dict[str, List[RowRef]]:
+    """Concatenate row-reference maps family by family.
+
+    :param parts: ``{family: [RowRef]}`` maps.
+    :returns: The merged map.
+    """
+    out: Dict[str, List[RowRef]] = defaultdict(list)
+    for part in parts:
+        for fam, rs in (part or {}).items():
+            out[fam].extend(rs)
+    return dict(out)
+
+
 def strongest_split(refs: Iterable[RowRef]) -> Dict[str, str]:
     """Strongest split per pgpid over rows (``heldout`` > ``heldout_vision`` > ``test_indist`` > ``dev`` > ``train``).
 
@@ -632,7 +658,7 @@ def build_e2_read(refs: Mapping[str, Sequence[RowRef]]) -> Dict[str, Any]:
 
 # ========================================================================================== E3
 E3_DEF = ("Dev monitor for checkpoint choice only, one block per mixture family: all dev translate_en / translate_he "
-          "rows (PGP and the L5 new-book dev documents) + a seeded 40 catalogue_json and 20 extract_relations dev rows "
+          "rows (PGP, the L5 new-book dev documents and, from 2026-10-26, the web-pair dev documents) + a seeded 40 catalogue_json and 20 extract_relations dev rows "
           "(the original monitor); every dev analyse_document row (L2 + L5 analysis), every dev rag_context row (dev "
           "documents with their own leak-safe discussion pages that no train row uses), a seeded 60 of the dev "
           "canon_diff rows, up to 60 domain_reading in-run probe chunks (split probe, never trained; relabelled "
@@ -1598,6 +1624,7 @@ def build_manifest(p: Optional[_paths.Paths] = None, families_dir: Optional[Path
 
     # family-based sets
     new_book: Dict[str, List[RowRef]] = {}
+    web: Dict[str, List[RowRef]] = {}
     overrides_map: Dict[str, str] = {}
     if dry_run_v01:
         refs = load_v01_refs(p.text_ft_v0_1)
@@ -1608,7 +1635,9 @@ def build_manifest(p: Optional[_paths.Paths] = None, families_dir: Optional[Path
         overrides_map = overrides
         refs = load_family_refs(families_dir, overrides=overrides)
         new_book = load_new_book_refs(families_dir, overrides)
-        extra = ([families_dir / f"{BOOK_PAIRS}.jsonl"] if new_book else []) + ([excluded_rows] if overrides else [])
+        web = load_web_pair_refs(families_dir, overrides)
+        extra = ([families_dir / f"{BOOK_PAIRS}.jsonl"] if new_book else []) + \
+            ([families_dir / f"{WEB_PAIRS}.jsonl"] if web else []) + ([excluded_rows] if overrides else [])
         fam_sources = _sigs([family_file(families_dir, f) for f in refs] + extra, repo)
         sources["split_overrides"] = {"rows": len(overrides), "by_split": dict(Counter(overrides.values()))}
     exposure_path = p.out("exposure.jsonl")
@@ -1631,7 +1660,7 @@ def build_manifest(p: Optional[_paths.Paths] = None, families_dir: Optional[Path
         elif name == "E3_dev_monitor":
             mix = p.out(E3_TRAIN_MIXTURE)
             monitor_refs = {} if dry_run_v01 else load_monitor_refs(families_dir, overrides_map)
-            sets[name] = build_e3(refs, seed=seed, new_book_refs=new_book, monitor_refs=monitor_refs,
+            sets[name] = build_e3(refs, seed=seed, new_book_refs=merge_refs(new_book, web), monitor_refs=monitor_refs,
                                   train_ids=train_identities(mix) if (mix.exists() and not dry_run_v01) else None)
             if mix.exists() and not dry_run_v01:
                 sets[name]["train_mixture"] = file_sig(mix, repo)
@@ -1756,9 +1785,10 @@ def dev_monitor_rows(e3: Mapping[str, Any], families_dir: Path) -> List[Dict[str
         cand = ([Path(families_dir) / f"{stem}.jsonl" for stem in E3_MONITOR_FILES[b]] if b in E3_MONITOR_FILES
                 else [family_file(families_dir, b)])
         files += [f for f in cand if f not in files]
-    bp = Path(families_dir) / f"{BOOK_PAIRS}.jsonl"
-    if bp not in files:
-        files.append(bp)
+    for stem in (BOOK_PAIRS, WEB_PAIRS):
+        extra = Path(families_dir) / f"{stem}.jsonl"
+        if extra not in files and extra.exists():
+            files.append(extra)
     rows = select_rows(files, [rid for b in blocks for rid in e3["row_ids"][b]])
     out = []
     for r in rows:
@@ -2068,7 +2098,7 @@ def readme_text(arms: Sequence[Mapping[str, Any]], dev: Mapping[str, Any], e3: M
               "translation pilot and the no-slice, no-literature baseline. `t27b` = the joint mixture: translate ×2, "
               "catalogue ∪ describe one row per document, relations 40 %, analysis ×2, literature-conditioned rows, "
               "domain reading, with the noise slice swapped in for noised copies, public-domain edition translation "
-              "pairs ×2, and canon-comparison rows (`canon_diff`: a fragment's variant apparatus against the canonical "
+              "pairs ×2, translation pairs from open-access articles and posts ×2 (`web_pairs`), and canon-comparison rows (`canon_diff`: a fragment's variant apparatus against the canonical "
               "text given in the prompt, computed by deterministic alignment of a scholar's transcription; capped per "
               "epoch, work-weighted).", "",
               "## Row schema", "",

@@ -184,6 +184,12 @@ def test_split_overrides_new_books_and_loaders(tmp_path: Path) -> None:
     assert "bookx" not in json.dumps(e2nb)
     assert E.doc_hash("123") == "123" and E.doc_hash("book:bookx:17").startswith("d") and len(E.doc_hash("x")) == 16
     assert E.load_new_book_refs(tmp_path / "nowhere") == {}
+    R.write_jsonl(fam / "web_pairs.jsonl", [row("translate_en", "", "dev", doc_id="web:d:s:1", row_id="w1"),
+                                            row("translate_en", "", "heldout", doc_id="web:d:s:2", row_id="w2")])
+    web = E.load_web_pair_refs(fam)
+    assert [r.row_id for r in web["translate_en"]] == ["w1", "w2"] and web["translate_en"][0].origin == "web_pairs"
+    merged = E.merge_refs(nb, web)
+    assert {r.row_id for r in merged["translate_en"]} >= {"r1", "w1"} and E.load_web_pair_refs(tmp_path / "x") == {}
     # analyse_document comes from the L2 file when it exists
     R.write_jsonl(fam / "analyse_document.jsonl", [row("analyse_document", "1", "train")])
     assert E.family_file(fam, "analyse_document").name == "analyse_document.jsonl"
@@ -549,10 +555,12 @@ def test_dev_monitor_rows_and_problems(tmp_path: Path) -> None:
     R.write_jsonl(fam / "translate_en.jsonl", [row("translate_en", "1", "dev"), row("translate_en", "2", "train")])
     R.write_jsonl(fam / "catalogue_json.jsonl", [row("catalogue_json", "3", "dev")])
     R.write_jsonl(fam / "book_pairs.jsonl", [row("translate_en", "", "dev", doc_id="book:b:1", row_id="nb1")])
+    R.write_jsonl(fam / "web_pairs.jsonl", [row("translate_en", "", "dev", doc_id="web:d:s:1", row_id="wb1")])
     rid = lambda f, p: R.row_id(f, p, "edition", None)  # noqa: E731
-    e3 = {"row_ids": {"catalogue_json": [rid("catalogue_json", "3")], "translate_en": [rid("translate_en", "1"), "nb1"]}}
+    e3 = {"row_ids": {"catalogue_json": [rid("catalogue_json", "3")],
+                      "translate_en": [rid("translate_en", "1"), "nb1", "wb1"]}}
     rows = E.dev_monitor_rows(e3, fam)
-    assert [r["meta"]["row_id"] for r in rows] == [rid("translate_en", "1"), "nb1", rid("catalogue_json", "3")]
+    assert [r["meta"]["row_id"] for r in rows] == [rid("translate_en", "1"), "nb1", "wb1", rid("catalogue_json", "3")]
     assert E.dev_monitor_problems(rows) == []
     with pytest.raises(ValueError):
         E.select_rows([fam / "translate_en.jsonl"], ["nope"])
