@@ -1220,11 +1220,12 @@ EXCLUDED_ROWS_MANIFEST_FILE = "excluded_rows_manifest.json"
 NON_TRAIN_SPLITS: Tuple[str, ...] = ("dev", "test_indist", "heldout_vision", "heldout")
 #: Reason prefix of a TRAIN row whose document another family file holds out.
 SPLIT_CONFLICT_REASON = "split_conflict"
-#: ``meta.split_reason`` values of a SOURCE-level hold-out (2026-10-26, :mod:`web_pairs`: every pair of a web item that
-#: names a held document is an eval-only reference, whatever its document): the document itself is not held out, so
-#: such rows do not put the document's rows in other families into a split conflict (their own TRAIN twins never
-#: exist: the whole item is held out).
-SOURCE_LEVEL_SPLIT_REASONS: Tuple[str, ...] = ("item_mention",)
+#: ``meta.split_reason`` values of a hold-out that concerns the SOURCE text, not the document (2026-10-26,
+#: :mod:`web_pairs`): ``item_mention`` (the item-level rule, kept for commentary), ``span_mention`` (the translation
+#: span or its edition names ANOTHER, held document) and ``item_eval_only`` (the item's metadata marks it eval-only).
+#: The document itself is not held out, so such rows do not put the document's rows in other families into a split
+#: conflict.
+SOURCE_LEVEL_SPLIT_REASONS: Tuple[str, ...] = ("item_mention", "span_mention", "item_eval_only")
 #: ``meta.page_keys_source`` of rows built from a parsed book-edition entry (L5 / L2, fix pass F11).
 NAS_PAGE_SOURCE = "nas_entry"
 #: Reason of a TRAIN parsed-entry row whose entry could not be mapped to literature pages (F11: never ungated).

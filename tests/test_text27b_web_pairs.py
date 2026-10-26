@@ -20,6 +20,9 @@ from src.finetuning.text27b import web_pairs as W
 JA_LINES = ["בשמ רחמ", "כתאבי אלי אלשיך אבו עלי חסן בן דאוד", "וצל כתאבך ופהמתה ואלחמד ללה"]
 EN_LINES = ["In the name of God, the Merciful, the Compassionate.", "My letter to the elder Abū ʿAlī Ḥasan ibn Dāwūd.",
             "Your letter arrived and I understood it, praise be to God."]
+#: A translation whose named entities never occur in :data:`JA_LINES` (fails the overlap floor).
+ODD_LINES = ["Zebulon met Methuselah at Samarkand.", "Nebuchadnezzar wrote to Belshazzar of Bukhara.",
+             "Ishmael sent word from Trebizond."]
 
 
 class FakeTC:
@@ -91,14 +94,16 @@ def fake_mention(texts: List[str], holdouts: Any) -> Optional[str]:
     return "test" if any("HELD-DOC" in (t or "") for t in texts) else None
 
 
-def item_text(extra: str = "") -> str:
+def item_text(extra: str = "", translation: Optional[List[str]] = None) -> str:
     """A synthetic post: heading, transcription, translation with footnote refs, commentary.
 
     :param extra: Extra commentary line.
+    :param translation: Three translation lines (default :data:`EN_LINES`).
     :returns: Text.
     """
+    tr = translation or EN_LINES
     return "\n".join(["Title of the post", "", "Transcription:", "", *JA_LINES, "", "Translation:", "",
-                      EN_LINES[0] + "[1]", EN_LINES[1], EN_LINES[2], "", "Commentary on the letter. " + extra,
+                      tr[0] + "[1]", tr[1], tr[2], "", "Commentary on the letter. " + extra,
                       "", "[1] A footnote."])
 
 
@@ -254,7 +259,8 @@ def test_spec_round_trip_and_doc_from_spec(tmp_path: Path) -> None:
 
 # ---------------------------------------------------------------------------------- hold-outs and splits
 def test_item_holdout_reason_and_split(tmp_path: Path) -> None:
-    """An item naming a held document holds out all its pairs (source level, vision flag off); else D14."""
+    """Span-level rule: the document's own match (a), a span / edition mention (b) or a metadata eval-only reason (c)
+    holds a pair out; an item-level mention alone does not (it is recorded; the item rule stays for commentary)."""
     root = tmp_path / "lit"
     write_dir(root, "src_a", [{"slug": "p1", "text": item_text()},
                               {"slug": "p2", "text": item_text(), "meta": {"shelfmarks_mentioned": ["T-S 9.9"]}}])
@@ -267,10 +273,20 @@ def test_item_holdout_reason_and_split(tmp_path: Path) -> None:
                    translation_raw="y", script="hebrew", lang_class="JA", input_source="s", licence=None,
                    licence_class="pd")
     ix = BP.PgpIndex()
-    assert W.assign_web_split(doc, [], "text:test", h, ix) == ("heldout", W.ITEM_MENTION, "item_mention:text:test")
-    assert W.assign_web_split(doc, [], None, h, ix)[1] == "hash"
-    assert W.assign_web_split(doc, [], None, FakeHoldouts(evals={"T-S 5.5": "dev"}), ix)[:2] == \
-        ("heldout", "eval_doc:shelfmark")
+    assert W.assign_web_split(doc, [], h, ix, span_reason="test") == ("heldout", W.SPAN_MENTION, "span_mention:test")
+    assert W.assign_web_split(doc, [], h, ix, eval_only="translated_holdout:dev") == \
+        ("heldout", W.ITEM_EVAL_ONLY, "item_eval_only:translated_holdout:dev")
+    assert W.assign_web_split(doc, [], h, ix)[1] == "hash"
+    own = FakeHoldouts(evals={"T-S 5.5": "dev"})
+    assert W.assign_web_split(doc, [], own, ix, span_reason="x", eval_only="y")[:2] == ("heldout", "eval_doc:shelfmark")
+    assert W.span_holdout_reason(doc, h, fake_mention) is None
+    doc.translation_raw = "y HELD-DOC"
+    assert W.span_holdout_reason(doc, h, fake_mention) == "test"
+    it = items["src_a/text/p1.txt"]
+    it.review["translated_holdout"] = "registry"          # a held TRANSLATED document is rule (a), per document
+    assert W.item_eval_only_reason(it) is None
+    it.review["eval_only"] = True
+    assert W.item_eval_only_reason(it) == "eval_only"
 
 
 def test_book_pair_keys(tmp_path: Path) -> None:
@@ -299,7 +315,13 @@ def test_build_dedupe_holdouts_rows_and_outputs(tmp_path: Path) -> None:
          "meta": {"shelfmarks_mentioned": ["T-S 6.6"]}},
         {"slug": "p3", "text": item_text(), "review": {"translation_level": "full"}},
         {"slug": "p4", "text": item_text(), "review": {"translation_level": "full"}},
-        {"slug": "p5", "text": item_text(), "review": {"translation_level": "full"}}])
+        {"slug": "p5", "text": item_text(), "review": {"translation_level": "full"}},
+        {"slug": "p6", "text": item_text(translation=EN_LINES[:2] + [EN_LINES[2] + " HELD-DOC"]),
+         "review": {"translation_level": "full"}},
+        {"slug": "p7", "text": item_text(), "review": {"translation_level": "full", "translated_holdout": "test"},
+         "meta": {"eval_only": True}},
+        {"slug": "p8", "text": item_text(translation=ODD_LINES), "review": {"translation_level": "full"}},
+        {"slug": "p9", "text": item_text(translation=ODD_LINES), "review": {"translation_level": "full"}}])
     ix = pairs_index(tmp_path, [
         {"pgpid": "10", "shelfmark": "T-S 7.7", "split": "train", "translation_en": "An English translation.",
          "edition_text": "אלף בית גימל דלת הא וו זין חית טית יוד", "editions": [], "translations": []}])
@@ -314,6 +336,15 @@ def test_build_dedupe_holdouts_rows_and_outputs(tmp_path: Path) -> None:
         {"dir": "src_a", "slug": "p4", "docs": [span_spec("1", texts["src_a/text/p4.txt"], "src_a/text/p4.txt",
                                                           shelfmarks=["T-S 8.8"])]},
         {"dir": "src_a", "slug": "p5", "docs": [span_spec("1", texts["src_a/text/p5.txt"], "src_a/text/p5.txt")]},
+        {"dir": "src_a", "slug": "p6", "docs": [span_spec("1", texts["src_a/text/p6.txt"], "src_a/text/p6.txt",
+                                                          shelfmarks=["T-S 16.16"])]},
+        {"dir": "src_a", "slug": "p7", "docs": [span_spec("1", texts["src_a/text/p7.txt"], "src_a/text/p7.txt",
+                                                          shelfmarks=["T-S 17.17"])]},
+        {"dir": "src_a", "slug": "p8", "docs": [span_spec("1", texts["src_a/text/p8.txt"], "src_a/text/p8.txt",
+                                                          shelfmarks=["T-S 18.18"],
+                                                          pair_check_override="read: it is the translation")]},
+        {"dir": "src_a", "slug": "p9", "docs": [span_spec("1", texts["src_a/text/p9.txt"], "src_a/text/p9.txt",
+                                                          shelfmarks=["T-S 19.19"])]},
         {"dir": "src_b", "slug": "zz", "docs": []}]}
     book = {("translate_en", k): "book:b:1" for k in BP.BookDoc(
         source="b", doc="1", shelfmarks=["T-S 8.8"], target_lang="en", edition="", translation="", translation_raw="",
@@ -322,7 +353,17 @@ def test_build_dedupe_holdouts_rows_and_outputs(tmp_path: Path) -> None:
                   items=items, texts=texts, independence=False, book_keys=book, mention_reason=fake_mention)
     recs = {d["item"]: d for d in res["docs"]}
     assert recs["p1"]["translate"]["rows"] >= 1 and recs["p1"]["split"] != "heldout"
-    assert recs["p2"]["split"] == "heldout" and recs["p2"]["split_reason"] == W.ITEM_MENTION
+    assert recs["p2"]["split"] != "heldout" and recs["p2"]["item_mention_reason"] == "text:test"
+    assert recs["p6"]["split"] == "heldout" and recs["p6"]["split_reason"] == W.SPAN_MENTION
+    assert recs["p7"]["split"] == "heldout" and recs["p7"]["split_reason"] == W.ITEM_EVAL_ONLY
+    assert recs["p9"]["translate"]["drop"] == "pair_check_floor"
+    assert recs["p8"]["translate"]["rows"] >= 1 and recs["p8"]["translate"]["pair_check_override"]["overridden"] == \
+        "pair_check_floor"
+    assert res["report"]["pair_check_overrides"][0]["doc_id"] == "web:src_a:p8:1"
+    p8 = next(r for r in res["rows"] if r["meta"]["web_doc"] == "p8:1" and r["meta"]["condition"] == "edition")
+    assert p8["meta"]["pair_check_override"]["reason"].startswith("read") and \
+        p8["meta"]["pair_check"]["enforced"] is False and p8["meta"]["target_raw"].endswith("[1]\n" + ODD_LINES[1] +
+                                                                                           "\n" + ODD_LINES[2])
     assert recs["p3"]["translate"]["drop"] == "dup_pgp_translation"
     assert recs["p4"]["translate"]["drop"] == "dup_book_pairs"
     assert recs["p5"]["translate"]["drop"] == "dup_within_web"
@@ -332,15 +373,16 @@ def test_build_dedupe_holdouts_rows_and_outputs(tmp_path: Path) -> None:
     assert m["source"] == "web:src_a:p1" and m["doc_id"] == "web:src_a:p1:1" and m["translator"] == "T One"
     assert m["edition_source"] == "web" and m["page_keys"] == ["src_a/text/p1.txt"] and m["licence_class"] == "pd"
     assert "[1]" not in row["messages"][2]["content"] and R.validate_row(row) == []
-    held = next(r for r in res["rows"] if r["meta"]["web_doc"] == "p2:1")
+    held = next(r for r in res["rows"] if r["meta"]["web_doc"] == "p6:1")
     assert held["meta"]["split"] == "heldout" and held["meta"]["held_out_vision_benchmark"] is False
-    assert held["meta"]["item_holdout_reason"] == "text:test"
+    assert held["meta"]["holdout_rule"] == "span_level" and held["meta"]["holdout_reason"] == "span_mention:test"
     com = res["report"]["commentary"]
     assert com["items"] == 2 and com["eval_only"] == 1 and com["train_eligible"] == 1
     man = W.write_outputs(res, p, build_args={"test": True}, exact_tokens=False)
     assert man["checks"]["duplicate_row_ids"] == 0 and man["checks"]["heldout_rows_in_train"] == 0
     assert not man["checks"]["schema_problems"] and man["checks"]["target_not_verbatim"] == 0
-    assert man["pairs_by_lang_split"]["en"].get("heldout") == 1 and man["translators"]
+    assert man["pairs_by_lang_split"]["en"].get("heldout") == 2 and man["translators"]
+    assert man["checks"]["pair_check_overrides"] == 1
     assert R.load_jsonl(p.out("families", "web_pairs.jsonl")) and R.load_jsonl(p.out("audit", W.AUDIT_NAME))
     assert set(man["per_source"]) == {"src_a"}
 

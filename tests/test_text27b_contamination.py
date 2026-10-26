@@ -708,7 +708,8 @@ def test_excluded_rows_source_level_holdout_no_conflict(cworld: P.Paths, cheld: 
     rel_a = _fam_row("extract_relations", "train", "9200", "Clean relations A.")
     rel_b = _fam_row("extract_relations", "train", "9201", "Clean relations B.")
     assert "web:srcW:p1:1" in C.doc_identities(web_item["meta"])
-    assert "item_mention" in C.SOURCE_LEVEL_SPLIT_REASONS and "web_pairs.jsonl" in C.TRAIN_DUP_EXTRA_FILES
+    assert {"item_mention", "span_mention", "item_eval_only"} <= set(C.SOURCE_LEVEL_SPLIT_REASONS)
+    assert "web_pairs.jsonl" in C.TRAIN_DUP_EXTRA_FILES
     fams = _write_fams(tmp_path / "families", {"web_pairs": [web_item, web_doc], "extract_relations": [rel_a, rel_b]})
     ex, _ = C.build_excluded_rows(fams, idx, holdouts=cheld)
     assert ex == {rel_b["meta"]["row_id"]: "split_conflict:test_indist:pgpid:9201"}

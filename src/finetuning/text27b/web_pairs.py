@@ -38,10 +38,19 @@ Dedupe and splits. A document is matched to PGP ids by the spans file's hints, i
 transcriptions) edition n-grams (:func:`book_pairs.match_pgpids`). It is dropped when PGP already carries a
 translation into the target language (``dup_pgp_translation``), when an L5 book pair already translates it into
 that language (``dup_book_pairs``) or when an earlier web item does (``dup_within_web``). Hold-outs
-(:class:`holdouts.Holdouts`): an item whose text or metadata names ANY held document (benchmark or eval tier,
-:func:`contamination.text_mention_reason`) is an eval-only reference -- all its pairs go to ``heldout``
-(``split_reason = item_mention``); otherwise the document's own benchmark / eval-tier match → ``heldout``, a PGP
-id v0_1 trains on → ``train``, else the D14 hash split 80/10/10 (:func:`book_pairs.assign_split`).
+(:class:`holdouts.Holdouts`; span-level rule, design owner 2026-10-26): a pair is ``heldout`` only when (a) the
+translated document itself is in the benchmark or eval tier (pgpid / shelfmark key, group closure included;
+:func:`book_pairs.assign_split`), (b) the translation span or its paired edition names a held document
+(``split_reason = span_mention``, :func:`contamination.text_mention_reason`), or (c) the item is eval-only for a reason
+its metadata records other than a mention (``item_eval_only``: an ``eval_only`` flag; the metadata ``holdout_reason``
+is mention-based and the review's ``translated_holdout`` concerns translated documents, which (a) checks one by one). An item that merely mentions a held document elsewhere does NOT hold its other documents' pairs: only the span
+and the edition enter a row (``meta.item_mention_reason`` records the mention). Otherwise a PGP id v0_1 trains on →
+``train``, else the D14 hash split 80/10/10. The item-level rule (:func:`item_holdout_reason`) stays for commentary
+items, which are counted, not built.
+
+Overlap-check overrides: a spans-file document may carry ``pair_check_override`` (a reason, recorded after reading
+the pair): a ``pair_check_floor`` / ``pair_check_rank`` verdict is then recorded but not enforced
+(``meta.pair_check_override``); the F1 band, the verbatim / word-subset checks and the independence screen still apply.
 
 Rows (schema of :mod:`rows`, ``build = v0_2``): ``translate_en`` / ``translate_he`` with condition ``edition``;
 ``noised_edition`` for Hebrew-script editions in train; an ``edition_rescript`` twin for Arabic-script Arabic
@@ -74,7 +83,8 @@ Public API: :data:`WEB_NORMALISERS`, :func:`drop_bracket_refs`, :func:`drop_inli
 :func:`web_normalise`, :func:`item_key`, :class:`WebItem`, :func:`load_local_config`, :func:`load_items`,
 :func:`licence_of`, :func:`translators_of`, :class:`WebDoc`, :func:`pgp_edition_text`, :func:`pgp_line_piece`,
 :func:`cut_pgp_lines`, :func:`doc_from_spec`, :func:`spec_to_span_doc`, :func:`fill_specs`,
-:func:`item_holdout_reason`, :func:`assign_web_split`, :func:`book_pair_keys`, :func:`commentary_counts`,
+:func:`item_holdout_reason`, :func:`span_holdout_reason`, :func:`item_eval_only_reason`, :func:`assign_web_split`,
+:func:`web_translate_rows`, :func:`book_pair_keys`, :func:`commentary_counts`,
 :func:`candidates`, :func:`build`, :func:`scrub_rows`, :func:`per_source`, :func:`audit_sample`, :func:`write_outputs`,
 :func:`show_item`, :func:`show_pgp`, :func:`find_pgp`, :func:`main`.
 """
@@ -112,8 +122,19 @@ CANDIDATE_LEVELS: Tuple[str, ...] = ("full", "partial")
 TARGET_LANGS: Tuple[str, ...] = ("en", "he")
 #: ``meta.translator`` when neither the spans file nor the review names one.
 UNKNOWN_TRANSLATOR = "unknown"
-#: Split reason of every pair of an item that names a held document (eval-only reference).
+#: Item-level rule (kept for commentary items, which are counted, not built): an item naming a held document anywhere.
 ITEM_MENTION = "item_mention"
+#: Span-level rule (b): the translation span or its paired edition names a held document.
+SPAN_MENTION = "span_mention"
+#: Span-level rule (c): the item is eval-only for a reason its metadata records other than a mention (an explicit
+#: ``eval_only`` flag). The fetch metadata's ``holdout_reason`` is mention-based (any mentioned shelfmark / PGP id held)
+#: and the review's ``translated_holdout`` names a held TRANSLATED document, which rule (a) checks per document.
+ITEM_EVAL_ONLY = "item_eval_only"
+#: Split reasons of the span-level hold-outs (the document itself is not held; see :data:`contamination
+#: .SOURCE_LEVEL_SPLIT_REASONS`).
+SPAN_LEVEL_REASONS: Tuple[str, ...] = (SPAN_MENTION, ITEM_EVAL_ONLY)
+#: Overlap-check drops a spans-file ``pair_check_override`` may lift (the F1 band is never overridden).
+OVERRIDABLE_DROPS: Tuple[str, ...] = ("pair_check_floor", "pair_check_rank")
 
 _BRACKET_REF = re.compile(r"[ \t]?\[\d{1,3}\]")
 _INLINE_PAREN_NUM = re.compile(r"(?:(?<=\s)|^)\((\d{1,3})\)(?=\s)", re.M)
@@ -197,6 +218,7 @@ class WebItem:
     pgpids: List[str] = field(default_factory=list)
     heuristic_commentary: bool = False
     text_path: Optional[Path] = None
+    eval_only: bool = False
 
     @property
     def key(self) -> str:
@@ -311,7 +333,7 @@ def load_items(root: Path, dirs: Sequence[str], skip: Optional[Mapping[str, Sequ
                 shelfmarks=[str(s) for s in m.get("shelfmarks_mentioned") or it.get("shelfmarks_mentioned") or []],
                 pgpids=[str(x) for x in m.get("pgpids_resolved") or it.get("pgpids_resolved") or []],
                 heuristic_commentary=bool(m.get("has_commentary") or it.get("has_commentary")),
-                text_path=base / "text" / f"{slug}.txt")
+                text_path=base / "text" / f"{slug}.txt", eval_only=bool(m.get("eval_only") or it.get("eval_only")))
     return out
 
 
@@ -330,6 +352,7 @@ class WebDoc(_bp.BookDoc):
     edition_source: str = "pgp"
     pgp_edition_pgpid: Optional[str] = None
     pgp_lines: Optional[List[int]] = None
+    pair_check_override: Optional[str] = None
 
     @property
     def doc_id(self) -> str:
@@ -477,7 +500,8 @@ def doc_from_spec(item: WebItem, d: Mapping[str, Any], text: str, ix: _bp.PgpInd
                              "item": item.key, "note": d.get("note")},
                  norm_ops=tr_ops, located=True, item_slug=item.slug, translator=translator,
                  translator_source=t_src, edition_source=ed_source, pgp_edition_pgpid=pg_used,
-                 pgp_lines=list(d["pgp_lines"]["lines"]) if d.get("pgp_lines") else None)
+                 pgp_lines=list(d["pgp_lines"]["lines"]) if d.get("pgp_lines") else None,
+                 pair_check_override=str(d["pair_check_override"]) if d.get("pair_check_override") else None)
     info["pages"] = pages
     return doc, info
 
@@ -504,7 +528,7 @@ def spec_to_span_doc(spec: Mapping[str, Any], key: str, text: str, ix: Optional[
 
     :param spec: ``{"doc", "shelfmarks", "pgpids", "pgpid", "pgp_lines": [a, b], "input", "target_lang",
         "lang_class", "translator", "translation": [[a, b], ...], "edition": [[a, b], ...], "normalise": [...],
-        "edition_normalise": [...], "not_placed", "note"}``.
+        "edition_normalise": [...], "not_placed", "note", "pair_check_override"}``.
     :param key: Item key.
     :param text: Item text.
     :param ix: PGP index (needed for ``pgp_lines``).
@@ -512,7 +536,8 @@ def spec_to_span_doc(spec: Mapping[str, Any], key: str, text: str, ix: Optional[
     :raises ValueError: When ``pgp_lines`` is given without a resolvable PGP edition.
     """
     out: Dict[str, Any] = {k: spec[k] for k in ("doc", "shelfmarks", "pgpids", "pgpid", "input", "target_lang",
-                                                 "lang_class", "translator", "not_placed", "note") if spec.get(k)}
+                                                 "lang_class", "translator", "not_placed", "note",
+                                                 "pair_check_override") if spec.get(k)}
     spans: Dict[str, Any] = {}
     if spec.get("translation"):
         spans["translation"] = {"pieces": _piece_specs(spec["translation"], key, text),
@@ -594,21 +619,55 @@ def item_holdout_reason(item: WebItem, text: str, holdouts: Any, mention_reason:
     return None
 
 
-def assign_web_split(doc: WebDoc, pgpids: Sequence[str], item_reason: Optional[str], holdouts: Any,
-                     ix: _bp.PgpIndex) -> Tuple[str, str, Optional[str]]:
-    """Split of a web document: an item naming a held document → ``heldout``; else :func:`book_pairs.assign_split`.
+def span_holdout_reason(doc: WebDoc, holdouts: Any, mention_reason: Optional[Callable[..., Any]] = None
+                        ) -> Optional[str]:
+    """Rule (b): whether the translation span (raw and normalised) or its paired edition names a held document.
+
+    :param doc: The document.
+    :param holdouts: Hold-out set.
+    :param mention_reason: ``(texts, holdouts) -> reason | None`` (default :func:`contamination.text_mention_reason`,
+        both tiers).
+    :returns: The reason or None.
+    """
+    if mention_reason is None:
+        from src.finetuning.text27b.contamination import text_mention_reason as mention_reason
+    return mention_reason([doc.translation_raw, doc.translation, doc.edition], holdouts)
+
+
+def item_eval_only_reason(item: WebItem) -> Optional[str]:
+    """Rule (c): an eval-only reason the item's metadata records other than a mention (an explicit ``eval_only`` flag
+    in the item record, its metadata or its review). The mention-based ``holdout_reason`` and the review's
+    ``translated_holdout`` (a held translated document: rule (a), per document) do not count.
+
+    :param item: The item.
+    :returns: ``eval_only`` or None.
+    """
+    return "eval_only" if (item.eval_only or item.review.get("eval_only")) else None
+
+
+def assign_web_split(doc: WebDoc, pgpids: Sequence[str], holdouts: Any, ix: _bp.PgpIndex,
+                     span_reason: Optional[str] = None, eval_only: Optional[str] = None
+                     ) -> Tuple[str, str, Optional[str]]:
+    """Span-level split of a web document: (a) the document's own benchmark / eval-tier match
+    (:func:`book_pairs.assign_split`) → ``heldout``; (b) ``span_reason`` → ``heldout`` (``span_mention``); (c)
+    ``eval_only`` → ``heldout`` (``item_eval_only``); otherwise the D14 split of :func:`book_pairs.assign_split`.
 
     :param doc: The document.
     :param pgpids: Matched PGP ids.
-    :param item_reason: :func:`item_holdout_reason` of its item.
     :param holdouts: Hold-out set.
     :param ix: PGP index.
-    :returns: ``(split, split_reason, holdout_reason)``; an item-mention hold-out without a reason of the document's
-        own carries ``item_mention:<item reason>``.
+    :param span_reason: :func:`span_holdout_reason`.
+    :param eval_only: :func:`item_eval_only_reason` of its item.
+    :returns: ``(split, split_reason, holdout_reason)``; span-level hold-outs carry ``span_mention:<r>`` /
+        ``item_eval_only:<r>``.
     """
     own = _bp.assign_split(doc, pgpids, holdouts, ix)
-    if item_reason:
-        return "heldout", ITEM_MENTION, own[2] or f"{ITEM_MENTION}:{item_reason}"
+    if own[0] == "heldout":
+        return own
+    if span_reason:
+        return "heldout", SPAN_MENTION, f"{SPAN_MENTION}:{span_reason}"
+    if eval_only:
+        return "heldout", ITEM_EVAL_ONLY, f"{ITEM_EVAL_ONLY}:{eval_only}"
     return own
 
 
@@ -706,13 +765,15 @@ def candidates(items: Mapping[str, WebItem], ix: _bp.PgpIndex, holdouts: Any,
 
 
 # ============================================================================== build
-def _patch_meta(row: Dict[str, Any], doc: WebDoc, item: WebItem, item_reason: Optional[str]) -> Dict[str, Any]:
+def _patch_meta(row: Dict[str, Any], doc: WebDoc, item: WebItem, item_reason: Optional[str],
+                override_info: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """Web fields on a row built by :func:`book_pairs.translate_rows`.
 
     :param row: Row (modified in place).
     :param doc: The document.
     :param item: Its item.
-    :param item_reason: Item hold-out reason.
+    :param item_reason: Item-level mention reason (recorded only; the split is span-level).
+    :param override_info: The overridden overlap verdict when ``doc.pair_check_override`` lifted it.
     :returns: The row.
     """
     m = row["meta"]
@@ -721,10 +782,15 @@ def _patch_meta(row: Dict[str, Any], doc: WebDoc, item: WebItem, item_reason: Op
     m["edition_source"] = doc.edition_source
     m["web_item"] = {"dir": item.dir, "slug": item.slug, "title": item.title, "authors": item.authors,
                      "year": item.year}
-    m["item_holdout_reason"] = item_reason
+    m["item_mention_reason"] = item_reason
+    m["holdout_rule"] = "span_level"
     own = str(m.get("holdout_reason") or "")
-    m["held_out_vision_benchmark"] = bool(own and not own.startswith(f"{ITEM_MENTION}:")
+    m["held_out_vision_benchmark"] = bool(own and not own.startswith(tuple(f"{r}:" for r in SPAN_LEVEL_REASONS))
                                           and _bd.BENCH_REASONS & {own.split(":")[-1]})
+    if override_info is not None:
+        m["pair_check_override"] = {"reason": doc.pair_check_override, "overridden": override_info.get("reason")}
+        if m.get("target_raw") is not None:
+            m["target_raw"] = doc.translation_raw
     m["licence"], m["licence_class"] = item.licence, item.licence_class
     m["web_doc"] = doc.doc
     m.pop("book_doc", None)
@@ -734,6 +800,36 @@ def _patch_meta(row: Dict[str, Any], doc: WebDoc, item: WebItem, item_reason: Op
         m["pgp_lines"] = doc.pgp_lines
     m["provenance"] = {**(m.get("provenance") or {}), "source": item.dir, "item": item.slug}
     return row
+
+
+def web_translate_rows(doc: WebDoc, split: str, pgpids: Sequence[str], split_reason: str, hold: Optional[str],
+                       others: Sequence[WebDoc], ctx: Any) -> Tuple[List[Dict[str, Any]], Dict[str, Any],
+                                                                     Optional[Dict[str, Any]]]:
+    """:func:`book_pairs.translate_rows` with the spans-file overlap override.
+
+    Without ``doc.pair_check_override`` this is ``translate_rows`` unchanged. With it, a document whose overlap check
+    fails (:data:`OVERRIDABLE_DROPS`) is built again with the overlap verdict recorded but not enforced (the F1 band,
+    the word-subset and overlap-with-edition checks and the independence screen still apply).
+
+    :param doc: The document.
+    :param split: Split.
+    :param pgpids: Matched PGP ids.
+    :param split_reason: Why the split was chosen.
+    :param hold: Hold-out reason.
+    :param others: Other documents of the directory (decoys).
+    :param ctx: Build context.
+    :returns: ``(rows, info, lifted pair-check verdict or None)``.
+    """
+    rows, info = _bp.translate_rows(doc, split, pgpids, split_reason, hold, others, ctx)
+    if rows or not doc.pair_check_override or info.get("drop") not in OVERRIDABLE_DROPS:
+        return rows, info, None
+    lifted = dict(info.get("pair_check") or {}, reason=info["drop"])
+    doc.located = False  # pair_check records, does not enforce, the overlap verdict of a non-located document
+    try:
+        rows, info = _bp.translate_rows(doc, split, pgpids, split_reason, hold, others, ctx)
+    finally:
+        doc.located = True
+    return rows, info, (lifted if rows else None)
 
 
 def build(p: Optional[_paths.Paths] = None, cfg: Optional[Mapping[str, Any]] = None,
@@ -790,7 +886,8 @@ def build(p: Optional[_paths.Paths] = None, cfg: Optional[Mapping[str, Any]] = N
         if k not in texts:
             texts[k] = it.text()
     item_reasons = {k: item_holdout_reason(it, texts.get(k, ""), holdouts, mention_reason) for k, it in items.items()}
-    LOG.info("[%5.1fs] %d items, %d eval-only", time.time() - t0, len(items), sum(1 for v in item_reasons.values() if v))
+    LOG.info("[%5.1fs] %d items, %d mention a held document", time.time() - t0, len(items),
+             sum(1 for v in item_reasons.values() if v))
     drops: collections.Counter = collections.Counter()
     docs: List[Tuple[WebDoc, WebItem]] = []
     span_info: List[Dict[str, Any]] = []
@@ -823,12 +920,15 @@ def build(p: Optional[_paths.Paths] = None, cfg: Optional[Mapping[str, Any]] = N
         if doc.pgp_edition_pgpid and doc.pgp_edition_pgpid not in pgpids:
             pgpids = [doc.pgp_edition_pgpid] + pgpids
         reason = item_reasons.get(it.key)
-        split, split_reason, hold = assign_web_split(doc, pgpids, reason, holdouts, ix)
+        span_r = span_holdout_reason(doc, holdouts, mention_reason)
+        eval_only = item_eval_only_reason(it)
+        split, split_reason, hold = assign_web_split(doc, pgpids, holdouts, ix, span_r, eval_only)
         fam = f"translate_{doc.target_lang}"
         rec: Dict[str, Any] = {"source": f"web:{it.dir}:{it.slug}", "dir": it.dir, "item": it.slug, "doc": doc.doc,
                                "doc_id": doc.doc_id, "shelfmarks": doc.shelfmarks, "keys": doc.keys, "pgpids": pgpids,
                                "match": how, "family": fam, "split": split, "split_reason": split_reason,
-                               "holdout_reason": hold, "item_holdout_reason": reason, "script": doc.script,
+                               "holdout_reason": hold, "item_mention_reason": reason, "span_mention_reason": span_r,
+                               "item_eval_only_reason": eval_only, "script": doc.script,
                                "lang_class": doc.lang_class, "edition_source": doc.edition_source,
                                "translator": doc.translator, "translate": None}
         ids = _doc_ids(doc, pgpids)
@@ -842,17 +942,23 @@ def build(p: Optional[_paths.Paths] = None, cfg: Optional[Mapping[str, Any]] = N
         elif dup_web:
             rec["translate"] = {"drop": "dup_within_web", "of": dup_web}
         else:
-            r, info = _bp.translate_rows(doc, split, pgpids, split_reason, hold, by_dir[doc.source], ctx)
+            r, info, lifted = web_translate_rows(doc, split, pgpids, split_reason, hold, by_dir[doc.source], ctx)
             rec["translate"] = {**info, "rows": len(r)}
+            if lifted is not None:
+                rec["translate"]["pair_check_override"] = {"reason": doc.pair_check_override,
+                                                           "overridden": lifted.get("reason")}
             for row in r:
-                rows.append(_patch_meta(row, doc, it, reason))
+                rows.append(_patch_meta(row, doc, it, reason, lifted))
             if r:
                 for k in ids:
                     seen.setdefault((fam, k), doc.doc_id)
         if rec["translate"].get("drop"):
             drops[f"{it.dir}:translate:{rec['translate']['drop']}"] += 1
         records.append(rec)
-    report = {"items": len(items), "items_eval_only": sum(1 for v in item_reasons.values() if v),
+    report = {"items": len(items), "items_mentioning_held": sum(1 for v in item_reasons.values() if v),
+              "holdout_rule": "span_level",
+              "pair_check_overrides": [{"doc_id": d["doc_id"], **d["translate"]["pair_check_override"]}
+                                       for d in records if (d.get("translate") or {}).get("pair_check_override")],
               "span_docs": span_info, "noise": noise_info, "drops": dict(sorted((drops + ctx.drops).items())),
               "commentary": commentary_counts(items, item_reasons),
               "commentary_flagged_by_span_agents": {
@@ -1010,8 +1116,9 @@ def write_outputs(result: Dict[str, Any], p: _paths.Paths, out_dir: Optional[Pat
                                         for lg in TARGET_LANGS}
     checks = {
         "rows": len(rows), "duplicate_row_ids": len(ids) - len(set(ids)), "schema_problems": dict(problems),
-        "heldout_rows_in_train": sum(1 for r in rows if r["meta"]["split"] == "train" and
-                                     (r["meta"].get("holdout_reason") or r["meta"].get("item_holdout_reason"))),
+        "heldout_rows_in_train": sum(1 for r in rows if r["meta"]["split"] == "train" and r["meta"].get("holdout_reason")),
+        "pair_check_overrides": sum(1 for r in rows if r["meta"].get("pair_check_override")
+                                    and r["meta"]["condition"] == "edition"),
         "scrub_rows": sum(1 for r in rows if tn.has_source_names(json.dumps(r, ensure_ascii=False))),
         "ar_noised_rows": sum(1 for r in rows if r["meta"]["condition"] == "noised_edition" and
                               (r["meta"]["lang_class"] == "AR" or r["meta"].get("edition_script") == "arabic")),
