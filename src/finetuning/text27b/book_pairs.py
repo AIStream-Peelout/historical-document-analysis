@@ -32,7 +32,16 @@ Hebrew: Hebrew words shared with the edition) must not be beaten by another docu
 
 Dedupe and hold-outs (D14, plan §9.4): a document is matched to PGP ids by the source's PGP edition
 slug and number (``doc. N``) and by normalised shelfmark key. It is dropped when PGP already carries a
-translation into the same language (``dup_pgp_translation``).
+translation into the same language (``dup_pgp_translation``), and -- the independence screen of the
+books-mining pass (:func:`independence_check`) -- when its target is a near-copy of any PGP digital translation
+in that language (word 5-gram containment ≥ 0.5 or character ratio > 0.9; ``independence_dup_pgp_translation``),
+since PGP often digitised the same book.
+
+Books-mining pass (2026-10-25): span documents may set their own ``input`` (``span`` / ``pgp_edition``),
+carry a ``commentary`` span (an editor's commentary after the text, gated like an introduction), or be
+recorded without spans as examined candidates (``not_placed``: ``no_translation``, ``dup_pgp_translation``,
+``ocr_unusable``, ...), so the manifest counts every candidate. Pages of works whose text layer was repaired
+(:mod:`ocr_repair`) are read through :func:`pages.iter_pages`, which applies the repair.
 Split: any match with the benchmark tier of :class:`holdouts.Holdouts` or with its eval tier (v0_1
 dev / test documents, shelfmark-keyed) → ``heldout``; a PGP id that v0_1 trains on → ``train``;
 otherwise sha1 of the document's shelfmark key (else ``book:<slug>:<doc>``) → 80/10/10 ``train`` /
@@ -75,17 +84,22 @@ CLI::
     PYTHONPATH=. .venv/bin/python -m src.finetuning.text27b.book_pairs                # full build
     PYTHONPATH=. .venv/bin/python -m src.finetuning.text27b.book_pairs --dry-run      # counts only
     PYTHONPATH=. .venv/bin/python -m src.finetuning.text27b.book_pairs --show-page KEY  # numbered OCR lines
+    PYTHONPATH=. .venv/bin/python -m src.finetuning.text27b.book_pairs --piece KEY 12 30   # piece for lines 12..30
+    PYTHONPATH=. .venv/bin/python -m src.finetuning.text27b.book_pairs --check --source SLUG  # span verdicts
 
 Public API: :data:`NORMALISERS`, :func:`label_of`, :func:`render_blocks`, :func:`group_lines`,
 :func:`rejoin_indented`, :func:`rejoin_blank_separated`, :func:`prose_paragraphs`,
 :func:`drop_footnote_refs`, :func:`drop_digit_remnants`, :func:`drop_bracket_headings`,
-:func:`side_labels`, :func:`drop_blank_lines`, :func:`normalise`, :func:`paragraphs_to_lines`,
+:func:`side_labels`, :func:`drop_blank_lines`, :func:`rejoin_numbered`, :func:`drop_line_numbers`,
+:func:`drop_superscripts`, :func:`normalise`, :func:`paragraphs_to_lines`,
 :func:`words_subset`, :class:`Piece`, :func:`piece_from_lines`, :func:`cut_piece`, :func:`cut_span`,
 :data:`NAS_PAGE_SOURCE`, :func:`entry_start_page`, :func:`entry_last_page`, :func:`entry_page_ranges`,
 :class:`EntryPages`, :class:`BookDoc`, :func:`doc_from_lines_entry`, :func:`doc_from_paragraph_entry`,
 :func:`doc_from_spans`, :data:`ROW_SPAN_KINDS`, :func:`row_page_keys`, :class:`PgpIndex`, :func:`match_pgpids`, :func:`hash_split`,
 :func:`assign_split`, :func:`overlap_score`, :func:`pair_check`, :class:`BuildContext`,
-:func:`translate_rows`, :func:`analyse_rows`, :func:`build`, :func:`write_outputs`, :func:`main`.
+:func:`translate_rows`, :func:`analyse_rows`, :func:`build`, :func:`write_outputs`, :func:`main`,
+:data:`INDEPENDENCE_CONTAINMENT`, :data:`INDEPENDENCE_RATIO`, :func:`independence_tokens`, :class:`PgpTranslations`,
+:func:`independence_check`, :func:`make_pieces`, :func:`check_report`, :func:`load_carry`, :func:`carry_rows`.
 """
 from __future__ import annotations
 
@@ -591,7 +605,7 @@ _BARE_NUMBER = re.compile(r"(?<=\s)\d{1,2}(?=\s|$|[.,;:])")
 
 _OCR_REFS = (
     re.compile(r"[\[{]{1,2}\s*I?[א-ת]?\d{1,3}[א-ת]?\s*[\]}]{0,2}(?=\s|$|[.,;:])"),    # [61], [[51], [ג6א], {Iג15
-    re.compile(r"[\[{]\s*[א-ת]\s*[\]}]"),                                         # [ג]
+    re.compile(r"(?<![א-ת])[\[{]\s*[א-ת]\s*[\]}](?![א-ת])"),                       # [ג] (not ש[א]סר, a restored letter)
     re.compile(r"(?<=\s)[*“”]\d{1,3}[′’]?(?=\s|$|[.,;:])"),                         # *2  “4
     re.compile(r"(?<=[^\s\d(])[*/“”]?\d{1,3}[′’]?(?=\s|$|[.,;:\]}])"),             # טַלְחִי',23  ה'מחודש20′  /18
     re.compile(r"(?<=[א-ת'\"”’)])[*]\d?(?=\s|$|[.,;:])"),                           # מזה*  לשמור"*
@@ -671,6 +685,77 @@ def split_at_markers(text: str) -> Tuple[str, int]:
     return "\n".join(out), (n_markers if split else 0)
 
 
+_NUM_OPENS = re.compile(r"^\d{1,3}[a-z]?\s*[.)](?:\s|$)")
+_SIDE_HEADING = re.compile(r"^(?:(?:Recto|Verso|Margin) (?:Inverted|Below|Above|Upside Down)|Recto|Verso|Margins?|"
+                           r"(?:Right|Left|Top|Bottom) Margin|Below|Above|Address|Folio \d+[ab]?(?: (?:Recto|Verso))?|"
+                           r"Fragment \d+(?: (?:Recto|Verso))?)\s*[:.]?$", re.I)
+
+
+def rejoin_numbered(text: str) -> Tuple[str, int]:
+    """Re-join printed lines of a span whose logical lines start with a line number (``12.``, ``12)``, or a bare
+    ``12`` row of a fragmented text layer): every other non-blank row continues the previous line (a hyphenated
+    break between letters is joined by :func:`join_hyphenated`); ``§`` label rows and side / folio headings
+    (``Recto``, ``Margin Inverted``, ``Fragment 2 Verso``) stand alone and never take a continuation.
+
+    :param text: Span text.
+    :returns: ``(text, number of joins)``.
+    """
+    out: List[str] = []
+    joins = 0
+    for ln in text.split("\n"):
+        s = ln.strip()
+        if not s:
+            continue
+        label = s.startswith("§") or bool(_SIDE_HEADING.match(s))
+        opens = label or bool(_NUM_OPENS.match(s)) or bool(re.fullmatch(r"\d{1,3}", s))
+        if out and not opens and not (out[-1].startswith("§") or _SIDE_HEADING.match(out[-1])):
+            prev = out[-1]
+            if re.search(r"[A-Za-zÀ-ɏḀ-ỿ]-$", prev) and re.match(r"[a-zà-ÿā-ž]", s):
+                out[-1] = join_hyphenated(prev, s)
+            else:
+                out[-1] = prev + " " + s
+            joins += 1
+        else:
+            out.append(s)
+    return "\n".join(out), joins
+
+
+_LEAD_LINE_NO = re.compile(r"^(\s*)\d{1,3}[a-z]?\s*[.)]?\s*(?:\.\s+)?(?=\S)")
+_TRAIL_LINE_NO = re.compile(r"\s*\.\d{1,3}\s*$")
+
+
+def drop_line_numbers(text: str) -> Tuple[str, int]:
+    """Remove edition line numbers on Hebrew / Arabic-script lines: a leading ``N.`` / ``N)`` / ``N`` (with the
+    ``. `` a fragmented text layer leaves after it) and a trailing ``.N`` (a right-to-left ``N.`` read in
+    reverse). Lines with Latin letters and ``§`` lines are kept as they are.
+
+    :param text: Edition span text.
+    :returns: ``(text, number of lines changed)``.
+    """
+    out: List[str] = []
+    n = 0
+    for ln in text.split("\n"):
+        if ln.strip().startswith("§") or re.search(r"[A-Za-zÀ-ɏḀ-ỿ]", ln):
+            out.append(ln)
+            continue
+        new = _TRAIL_LINE_NO.sub("", _LEAD_LINE_NO.sub(r"\1", ln, count=1))
+        n += new != ln
+        out.append(new)
+    return "\n".join(out), n
+
+
+_SUPERSCRIPTS = re.compile("[\u00b9\u00b2\u00b3\u2070\u2074-\u2079]+")
+
+
+def drop_superscripts(text: str) -> Tuple[str, int]:
+    """Remove superscript digits (``¹ ² ³ ⁴``…, footnote marks the OCR kept as characters).
+
+    :param text: Span text.
+    :returns: ``(text, number of runs removed)``.
+    """
+    return _SUPERSCRIPTS.subn("", text)
+
+
 def drop_blank_lines(text: str) -> Tuple[str, int]:
     """Remove whitespace-only lines and trailing spaces.
 
@@ -698,6 +783,9 @@ NORMALISERS: Dict[str, Callable[[str], Tuple[str, int]]] = {
     "drop_ocr_refs": drop_ocr_refs,
     "split_at_markers": split_at_markers,
     "drop_blank_lines": drop_blank_lines,
+    "rejoin_numbered": rejoin_numbered,
+    "drop_line_numbers": drop_line_numbers,
+    "drop_superscripts": drop_superscripts,
 }
 
 
@@ -1314,14 +1402,21 @@ def doc_from_spans(src: Mapping[str, Any], d: Mapping[str, Any], page_texts: Map
     """BookDoc from located spans (D15): cut, verify and normalise the translation / edition / intro spans.
 
     :param src: Span source config (``slug``, ``target_lang``, ``input``, licence fields).
-    :param d: One ``docs`` entry (``doc``, ``shelfmarks``, ``pgpids``, ``lang_class``, ``spans``).
+    :param d: One ``docs`` entry (``doc``, ``shelfmarks``, ``pgpids``, ``lang_class``, ``spans``; optional
+        ``input`` overriding the source's, and ``not_placed`` naming why a candidate document has no spans --
+        ``not_found``, ``ocr_unusable``, ``description_only``, ...). Span kinds: ``translation``, ``edition``,
+        ``intro`` and ``commentary`` (an editor's commentary after the text; used like an introduction).
     :param page_texts: page key → OCR text.
     :param pgp_edition: For ``input: pgp_edition``: callable ``(pgpids, shelfmarks) -> (edition, slug,
         pgpid)`` or None when PGP has no edition.
-    :returns: ``(doc or None, info)``; ``info["drop"]`` holds the reason when no document results.
+    :returns: ``(doc or None, info)``; ``info["drop"]`` holds the reason when no document results
+        (``not_placed:<reason>`` for a recorded candidate without spans).
     """
     spans = d.get("spans") or {}
     info: Dict[str, Any] = {"doc": d.get("doc")}
+    if not spans and d.get("not_placed"):
+        info["drop"] = f"not_placed:{d['not_placed']}"
+        return None, info
     out: Dict[str, Tuple[str, str, List[str]]] = {}
     for kind, span in spans.items():
         raw, ci = cut_span(span, page_texts)
@@ -1335,13 +1430,17 @@ def doc_from_spans(src: Mapping[str, Any], d: Mapping[str, Any], page_texts: Map
             continue
         out[kind] = (text, raw, ops)
         info.setdefault("pages", {})[kind] = ci.get("pages")
+    if "commentary" in out and "intro" not in out:
+        out["intro"] = out.pop("commentary")
+        info.setdefault("pages", {})["intro"] = info.get("pages", {}).pop("commentary", None)
+        info["analysis_kind"] = "commentary"
     if "translation" not in out and "intro" not in out:
         info["drop"] = "span_cut_failed" if info.get("span_failures") else "no_spans"
         return None, info
     shelfmarks = [str(s) for s in d.get("shelfmarks") or []]
     hints = [str(x) for x in d.get("pgpids") or []]
     edition, input_source, pg_used = "", f"book_edition:{src['slug']}", None
-    if src.get("input") == "pgp_edition":
+    if (d.get("input") or src.get("input")) == "pgp_edition":
         got = pgp_edition(hints, shelfmarks) if pgp_edition else None
         if got is None:
             info["drop"] = "no_pgp_edition"
@@ -1666,10 +1765,139 @@ def pair_check(doc: BookDoc, target: str, others: Sequence[BookDoc], scholar_nam
     return {**info, "ok": True, "reason": "ok", "overlap": verdict}
 
 
+# ============================================================================== independence screen
+#: Independence screen (books-mining pass): a book translation is not an independent pair when it is a near-copy of a
+#: PGP digital translation in the same language -- word 5-gram containment ≥ 0.5 of the book target's grams, or a
+#: character similarity ratio > 0.9 (PGP often digitised the same book).
+INDEPENDENCE_GRAM = 5
+INDEPENDENCE_CONTAINMENT = 0.5
+INDEPENDENCE_RATIO = 0.9
+_INDEP_TOKEN = re.compile(r"[^\W\d_]+|\d+")
+
+
+def independence_tokens(text: str) -> List[str]:
+    """Comparison tokens of a translation: line markers removed, words and numbers lower-cased.
+
+    :param text: Translation text.
+    :returns: Tokens.
+    """
+    t, _ = tn.strip_line_markers(text or "")
+    t = re.sub(r"[\u0591-\u05C7]", "", t)
+    return [w.lower() for w in _INDEP_TOKEN.findall(t)]
+
+
+def _grams(tokens: Sequence[str], n: int = INDEPENDENCE_GRAM) -> Set[str]:
+    """Word n-grams of a token list.
+
+    :param tokens: Tokens.
+    :param n: n-gram length.
+    :returns: Space-joined n-grams.
+    """
+    return {" ".join(tokens[i:i + n]) for i in range(len(tokens) - n + 1)}
+
+
+@dataclass
+class PgpTranslations:
+    """PGP digital translations by language, with a word n-gram index (for :func:`independence_check`)."""
+
+    texts: Dict[str, Dict[str, List[str]]] = field(default_factory=dict)
+    grams: Dict[str, Dict[str, Set[str]]] = field(default_factory=dict)
+
+    @classmethod
+    def build(cls, ix: PgpIndex) -> "PgpTranslations":
+        """Index every translation the PGP pairs carry (``translation_<lang>`` and the ``translations`` list).
+
+        :param ix: PGP index.
+        :returns: The index.
+        """
+        out = cls()
+        for pid, d in ix.docs.items():
+            found: List[Tuple[str, str]] = []
+            for lang in ("en", "he"):
+                if d.get(f"translation_{lang}"):
+                    found.append((lang, str(d[f"translation_{lang}"])))
+            for t in d.get("translations") or []:
+                lang = str(t.get("language") or "").lower()[:2]
+                if lang in ("en", "he") and (t.get("text") or t.get("raw")):
+                    found.append((lang, str(t.get("text") or t.get("raw"))))
+            for lang, text in found:
+                lst = out.texts.setdefault(lang, {}).setdefault(pid, [])
+                if text in lst:
+                    continue
+                lst.append(text)
+                for g in _grams(independence_tokens(text)):
+                    out.grams.setdefault(lang, {}).setdefault(g, set()).add(pid)
+        return out
+
+    def candidates(self, text: str, lang: str, k: int = 3) -> List[Tuple[str, float]]:
+        """The PGP documents whose translations share most word n-grams with a text.
+
+        :param text: Book translation.
+        :param lang: ``en`` / ``he``.
+        :param k: Number of documents returned.
+        :returns: ``[(pgpid, containment)]``, best first.
+        """
+        g = _grams(independence_tokens(text))
+        if not g:
+            return []
+        c: collections.Counter = collections.Counter()
+        idx = self.grams.get(lang, {})
+        for x in g:
+            for pid in idx.get(x, ()):
+                c[pid] += 1
+        return [(pid, round(n / len(g), 4)) for pid, n in c.most_common(k)]
+
+
+def _ratio(a: str, b: str) -> float:
+    """Character similarity of two translations (rapidfuzz ``ratio`` on the joined comparison tokens).
+
+    :param a: Text.
+    :param b: Text.
+    :returns: Ratio in [0, 1].
+    """
+    from rapidfuzz import fuzz
+    return fuzz.ratio(" ".join(independence_tokens(a)), " ".join(independence_tokens(b))) / 100.0
+
+
+def independence_check(target: str, lang: str, tr: Optional[PgpTranslations], same_doc: Sequence[str] = ()
+                       ) -> Dict[str, Any]:
+    """Independence screen of a book translation against the PGP digital translations in its language.
+
+    The book target fails when, for some PGP translation, the share of the target's word 5-grams found in it
+    is ≥ :data:`INDEPENDENCE_CONTAINMENT` or the character ratio exceeds :data:`INDEPENDENCE_RATIO`. Checked:
+    the translations of the document's own matched PGP ids (``same_doc``) and the three PGP documents sharing
+    most 5-grams with the target (any document: a near-copy filed under another id is still a copy).
+
+    :param target: Final translation target.
+    :param lang: ``en`` / ``he``.
+    :param tr: PGP translation index (None: screen skipped, ``ok``).
+    :param same_doc: Matched PGP ids of the document.
+    :returns: ``{"ok", "pgpid", "containment", "ratio", "same_doc"}`` (the worst PGP translation found).
+    """
+    if tr is None:
+        return {"ok": True, "pgpid": None, "containment": 0.0, "ratio": 0.0, "same_doc": False}
+    tg = _grams(independence_tokens(target))
+    cands = dict(tr.candidates(target, lang))
+    for pid in same_doc:
+        if pid in tr.texts.get(lang, {}):
+            cands.setdefault(pid, 0.0)
+    worst = {"ok": True, "pgpid": None, "containment": 0.0, "ratio": 0.0, "same_doc": False}
+    for pid in cands:
+        for text in tr.texts.get(lang, {}).get(pid, []):
+            g = _grams(independence_tokens(text))
+            cont = len(tg & g) / len(tg) if tg else 0.0
+            ratio = _ratio(target, text)
+            if (cont, ratio) > (worst["containment"], worst["ratio"]):
+                worst = {"ok": True, "pgpid": pid, "containment": round(cont, 4), "ratio": round(ratio, 4),
+                         "same_doc": pid in same_doc}
+    worst["ok"] = not (worst["containment"] >= INDEPENDENCE_CONTAINMENT or worst["ratio"] > INDEPENDENCE_RATIO)
+    return worst
+
+
 # ============================================================================== rows
 @dataclass
 class BuildContext:
-    """Shared state of one build: tokens, noise, PGP lookups, hold-outs, counters."""
+    """Shared state of one build: tokens, noise, PGP lookups, hold-outs, counters, the PGP translation index."""
 
     holdouts: Any
     ix: PgpIndex
@@ -1678,6 +1906,7 @@ class BuildContext:
     drops: collections.Counter = field(default_factory=collections.Counter)
     with_entry_commentary: bool = False
     tc: Any = None
+    translations: Optional[PgpTranslations] = None
 
 
 #: Located-span kinds a row of each family draws on (its target, its input when the book prints the edition, the
@@ -1842,12 +2071,17 @@ def translate_rows(doc: BookDoc, split: str, pgpids: Sequence[str], split_reason
         return [], {"drop": "target_words_not_in_source", "missing": missing}
     if tn.overlap60(target, doc.edition):
         return [], {"drop": "target_overlaps_edition"}
+    indep = independence_check(target, doc.target_lang, ctx.translations, pgpids)
+    info["independence"] = indep
+    if not indep["ok"]:
+        return [], {**info, "drop": "independence_dup_pgp_translation"}
     chk = pair_check(doc, target, others, ctx.scholar_names)
     info["pair_check"] = chk
     if not chk["ok"]:
         return [], {**info, "drop": chk["reason"]}
     base = _base_meta(doc, family, "edition", split, pgpids, split_reason, hold_reason)
     base.update({"target_lang": doc.target_lang, "length_ratio": chk["length_ratio"], "pair_check": chk,
+                 "independence": indep,
                  "target_raw": (doc.translation_raw if doc.located else doc.translation) if ops else None,
                  "strip_ops": ops, "doc_flags": doc.flags})
     units: List[Tuple[Optional[str], str, str]] = [(None, doc.edition, target)]
@@ -2111,11 +2345,66 @@ def load_span_docs(spans: Mapping[str, Any], p: _paths.Paths, ix: PgpIndex, drop
     return docs, infos
 
 
+def load_carry(prev_dir: Path, slugs: Iterable[str]) -> Dict[str, Any]:
+    """Rows and document records of the parsed-entry books from an earlier build's family file and manifest.
+
+    :param prev_dir: Directory holding ``book_pairs.jsonl`` and ``book_pairs_manifest.json``.
+    :param slugs: Parsed-entry book slugs to carry.
+    :returns: ``{"rows", "docs", "entries_per_book", "from"}``.
+    :raises FileNotFoundError: When the family file or manifest is missing.
+    """
+    prev_dir = Path(prev_dir)
+    want = {str(x) for x in slugs}
+    rows = [r for r in _rows.read_jsonl(prev_dir / f"{FAMILY_FILE}.jsonl")
+            if str(r["meta"].get("source", "")).split(":", 1)[-1] in want]
+    man = json.loads((prev_dir / MANIFEST_NAME).read_text(encoding="utf-8"))
+    docs = [d for d in man.get("documents") or [] if d.get("source") in want]
+    fam_of: Dict[str, str] = {}
+    for r in rows:
+        if r["meta"]["family"].startswith("translate_"):
+            fam_of[r["meta"]["doc_id"]] = r["meta"]["family"]
+    for d in docs:
+        if d.get("translate") and d["doc_id"] in fam_of:
+            d["translate"] = {**d["translate"], "family": fam_of[d["doc_id"]]}
+    epb = {k: v for k, v in ((man.get("report") or {}).get("entries_per_book") or {}).items() if k in want}
+    return {"rows": rows, "docs": docs, "entries_per_book": epb, "from": prev_dir.name}
+
+
+def carry_rows(carry: Mapping[str, Any], tr: Optional[PgpTranslations], drops: collections.Counter
+               ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Carried parsed-entry rows after the independence screen (a document whose translation near-copies a PGP
+    translation loses all its translate rows; its record notes the drop).
+
+    :param carry: Output of :func:`load_carry`.
+    :param tr: PGP translation index (None: no screen).
+    :param drops: Drop counter (``<source>:translate:independence_dup_pgp_translation``).
+    :returns: ``(rows, document records)``.
+    """
+    bad: Dict[str, Dict[str, Any]] = {}
+    for r in carry["rows"]:
+        m = r["meta"]
+        if m["family"].startswith("translate_") and m["condition"] == "edition" and m["doc_id"] not in bad:
+            chk = independence_check(r["messages"][2]["content"], m["family"].split("_", 1)[1], tr, m.get("pgpids") or [])
+            if not chk["ok"]:
+                bad[m["doc_id"]] = chk
+    rows = [r for r in carry["rows"] if not (r["meta"]["doc_id"] in bad and r["meta"]["family"].startswith("translate_"))]
+    docs = []
+    for d in carry["docs"]:
+        d = dict(d)
+        d["carried_from"] = carry.get("from")
+        if d["doc_id"] in bad:
+            d["translate"] = {"drop": "independence_dup_pgp_translation", "independence": bad[d["doc_id"]], "rows": 0}
+            drops[f"{d['source']}:translate:independence_dup_pgp_translation"] += 1
+        docs.append(d)
+    return rows, docs
+
+
 def build(p: Optional[_paths.Paths] = None, cfg: Optional[Mapping[str, Any]] = None,
           spans: Optional[Mapping[str, Any]] = None, holdouts: Any = None, ix: Optional[PgpIndex] = None,
           noiser: Any = None, tc: Any = None, with_entry_commentary: bool = False,
           page_texts: Optional[Mapping[str, Optional[str]]] = None,
-          entry_pages: Optional[EntryPages] = None) -> Dict[str, Any]:
+          entry_pages: Optional[EntryPages] = None, independence: bool = True,
+          carry: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """Build the L5 rows from the configured sources.
 
     :param p: Build paths.
@@ -2129,6 +2418,9 @@ def build(p: Optional[_paths.Paths] = None, cfg: Optional[Mapping[str, Any]] = N
     :param page_texts: Pre-loaded page texts for the span sources (tests).
     :param entry_pages: Entry → page-key mapper of the parsed entries (default :meth:`EntryPages.load` over the
         configured books; F11).
+    :param independence: Apply the independence screen (:func:`independence_check`) to every translation pair.
+    :param carry: Parsed-entry rows carried from an earlier build (:func:`load_carry`) instead of reading the
+        entries (when the edition-entries store is not reachable); they pass the independence screen again.
     :returns: ``{"rows", "docs", "report"}``.
     """
     t0 = time.time()
@@ -2151,7 +2443,8 @@ def build(p: Optional[_paths.Paths] = None, cfg: Optional[Mapping[str, Any]] = N
     elif noiser is False:
         noiser = None
     ctx = BuildContext(holdouts=holdouts, ix=ix, noiser=noiser, with_entry_commentary=with_entry_commentary,
-                       tc=tc if tc is not None else _bv.TokenCounter(p.tokenizer_json))
+                       tc=tc if tc is not None else _bv.TokenCounter(p.tokenizer_json),
+                       translations=PgpTranslations.build(ix) if independence else None)
     pgp_ex = p.pgp_export / "sources.csv"
     if pgp_ex.exists():
         extra = list(_bv.load_local_config(p).get("scholar_extra") or []) + list(cfg.get("scholar_extra") or [])
@@ -2160,7 +2453,10 @@ def build(p: Optional[_paths.Paths] = None, cfg: Optional[Mapping[str, Any]] = N
     drops: collections.Counter = collections.Counter()
     if entry_pages is None and cfg.get("nas_books"):
         entry_pages = EntryPages.load(p, cfg)
-    nas_docs, entries_seen = load_nas_docs(cfg, p.book_editions_nas, drops, entry_pages)
+    if carry is not None:
+        nas_docs, entries_seen = [], dict(carry.get("entries_per_book") or {})
+    else:
+        nas_docs, entries_seen = load_nas_docs(cfg, p.book_editions_nas, drops, entry_pages)
     span_docs, span_info = load_span_docs(spans, p, ix, drops, page_texts)
     LOG.info("[%5.1fs] %d entry docs, %d span docs", time.time() - t0, len(nas_docs), len(span_docs))
     pgp_slugs: Dict[str, List[str]] = {str(b["slug"]): list(b.get("pgp_slugs") or []) for b in cfg.get("nas_books") or []}
@@ -2177,6 +2473,18 @@ def build(p: Optional[_paths.Paths] = None, cfg: Optional[Mapping[str, Any]] = N
     doc_records: List[Dict[str, Any]] = []
     seen_keys: Dict[Tuple[str, str], str] = {}
     held_docs: List[Dict[str, Any]] = []
+    if carry is not None:
+        c_rows, c_docs = carry_rows(carry, ctx.translations, drops)
+        rows.extend(c_rows)
+        doc_records.extend(c_docs)
+        for rec in c_docs:
+            fam = (rec.get("translate") or {}).get("family")
+            if fam and (rec.get("translate") or {}).get("rows"):
+                for k in rec.get("keys") or []:
+                    seen_keys.setdefault((fam, k), rec["doc_id"])
+            if rec.get("split") == "heldout":
+                held_docs.append({k: rec.get(k) for k in ("source", "doc", "shelfmarks", "pgpids", "holdout_reason",
+                                                          "split_reason")})
     for doc in all_docs:
         pgpids, how = match_pgpids(doc, ix, pgp_slugs.get(doc.source, []))
         split, split_reason, hold = assign_split(doc, pgpids, holdouts, ix)
@@ -2357,6 +2665,63 @@ def write_outputs(result: Dict[str, Any], p: _paths.Paths, out_dir: Optional[Pat
     return manifest
 
 
+def make_pieces(specs: Sequence[Sequence[str]], p: Optional[_paths.Paths] = None) -> List[Dict[str, Any]]:
+    """Spans-file pieces (head, tail, sha1 filled in) for line ranges of literature pages.
+
+    :param specs: ``[(page key, first line, last line)]`` (inclusive, indices as :func:`show_page` prints them).
+    :param p: Build paths.
+    :returns: Piece dicts in spec order.
+    :raises KeyError: When a page is unknown or has no OCR text.
+    """
+    from src.finetuning.text27b import pages as _pages
+    p = p or _paths.load_paths()
+    works = sorted({str(k).split("/", 1)[0] for k, _, _ in specs})
+    texts = {pg.page_key: pg.ocr_text for pg in _pages.iter_pages(p.academic_literature, works=works)}
+    out = []
+    for key, a, b in specs:
+        text = texts.get(str(key))
+        if text is None:
+            raise KeyError(f"no OCR text for page {key}")
+        out.append(piece_from_lines(str(key), text, int(a), int(b)).to_dict())
+    return out
+
+
+def check_report(res: Mapping[str, Any]) -> List[Dict[str, Any]]:
+    """One line per located-span document of a build: split, matched PGP ids and the translate / analyse verdicts.
+
+    :param res: Output of :func:`build`.
+    :returns: Records ``{source, doc, pgpids, split, holdout, translate, analyse}``.
+    """
+    out = []
+    for d in res["docs"]:
+        t, a = d.get("translate") or {}, d.get("analyse") or {}
+
+        def verdict(x: Mapping[str, Any]) -> Optional[str]:
+            """Short verdict of a translate / analyse record.
+
+            :param x: Record.
+            :returns: Text or None.
+            """
+            if not x:
+                return None
+            if x.get("rows"):
+                pc = x.get("pair_check") or {}
+                ind = x.get("independence") or {}
+                return (f"rows={x['rows']} ratio={pc.get('length_ratio')} own={pc.get('own')} best={pc.get('best_other')}"
+                        f" indep={ind.get('containment')}/{ind.get('ratio')}" if pc else f"rows={x['rows']}")
+            extra = {k: x[k] for k in ("pgpids", "missing", "independence", "pair_check", "grounding_share", "ungrounded")
+                     if k in x}
+            return f"DROP {x.get('drop')} {json.dumps(extra, ensure_ascii=False, default=str)[:300]}"
+        out.append({"source": d["source"], "doc": d["doc"], "pgpids": d["pgpids"][:6], "split": d["split"],
+                    "holdout": d.get("holdout_reason"), "translate": verdict(t), "analyse": verdict(a)})
+    for info in res["report"].get("span_docs") or []:
+        if info.get("drop"):
+            out.append({"source": info.get("source"), "doc": info.get("doc"), "pgpids": [], "split": None,
+                        "holdout": None, "translate": f"DROP {info['drop']} {json.dumps(info.get('span_failures'), ensure_ascii=False)[:300]}",
+                        "analyse": None})
+    return out
+
+
 def show_page(key: str, p: Optional[_paths.Paths] = None, width: int = 110) -> str:
     """Numbered OCR lines of one literature page (the view used to place span pieces).
 
@@ -2388,16 +2753,44 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
     ap.add_argument("--no-noise", action="store_true", help="no noised_edition rows")
     ap.add_argument("--dry-run", action="store_true", help="build and print counts; write nothing")
     ap.add_argument("--show-page", default=None, help="print a page's numbered OCR lines and exit")
+    ap.add_argument("--piece", nargs=3, action="append", metavar=("KEY", "FIRST", "LAST"),
+                    help="print the spans-file piece for lines FIRST..LAST of page KEY (repeatable) and exit")
+    ap.add_argument("--check", action="store_true",
+                    help="build the located-span sources only (no parsed entries, no noise) and print one verdict "
+                         "line per document; write nothing")
+    ap.add_argument("--source", action="append", default=None, help="with --check: only these span sources")
+    ap.add_argument("--no-independence", action="store_true", help="skip the PGP-translation independence screen")
+    ap.add_argument("--carry-entries-from", type=Path, default=None,
+                    help="directory with an earlier book_pairs.jsonl + manifest: carry its parsed-entry rows instead "
+                         "of reading the edition-entries store (required when that store is not reachable)")
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     p = _paths.load_paths()
     if args.show_page:
         print(show_page(args.show_page, p))
         return
+    if args.piece:
+        print(json.dumps(make_pieces(args.piece, p), ensure_ascii=False))
+        return
+    if args.check:
+        cfg, spans, _, _ = load_local_config(p, args.config, args.spans)
+        if args.source:
+            spans = {**spans, "sources": [s for s in spans.get("sources") or [] if s.get("slug") in args.source]}
+        res = build(p, {"priority": cfg.get("priority") or []}, spans, noiser=False,
+                    independence=not args.no_independence)
+        for r in check_report(res):
+            print(json.dumps(r, ensure_ascii=False))
+        return
     t0 = time.time()
     cfg, spans, cpath, spath = load_local_config(p, args.config, args.spans)
+    carry = None
+    if args.carry_entries_from is not None:
+        carry = load_carry(args.carry_entries_from, [b["slug"] for b in cfg.get("nas_books") or []])
+        LOG.info("carrying %d parsed-entry rows from %s", len(carry["rows"]), args.carry_entries_from.name)
+    elif cfg.get("nas_books") and not p.book_editions_nas.is_dir():
+        raise SystemExit("the edition-entries store is not reachable: mount it, or pass --carry-entries-from DIR")
     res = build(p, cfg, spans, noiser=False if args.no_noise else None,
-                with_entry_commentary=args.with_entry_commentary)
+                with_entry_commentary=args.with_entry_commentary, independence=not args.no_independence, carry=carry)
     LOG.info("[%5.1fs] built %d rows", time.time() - t0, len(res["rows"]))
     if args.dry_run:
         print(json.dumps({"rows": len(res["rows"]), "drops": res["report"]["drops"]}, indent=1, ensure_ascii=False))

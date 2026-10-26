@@ -642,3 +642,140 @@ def test_nas_rows_carry_entry_page_keys(tmp_path: Path) -> None:
     man = BP.write_outputs(res, p, exact_tokens=False)
     assert man["checks"]["rows_unmapped_entry_pages"] == sum(1 for k in rows if k[0] == "book:lost:1")
     assert man["checks"]["rows_by_page_keys_source"] == {BP.NAS_PAGE_SOURCE: len(rows)}
+
+
+# ---------------------------------------------------------------------------------- books-mining pass (2026-10-25)
+def test_numbered_line_normalisers_and_superscripts() -> None:
+    """rejoin_numbered joins wrapped rows to their numbered line; drop_line_numbers strips edition numbers."""
+    text = "Recto\n1. In the name of God the\nMerciful and Compa-\nssionate\n2. My letter\n§ verso\n3. Peace"
+    out, n = BP.rejoin_numbered(text)
+    assert out.split("\n") == ["Recto", "1. In the name of God the Merciful and Compassionate", "2. My letter",
+                               "§ verso", "3. Peace"]
+    assert n == 2
+    ed, k = BP.drop_line_numbers("1. בשמ רחמ\n2 כתאבי אלי\nכתאבך .3\n§ recto\nline 4 Latin")
+    assert ed.split("\n") == ["בשמ רחמ", "כתאבי אלי", "כתאבך", "§ recto", "line 4 Latin"] and k == 3
+    s, m = BP.drop_superscripts("the house² of Abū¹³ ʿAlī")
+    assert s == "the house of Abū ʿAlī" and m == 2
+    ok, missing = BP.words_subset(s, "the house² of Abū¹³ ʿAlī")
+    assert ok, missing
+    assert {"rejoin_numbered", "drop_line_numbers", "drop_superscripts"} <= set(BP.NORMALISERS)
+
+
+def test_drop_ocr_refs_keeps_restored_letter_inside_word() -> None:
+    """A bracketed letter inside a word is a restoration, not a siglum."""
+    out, n = BP.drop_ocr_refs("החכם ש[א]סר את [ג] האשה")
+    assert out == "החכם ש[א]סר את האשה" and n == 1
+
+
+def test_doc_from_spans_not_placed_input_override_and_commentary() -> None:
+    """Recorded candidates without spans drop with their reason; a doc can override the source input; a
+    commentary span is used as the analysis text."""
+    page = "Head\n" + "\n".join(JA_LINES) + "\nTranslation\n" + "\n".join(EN_LINES) + \
+        "\nCommentary\nThe letter of Abū ʿAlī Ḥasan ibn Dāwūd was written in Fustat about the year 1100."
+    pages = {"w/p/page_001.json": page}
+    src = {"slug": "bk", "target_lang": "en", "input": "pgp_edition", "licence": "l", "licence_class": "copyright"}
+    doc, info = BP.doc_from_spans(src, {"doc": "9", "not_placed": "no_translation"}, pages)
+    assert doc is None and info["drop"] == "not_placed:no_translation"
+    spans = {"edition": {"pieces": [BP.piece_from_lines("w/p/page_001.json", page, 1, 3).to_dict()], "normalise": []},
+             "translation": {"pieces": [BP.piece_from_lines("w/p/page_001.json", page, 5, 7).to_dict()],
+                             "normalise": []},
+             "commentary": {"pieces": [BP.piece_from_lines("w/p/page_001.json", page, 9, 9).to_dict()],
+                            "normalise": []}}
+    doc, info = BP.doc_from_spans(src, {"doc": "1", "input": "span", "spans": spans}, pages, lambda h, s: None)
+    assert doc is not None and doc.input_source == "book_edition:bk" and doc.edition == "\n".join(JA_LINES)
+    assert doc.intro.startswith("The letter of") and info["analysis_kind"] == "commentary"
+    assert doc.provenance["work_pages"]["intro"] == ["w/p/page_001.json"]
+
+
+def test_independence_check_flags_near_copies(tmp_path: Path) -> None:
+    """A book translation that copies a PGP digital translation fails; an independent one passes."""
+    pgp_tr = ("In the name of God. My letter to the elder Abū ʿAlī Ḥasan ibn Dāwūd, may God prolong his life. "
+              "Your letter arrived and I understood it, praise be to God, and I sent the pepper with the boat.")
+    pairs = write_pairs(tmp_path / "pairs.jsonl", [
+        {"pgpid": "10", "shelfmark": "T-S 1.1", "split": "train", "translation_en": pgp_tr, "edition_text": "x",
+         "editions": [], "translations": [{"language": "en", "text": pgp_tr}]},
+        {"pgpid": "11", "shelfmark": "T-S 2.2", "split": "train", "translation_he": "שלום לך אדוני", "edition_text": "y",
+         "editions": [], "translations": []}])
+    ix = BP.PgpIndex.build(pairs, with_grams=False)
+    tr = BP.PgpTranslations.build(ix)
+    assert set(tr.texts["en"]) == {"10"} and set(tr.texts["he"]) == {"11"}
+    copy = pgp_tr.replace("Your letter", "(3) Your letter")
+    bad = BP.independence_check(copy, "en", tr, same_doc=[])
+    assert not bad["ok"] and bad["pgpid"] == "10" and bad["containment"] >= 0.5 and not bad["same_doc"]
+    other = ("The judge of the court confirmed the sale of half a house in the Jewish quarter to the widow, "
+             "and the witnesses signed the deed in the month of Nisan.")
+    good = BP.independence_check(other, "en", tr, same_doc=["10"])
+    assert good["ok"] and good["containment"] < 0.5 and good["ratio"] <= 0.9
+    assert BP.independence_check(copy, "en", None)["ok"]
+    assert BP.independence_tokens("(12) Peace, Abū ʿAlī") == ["peace", "abū", "ʿalī"]
+
+
+def test_translate_rows_drop_on_independence(tmp_path: Path) -> None:
+    """translate_rows drops a located pair whose target near-copies a PGP translation."""
+    pairs = write_pairs(tmp_path / "pairs.jsonl", [
+        {"pgpid": "10", "shelfmark": "T-S 9.9", "split": "train", "translation_en": "\n".join(EN_LINES),
+         "edition_text": "x", "editions": [], "translations": []}])
+    ix = BP.PgpIndex.build(pairs, with_grams=False)
+    c = ctx(ix=ix)
+    c.translations = BP.PgpTranslations.build(ix)
+    doc = make_doc(located=True)
+    rows, info = BP.translate_rows(doc, "train", [], "hash", None, [doc], c)
+    assert rows == [] and info["drop"] == "independence_dup_pgp_translation"
+    c.translations = None
+    rows, info = BP.translate_rows(doc, "train", [], "hash", None, [doc], c)
+    assert rows and rows[0]["meta"]["independence"]["ok"]
+
+
+def test_check_report_lines() -> None:
+    """check_report gives one verdict per document and lists span-level drops."""
+    res = {"docs": [{"source": "bk", "doc": "1", "pgpids": ["5"], "split": "train", "holdout_reason": None,
+                     "translate": {"rows": 2, "pair_check": {"length_ratio": 1.1, "own": 0.5, "best_other": 0.1},
+                                   "independence": {"containment": 0.0, "ratio": 0.3}}, "analyse": {"drop": "no_intro"}}],
+           "report": {"span_docs": [{"source": "bk", "doc": "2", "drop": "not_placed:no_translation"}]}}
+    out = BP.check_report(res)
+    assert out[0]["translate"].startswith("rows=2") and out[0]["analyse"].startswith("DROP no_intro")
+    assert out[1]["doc"] == "2" and out[1]["translate"].startswith("DROP not_placed:no_translation")
+
+
+def test_load_carry_and_carry_rows(tmp_path: Path) -> None:
+    """Parsed-entry rows are carried from an earlier build and screened again for independence."""
+    def row(doc_id: str, fam: str, target: str, source: str = "book:nas1") -> Dict[str, Any]:
+        """A minimal carried row.
+
+        :param doc_id: Document id.
+        :param fam: Family.
+        :param target: Assistant text.
+        :param source: Source tag.
+        :returns: Row.
+        """
+        return {"messages": [{"role": "system", "content": "s"}, {"role": "user", "content": "u"},
+                             {"role": "assistant", "content": target}],
+                "meta": {"doc_id": doc_id, "family": fam, "condition": "edition", "source": source, "pgpids": []}}
+    copied = " ".join(EN_LINES)
+    rows = [row("book:nas1:1", "translate_en", copied), row("book:nas1:2", "translate_en", "An unrelated text about a "
+                                                                                              "house sale in the quarter."),
+            row("book:other:1", "translate_en", "x", source="book:other")]
+    d = tmp_path / "prev"
+    d.mkdir()
+    R.write_jsonl(d / "book_pairs.jsonl", rows)
+    (d / "book_pairs_manifest.json").write_text(json.dumps({
+        "documents": [{"source": "nas1", "doc": "1", "doc_id": "book:nas1:1", "keys": ["k1"], "split": "train",
+                       "translate": {"rows": 1}},
+                      {"source": "nas1", "doc": "2", "doc_id": "book:nas1:2", "keys": ["k2"], "split": "heldout",
+                       "translate": {"rows": 1}},
+                      {"source": "other", "doc": "1", "doc_id": "book:other:1", "keys": [], "split": "train"}],
+        "report": {"entries_per_book": {"nas1": 2, "other": 1}}}), encoding="utf-8")
+    carry = BP.load_carry(d, ["nas1"])
+    assert len(carry["rows"]) == 2 and [x["doc"] for x in carry["docs"]] == ["1", "2"]
+    assert carry["entries_per_book"] == {"nas1": 2} and carry["docs"][0]["translate"]["family"] == "translate_en"
+    pairs = write_pairs(tmp_path / "pairs.jsonl", [
+        {"pgpid": "10", "shelfmark": "T-S 9.9", "split": "train", "translation_en": copied, "edition_text": "x",
+         "editions": [], "translations": []}])
+    tr = BP.PgpTranslations.build(BP.PgpIndex.build(pairs, with_grams=False))
+    import collections
+    drops: collections.Counter = collections.Counter()
+    kept, docs = BP.carry_rows(carry, tr, drops)
+    assert [r["meta"]["doc_id"] for r in kept] == ["book:nas1:2"]
+    assert docs[0]["translate"]["drop"] == "independence_dup_pgp_translation" and drops
+    kept2, _ = BP.carry_rows(carry, None, collections.Counter())
+    assert len(kept2) == 2

@@ -27,7 +27,8 @@ Iteration
     :class:`PageRec`, :func:`iter_pages`, :func:`page_key`, :func:`parse_page_key`,
     :func:`page_no_of`, :func:`model_priority`, :func:`ocr_index`, :func:`load_ocr_file`,
     :func:`resolve_ocr`, :func:`shingles`, :func:`containment`, :func:`parse_printed_page`,
-    :func:`infer_printed_pages`.
+    :func:`infer_printed_pages`, :func:`default_repair_root`, :func:`apply_ocr_repair` (derived repairs of
+    fragmented text layers, written by :mod:`ocr_repair`, replace ``ocr_text`` when present and current).
 Page JSON fields (ported from ``analysis_lib``)
     :func:`sm_keys`, :func:`sm_note`, :func:`tr_keys`, :func:`tr_chars`, :func:`footnote_texts`.
 Page-text analysis (ported from ``analysis_lib`` for the literature index / span detector)
@@ -43,6 +44,7 @@ Page-text analysis (ported from ``analysis_lib`` for the literature index / span
 from __future__ import annotations
 
 import collections
+import hashlib
 import json
 import logging
 import os
@@ -128,7 +130,8 @@ class PageRec:
     ``ocr_file`` / ``ocr_text`` / ``ocr_source`` (``text_layer`` / ``vision`` / ``ocr``) /
     ``ocr_mode`` (the OCR file's ``processing_info.mode``), ``ocr_containment`` (share of
     ``full_main_text`` 5-word shingles found in ``ocr_text``; None under five words), ``data``
-    (the page JSON).
+    (the page JSON), ``ocr_text_raw`` / ``ocr_repair`` (set when a derived repair of a fragmented text layer
+    replaced ``ocr_text``: the original OCR text and the repair method, see :mod:`ocr_repair`).
     """
 
     work: str
@@ -151,6 +154,8 @@ class PageRec:
     printed_page_num: Optional[int] = None
     printed_page_source: Optional[str] = None
     data: Dict[str, Any] = field(default_factory=dict, repr=False)
+    ocr_text_raw: Optional[str] = field(default=None, repr=False)
+    ocr_repair: Optional[str] = None
 
     @property
     def page_key(self) -> str:
@@ -482,7 +487,8 @@ def infer_printed_pages(pages: Sequence[PageRec], max_gap: int = 2) -> None:
 
 
 def iter_pages(root: Optional[Path] = None, works: Optional[Iterable[str]] = None, with_ocr: bool = True,
-               skip: Iterable[str] = (), shingle_n: int = 5) -> List[PageRec]:
+               skip: Iterable[str] = (), shingle_n: int = 5, repair_root: Optional[Path] = None,
+               use_repairs: bool = True) -> List[PageRec]:
     """Load the literature pages, one structuring per ``(work, part, page number)``.
 
     Port of ``analysis_lib.iter_pages`` (same ``work`` / ``part`` derivation and model preference,
@@ -496,6 +502,8 @@ def iter_pages(root: Optional[Path] = None, works: Optional[Iterable[str]] = Non
     :param with_ocr: Join OCR text and compute containment.
     :param skip: Top-level directories to ignore.
     :param shingle_n: Shingle length for :attr:`PageRec.ocr_containment`.
+    :param repair_root: Directory of derived OCR repairs (default ``paths.out_dir/ocr_repair`` when it exists).
+    :param use_repairs: Apply the repairs (:func:`apply_ocr_repair`); False keeps the raw OCR text.
     :returns: Pages sorted by work, part, page number.
     """
     root = Path(root) if root is not None else _paths.load_paths().academic_literature
@@ -539,21 +547,60 @@ def iter_pages(root: Optional[Path] = None, works: Optional[Iterable[str]] = Non
     pages = [r for _, r in best.values()]
     pages.sort(key=lambda r: (r.work, r.part, r.page_no))
     if with_ocr:
-        _join_ocr(pages, root, shingle_n)
+        _join_ocr(pages, root, shingle_n, (repair_root or default_repair_root()) if use_repairs else None)
     infer_printed_pages(pages)
     return pages
 
 
-def _join_ocr(pages: Sequence[PageRec], root: Path, shingle_n: int) -> None:
-    """Attach OCR text, source and containment to pages (in place).
+def default_repair_root() -> Optional[Path]:
+    """The build's OCR repair directory (``paths.out_dir/ocr_repair``) when it exists.
+
+    :returns: Directory or None (no repairs, or no local paths file).
+    """
+    from src.finetuning.text27b import ocr_repair as _rep
+    try:
+        d = _rep.default_repair_root()
+    except FileNotFoundError:
+        return None
+    return d if d.is_dir() else None
+
+
+def apply_ocr_repair(page: PageRec, repairs: Dict[int, Tuple[str, str, str]], ocr_file_name: Optional[str]) -> bool:
+    """Replace a page's OCR text by its derived repair when the repair was made from exactly this OCR text.
+
+    The repair applies only when the repair manifest names the page's OCR file and the sha1 of the page's OCR
+    text equals the one recorded when the repair was made; the original text is kept in ``ocr_text_raw``.
+
+    :param page: Page with ``ocr_text`` / ``ocr_file`` set.
+    :param repairs: ``{page_number: (text, original sha1, method)}`` of the page's work (:func:`ocr_repair.load_repairs`).
+    :param ocr_file_name: OCR file name the repairs were made from.
+    :returns: True when the page text was replaced.
+    """
+    rec = repairs.get(page.page_no)
+    if rec is None or page.ocr_text is None or not page.ocr_file or Path(page.ocr_file).name != ocr_file_name:
+        return False
+    text, sha1, method = rec
+    if hashlib.sha1(page.ocr_text.encode("utf-8")).hexdigest() != sha1:
+        return False
+    page.ocr_text_raw, page.ocr_text, page.ocr_repair = page.ocr_text, text, method
+    page.ocr_source = f"{page.ocr_source or 'ocr'}+repair"
+    return True
+
+
+def _join_ocr(pages: Sequence[PageRec], root: Path, shingle_n: int, repair_root: Optional[Path] = None) -> None:
+    """Attach OCR text, source and containment to pages (in place), applying derived OCR repairs.
 
     :param pages: Pages from :func:`iter_pages`.
     :param root: Literature root.
     :param shingle_n: Shingle length.
+    :param repair_root: Directory of derived OCR repairs (None: none applied).
     :returns: None.
     """
+    from src.finetuning.text27b import ocr_repair as _rep
     index = ocr_index(root)
     cache: Dict[Path, Dict[int, Dict[str, Any]]] = {}
+    repairs: Dict[str, Tuple[Optional[str], Dict[int, Tuple[str, str, str]]]] = {}
+    repaired = 0
     missing = 0
     for p in pages:
         f = resolve_ocr(Path(p.path), p.data, p.structuring_dir.split("/")[0], index, root / p.work)
@@ -568,9 +615,18 @@ def _join_ocr(pages: Sequence[PageRec], root: Path, shingle_n: int) -> None:
             missing += 1
             continue
         p.ocr_text, p.ocr_source, p.ocr_mode = o["text"], o["source"], o["mode"]
-        p.ocr_containment = containment(p.full_main_text, o["text"], shingle_n)
+        if repair_root is not None:
+            if p.work not in repairs:
+                repairs[p.work] = _rep.load_repairs(repair_root, p.work)
+            name, recs = repairs[p.work]
+            repaired += apply_ocr_repair(p, recs, name)
+        # the join check compares the structurer's text with the OCR file's own text (a repair is verified
+        # against that text by its character multiset and sha1 when it is made)
+        p.ocr_containment = containment(p.full_main_text, p.ocr_text_raw or p.ocr_text, shingle_n)
     if missing:
         LOG.warning("%d of %d pages without an OCR page", missing, len(pages))
+    if repaired:
+        LOG.info("%d pages read from derived OCR repairs", repaired)
 
 
 # ------------------------------------------------------------------------------------ text analysis
