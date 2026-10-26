@@ -16,7 +16,7 @@ transcription_raw_outputs
 transcription_results
 # Qwen Hebrew fine-tuning artifacts (large, regenerable — canonical copies on HF hub)
 src/datasets/processed/
-models/
+/models/
 .venv-mlx/
 src/finetuning/qwen_hebrew/assets/
 

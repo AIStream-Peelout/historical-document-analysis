@@ -1,8 +1,9 @@
 # Shared Studio Runtime — READ BEFORE RUNNING ANYTHING LONG
 
-The Mac Studio is **shared production**. `api.cairogenizah.ai` is served from
-Docker containers, LM Studio and a cloudflared tunnel on this machine (owned by
-the `genizah_search` repo — its "Shared Runtime" section is canonical). This
+The Mac Studio is **shared production**. The web stack of `api.cairogenizah.ai`
+(Docker containers, cloudflared tunnel) now runs on the M3 MacBook Pro, but its
+chat LLMs are still served by LM Studio on this machine (owned by the
+`genizah_search` repo — its "Shared Runtime" section is canonical). This
 repo's evaluations, consensus runs, dataset builds, merges and probes share the
 same disk, RAM, Docker daemon and LM Studio server. One process killing another
 it was not aware of has happened repeatedly (port clashes, disk exhaustion,
@@ -47,7 +48,7 @@ docker ps --format '{{.Names}}\t{{.Ports}}\t{{.Status}}'
 | Merge pipeline | `.venv` PEFT merge (bf16 base on CPU, ~17 GB RAM) → `.venv-mlx` `mlx_vlm convert` → APFS clone into `~/.lmstudio/models/isaacmg/` | ONE MLX process at a time; needs ~26 GB free disk at peak; RAM spike can pressure LM Studio's resident models. |
 | HF caches | `~/.cache/huggingface/hub/models--Qwen--Qwen3-VL-8B-Instruct` (16 GB, needed for every merge); adapters/ckpts small | cold caches (colqwen 31 GB) already archived to NAS. |
 | KG / indexing scripts | `src/datasets/indexing/neo4j/*` → genizah_search-neo4j-1 (bolt 7681); `src/datasets/indexing/*elastic*` → ES | **these write to prod/backup stores — confirm with the user before any import or re-index.** |
-| GCS bucket `cairo-genizah-es-json` | images for the web app + our KTIV/FJP image uploads | uploads fine; never delete/overwrite objects. |
+| GCS bucket `cairo-genizah-es-json` | images for the web app + our KTIV/legacy-catalogue image uploads | uploads fine; never delete/overwrite objects. |
 | Training | Colab A100 only (`src/finetuning/qwen_hebrew/colab/`) — never local | local = evals, merges, probes, data builds. |
 | W&B | project `cairo-genizah-transcription`, entity `igodfried` | run dirs are synced; local copies archived to NAS. |
 
@@ -80,3 +81,26 @@ containers need more. A job that needs exceptional RAM must:
 Diagnose read-only — `docker ps`, `docker logs genizah_search-backend-1`,
 `curl localhost:8000/health`, `curl localhost:1234/api/v0/models`,
 `df -h` — and report to the user. Do not restart anything to "fix" it.
+
+## 7. Yield to prod chat (`src/models/ocr/lms_yield_gate.py`)
+
+Prod chat runs its three LLMs (`qwen/qwen3-4b-2507` router, `qwen/qwen3.8-27b`
+synthesis, `qwen/qwen3.6-35b-a3b` verifier) on this machine's LM Studio. Before
+each unit of GPU work (page, LLM call, eval row, checkpoint stage) this repo's
+LM Studio call sites ask the yield gate whether a prod chat is active: `lms ps
+--json` shows a chat model busy, or used in the last 180 s, not counting this
+repo's own calls. It fails open and never raises.
+
+* `LMS_YIELD_MODE=off|dryrun|on`: process env first, then the repo `.env`;
+  default `dryrun` (log only, never wait). In `on` it polls every 3 s and
+  proceeds after at most 15 min. It is read once per process, so a change
+  reaches newly started processes only. `off` is the kill switch.
+* Logs: `logs/lms_yield/yield_gate.jsonl` (one record per gate call) and
+  `logs/lms_yield/own_calls.jsonl` (this repo's own chat-model calls).
+  Summary: `.venv/bin/python -m src.models.ocr.lms_yield_gate --summarize`;
+  live check: `... --check` (exit 0 clear, 3 hold).
+* New LM Studio call sites: `wait_for_chat_idle(site=...)` (or
+  `await await_chat_idle(site=...)`) before the request, and wrap requests to
+  a chat model in `own_call(model)`. Shell stages run
+  `.venv/bin/python -m src.models.ocr.lms_yield_gate --wait --site <stage>`.
+* Tests run with the gate off (`tests/conftest.py`).

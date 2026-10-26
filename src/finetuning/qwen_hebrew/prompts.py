@@ -13,6 +13,14 @@ Two prompt families:
   heavy eval-only dependencies (wandb, kraken, google-cloud-vision) that must
   not become training-environment requirements.
   ``tests/test_qwen_hebrew_prompts.py`` asserts the copies stay byte-equal.
+- Task C: whole-page Genizah fragment transcription. ``FRAGMENT_TRANSCRIBE_PROMPT``
+  (asserts Hebrew script) and ``ARABIC_FRAGMENT_PROMPT`` (asserts Arabic script)
+  are the prompts the training rows were built with; they are kept for building
+  rows and for reproducing past evaluations. ``SCRIPT_NEUTRAL_PROMPT`` is the same
+  prompt without the script assertion and is the one prompt the production reader
+  (``src.models.ocr.page_reader``) sends for every page, whatever its script: the
+  prompt ablation of 2026-10-25 showed that asserting the script makes the reader
+  write Arabic on Hebrew-script sides, at no gain on Arabic pages.
 """
 
 from typing import Dict
@@ -100,6 +108,33 @@ Where text is lost or illegible due to damage, write [...].
 Do NOT correct, restore, or complete from memory.
 
 Return ONLY the transcription."""
+
+# The script clause of the fragment prompt. The two asserting prompts differ from each other, and from
+# the script-neutral one, in this clause alone; the instructions after it are shared byte for byte.
+HEBREW_SCRIPT_CLAUSE = "handwritten Hebrew script (the language may be Hebrew, Judeo-Arabic, or Aramaic)"
+ARABIC_SCRIPT_CLAUSE = "handwritten Arabic script"
+SCRIPT_NEUTRAL_CLAUSE = "handwritten text in its original script"
+
+# The Arabic-script training rows' prompt (``build_pgp_arabic_editions`` and the book / external
+# edition builders): kept for building rows and for reproducing the Arabic-script benchmark runs.
+ARABIC_FRAGMENT_PROMPT = FRAGMENT_TRANSCRIBE_PROMPT.replace(HEBREW_SCRIPT_CLAUSE, ARABIC_SCRIPT_CLAUSE)
+
+# The production reader's prompt, for every page of every script (never asserts the script).
+SCRIPT_NEUTRAL_PROMPT = """This image is a manuscript fragment from the Cairo Genizah — \
+handwritten text in its original script.
+
+Transcribe the text exactly as written, in reading order. Mark unclear characters with [?].
+Where text is lost or illegible due to damage, write [...].
+Do NOT correct, restore, or complete from memory.
+
+Return ONLY the transcription."""
+
+assert HEBREW_SCRIPT_CLAUSE in FRAGMENT_TRANSCRIBE_PROMPT, "the fragment prompt no longer holds its script clause"
+assert SCRIPT_NEUTRAL_PROMPT == FRAGMENT_TRANSCRIBE_PROMPT.replace(HEBREW_SCRIPT_CLAUSE, SCRIPT_NEUTRAL_CLAUSE), \
+    "the script-neutral prompt drifted from the fragment prompt in more than the script clause"
+
+# The script-asserting prompts by the script they assert: only for reproducing past evaluations.
+LEGACY_SCRIPT_PROMPTS: Dict[str, str] = {"hebrew": FRAGMENT_TRANSCRIBE_PROMPT, "arabic": ARABIC_FRAGMENT_PROMPT}
 
 
 def prompt_for(task: str, section: str) -> str:

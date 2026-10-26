@@ -28,6 +28,7 @@ _REPO = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(_REPO))
 
 from src.datasets.evaluations.metrics import cer_pair  # noqa: E402
+from src.models.ocr import lms_yield_gate  # noqa: E402
 
 LM_STUDIO_URL = "http://localhost:1234/v1"
 SEED = 20260810
@@ -63,6 +64,7 @@ def call_model(client: Any, model: str, question: str, data_url: str,
     :param retries: Attempts (model-swap evictions 400 until JIT load).
     :returns: Model output text ("" after exhausted retries).
     """
+    lms_yield_gate.wait_for_chat_idle(site="probe_forgetting")  # yield to prod chat; fails open
     for attempt in range(retries):
         try:
             resp = client.chat.completions.create(

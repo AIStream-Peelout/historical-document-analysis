@@ -34,18 +34,29 @@ Tiers (each maps to one scraping action):
 Documents with neither transcription nor permitted image are counted in the
 summary, not listed.
 
+Inputs: the PGP export directory (``documents.csv``, ``footnotes.csv``, ``fragments.csv``;
+``--pgp-dir``, default the export under ``raw_data``), the merged corpus, the ``decontam``
+training inventories and the local image directories. Outputs: the queue CSV, the image-only
+backlog CSV and the JSON summary, written to ``--out-dir`` (default the merged directory under
+``raw_data``, the files the training and benchmark builders read). A queue from another export
+than the default needs an ``--out-dir`` other than that directory. The summary records the export
+it was built from (``pgp_dir``, ``pgp_export_commit`` from the export's ``COMMIT`` file), which
+the training builder checks against its edition text (:func:`queue_provenance`).
+
 Usage (from the repo root):
     PYTHONPATH=. .venv/bin/python -m src.datasets.indexing.arabic_scrape_queue [--verify-cudl]
+        [--pgp-dir DIR] [--out-dir DIR]
 """
 import argparse
 import ast
 import collections
 import csv
+import functools
 import json
 import re
 import time
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import AbstractSet, Any, Dict, FrozenSet, Iterable, List, Optional, Tuple
 
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
 
@@ -69,8 +80,6 @@ _ARABIC = re.compile(r"[؀-ۿݐ-ݿ]")
 _HEBREW = re.compile(r"[֐-׿]")
 # Cambridge shelfmark prefixes -> CUDL manifest id prefix (learned from the
 # export rows that carry both a shelfmark and a CUDL manifest URL).
-_KNOWN_FRAGMENTS = {r["shelfmark"] for r in csv.DictReader(
-    open(PGP / "fragments.csv", encoding="utf-8-sig"))} if (PGP / "fragments.csv").exists() else set()
 _CUDL_PREFIXES = [("T-S ", "MS-TS"), ("CUL Or.", "MS-OR"), ("CUL Add.", "MS-ADD"),
                   ("Moss. ", "MS-MOSSERI")]
 # Image-only material is ordered by genre: page-like Arabic-script genres
@@ -152,7 +161,33 @@ def arabic_primary(row: Dict[str, str]) -> bool:
     return "arabic" in lp and "judaeo-arabic" not in lp and "judeo-arabic" not in lp
 
 
-def cudl_manifest(shelfmark: str) -> Optional[str]:
+@functools.lru_cache(maxsize=None)
+def _fragment_shelfmarks(fragments_csv: Path) -> FrozenSet[str]:
+    """Shelfmarks listed in one ``fragments.csv``, read once per path.
+
+    :param fragments_csv: PGP export ``fragments.csv``.
+    :type fragments_csv: Path
+    :return: Shelfmarks (empty when the file does not exist).
+    :rtype: FrozenSet[str]
+    """
+    if not fragments_csv.exists():
+        return frozenset()
+    with open(fragments_csv, encoding="utf-8-sig") as fh:
+        return frozenset(r["shelfmark"] for r in csv.DictReader(fh))
+
+
+def known_fragments(pgp_dir: Optional[Path] = None) -> FrozenSet[str]:
+    """Shelfmarks of the physical fragments of a PGP export, read on first use (not at import).
+
+    :param pgp_dir: PGP export directory holding ``fragments.csv``; default :data:`PGP`.
+    :type pgp_dir: Optional[Path]
+    :return: Fragment shelfmarks (empty when the export has no ``fragments.csv``).
+    :rtype: FrozenSet[str]
+    """
+    return _fragment_shelfmarks((pgp_dir if pgp_dir is not None else PGP) / "fragments.csv")
+
+
+def cudl_manifest(shelfmark: str, known: Optional[AbstractSet[str]] = None) -> Optional[str]:
     """Construct the CUDL IIIF manifest URL for a single Cambridge shelfmark.
 
     Tokens after the collection prefix become ``-``-joined id parts: numbers
@@ -161,7 +196,12 @@ def cudl_manifest(shelfmark: str) -> Optional[str]:
     ``MS-TS-AR-00018-00001-00135``, ``CUL Or.1080 J10`` -> ``MS-OR-01080-J-00010``.
 
     :param shelfmark: Single (non-joined) shelfmark.
+    :type shelfmark: str
+    :param known: Fragment shelfmarks of the PGP export in use (:func:`known_fragments`);
+        default: those of the export under :data:`PGP`, read only when needed.
+    :type known: Optional[AbstractSet[str]]
     :return: Manifest URL, or ``None`` for non-Cambridge / joined shelfmarks.
+    :rtype: Optional[str]
     """
     if " + " in shelfmark:
         return None
@@ -169,7 +209,7 @@ def cudl_manifest(shelfmark: str) -> Optional[str]:
     # (``T-S 13J4.15.1`` is the first document on fragment ``T-S 13J4.15``)
     # is dropped when the base shelfmark is a known fragment.
     base = re.sub(r"\.[0-9]+$", "", shelfmark)
-    if base != shelfmark and base in _KNOWN_FRAGMENTS:
+    if base != shelfmark and base in (known if known is not None else known_fragments()):
         shelfmark = base
     for prefix, ms in _CUDL_PREFIXES:
         if shelfmark.startswith(prefix):
@@ -226,17 +266,49 @@ def local_image_index() -> Dict[str, str]:
     return idx
 
 
-def load_pgp_editions(pgpids: set) -> Dict[str, str]:
+def pgp_export_commit(pgp_dir: Optional[Path] = None) -> str:
+    """The PGP export commit a pinned snapshot directory records.
+
+    :param pgp_dir: PGP export directory; default :data:`PGP`.
+    :type pgp_dir: Optional[Path]
+    :return: Content of its ``COMMIT`` file, or ``""`` when there is none (an unpinned export).
+    :rtype: str
+    """
+    path = (pgp_dir if pgp_dir is not None else PGP) / "COMMIT"
+    return path.read_text(encoding="utf-8").strip() if path.is_file() else ""
+
+
+def queue_provenance(queue_csv: Path) -> Dict[str, str]:
+    """The PGP export a queue was built from, as the summary written next to it records.
+
+    :param queue_csv: A queue CSV written by :func:`main` (its summary is the
+        :data:`OUT_SUMMARY` file name in the same directory).
+    :type queue_csv: Path
+    :return: ``{"pgp_dir", "pgp_export_commit"}``; empty strings when the summary is missing or
+        predates these fields.
+    :rtype: Dict[str, str]
+    """
+    path = queue_csv.with_name(OUT_SUMMARY.name)
+    summary = json.loads(path.read_text(encoding="utf-8")) if path.is_file() else {}
+    return {"pgp_dir": summary.get("pgp_dir", ""), "pgp_export_commit": summary.get("pgp_export_commit", "")}
+
+
+def load_pgp_editions(pgpids: set, pgp_dir: Optional[Path] = None) -> Dict[str, str]:
     """Concatenate PGP edition content per document from footnotes.csv.
 
     :param pgpids: Documents of interest.
+    :type pgpids: set
+    :param pgp_dir: PGP export directory; default :data:`PGP`.
+    :type pgp_dir: Optional[Path]
     :return: pgpid -> transcription text (all edition footnotes joined).
+    :rtype: Dict[str, str]
     """
     text: Dict[str, str] = collections.defaultdict(str)
-    for f in csv.DictReader(open(PGP / "footnotes.csv", encoding="utf-8-sig")):
-        pid = f["document_id"].strip()
-        if pid in pgpids and "Edition" in f["doc_relation"] and f["content"].strip():
-            text[pid] += "\n" + f["content"]
+    with open((pgp_dir if pgp_dir is not None else PGP) / "footnotes.csv", encoding="utf-8-sig") as fh:
+        for f in csv.DictReader(fh):
+            pid = f["document_id"].strip()
+            if pid in pgpids and "Edition" in f["doc_relation"] and f["content"].strip():
+                text[pid] += "\n" + f["content"]
     return text
 
 
@@ -301,24 +373,31 @@ def tier_for(row: Dict[str, Any]) -> int:
     return 5
 
 
-def build(verify_cudl: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+def build(verify_cudl: bool = False, pgp_dir: Optional[Path] = None) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Build the ranked queue.
 
     :param verify_cudl: Fetch constructed CUDL manifests and promote only the
         ones that resolve; otherwise constructed URLs stay suggestions.
+    :type verify_cudl: bool
+    :param pgp_dir: PGP export directory (``documents.csv``, ``footnotes.csv``,
+        ``fragments.csv``); default :data:`PGP`.
+    :type pgp_dir: Optional[Path]
     :return: (rows, summary) — rows are tiers 1-6 sorted by rank.
+    :rtype: Tuple[List[Dict[str, Any]], Dict[str, Any]]
     """
-    docs = [r for r in csv.DictReader(open(PGP / "documents.csv", encoding="utf-8-sig"))
-            if arabic_primary(r)]
-    editions = load_pgp_editions({d["pgpid"] for d in docs})
+    pgp_dir = pgp_dir if pgp_dir is not None else PGP
+    with open(pgp_dir / "documents.csv", encoding="utf-8-sig") as fh:
+        docs = [r for r in csv.DictReader(fh) if arabic_primary(r)]
+    editions = load_pgp_editions({d["pgpid"] for d in docs}, pgp_dir)
     merged = load_merged_by_pgpid()
     keys = json.load(open(CLEAN_V2_KEYS))
     train_keys = set(keys if isinstance(keys, list) else keys.keys())
     ids = json.load(open(CLEAN_V2_IDS)) if CLEAN_V2_IDS.exists() else []
     train_ids = set(map(str, ids if isinstance(ids, list) else ids.keys()))
     local = local_image_index()
-    frags = {r["shelfmark"]: r
-             for r in csv.DictReader(open(PGP / "fragments.csv", encoding="utf-8-sig"))}
+    with open(pgp_dir / "fragments.csv", encoding="utf-8-sig") as fh:
+        frags = {r["shelfmark"]: r for r in csv.DictReader(fh)}
+    known = known_fragments(pgp_dir)
 
     rows: List[Dict[str, Any]] = []
     for d in docs:
@@ -351,9 +430,9 @@ def build(verify_cudl: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, An
             "in_training_clean_v2": loose_key(shelf) in train_keys
                                     or (m.get("canonical_id", "") in train_ids),
             "local_image": (local.get(m.get("canonical_id", "")) or
-                            local.get((cudl_manifest(shelf) or "").rsplit("/", 1)[-1], "")),
+                            local.get((cudl_manifest(shelf, known) or "").rsplit("/", 1)[-1], "")),
             "image_source": image_source(iiif, m), "iiif_urls": iiif,
-            "suggested_iiif": "" if iiif else (cudl_manifest(shelf) or ""),
+            "suggested_iiif": "" if iiif else (cudl_manifest(shelf, known) or ""),
             "cudl_verified": "",
         })
 
@@ -395,6 +474,7 @@ def build(verify_cudl: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, An
                                         if r["tier"] == tier).most_common(top))
     t1 = [r for r in listed if r["tier"] == 1]
     summary = {
+        "pgp_dir": str(pgp_dir), "pgp_export_commit": pgp_export_commit(pgp_dir),
         "arabic_primary_docs": len(docs), "listed": len(listed),
         "by_tier": {t: sum(r["tier"] == t for r in listed) for t in TIERS},
         "skipped_nothing_actionable_by_gt_source": dict(skipped),
@@ -410,19 +490,91 @@ def build(verify_cudl: bool = False) -> Tuple[List[Dict[str, Any]], Dict[str, An
     return listed, summary
 
 
-def main() -> None:
-    """Write the queue CSV and a JSON summary, printing the summary."""
+def output_paths(out_dir: Optional[Path] = None) -> Tuple[Path, Path, Path]:
+    """Where the queue, the backlog and the summary are written.
+
+    :param out_dir: Output directory; default: :data:`OUT_CSV`, :data:`OUT_BACKLOG` and
+        :data:`OUT_SUMMARY` themselves (the merged directory under ``raw_data``).
+    :type out_dir: Optional[Path]
+    :return: ``(queue CSV, backlog CSV, summary JSON)``, with the default file names.
+    :rtype: Tuple[Path, Path, Path]
+    """
+    if out_dir is None:
+        return OUT_CSV, OUT_BACKLOG, OUT_SUMMARY
+    return out_dir / OUT_CSV.name, out_dir / OUT_BACKLOG.name, out_dir / OUT_SUMMARY.name
+
+
+def _same_path(a: Path, b: Path) -> bool:
+    """Whether two paths name the same place, ignoring case (APFS and the NAS share ignore it).
+
+    :param a: First path.
+    :type a: Path
+    :param b: Second path.
+    :type b: Path
+    :return: True when the resolved paths are equal after case folding.
+    :rtype: bool
+    """
+    return str(a.resolve()).casefold() == str(b.resolve()).casefold()
+
+
+def out_dir_problem(pgp_dir: Optional[Path], out_dir: Optional[Path]) -> str:
+    """Why a run may not write where it would: a queue from another export must not replace the default one.
+
+    :param pgp_dir: ``--pgp-dir`` (``None``: the default export :data:`PGP`).
+    :type pgp_dir: Optional[Path]
+    :param out_dir: ``--out-dir`` (``None``: the default files under ``raw_data``).
+    :type out_dir: Optional[Path]
+    :return: The problem, or ``""`` when the run may write its outputs.
+    :rtype: str
+    """
+    if pgp_dir is None or _same_path(pgp_dir, PGP):
+        return ""
+    if out_dir is None:
+        return (f"--pgp-dir {pgp_dir} is another export than {PGP}: give --out-dir, the default outputs under raw_data "
+                f"are the queue the training and benchmark builders read")
+    if _same_path(output_paths(out_dir)[0], OUT_CSV):
+        return f"--out-dir {out_dir} is the default queue directory under raw_data: a queue from {pgp_dir} must not replace it"
+    return ""
+
+
+def _display_path(path: Path) -> Path:
+    """A path relative to the repo when it is inside it, else the path itself.
+
+    :param path: Output file.
+    :type path: Path
+    :return: Path for the closing message.
+    :rtype: Path
+    """
+    return path.relative_to(REPO) if path.is_relative_to(REPO) else path
+
+
+def main(argv: Optional[List[str]] = None) -> None:
+    """Write the queue CSV and a JSON summary, printing the summary.
+
+    :param argv: Command-line arguments (default: ``sys.argv[1:]``).
+    :type argv: Optional[List[str]]
+    """
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--verify-cudl", action="store_true",
                     help="fetch constructed CUDL manifests; promote only the ones that resolve")
-    args = ap.parse_args()
-    rows, summary = build(verify_cudl=args.verify_cudl)
+    ap.add_argument("--pgp-dir", type=Path, default=None,
+                    help=f"PGP export directory with documents.csv, footnotes.csv, fragments.csv (default: {PGP})")
+    ap.add_argument("--out-dir", type=Path, default=None,
+                    help=f"directory for the queue, backlog and summary files (default: {OUT_CSV.parent})")
+    args = ap.parse_args(argv)
+    problem = out_dir_problem(args.pgp_dir, args.out_dir)
+    if problem:
+        ap.error(problem)
+    out_csv, out_backlog, out_summary = output_paths(args.out_dir)
+    if args.out_dir is not None:
+        args.out_dir.mkdir(parents=True, exist_ok=True)
+    rows, summary = build(verify_cudl=args.verify_cudl, pgp_dir=args.pgp_dir)
     order = {1: 0, 2: 1, 3: 2, 6: 3}
     main_rows = sorted((r for r in rows if r["tier"] in order), key=lambda r: (order[r["tier"]], r["rank"]))
     for i, r in enumerate(main_rows, 1):
         r["rank"] = i
     backlog = [r for r in rows if r["tier"] not in order]
-    for path, subset in ((OUT_CSV, main_rows), (OUT_BACKLOG, backlog)):
+    for path, subset in ((out_csv, main_rows), (out_backlog, backlog)):
         with open(path, "w", newline="") as fh:
             w = csv.DictWriter(fh, fieldnames=COLUMNS)
             w.writeheader()
@@ -430,10 +582,10 @@ def main() -> None:
     summary["main_queue_rows"] = len(main_rows)
     summary["backlog_rows"] = len(backlog)
     summary["main_queue_with_local_image"] = sum(1 for r in main_rows if r["local_image"])
-    OUT_SUMMARY.write_text(json.dumps(summary, ensure_ascii=False, indent=1))
+    out_summary.write_text(json.dumps(summary, ensure_ascii=False, indent=1))
     print(json.dumps(summary, ensure_ascii=False, indent=1))
-    print(f"wrote {OUT_CSV.relative_to(REPO)} ({len(main_rows)} transcription-bearing rows) "
-          f"+ {OUT_BACKLOG.name} ({len(backlog)} image-only/FJP-only rows)")
+    print(f"wrote {_display_path(out_csv)} ({len(main_rows)} transcription-bearing rows) "
+          f"+ {out_backlog.name} ({len(backlog)} image-only/FJP-only rows)")
 
 
 if __name__ == "__main__":

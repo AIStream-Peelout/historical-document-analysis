@@ -276,3 +276,10 @@ def test_served_page_emits_no_v21_rows():
         rows = bkd.grounding_rows(page, items, Path("x.jpg"), "ktiv_9_FL1",
                                   2000, 200, 1000, 100, random.Random(0))
         assert rows == []
+
+
+def test_exclude_benchmark_manuscripts_holds_out_registered_manuscripts(tmp_path):
+    bundles = [{"sys_num": "990000000000000002"}, {"sys_num": "990000000000000003"}]
+    kept, excl = bkd.exclude_benchmark_manuscripts(bundles, tmp_path, registered={"990000000000000002"})
+    assert [b["sys_num"] for b in kept] == ["990000000000000003"]
+    assert excl == {"registered_benchmark_ms": 1}

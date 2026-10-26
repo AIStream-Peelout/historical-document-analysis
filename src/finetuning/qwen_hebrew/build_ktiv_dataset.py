@@ -1007,15 +1007,18 @@ def _layout_qa_row(page: Dict, locate_cands: List[Tuple[str, Tuple]],
     return _row(page_path, q, a, "layout_qa", kind, f"{stem}_qa", page_w, page_h)
 
 
-def exclude_benchmark_manuscripts(bundles: List[dict],
-                                  ktiv_dir: Path) -> Tuple[List[dict], Dict]:
+def exclude_benchmark_manuscripts(bundles: List[dict], ktiv_dir: Path,
+                                  registered: Optional[Iterable[str]] = None) -> Tuple[List[dict], Dict]:
     """Drop manuscripts that belong to any eval benchmark.
 
-    Two id-level layers on top of the text-shingle check in
+    Three id-level layers on top of the text-shingle check in
     :func:`build_rows` (which catches page-text overlap but not a benchmark
     manuscript's OTHER pages — same-hand leakage):
 
     * every religious-benchmark manuscript, by exact sys_num;
+    * every manuscript held out by a registered benchmark
+      (``benchmark_registry.registered_benchmark_manuscripts``, e.g. the
+      sealed confirmation set), by exact sys_num;
     * every manuscript whose loose shelfmark key appears in the frozen
       PGP-131 benchmark (same physical fragment reachable through two
       sources), via :class:`DecontamGate`'s inventory.
@@ -1024,10 +1027,16 @@ def exclude_benchmark_manuscripts(bundles: List[dict],
     :type bundles: List[dict]
     :param ktiv_dir: KTIV raw directory (metadata JSONs for shelfmarks).
     :type ktiv_dir: Path
+    :param registered: Manuscripts held out by registered benchmarks; default:
+        every registry in ``benchmark_registry.BENCHMARK_REGISTRIES``.
+    :type registered: Optional[Iterable[str]]
     :return: (kept bundles, counts-by-reason dict).
     :rtype: Tuple[List[dict], Dict]
     """
+    from src.datasets.evaluations.benchmark_registry import registered_benchmark_manuscripts
     from src.datasets.evaluations.helper_eval_scripts.decontam_gate import DecontamGate
+
+    registered_sys = set(registered_benchmark_manuscripts() if registered is None else registered)
 
     religious_sys = set()
     if RELIGIOUS_BENCH_PATH.exists():
@@ -1051,6 +1060,9 @@ def exclude_benchmark_manuscripts(bundles: List[dict],
     for doc in bundles:
         if doc["sys_num"] in religious_sys:
             excl["religious_benchmark_ms"] += 1
+            continue
+        if doc["sys_num"] in registered_sys:
+            excl["registered_benchmark_ms"] += 1
             continue
         key = gate.loose_key(shelf_by_sys.get(doc["sys_num"], ""))
         if key and key in gate.bench_keys:

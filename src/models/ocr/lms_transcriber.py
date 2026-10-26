@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 import aiohttp
 
+from src.models.ocr import lms_yield_gate
+
 
 # ============================================================================
 # Config
@@ -236,7 +238,26 @@ def chat_payload(
     return payload
 
 
-async def transcribe_with_lm_studio(
+def completion_meta(data: Dict[str, Any]) -> Dict[str, Any]:
+    """The text and the generation metadata of an OpenAI-compatible chat completion.
+
+    :param data: Parsed response body with at least one choice.
+    :type data: Dict[str, Any]
+    :return: ``text`` (stripped content, None when empty), ``finish_reason`` (``"stop"`` when the model
+        emitted its end token, ``"length"`` when the ``max_tokens`` budget cut the generation, else what
+        the server says, None when absent) and the server's ``usage`` counts ``prompt_tokens``,
+        ``completion_tokens`` and ``total_tokens`` (None when absent).
+    :rtype: Dict[str, Any]
+    """
+    choice = data["choices"][0]
+    content = (choice.get("message") or {}).get("content", "")
+    usage = data.get("usage") or {}
+    return {"text": content.strip() if content else None, "finish_reason": choice.get("finish_reason"),
+            "prompt_tokens": usage.get("prompt_tokens"), "completion_tokens": usage.get("completion_tokens"),
+            "total_tokens": usage.get("total_tokens")}
+
+
+async def transcribe_with_lm_studio_meta(
     model_id: str,
     image_path: str,
     prompt: str,
@@ -247,20 +268,40 @@ async def transcribe_with_lm_studio(
     max_retries: int = DEFAULT_CONFIG.max_retries,
     retry_delay: float = DEFAULT_CONFIG.retry_delay_s,
     extra_payload: Optional[Dict[str, Any]] = None,
-) -> Optional[str]:
-    """Call a vision-capable model loaded in LM Studio and return the raw text.
+) -> Optional[Dict[str, Any]]:
+    """Call a vision-capable model loaded in LM Studio and return the text with how the generation ended.
 
-    The function sends the image as a base64 data URI inside a standard
-    OpenAI multimodal message.  The prompt should ask the model to return
-    JSON (section-aware Talmud prompts already do this).
+    The same request, lock and retries as :func:`transcribe_with_lm_studio` (which wraps this function);
+    the result is :func:`completion_meta` of the response, so a caller can tell a read the model finished
+    (``finish_reason == "stop"``) from one the token budget cut (``"length"``) and keep the token counts.
 
-    Returns None on unrecoverable failure so the caller can log the error
-    and continue with other models.
+    Returns None on unrecoverable failure (HTTP error after the retries, no connection, timeout, no
+    choices) so the caller can log the error and continue with other models.
 
+    :param model_id: LM Studio model key.
+    :type model_id: str
+    :param image_path: Image file.
+    :type image_path: str
+    :param prompt: Text prompt sent after the image.
+    :type prompt: str
+    :param base_url: LM Studio OpenAI-compatible base URL.
+    :type base_url: str
+    :param temperature: Sampling temperature.
+    :type temperature: float
+    :param max_tokens: Output token budget.
+    :type max_tokens: int
+    :param timeout: Total seconds per attempt.
+    :type timeout: float
+    :param max_retries: Retries after a failed attempt.
+    :type max_retries: int
+    :param retry_delay: Seconds between attempts.
+    :type retry_delay: float
     :param extra_payload: Further request fields (e.g. ``{"seed": 7}`` or
         ``{"repeat_penalty": 1.1}``) merged into the body by
         :func:`chat_payload`; None sends the usual body unchanged.
     :type extra_payload: Optional[Dict[str, Any]]
+    :return: :func:`completion_meta` of the response, or None.
+    :rtype: Optional[Dict[str, Any]]
     """
     b64, mime = _encode_image(image_path)
     data_uri = f"data:{mime};base64,{b64}"
@@ -273,6 +314,8 @@ async def transcribe_with_lm_studio(
     # Hold the module-wide lock for the entire call (retries included):
     # LM Studio must never see two inference requests at once.
     async with _get_lms_lock():
+        # Yield to prod chat first (once per call, not per retry); fails open, never raises.
+        await lms_yield_gate.await_chat_idle(site=f"transcribe:{model_id}", base_url=base_url)
         last_exc: Optional[Exception] = None
         for attempt in range(max_retries + 1):
             try:
@@ -295,13 +338,10 @@ async def transcribe_with_lm_studio(
                         data = await resp.json()
 
                         # OpenAI-compatible response shape
-                        choices = data.get("choices", [])
-                        if not choices:
+                        if not data.get("choices"):
                             print(f"    ✗ [{model_id}] Empty choices in response")
                             return None
-
-                        content = choices[0].get("message", {}).get("content", "")
-                        return content.strip() if content else None
+                        return completion_meta(data)
 
             except aiohttp.ClientConnectorError:
                 print(f"    ✗ [{model_id}] Cannot connect to LM Studio at {base_url}")
@@ -319,6 +359,39 @@ async def transcribe_with_lm_studio(
 
         print(f"    ✗ [{model_id}] All {max_retries + 1} attempts failed. Last: {last_exc}")
         return None
+
+
+async def transcribe_with_lm_studio(
+    model_id: str,
+    image_path: str,
+    prompt: str,
+    base_url: str = DEFAULT_CONFIG.base_url,
+    temperature: float = DEFAULT_CONFIG.temperature,
+    max_tokens: int = DEFAULT_CONFIG.max_tokens,
+    timeout: float = DEFAULT_CONFIG.timeout_s,
+    max_retries: int = DEFAULT_CONFIG.max_retries,
+    retry_delay: float = DEFAULT_CONFIG.retry_delay_s,
+    extra_payload: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """Call a vision-capable model loaded in LM Studio and return the raw text.
+
+    The function sends the image as a base64 data URI inside a standard
+    OpenAI multimodal message.  The prompt should ask the model to return
+    JSON (section-aware Talmud prompts already do this).
+
+    Returns None on unrecoverable failure so the caller can log the error
+    and continue with other models. The text alone is returned; a caller
+    that needs the finish reason or the token counts uses
+    :func:`transcribe_with_lm_studio_meta`, of which this is the wrapper.
+
+    :param extra_payload: Further request fields (e.g. ``{"seed": 7}`` or
+        ``{"repeat_penalty": 1.1}``) merged into the body by
+        :func:`chat_payload`; None sends the usual body unchanged.
+    :type extra_payload: Optional[Dict[str, Any]]
+    """
+    meta = await transcribe_with_lm_studio_meta(model_id, image_path, prompt, base_url, temperature, max_tokens,
+                                                timeout, max_retries, retry_delay, extra_payload)
+    return meta["text"] if meta else None
 
 
 # ============================================================================
@@ -362,15 +435,19 @@ async def complete_text(
     # Same module-wide lock as image transcription — LM Studio must never
     # see two inference requests at once (limited RAM, model eviction).
     async with _get_lms_lock():
+        # Yield to prod chat first; the request itself is marked as our own, because the judge and
+        # segmentation may run on a prod chat model (own_call is a no-op for any other model).
+        await lms_yield_gate.await_chat_idle(site=f"complete_text:{model_id}", base_url=base_url)
         try:
-            async with aiohttp.ClientSession(
-                timeout=aiohttp.ClientTimeout(total=timeout)
-            ) as session:
-                async with session.post(f"{base_url}/chat/completions", json=payload) as resp:
-                    resp.raise_for_status()
-                    data = await resp.json()
-                    content = data["choices"][0]["message"]["content"] or ""
-                    return content.strip() or None
+            with lms_yield_gate.own_call(model_id):
+                async with aiohttp.ClientSession(
+                    timeout=aiohttp.ClientTimeout(total=timeout)
+                ) as session:
+                    async with session.post(f"{base_url}/chat/completions", json=payload) as resp:
+                        resp.raise_for_status()
+                        data = await resp.json()
+                        content = data["choices"][0]["message"]["content"] or ""
+                        return content.strip() or None
         except Exception as exc:
             print(f"    ✗ LM Studio text-only failed ({model_id}): {exc}")
             return None

@@ -32,10 +32,15 @@ Used by:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import zipfile
-from typing import Dict, List, NamedTuple, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, NamedTuple, Optional, Tuple
+
+#: Cache file the merge keeps next to its output (see :class:`ZipMemberCache`).
+ZIP_CACHE_FILE = "ktiv_zip_members_cache.json"
 
 # Bucket layout (shared with FJP, which lives under "images/").
 GCS_BUCKET = "cairo-genizah-es-json"
@@ -199,24 +204,119 @@ def _pick_folder_per_sysnum(dir_paths: List[str]) -> Dict[str, str]:
     return chosen
 
 
-def _zip_entries(sys_num: str, zip_path: str) -> List[Tuple[str, str]]:
+def _list_image_members(zip_path: str) -> Optional[List[str]]:
+    """Sorted image members of an archive, or ``None`` when it cannot be read.
+
+    :param zip_path: Path to the archive.
+    :returns: Member names, or ``None`` for a missing / corrupt archive.
+    """
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            return sorted(n for n in zf.namelist() if _is_image(n))
+    except (zipfile.BadZipFile, OSError):
+        return None
+
+
+class ZipMemberCache:
+    """Persistent listing of the image members of KTIV archives, keyed by ``(basename, size)``.
+
+    A merge opens every chosen archive only to list its images; with the archives on the NAS that is the slow part
+    of a run, and the answer never changes for an archive of a given size. Keyed by basename and size, the cache
+    survives a move between the local folder and the NAS store, and a re-downloaded or repaired copy (another size) is
+    listed again. Only successful listings are recorded (a genuinely imageless archive included): an archive that
+    cannot be read -- corrupt, or a NAS read that failed this time -- counts as ``unreadable`` for the run and is
+    tried again on the next merge, so a transient failure never freezes a manuscript's images out of the merge. Only
+    archives never listed before (newly scraped manuscripts) and those that failed last time are opened.
+
+    :param path: JSON file the cache is read from and saved to (``None``: in-memory only).
+    :param entries: Initial ``key -> members`` map.
+    """
+
+    def __init__(self, path: Optional[str] = None, entries: Optional[Dict[str, List[str]]] = None) -> None:
+        self.path = path
+        self.entries: Dict[str, List[str]] = dict(entries or {})
+        self.hits = 0
+        self.misses = 0
+        self.unreadable = 0
+
+    @staticmethod
+    def key(zip_path: str) -> str:
+        """Cache key of an archive: its basename and size in bytes.
+
+        :param zip_path: Path to the archive.
+        :returns: ``"<basename>|<size>"``.
+        :raises OSError: When the file does not exist.
+        """
+        return f"{os.path.basename(zip_path)}|{os.path.getsize(zip_path)}"
+
+    @classmethod
+    def load(cls, path: str) -> "ZipMemberCache":
+        """Read a cache file (an absent file gives an empty cache bound to that path).
+
+        :param path: JSON cache file.
+        :returns: The cache.
+        """
+        entries: Dict[str, List[str]] = {}
+        if os.path.exists(path):
+            entries = json.loads(Path(path).read_text(encoding="utf-8")).get("entries") or {}
+        return cls(path, entries)
+
+    def image_members(self, zip_path: str) -> List[str]:
+        """Image members of an archive, from the cache when its key is known, else listed and recorded.
+
+        :param zip_path: Path to the archive.
+        :returns: Sorted member names (empty for an unreadable or imageless archive; only a successful listing is
+            cached, so an unreadable archive is tried again next time).
+        """
+        try:
+            key = self.key(zip_path)
+        except OSError:
+            self.unreadable += 1
+            return []
+        if key in self.entries:
+            self.hits += 1
+            return list(self.entries[key])
+        self.misses += 1
+        members = _list_image_members(zip_path)
+        if members is None:
+            self.unreadable += 1
+            return []
+        self.entries[key] = members
+        return list(members)
+
+    def save(self) -> None:
+        """Write the cache atomically to its path (no-op for an in-memory cache)."""
+        if self.path is None:
+            return
+        tmp = f"{self.path}.tmp"
+        Path(tmp).write_text(json.dumps({"schema": "ktiv_zip_members_cache_v1", "entries": self.entries},
+                                        ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, self.path)
+
+    def stats(self) -> Dict[str, Any]:
+        """Counters of this run.
+
+        :returns: ``{"hits", "misses", "unreadable", "entries"}``.
+        """
+        return {"hits": self.hits, "misses": self.misses, "unreadable": self.unreadable, "entries": len(self.entries)}
+
+
+def _zip_entries(sys_num: str, zip_path: str, cache: Optional[ZipMemberCache] = None) -> List[Tuple[str, str]]:
     """List a zip's image members as ``(object_path, member_name)`` pairs.
 
     :param sys_num: Manuscript system number.
     :param zip_path: Path to the archive.
+    :param cache: Member cache to consult and fill (``None``: always open the archive).
     :returns: Sorted pairs; empty when the archive is unreadable or imageless.
     """
-    try:
-        with zipfile.ZipFile(zip_path) as zf:
-            members = [n for n in zf.namelist() if _is_image(n)]
-    except (zipfile.BadZipFile, OSError):
-        return []
-    return [(gcs_object_path(sys_num, n), n) for n in sorted(members)]
+    members = cache.image_members(zip_path) if cache is not None else (_list_image_members(zip_path) or [])
+    return [(gcs_object_path(sys_num, n), n) for n in members]
 
 
 def ktiv_image_sources(
     zip_paths: List[str],
     folder_paths: Optional[List[str]] = None,
+    cache: Optional[ZipMemberCache] = None,
 ) -> Dict[str, ManuscriptImages]:
     """Resolve the local image source for every manuscript with images on disk.
 
@@ -228,12 +328,13 @@ def ktiv_image_sources(
 
     :param zip_paths: Paths to KTIV ``*.zip`` archives.
     :param folder_paths: Paths to candidate image folders, or ``None``.
+    :param cache: :class:`ZipMemberCache` so only archives never listed before are opened (``None``: open all).
     :returns: ``sys_num -> ManuscriptImages`` (manuscripts with no usable
         images in either form are omitted).
     """
     sources: Dict[str, ManuscriptImages] = {}
     for sys_num, zp in _pick_zip_per_sysnum(zip_paths).items():
-        entries = _zip_entries(sys_num, zp)
+        entries = _zip_entries(sys_num, zp, cache)
         if entries:
             sources[sys_num] = ManuscriptImages("zip", zp, entries)
     for sys_num, folder in _pick_folder_per_sysnum(folder_paths or []).items():

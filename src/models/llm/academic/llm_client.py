@@ -21,6 +21,8 @@ from typing import Dict, List, Optional, Tuple
 
 import requests
 
+from src.models.ocr import lms_yield_gate
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -171,25 +173,29 @@ class LLMClient:
 
         pred_config = lms.LlmPredictionConfig(temperature=0.1, max_tokens=4096)
 
-        for ctx_shift in range(3):
-            trimmed_user = _trim_passages(user, max_context_chars >> ctx_shift)
-            chat = lms.Chat(system)
-            chat.add_user_message(trimmed_user)
-            try:
-                with lms.Client(host_port) as client:
-                    model = client.llm.model(self.lms_model)
-                    result = model.respond(
-                        chat,
-                        config=pred_config,
-                        response_format=response_schema,   # None = unstructured
-                    )
-                    return result.content
-            except Exception as e:
-                err = str(e).lower()
-                if ("context" in err or "token" in err or "length" in err) and ctx_shift < 2:
-                    logger.warning(f"  LMS context error (attempt {ctx_shift+1}) — halving and retrying: {e}")
-                    continue
-                raise
+        # Yield to prod chat once per completion (not per context retry); the whole retry loop is our own
+        # call on a (possibly prod) chat model. Fails open, never raises.
+        lms_yield_gate.wait_for_chat_idle(site="llm_client", base_url=self.lms_url)
+        with lms_yield_gate.own_call(self.lms_model):
+            for ctx_shift in range(3):
+                trimmed_user = _trim_passages(user, max_context_chars >> ctx_shift)
+                chat = lms.Chat(system)
+                chat.add_user_message(trimmed_user)
+                try:
+                    with lms.Client(host_port) as client:
+                        model = client.llm.model(self.lms_model)
+                        result = model.respond(
+                            chat,
+                            config=pred_config,
+                            response_format=response_schema,   # None = unstructured
+                        )
+                        return result.content
+                except Exception as e:
+                    err = str(e).lower()
+                    if ("context" in err or "token" in err or "length" in err) and ctx_shift < 2:
+                        logger.warning(f"  LMS context error (attempt {ctx_shift+1}) — halving and retrying: {e}")
+                        continue
+                    raise
         raise RuntimeError("LMS failed after all context-reduction retries")
 
 
