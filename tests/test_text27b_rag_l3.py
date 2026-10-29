@@ -695,20 +695,38 @@ def test_run_build_rows_end_to_end(env: P.Paths, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(L, "_load_holdouts", lambda *a, **k: None)
     monkeypatch.setattr(L, "_load_quality_fn", lambda *a, **k: None)
     man = L.run_build_rows(env, distractor_rate=0.0)
-    out = R.load_jsonl(env.out("families", "rag_context.jsonl"))
+    every = R.load_jsonl(env.out("families", "rag_context.jsonl"))
+    out = [r for r in every if r["meta"]["split"] == "train"]
+    dev = [r for r in every if r["meta"]["split"] == "dev"]
     assert man["rows"] == len(out) == 1 and out[0]["meta"]["pgpid"] == "9001"
+    # prep pass: the dev document gets a dev-monitor row on pages no train row uses
+    assert [r["meta"]["pgpid"] for r in dev] == ["9004"] and man["dev"]["rows"] == 1
+    assert not ({s["page_key"] for s in dev[0]["meta"]["lit_sources"]}
+                & {s["page_key"] for s in out[0]["meta"]["lit_sources"]})
     keys = [s["page_key"] for s in out[0]["meta"]["lit_sources"]]
     assert "work_docs/stem_d/page_003_structured.json" not in keys  # unclean span
     assert man["inputs"]["family_files"] == ["describe_pgp.jsonl"]
     assert json.loads(env.out("families", "rag_context_manifest.json").read_text())["rows"] == 1
     # D5: a base row listed in excluded_rows.json is never a base (the document then has no rag row)
     (env.out_dir / "excluded_rows.json").write_text(json.dumps({out[0]["meta"]["twin_row_id"]: "ngram_target:x#w8"}))
-    man2 = L.run_build_rows(env, distractor_rate=0.0)
+    man2 = L.run_build_rows(env, distractor_rate=0.0, dev_rows=False)
     assert man2["rows"] == 0 and man2["inputs"]["base_rows_excluded"] == 1 and man2["inputs"]["excluded_rows_listed"] == 1
+    assert R.load_jsonl(env.out("families", "rag_context.jsonl")) == [] and "dev" not in man2
     assert L.load_excluded_rows(env.out_dir / "none.json") == set()
 
 
 # ===================================================================================== adapters
+
+
+def test_dev_page_ok_reason_tiers() -> None:
+    """Dev-monitor context pages may carry dev-tier mention / window / treatment reasons, the L1-only dedupe and n-gram
+    hits on the row's own document; any benchmark / test / probe / extra reason or another document's n-grams binds."""
+    assert L.dev_page_ok([], "5")
+    assert L.dev_page_ok(["mention:index:dev", "window:mention:rag:dev", "treatment:dev", "train_target_dup:x:1",
+                          "ngram:tgt:describe_pgp:5#w8"], "5")
+    for bad in ("mention:text:key:registry", "window:mention:rag:test", "mention:index:probe", "treatment:pgp131",
+                "ngram:tgt:describe_pgp:55#w8", "extra:d6:x:window", "mention:rag:vision_flag"):
+        assert not L.dev_page_ok(["mention:index:dev", bad], "5"), bad
 
 
 def test_rag_excluded_pages_ignores_l1_only_reasons() -> None:
@@ -809,3 +827,37 @@ def test_block_check_uses_contamination_rule(monkeypatch: pytest.MonkeyPatch) ->
     bad = {"messages": R.make_messages("doc\n\nLiterature:\n[SOURCE 1] c\nOriginal page text (quoteable): target", "target")}
     kept, dropped = L._block_check([ok, bad])
     assert kept == [ok] and dropped == 1
+
+
+def test_build_eval_rows_renders_e6_prompts() -> None:
+    """E6 rows (prep pass 2026-10-26): per test document and family, the edition row with its leak-safe pages in the site
+    format, the base row's split kept, ``meta.e6`` set; documents without safe pages or without a base row skipped."""
+    from types import SimpleNamespace
+
+    def page(key: str, text: str) -> Any:
+        """A minimal page object.
+
+        :param key: Page key.
+        :param text: Page text.
+        :returns: Page stand-in.
+        """
+        return SimpleNamespace(page_key=key, text=text, book="work_a", part="p", printed_page_num=7, shelf_marks=[],
+                               data={})
+
+    pages = {"work_a/p/page_001_structured.json": page("work_a/p/page_001_structured.json", "discussion one " + FILLER),
+             "work_a/p/page_002_structured.json": page("work_a/p/page_002_structured.json", "discussion two " + FILLER)}
+    inputs = L.RagInputs(index_rows=[], pages=pages, base_rows=[], nontrain=L.NonTrain(),
+                         manifest={"work_a": {"author": "A. Author", "title": "Studies", "year": 2001}})
+    test_row = _base("77", "describe_pgp", "edition", _target("t"))
+    test_row["meta"]["split"] = "test_indist"
+    docs = {"docs": [{"pgpid": "77", "discuss_pages": [{"page_key": k, "evidence": "located"} for k in pages],
+                      "leak_safe_pages": {"describe_pgp": sorted(pages), "translate_en": sorted(pages)}},
+                     {"pgpid": "78", "discuss_pages": [], "leak_safe_pages": {}}]}
+    rows, stats = L.build_eval_rows(inputs, docs, [test_row, _base("77", "describe_pgp", "read", _target("t"))],
+                                    token_fn=lambda r: 500)
+    assert len(rows) == 1 and rows[0]["meta"]["e6"] is True and rows[0]["meta"]["split"] == "test_indist"
+    assert rows[0]["meta"]["family"] == "rag_context" and rows[0]["meta"]["task"] == "describe_pgp"
+    assert [s["page_key"] for s in rows[0]["meta"]["lit_sources"]] == sorted(pages)
+    assert rows[0]["messages"][2]["content"] == test_row["messages"][2]["content"]
+    assert "Studies" in rows[0]["messages"][1]["content"]
+    assert stats["e6_rows:describe_pgp"] == 1 and stats["e6_skipped:translate_en"] == 2 and stats["e6_skipped:catalogue_json"] == 2

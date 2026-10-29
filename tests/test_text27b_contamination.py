@@ -690,6 +690,31 @@ def test_excluded_rows_split_conflicts(cworld: P.Paths, cheld: H.Holdouts, tmp_p
     assert C.build_excluded_rows(fams, idx, holdouts=cheld, split_conflicts=False)[0] == {}
 
 
+def test_excluded_rows_source_level_holdout_no_conflict(cworld: P.Paths, cheld: H.Holdouts, tmp_path: Path) -> None:
+    """A web pair held out at SOURCE level (its item names a held document: ``split_reason = item_mention``) does not
+    put its document's TRAIN rows in other families into a split conflict; a document-level hold-out still does; web
+    doc ids are identities; the web pairs file feeds the L1 dedupe.
+
+    :param cworld: Paths.
+    :param cheld: Hold-out set.
+    :param tmp_path: Pytest temporary directory.
+    :returns: None.
+    """
+    idx = C.build_reference_index(cworld, cheld)
+    web_item = _fam_row("translate_en", "heldout", "9200", "A clean web translation.", row_id="webI")
+    web_item["meta"].update({"split_reason": "item_mention", "doc_id": "web:srcW:p1:1"})
+    web_doc = _fam_row("translate_he", "test_indist", "9201", "A clean web translation two.", row_id="webD")
+    web_doc["meta"].update({"split_reason": "hash", "doc_id": "web:srcW:p2:1"})
+    rel_a = _fam_row("extract_relations", "train", "9200", "Clean relations A.")
+    rel_b = _fam_row("extract_relations", "train", "9201", "Clean relations B.")
+    assert "web:srcW:p1:1" in C.doc_identities(web_item["meta"])
+    assert {"item_mention", "span_mention", "item_eval_only"} <= set(C.SOURCE_LEVEL_SPLIT_REASONS)
+    assert "web_pairs.jsonl" in C.TRAIN_DUP_EXTRA_FILES
+    fams = _write_fams(tmp_path / "families", {"web_pairs": [web_item, web_doc], "extract_relations": [rel_a, rel_b]})
+    ex, _ = C.build_excluded_rows(fams, idx, holdouts=cheld)
+    assert ex == {rel_b["meta"]["row_id"]: "split_conflict:test_indist:pgpid:9201"}
+
+
 def test_rescan_reads_provenance_page_keys(cworld: P.Paths, cheld: H.Holdouts, tmp_path: Path) -> None:
     """A domain-reading row whose page keys sit only in ``provenance.page_keys`` is checked, not skipped.
 

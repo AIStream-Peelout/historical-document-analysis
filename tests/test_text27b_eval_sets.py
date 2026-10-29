@@ -184,6 +184,12 @@ def test_split_overrides_new_books_and_loaders(tmp_path: Path) -> None:
     assert "bookx" not in json.dumps(e2nb)
     assert E.doc_hash("123") == "123" and E.doc_hash("book:bookx:17").startswith("d") and len(E.doc_hash("x")) == 16
     assert E.load_new_book_refs(tmp_path / "nowhere") == {}
+    R.write_jsonl(fam / "web_pairs.jsonl", [row("translate_en", "", "dev", doc_id="web:d:s:1", row_id="w1"),
+                                            row("translate_en", "", "heldout", doc_id="web:d:s:2", row_id="w2")])
+    web = E.load_web_pair_refs(fam)
+    assert [r.row_id for r in web["translate_en"]] == ["w1", "w2"] and web["translate_en"][0].origin == "web_pairs"
+    merged = E.merge_refs(nb, web)
+    assert {r.row_id for r in merged["translate_en"]} >= {"r1", "w1"} and E.load_web_pair_refs(tmp_path / "x") == {}
     # analyse_document comes from the L2 file when it exists
     R.write_jsonl(fam / "analyse_document.jsonl", [row("analyse_document", "1", "train")])
     assert E.family_file(fam, "analyse_document").name == "analyse_document.jsonl"
@@ -549,10 +555,12 @@ def test_dev_monitor_rows_and_problems(tmp_path: Path) -> None:
     R.write_jsonl(fam / "translate_en.jsonl", [row("translate_en", "1", "dev"), row("translate_en", "2", "train")])
     R.write_jsonl(fam / "catalogue_json.jsonl", [row("catalogue_json", "3", "dev")])
     R.write_jsonl(fam / "book_pairs.jsonl", [row("translate_en", "", "dev", doc_id="book:b:1", row_id="nb1")])
+    R.write_jsonl(fam / "web_pairs.jsonl", [row("translate_en", "", "dev", doc_id="web:d:s:1", row_id="wb1")])
     rid = lambda f, p: R.row_id(f, p, "edition", None)  # noqa: E731
-    e3 = {"row_ids": {"catalogue_json": [rid("catalogue_json", "3")], "translate_en": [rid("translate_en", "1"), "nb1"]}}
+    e3 = {"row_ids": {"catalogue_json": [rid("catalogue_json", "3")],
+                      "translate_en": [rid("translate_en", "1"), "nb1", "wb1"]}}
     rows = E.dev_monitor_rows(e3, fam)
-    assert [r["meta"]["row_id"] for r in rows] == [rid("translate_en", "1"), "nb1", rid("catalogue_json", "3")]
+    assert [r["meta"]["row_id"] for r in rows] == [rid("translate_en", "1"), "nb1", "wb1", rid("catalogue_json", "3")]
     assert E.dev_monitor_problems(rows) == []
     with pytest.raises(ValueError):
         E.select_rows([fam / "translate_en.jsonl"], ["nope"])
@@ -733,3 +741,120 @@ def test_load_id_list(tmp_path: Path) -> None:
     assert E.load_id_list(a) == ["x", "2"] and E.load_id_list(b) == ["y"]
     with pytest.raises(ValueError):
         E.load_id_list(c)
+
+
+# ------------------------------------------------------------------------------------ prep pass 2026-10-26: E3 blocks, E9
+def test_e3_monitor_blocks_and_train_overlap(tmp_path: Path) -> None:
+    """New monitor blocks: every dev analysis / rag / pd row, seeded samples of canon_diff and of the domain_reading
+    probe chunks; rows sharing a document, group, manuscript or page with the train epoch are skipped and counted;
+    the probe chunks are relabelled dev in the monitor file and only they carry ``split_source``.
+
+    :param tmp_path: Pytest temporary directory.
+    """
+    fam = tmp_path / "families"
+    fam.mkdir()
+    R.write_jsonl(fam / "analyse_document_v2.jsonl",
+                  [row("analyse_document", "40", "dev", page_keys=["w/p/page_001.json"]),
+                   row("analyse_document", "41", "dev", page_keys=["w/p/page_009.json"]),
+                   row("analyse_document", "42", "heldout")])
+    R.write_jsonl(fam / "book_pairs.jsonl", [row("analyse_document", "", "dev", doc_id="book:b:7", row_id="bp7"),
+                                             row("translate_en", "", "dev", doc_id="book:b:8", row_id="bp8")])
+    R.write_jsonl(fam / "rag_context.jsonl", [row("rag_context", "50", "dev", condition="literature",
+                                                  lit_sources=[{"page_key": "w/p/page_002.json"}]),
+                                              row("rag_context", "51", "train", condition="literature")])
+    R.write_jsonl(fam / "canon_diff.jsonl", [row("canon_diff", "", "dev", sys_num=f"ms{i}", row_id=f"c{i}") for i in range(8)]
+                  + [row("canon_diff", "", "dev", sys_num="msT", row_id="cT")])
+    R.write_jsonl(fam / "domain_reading.jsonl", [row("domain_reading", "", "probe", condition="literature", row_id=f"d{i}",
+                                                     page_keys=[f"w/p/page_1{i}.json"]) for i in range(5)]
+                  + [row("domain_reading", "", "train", condition="literature", row_id="dt")])
+    R.write_jsonl(fam / "pd_editions.jsonl", [row("translate_en", "", "dev", doc_id="pd:1", row_id="pd1")])
+    mon = E.load_monitor_refs(fam)
+    assert set(mon) == {"analyse_document", "rag_context", "canon_diff", "domain_reading", "pd_editions"}
+    assert {r.row_id for r in mon["analyse_document"]} >= {"bp7"} and "bp8" not in {r.row_id for r in mon["analyse_document"]}
+    mix = tmp_path / "mix.jsonl"
+    R.write_jsonl(mix, [row("translate_en", "41", "train"), row("canon_diff", "", "train", sys_num="msT", row_id="ct"),
+                        row("rag_context", "51", "train", condition="literature", lit_sources=[{"page_key": "w/p/page_12.json"}])])
+    ids = E.train_identities(mix)
+    assert ids["docs"] == {"41", "51"} and ids["sys_nums"] == {"msT"} and ids["pages"] == {"w/p/page_12.json"}
+    monitor = {"analyse_document": ("dev", None), "rag_context": ("dev", None), "canon_diff": ("dev", 4),
+               "domain_reading": ("probe", 3), "pd_editions": ("dev", None)}
+    e3 = E.build_e3({}, seed=1, samples={}, monitor_refs=mon, monitor=monitor, train_ids=ids)
+    assert e3["counts"] == {"translate_en": 0, "translate_he": 0, "analyse_document": 2, "rag_context": 1,
+                            "canon_diff": 4, "domain_reading": 3, "pd_editions": 1}
+    assert e3["train_overlap_removed"] == {"analyse_document:document": 1, "canon_diff:manuscript": 1,
+                                           "domain_reading:page": 1}
+    assert "cT" not in e3["row_ids"]["canon_diff"] and "d2" not in e3["row_ids"]["domain_reading"]
+    assert E.build_e3({}, seed=1, samples={}, monitor_refs=mon, monitor=monitor, train_ids=ids)["row_ids"] == e3["row_ids"]
+    rows_ = E.dev_monitor_rows(e3, fam)
+    probe = [r for r in rows_ if r["meta"]["family"] == "domain_reading"]
+    assert len(probe) == 3 and all(r["meta"]["split"] == "dev" and r["meta"]["split_source"] == "probe" for r in probe)
+    assert all(r["meta"].get("split_source") is None for r in rows_ if r["meta"]["family"] != "domain_reading")
+    assert R.load_jsonl(fam / "domain_reading.jsonl")[0]["meta"]["split"] == "probe"  # the family file is untouched
+    assert E.dev_monitor_problems(rows_) == []
+    wrong = dict(rows_[0], meta=dict(rows_[0]["meta"], split_source="probe"))
+    assert any("split_source" in p for p in E.dev_monitor_problems([wrong]))
+
+
+def test_build_e9_selection(tmp_path: Path) -> None:
+    """E9 draws the four sources (non-dev E5 analysis rows, E6 rows, the E8 canon_diff sample, C1 catalogue rows),
+    one item per document, with prompt messages and the reference kept apart; short pools give status short.
+
+    :param tmp_path: Pytest temporary directory.
+    """
+    fam = tmp_path / "families"
+    fam.mkdir()
+    R.write_jsonl(fam / "analyse_document_v2.jsonl", [row("analyse_document", str(100 + i), "heldout") for i in range(4)]
+                  + [row("analyse_document", "199", "dev")])
+    R.write_jsonl(fam / "canon_diff.jsonl", [row("canon_diff", "", "heldout", sys_num=f"m{i}", work=w, row_id=f"cd{i}")
+                                             for i, w in enumerate(["Talmud Bavli", "Mishneh Torah"] * 3)])
+    R.write_jsonl(fam / "catalogue_json.jsonl", [row("catalogue_json", str(300 + i), "heldout") for i in range(3)]
+                  + [row("catalogue_json", "300", "heldout", "read", read_model="a50")])
+    e6 = tmp_path / "e6.jsonl"
+    R.write_jsonl(e6, [row("rag_context", str(400 + i), "test_indist", condition="literature", task=t, e6=True)
+                       for i, t in enumerate(["describe_pgp", "catalogue_json", "translate_en"])])
+    sets = {"E5_excluded_treatments": {"analysis_rows": [{"split": "heldout", "row_ids": [R.row_id("analyse_document", str(100 + i), "edition", None)]} for i in range(4)]
+                                       + [{"split": "dev", "row_ids": [R.row_id("analyse_document", "199", "edition", None)]}]},
+            "E8_canon": {"sample": {"row_ids": {"canon_diff": [f"cd{i}" for i in range(6)]}}},
+            "E1_probe_clean": {"items": {"C1_catalogue": {"pgpids": ["300", "301", "302"]}}}}
+    e9, items = E.build_e9(sets, fam, e6, seed=1, sizes={"E5_analysis": 3, "E6_rag": 2, "E8_canon_diff": 4,
+                                                          "C1_catalogue": 3})
+    by = Counter(it["source"] for it in items)
+    assert by == {"E5_analysis": 3, "E6_rag": 2, "E8_canon_diff": 4, "C1_catalogue": 3} and e9["status"] == "ready"
+    assert all(it["split"] != "dev" for it in items if it["source"] == "E5_analysis")
+    assert all(it["condition"] == "edition" for it in items if it["source"] == "C1_catalogue")
+    canon = [it for it in items if it["source"] == "E8_canon_diff"]
+    assert Counter(it["work"] for it in canon) == {"Talmud Bavli": 2, "Mishneh Torah": 2}
+    for it in items:
+        assert [m["role"] for m in it["messages"]] == ["system", "user"] and it["reference"].startswith("y ")
+    assert len({it["item_id"] for it in items}) == len(items) and set(e9["modes"]) == {"off", "low", "medium"}
+    e9_short, _ = E.build_e9(sets, fam, None, seed=1)
+    assert e9_short["status"] == "short" and e9_short["counts"]["E6_rag"]["picked"] == 0
+    assert E.build_e9(sets, fam, e6, seed=1, sizes={"E5_analysis": 3, "E6_rag": 2, "E8_canon_diff": 4,
+                                                    "C1_catalogue": 3})[1] == items  # seeded
+
+
+def test_materialise_e9_with_real_template(tmp_path: Path) -> None:
+    """Three renders per item (off = the training render with its empty think block; low / medium open a think
+    block), token counts and a README with the run recipe (skipped without the local template / tokenizer).
+
+    :param tmp_path: Pytest temporary directory.
+    """
+    try:
+        p = P.load_paths()
+    except FileNotFoundError:
+        pytest.skip("no paths.json")
+    if not (Path(p.chat_template).exists() and Path(p.tokenizer_json).exists()):
+        pytest.skip("no local template / tokenizer")
+    fam = tmp_path / "families"
+    fam.mkdir()
+    R.write_jsonl(fam / "catalogue_json.jsonl", [row("catalogue_json", "300", "heldout")])
+    m = {"sets": {"E1_probe_clean": {"items": {"C1_catalogue": {"pgpids": ["300"]}}}}, "status": {}}
+    e9 = E.materialise_e9(m, p, fam, out=tmp_path / "e9")
+    assert m["sets"]["E9_thinking"] is e9 and set(e9["files"]) == {"items.jsonl", "prompts_off.jsonl", "prompts_low.jsonl",
+                                                                   "prompts_medium.jsonl", "README.md"}
+    off = R.load_jsonl(tmp_path / "e9" / "prompts_off.jsonl")[0]
+    low = R.load_jsonl(tmp_path / "e9" / "prompts_low.jsonl")[0]
+    assert off["prompt"].endswith(R.EMPTY_THINK) and not off["enable_thinking"] and off["prompt_tokens"] > 0
+    assert low["prompt"].endswith("<think>\n") and low["reasoning_effort"] == "low"
+    readme = (tmp_path / "e9" / "README.md").read_text(encoding="utf-8")
+    assert "enable_thinking" in readme and "reasoning_effort" in readme and "C1_catalogue | 1 | 1" in readme

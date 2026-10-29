@@ -2,7 +2,7 @@
 # Date: 10/25/26
 # Author: Isaac Godfried. Coded originally by Claude Opus 5.5.
 """Tests for text27b ``canon_diff``: Hebrew normalisation and the skeleton rule, abbreviation expansion, fragment
-tokenisation, the trigram index and anchor search, word alignment with typed variants (orthographic, substitution,
+tokenisation, the trigram index and anchor search, word alignment with typed variants (orthographic_or_minor, substitution,
 omission, addition, order, lacunae, torn margins), catalogue routing, hold-out splits, row building end to end on a
 synthetic KTIV bundle + Sefaria cache, the audit sample and the public-domain edition helpers.
 
@@ -126,9 +126,9 @@ def test_align_types_variants_and_lacunae() -> None:
     ref, he_ref = idx.ref_range(al.start, al.end)
     assert ref.startswith("Sanhedrin 19b:1") and he_ref == "סנהדרין יט ע״ב"
     got = {(v.type, v.fragment, v.canon) for v in al.variants}
-    assert ("orthographic", "אמ'", "אמר") in got  # the edge pair before the first exact match is kept
-    assert ("orthographic", "שנ'", "שנאמר") in got and ("orthographic", "כאלו", "כאילו") in got
-    assert ("orthographic", "יוחאי", "יוחי") in got  # internal aleph of a long word is a vowel letter
+    assert (C.ORTHO, "אמ'", "אמר") in got  # the edge pair before the first exact match is kept
+    assert (C.ORTHO, "שנ'", "שנאמר") in got and (C.ORTHO, "כאלו", "כאילו") in got
+    assert (C.ORTHO, "יוחאי", "יוחי") in got  # internal aleph of a long word is a vowel letter
     assert al.lacuna_words == 1 and al.counts()["omission"] == 0 and al.counts()["substitution"] == 0
     assert al.similarity > 0.8 and 0.9 < al.agreement_ratio <= 1.0
     tgt = C.diff_target(ref, al)
@@ -486,3 +486,76 @@ def test_pd_pairs_verification_and_band(tmp_path: Path) -> None:
                                band=(5.0, 6.0))
     assert rows2 == [] and drops2.get("length_band") == 2
     assert C._looks_numeral("יז") and C._looks_numeral("טו") and not C._looks_numeral("זרה")
+
+
+# ------------------------------------------------------------------------------------ prep pass 2026-10-26
+def test_orthographic_type_renamed_everywhere() -> None:
+    """The skeleton-rule type is ``orthographic_or_minor`` in the type list, the prompt and the summary sentence."""
+    assert C.ORTHO == "orthographic_or_minor" and C.ORTHO in C.VARIANT_TYPES and C.ORTHO_LEGACY not in C.VARIANT_TYPES
+    assert "orthographic_or_minor" in C.INSTRUCTION_DIFF and "orthographic (" not in C.INSTRUCTION_DIFF
+    al = C.Alignment(start=0, end=1, similarity=1.0, agreement_ratio=1.0, lacuna_words=0,
+                     variants=[C.Variant(C.ORTHO, "אמ'", "אמר", "1:1", (0, 1), (0, 1))], matched=1, legible=1,
+                     unaligned=0, canon_words=1, text_index=0)
+    assert "1 orthographic-or-minor" in C.summary_sentence("Berakhot 2a:1", al)
+
+
+def _diff_row(rid: str, work: str, sys_num: str, variants: List[Dict[str, str]], split: str = "heldout",
+              lines: Sequence[str] = ("אמר רבי יוחנן משום רבי שמעון", "כל המורה הלכה בפני רבו")) -> Dict[str, Any]:
+    """A synthetic canon_diff row.
+
+    :param rid: Row id.
+    :param work: Canonical work.
+    :param sys_num: Manuscript number.
+    :param variants: Apparatus variants.
+    :param split: Split.
+    :param lines: Fragment lines.
+    :returns: The row.
+    """
+    user = C.INSTRUCTION_DIFF + "\n\nnote\n\n<document>\n" + "\n".join(lines) + "\n</document>\n\nCanonical text (T 2a:1):\n" + \
+        "ואמר רבי יוחנן משום רבי שמעון בן יוחאי כל המורה הלכה בפני רבו חייב מיתה"
+    target = json.dumps({"canonical_ref": "T 2a:1", "agreement_ratio": 0.9, "lacuna_words": 0, "variants": variants,
+                         "summary": "s"}, ensure_ascii=False)
+    return {"messages": R.make_messages(user, target),
+            "meta": {"family": C.FAMILY_DIFF, "split": split, "row_id": rid, "work": work, "sys_num": sys_num,
+                     "catalogue_title": "T", "heldout_reason": "ktiv_benchmark:x"}}
+
+
+def test_expert_set_strata_labels_empty_and_context() -> None:
+    """60-variant set: Talmud substitutions, orthographic-or-minor and omission / addition strata over works, held-out
+    rows only, legacy ``orthographic`` read as the new type, expert fields empty, fragment line and canon context set."""
+    rows = []
+    for i in range(60):
+        work = ("Talmud Bavli", "Mishneh Torah", "Mishnah")[i % 3]
+        rows.append(_diff_row(f"r{i}", work, f"ms{i}", [
+            {"type": "substitution", "fragment": "רבי", "canon": "ר", "pos": "1:2"},
+            {"type": "orthographic" if i % 2 else C.ORTHO, "fragment": "אמ'", "canon": "אמר", "pos": "1:1"},
+            {"type": "omission", "fragment": "", "canon": "בן יוחאי", "pos": "2:1"},
+            {"type": "addition", "fragment": "יוחנן", "canon": "", "pos": "1:3"}]))
+    rows.append(_diff_row("train1", "Talmud Bavli", "msT", [{"type": "substitution", "fragment": "a", "canon": "b",
+                                                             "pos": "1:1"}], split="train"))
+    recs = C.expert_set(rows, 20, 3407)
+    by = {}
+    for r in recs:
+        by.setdefault(r["stratum"], []).append(r)
+    assert {k: len(v) for k, v in by.items()} == {"talmud_substitution": 20, "orthographic_or_minor": 20,
+                                                  "omission_addition": 20}
+    assert {r["work"] for r in by["talmud_substitution"]} == {"Talmud Bavli"}
+    assert {r["type_auto"] for r in by["orthographic_or_minor"]} == {C.ORTHO}
+    assert {r["work"] for r in by["orthographic_or_minor"]} == {"Talmud Bavli", "Mishneh Torah", "Mishnah"}
+    assert sorted(r["type_auto"] for r in by["omission_addition"]).count("omission") == 10
+    assert all(r["row_id"] != "train1" for r in recs)
+    assert all(r["expert_label"] is None and r["expert_note"] is None and r["expert_significant"] is None for r in recs)
+    om = by["omission_addition"][0] if by["omission_addition"][0]["type_auto"] == "omission" else by["omission_addition"][-1]
+    assert om["fragment_line"] == "כל המורה הלכה בפני רבו" and "בן יוחאי" in om["canon_line"]
+    assert om["canon_line_method"] == "located"
+    assert C.expert_set(rows, 20, 3407) == recs  # seeded
+
+
+def test_canon_window_prefers_occurrence_near_the_line() -> None:
+    """A short canonical word is located at its occurrence nearest the fragment line, not its first occurrence."""
+    canon = " ".join(["היו"] + ["מלה"] * 40 + ["אמר", "רבי", "יוחנן", "היו", "אומרים"])
+    win, how = C.canon_window(canon, {"canon": "היו"}, "אמר רבי יוחנן היו אומרים", width=2)
+    assert how == "located" and win.startswith("רבי יוחנן היו")
+    assert C.canon_window("", {"canon": "x"}, "y") == ("", "none")
+    win2, how2 = C.canon_window(canon, {"canon": ""}, "אמר רבי יוחנן", width=1)
+    assert how2 == "best_overlap" and "יוחנן" in win2

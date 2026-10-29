@@ -12,10 +12,13 @@ document's edition row. The read is only ever the input; every target is human t
 Selection, per (train document, family):
 
 * ``read_hard`` -- coverage 0.6–1.5 and 0.45 < CER ≤ 0.9; the lowest-CER failing read; for the
-  translate families only when that CER is ≤ 0.75.
+  translate families only when that CER is ≤ 0.60 (prep pass 2026-10-26; was 0.75: a translation read above
+  0.6 CER asks the model to reconstruct text the input no longer carries).
 * ``read_partial`` -- only when no ``read_hard`` read exists, only for ``catalogue_json`` and
   ``describe_pgp``: coverage 0.4–0.6, CER ≤ 0.9, kept where :func:`textnorm.grounding` of the
-  target's facts in the read is ≥ 0.5; the lowest-CER read among those that pass.
+  target's facts in the read is ≥ 0.5; the lowest-CER read among those that pass. Prep pass 2026-10-26: these rows
+  stay in the family file but carry ``meta.mixture_excluded = "read_partial"`` (a partial read cannot support a
+  whole-document target; the mixture drops them, :attr:`SliceConfig.mixture_excluded_conditions`).
 * never: Hebrew-script reads of Arabic editions (and the reverse), CER > 0.9, coverage outside
   0.4–2.5, reads by models outside :attr:`SliceConfig.read_models`, documents that are not in the
   train split, documents in the hold-out set H (by pgpid, canonical id or shelfmark key), documents
@@ -106,8 +109,8 @@ class SliceConfig:
     hard_coverage: Tuple[float, float] = (0.6, 1.5)
     #: Upper CER limit of every slice read.
     cer_max: float = 0.9
-    #: ``read_hard`` CER cap for the translate families.
-    translate_cer_max: float = 0.75
+    #: ``read_hard`` CER cap for the translate families (prep pass 2026-10-26: 0.75 → 0.60).
+    translate_cer_max: float = 0.60
     #: Coverage window of ``read_partial`` (``[lo, hi)``).
     partial_coverage: Tuple[float, float] = (0.4, 0.6)
     #: Minimum grounding of the target's facts in a partial read.
@@ -127,6 +130,8 @@ class SliceConfig:
     #: Document language classes left out of the slice (decision D7: Arabic documents have no noised
     #: twin after B8 and the Arabic read condition waits for the next reader's reads).
     exclude_lang_classes: Tuple[str, ...] = ("AR",)
+    #: Slice conditions kept in the family file but tagged ``meta.mixture_excluded`` (prep pass 2026-10-26).
+    mixture_excluded_conditions: Tuple[str, ...] = ("read_partial",)
 
 
 @dataclass
@@ -728,7 +733,8 @@ def make_slice_row(target: Target, sel: Selection, script: str, tokens: TokenFns
         read_agreed_share=rd.agreed_share, noise_band=noise_band(rd.cer), noise_class=rd.cls,
         read_grounding=sel.grounding, loop_lines_removed=rd.loop_lines_removed, reader_exposed=None,
         exposure_level=None, target_raw=tm.get("target_raw"), strip_ops=list(tm.get("strip_ops") or []),
-        swap_for="noised_edition", side=tm.get("side"))
+        swap_for="noised_edition", side=tm.get("side"),
+        mixture_excluded=sel.condition if sel.condition in cfg.mixture_excluded_conditions else None)
     for k in ("target_lang", "n_relations", "pgp_description_dup"):
         if k in tm:
             meta[k] = tm[k]
