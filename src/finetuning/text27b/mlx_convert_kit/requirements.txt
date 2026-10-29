@@ -1,0 +1,9 @@
+# Pinned to the versions that made the reference conversion. Keep transformers/tokenizers pinned too: they write the
+# tokenizer files, and the receiving side compares those byte for byte with the reference copy's.
+mlx==0.32.0
+mlx-lm==0.31.3
+transformers==5.12.1
+tokenizers==0.22.2
+safetensors==0.8.0
+numpy==2.5.1
+huggingface_hub==1.23.0
