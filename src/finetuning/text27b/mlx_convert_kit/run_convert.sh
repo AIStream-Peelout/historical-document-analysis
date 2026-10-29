@@ -1,22 +1,27 @@
 #!/bin/zsh
 # Convert a merged bf16 checkpoint to 8-bit MLX with the kit's low-memory wrapper, verify the result and record it.
 #
-# usage: run_convert.sh --hf-path <bf16 dir> --mlx-path <output dir> [--python <interpreter>] [--min-free-gib 12]
-#                       [--identity-json <report>] [--no-hash] [--force]
+# usage: run_convert.sh --hf-path <bf16 dir> --mlx-path <output dir> [--python <interpreter>] [--min-free-gib <GiB>]
+#                       [--identity-json <report>] [--quantize-order eager|lazy] [--no-hash] [--force]
 #
 # Refuses to start when: the source lacks config.json, the shard index, generation_config.json or a chat template;
 # the output directory exists; <output>.partial exists (another converter's staging directory, never deleted here);
 # <output>.lock exists (another run of this kit holds it); the interpreter lacks mlx or does not match
 # requirements.txt; LM Studio or another GPU server runs on this Mac (Metal's watchdog then kills the conversion;
-# --force overrides that one check); free memory is below --min-free-gib. The interpreter is $PYTHON, else
-# ~/.venv-mlx-kit/bin/python when it exists, else python3.
+# --force overrides that one check); free memory is below the floor. The floor is --min-free-gib when given; else, in
+# the eager order, memory_floor.py's estimate from the source's shard headers (packed model + largest bf16 tensor +
+# 4 GiB), and 12 GiB in the lazy order. The interpreter is $PYTHON, else ~/.venv-mlx-kit/bin/python when it exists,
+# else python3.
 # Runs under caffeinate (prevents idle sleep only: keep the lid open, or use clamshell mode on power with a display),
 # stages in <output>.kit-partial, verifies, writes <output>.MANIFEST.json and <output>.CONVERTED.json, then renames
 # the staging directory to <output> with a rename that fails instead of nesting if <output> appeared meanwhile.
 # Not resumable: a failed attempt leaves <output>.kit-partial for inspection; the next run deletes it.
+# --quantize-order goes to convert_lowmem.py: eager (default) holds the packed model in memory, hence its larger
+# floor; lazy is the stock order, only safe when the source is on a fast local SSD.
 set -euo pipefail
 KIT="${0:A:h}"
-HF_PATH="" MLX_PATH="" PYTHON="${PYTHON:-}" MIN_FREE_GIB=12 IDENTITY_JSON="" FORCE=0 NO_HASH=0
+HF_PATH="" MLX_PATH="" PYTHON="${PYTHON:-}" MIN_FREE_GIB="" IDENTITY_JSON="" FORCE=0 NO_HASH=0 QUANT_ORDER=eager
+LAZY_MIN_FREE_GIB=12 Q_BITS=8 Q_GROUP_SIZE=64
 
 die() { print -u2 -- "run_convert: $*"; exit 1; }
 need() { (( $# >= 2 )) || die "$1 needs a value"; }
@@ -28,15 +33,17 @@ while (( $# )); do
     --python) need "$@"; PYTHON="$2"; shift 2 ;;
     --min-free-gib) need "$@"; MIN_FREE_GIB="$2"; shift 2 ;;
     --identity-json) need "$@"; IDENTITY_JSON="$2"; shift 2 ;;
+    --quantize-order) need "$@"; QUANT_ORDER="$2"; shift 2 ;;
     --no-hash) NO_HASH=1; shift ;;
     --force) FORCE=1; shift ;;
-    -h|--help) sed -n '2,16p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,20p' "$0"; exit 0 ;;
     *) die "unknown argument $1" ;;
   esac
 done
 
 # 1. the source must hold everything the verifier later requires in the output
 [[ -n "$HF_PATH" && -n "$MLX_PATH" ]] || die "--hf-path and --mlx-path are required"
+[[ "$QUANT_ORDER" == eager || "$QUANT_ORDER" == lazy ]] || die "--quantize-order must be eager or lazy, not $QUANT_ORDER"
 [[ -d "$HF_PATH" ]] || die "$HF_PATH is not a directory"
 for f in config.json model.safetensors.index.json generation_config.json; do
   [[ -f "$HF_PATH/$f" ]] || die "$HF_PATH lacks $f (the output verification requires it)"
@@ -88,21 +95,30 @@ if [[ -n "$GPU_LIST" ]]; then
   (( FORCE )) || die "stop them first, or pass --force (Metal's watchdog kills a conversion that shares the GPU)"
 fi
 
-# 6. memory and power
+# 6. memory and power: the eager order holds the packed model, so its floor comes from the source's size
+if [[ -n "$MIN_FREE_GIB" ]]; then
+  FLOOR_NOTE="--min-free-gib"
+elif [[ "$QUANT_ORDER" == lazy ]]; then
+  MIN_FREE_GIB=$LAZY_MIN_FREE_GIB FLOOR_NOTE="lazy order default"
+else
+  MIN_FREE_GIB="$("$PYTHON" "$KIT/memory_floor.py" "$HF_PATH" --q-bits $Q_BITS --q-group-size $Q_GROUP_SIZE)" \
+    || die "could not estimate the eager order's memory floor from $HF_PATH's shard headers; pass --min-free-gib"
+  FLOOR_NOTE="eager order estimate: packed model + largest bf16 tensor + 4 GiB"
+fi
 PAGE=$(sysctl -n hw.pagesize)
 FREE_GIB=$(vm_stat | awk -v page="$PAGE" '/Pages (free|inactive|speculative)/ {gsub(/\./, "", $NF); s += $NF} END {printf "%.1f", s * page / 1073741824}')
 if (( FREE_GIB < MIN_FREE_GIB )); then
-  die "only $FREE_GIB GiB free (+inactive, speculative); need $MIN_FREE_GIB (override with --min-free-gib)"
+  die "only $FREE_GIB GiB free (+inactive, speculative); need $MIN_FREE_GIB GiB ($FLOOR_NOTE). Free memory, or use --quantize-order lazy from a local SSD copy, or override with --min-free-gib"
 fi
 pmset -g batt 2>/dev/null | grep -q "AC Power" || print -u2 -- "warning: not on AC power"
 
 # 7. convert into the kit's own staging directory
 PARTIAL="$MLX_PATH.kit-partial" LOG="$MLX_PATH.convert.log"
 if [[ -e "$PARTIAL" ]]; then print -- "removing interrupted $PARTIAL"; rm -rf "$PARTIAL"; fi
-print -- "=== $(date -u +%FT%TZ) convert $HF_PATH -> $PARTIAL on $(sysctl -n machdep.cpu.brand_string), $FREE_GIB GiB free, $PYTHON" | tee -a "$LOG"
+print -- "=== $(date -u +%FT%TZ) convert $HF_PATH -> $PARTIAL on $(sysctl -n machdep.cpu.brand_string), $FREE_GIB GiB free (floor $MIN_FREE_GIB GiB, $FLOOR_NOTE), $PYTHON, quantize order $QUANT_ORDER" | tee -a "$LOG"
 START=$(date +%s)
 if ! caffeinate -dims nice -n 10 "$PYTHON" -u "$KIT/convert_lowmem.py" --hf-path "$HF_PATH" --mlx-path "$PARTIAL" \
-      --q-bits 8 --q-group-size 64 2>&1 | tee -a "$LOG"; then
+      --q-bits $Q_BITS --q-group-size $Q_GROUP_SIZE --quantize-order "$QUANT_ORDER" 2>&1 | tee -a "$LOG"; then
   die "conversion failed after $(( $(date +%s) - START )) s; see $LOG ($PARTIAL left for inspection)"
 fi
 TOOK=$(( $(date +%s) - START ))
