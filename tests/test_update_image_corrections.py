@@ -1,8 +1,8 @@
 # File name: test_update_image_corrections.py
 # Date: 10/31/26
 # Author: Isaac Godfried. Coded originally by Claude Opus 5.5.
-"""Image-corrections updater: target partial documents, the dry run's read-only contract, refusal rules, apply with
-read-back, rollback, report contents, CLI.
+"""Image-corrections updater: target partial documents, the dry run's read-only contract, refusal rules, the live
+gate, apply with read-back, rollback, report contents, transcription corrections, CLI.
 
 Synthetic merged records only. No network: Elasticsearch and the bulk helper are faked. No ``.env`` is read.
 """
@@ -27,13 +27,15 @@ BASE = "https://storage.example.test/bucket-q7/images"
 
 
 def merged_record(cid: str, legacy: Sequence[str] = (), preferred: Optional[str] = None,
-                  ktiv_urls: Sequence[str] = (), **image_extra: Any) -> Dict[str, Any]:
+                  ktiv_urls: Sequence[str] = (), sources: Optional[Dict[str, Any]] = None,
+                  **image_extra: Any) -> Dict[str, Any]:
     """A synthetic merged record.
 
     :param cid: Canonical id.
     :param legacy: ``images.fjp`` file names.
     :param preferred: ``images.preferred_source``.
     :param ktiv_urls: ``images.ktiv.image_urls``.
+    :param sources: ``sources`` block (default: empty).
     :param image_extra: Further ``images`` keys (correction markers).
     :return: Record.
     """
@@ -44,7 +46,7 @@ def merged_record(cid: str, legacy: Sequence[str] = (), preferred: Optional[str]
             "description": f"Synthetic fragment {cid}", "date": None, "pgpids": [],
             "images": {"fjp": list(legacy), "ktiv": ktiv, "bodleian": None, "preferred_source": preferred,
                        **image_extra},
-            "sources": {}}
+            "sources": copy.deepcopy(sources) if sources is not None else {}}
 
 
 def served_source(record: Dict[str, Any]) -> Dict[str, Any]:
@@ -68,6 +70,11 @@ def mapping_properties() -> Dict[str, Any]:
     props["canonical_id"] = {"type": "keyword"}
     props["description"] = {"type": "text"}
     props[uic.METADATA_FIELD] = {"properties": {key: {"type": "keyword"} for key in uic.METADATA_IMAGE_KEYS}}
+    props["has_transcriptions"] = {"type": "boolean"}
+    props["full_text_content"] = {"type": "text"}
+    props["transcriptions"] = {"type": "nested", "properties": {"text": {"type": "text"}, "editor": {"type": "keyword"},
+                                                                "line_count": {"type": "integer"},
+                                                                "language": {"type": "keyword"}}}
     return props
 
 
@@ -140,6 +147,7 @@ class FakeES:
         self.store: Dict[str, Dict[str, Dict[str, Any]]] = {index: copy.deepcopy(docs)}
         self.indices = FakeIndices([index])
         self.mget_calls: List[List[str]] = []
+        self.mget_includes: List[Tuple[List[str], List[str]]] = []
         self.bulk_calls: List[List[Dict[str, Any]]] = []
 
     def mget(self, index: str, ids: Sequence[str], source_includes: Optional[List[str]] = None) -> Dict[str, Any]:
@@ -149,6 +157,7 @@ class FakeES:
         :return: ``{"docs": [...]}``.
         """
         self.mget_calls.append(list(ids))
+        self.mget_includes.append((list(ids), list(source_includes or [])))
         docs = self.store.get(index, {})
         return {"docs": [{"_index": index, "_id": i, "found": True, "_source": select(docs[i], source_includes)}
                          if i in docs else {"_index": index, "_id": i, "found": False} for i in ids]}
@@ -227,7 +236,7 @@ def dry(scene: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
 
 
 def apply(scene: Dict[str, Any], **kwargs: Any) -> Dict[str, Any]:
-    """Apply a scene's plan.
+    """Apply a scene's plan (the synthetic index is not a live name unless a test makes it one).
 
     :param scene: :func:`misfiled_scene`.
     :param kwargs: Further :func:`uic.apply_plan` arguments.
@@ -502,3 +511,170 @@ def test_cli_defaults_to_dry_run_and_returns_refusal_status(tmp_path: Path, monk
     future = time.time() + 60
     os.utime(scene["merged"], (future, future))
     assert uic.main([*common, "--apply"]) == 2 and fake_bulk == []
+
+
+# ----------------------------------------------------------------------------------------------- live gate
+
+
+@pytest.fixture
+def live_synthetic_index(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make the synthetic index count as the served index (as LIVE_INDEX_NAME does for real runs).
+
+    :param monkeypatch: Pytest monkeypatch.
+    """
+    monkeypatch.setattr(uic, "LIVE_INDEX_NAMES", frozenset({INDEX}))
+
+
+def test_apply_to_the_served_index_needs_the_second_gate(tmp_path: Path, fake_bulk: list,
+                                                         live_synthetic_index: None) -> None:
+    """--apply alone is refused for a live index name; with --i-know-this-is-live it writes."""
+    scene = misfiled_scene(tmp_path)
+    dry(scene)
+    with pytest.raises(uic.ApplyRefused, match="i-know-this-is-live") as refusal:
+        apply(scene)
+    assert INDEX not in str(refusal.value) and fake_bulk == []
+    assert not list(scene["plan"].parent.glob("plan.applied-*.jsonl"))         # refused before the archive copy
+    assert apply(scene, allow_live=True)["written"] == 3 and len(fake_bulk) == 1
+
+
+def test_rollback_write_to_the_served_index_needs_the_second_gate(tmp_path: Path, fake_bulk: list,
+                                                                  live_synthetic_index: None) -> None:
+    """The rollback check runs without the gate; the restore needs it."""
+    scene = misfiled_scene(tmp_path)
+    dry(scene)
+    apply(scene, allow_live=True)
+    archived = next(scene["plan"].parent.glob("plan.applied-*.jsonl"))
+    common = dict(index_name=INDEX, result_path=scene["rollback_result"], es_client=scene["es"])
+    assert uic.rollback_plan(archived, execute=False, **common)["to_write"] == 3
+    with pytest.raises(uic.ApplyRefused, match="i-know-this-is-live"):
+        uic.rollback_plan(archived, execute=True, **common)
+    assert len(fake_bulk) == 1
+    assert uic.rollback_plan(archived, execute=True, allow_live=True, **common)["written"] == 3
+
+
+def test_the_default_target_refuses_before_reading_anything(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The parser's default index is the served one, so a bare --apply is refused before any file or client is used."""
+    args = uic.build_parser().parse_args(["--apply"])
+    assert args.index in uic.LIVE_INDEX_NAMES and args.allow_live is False
+    assert uic.build_parser().parse_args(["--apply", "--i-know-this-is-live"]).allow_live is True
+
+    def no_client() -> None:
+        """Fail if a client is built.
+
+        :raises AssertionError: Always.
+        """
+        raise AssertionError("an Elasticsearch client was built")
+
+    monkeypatch.setattr(uic, "default_es_client", no_client)
+    with pytest.raises(uic.ApplyRefused, match="i-know-this-is-live"):
+        uic.apply_plan(tmp_path / "no_such_plan.jsonl")
+    with pytest.raises(uic.ApplyRefused, match="i-know-this-is-live"):
+        uic.rollback_plan(tmp_path / "no_such_plan.jsonl", execute=True)
+
+
+def test_cli_apply_needs_both_flags_for_the_served_index(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                         fake_bulk: list, live_synthetic_index: None) -> None:
+    """--apply alone exits 2 without building a client or writing; with --i-know-this-is-live it writes."""
+    scene = misfiled_scene(tmp_path)
+    monkeypatch.setattr(uic, "default_es_client", lambda: scene["es"])
+    common = ["--merged", str(scene["merged"]), "--corrections", str(scene["corrections"]), "--index", INDEX,
+              "--plan", str(scene["plan"]), "--report", str(scene["report"]), "--result", str(scene["result"])]
+    assert uic.main(common) == 0
+    assert uic.main([*common, "--apply"]) == 2 and fake_bulk == []
+    assert uic.main([*common, "--apply", "--i-know-this-is-live"]) == 0 and len(fake_bulk) == 1
+
+
+# ----------------------------------------------------------------------------------------------- transcriptions
+
+RESPONSUM = "synthetic responsum line one\nsynthetic responsum line two\nsynthetic responsum line three"
+SCRAP = "synthetic verse scrap"
+
+
+def transcription_scene(tmp_path: Path) -> Dict[str, Any]:
+    """TA's legacy-store section 2 belongs to TB (moved by the merge); IA's image moves to IB (image only).
+
+    The merged file is produced by the merge's own apply functions from the original records.
+
+    :param tmp_path: Pytest temp dir.
+    :return: Paths, the fake cluster and the served sources.
+    """
+    from src.datasets.merging.image_corrections import build_transcription_correction, validate_correction
+    from src.datasets.merging import merge_shelfmarks as ms
+
+    entry = {"doc_id": "syn-a", "transcriptions": {"1": SCRAP, "2": RESPONSUM}, "translations": {}}
+    original = {"TA": merged_record("TA", ["TA_1r.jpg"], "fjp", sources={"fjp": [entry]}),
+                "TB": merged_record("TB", ["TB_1r.jpg"], "fjp", sources={"fjp": []}),
+                "IA": merged_record("IA", ["IA_1r.jpg", "IA_1v.jpg"], "fjp"),
+                "IB": merged_record("IB", ["IB_1r.jpg"], "fjp")}
+    text = build_transcription_correction(original["TA"], "syn-a", ["2"], "TB", basis="eye",
+                                          evidence="photographs show a verse scrap", reviewed=True,
+                                          source="synthetic", recorded_at="2026-10-31")
+    image = validate_correction({"image": "IA_1r.jpg", "url": None, "sha256": None, "from_canonical_id": "IA",
+                                 "to_canonical_id": "IB", "to_shelfmark_text": "IB", "side": None, "basis": "eye",
+                                 "evidence": "IB", "reviewed": True, "recorded_at": "2026-10-31",
+                                 "source": "synthetic"})
+    corrected = copy.deepcopy(original)
+    ms.apply_image_corrections(corrected, {"IA_1r.jpg": image})
+    ms.apply_transcription_corrections(corrected, {("TA", "syn-a", "2"): text})
+    merged = tmp_path / "merged.jsonl"
+    merged.write_text("".join(json.dumps(rec) + "\n" for rec in corrected.values()), encoding="utf-8")
+    corrections = tmp_path / "image_corrections.jsonl"
+    corrections.write_text(json.dumps(image) + "\n" + json.dumps(text) + "\n", encoding="utf-8")
+    served = {cid: served_source(original[cid]) for cid in original}
+    old = time.time() - 600
+    os.utime(merged, (old, old))
+    return {"merged": merged, "corrections": corrections, "es": FakeES(served), "served": served,
+            "plan": tmp_path / "out" / "plan.jsonl", "report": tmp_path / "out" / "report.md",
+            "result": tmp_path / "out" / "result.jsonl", "rollback_result": tmp_path / "out" / "rollback.jsonl"}
+
+
+def test_scan_finds_records_with_a_transcription_marker(tmp_path: Path) -> None:
+    """A record whose only marker is a transcription marker is found and flagged."""
+    path = tmp_path / "m.jsonl"
+    marked = merged_record("M", ["m.jpg"])
+    marked["transcriptions_removed"] = [{"fjp_doc_id": "x", "section": "1"}]
+    path.write_text(json.dumps(marked) + "\n" + json.dumps(merged_record("N", ["n.jpg"])) + "\n", encoding="utf-8")
+    found, flagged = uic.scan_merged(path, set())
+    assert set(found) == {"M"} and flagged == {"M"} and uic.has_transcription_marker(found["M"])
+
+
+def test_transcription_fields_are_compared_for_transcription_documents_only(tmp_path: Path) -> None:
+    """TA/TB compare and change the transcription fields; IA/IB read and compare image fields only."""
+    scene = transcription_scene(tmp_path)
+    summary = dry(scene)
+    rows = rows_by_id(scene["plan"])
+    assert {cid: (row["status"], row["compares_transcriptions"]) for cid, row in rows.items()} == {
+        "TA": ("changed", True), "TB": ("changed", True), "IA": ("changed", False), "IB": ("changed", False)}
+    assert rows["TA"]["changed_fields"] == ["transcriptions", "full_text_content"]          # still has section 1
+    assert rows["TB"]["changed_fields"] == ["has_transcriptions", "transcriptions", "full_text_content"]
+    assert set(rows["IA"]["after"]) == set(uic.IMAGE_FIELDS)
+    assert [s["editor"] for s in rows["TB"]["after"]["transcriptions"]] == ["Transcription 2"]
+    assert "responsum line two" in rows["TB"]["after"]["full_text_content"]
+    assert "responsum" not in rows["TA"]["after"]["full_text_content"]
+    reads = {tuple(ids): includes for ids, includes in scene["es"].mget_includes}
+    assert set(uic.TRANSCRIPTION_FIELDS) <= set(reads[("TA", "TB")])
+    assert not set(uic.TRANSCRIPTION_FIELDS) & set(reads[("IA", "IB")])
+    assert summary["transcription_documents"] == 2 and summary["transcriptions_changed"] == 2
+    report = scene["report"].read_text(encoding="utf-8")
+    assert "## Transcription changes per document" in report and "NOT recomputed" in report
+    assert "responsum" not in report and "verse scrap" not in report                        # lengths, never text
+
+
+def test_apply_and_rollback_carry_the_transcription_fields(tmp_path: Path, fake_bulk: list) -> None:
+    """The apply writes the transcription fields of TA/TB only, verifies them, and the rollback restores them."""
+    scene = transcription_scene(tmp_path)
+    dry(scene)
+    rows = rows_by_id(scene["plan"])
+    summary = apply(scene)
+    assert summary["written"] == 4 and summary["verified"] == 4 and summary["unverified"] == 0
+    docs = {action["_id"]: action["doc"] for _, actions in fake_bulk for action in actions}
+    assert set(docs["TB"]) >= {"has_transcriptions", "transcriptions", "full_text_content"}
+    assert not {"transcriptions", "full_text_content"} & set(docs["IA"])
+    store = scene["es"].store[INDEX]
+    assert uic.document_fields(store["TB"], uic.ALL_FIELDS) == rows["TB"]["after"]
+    assert store["TB"]["description"] == scene["served"]["TB"]["description"]
+    archived = next(scene["plan"].parent.glob("plan.applied-*.jsonl"))
+    restored = uic.rollback_plan(archived, execute=True, index_name=INDEX, result_path=scene["rollback_result"],
+                                 es_client=scene["es"])
+    assert restored["written"] == 4 and restored["verified"] == 4
+    assert uic.document_fields(store["TA"], uic.ALL_FIELDS) == rows["TA"]["before"]

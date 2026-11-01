@@ -2,17 +2,21 @@
 # File name: update_image_corrections.py
 # Date: 10/31/26
 # Author: Isaac Godfried. Coded originally by Claude Opus 5.5.
-"""Bring the served index's image fields in line with corrected legacy-store images, in place.
+"""Bring the served index's image (and transcription) fields in line with corrected legacy-store records, in place.
 
 Some legacy-store photographs (``images.fjp`` in the merged file) were saved under a neighbouring fragment's name.
 The merge applies durable corrections (``image_corrections.jsonl``: each row moves an image from
 ``from_canonical_id`` to ``to_canonical_id``, or removes it when there is no target), and a corrected record can
 also carry ``images.fjp_corrections`` / ``images.fjp_removed``. The site serves an index built from an earlier
 merged file, so it still shows the misfiled photographs until the image fields of the affected documents are
-rewritten. This updater does exactly that and nothing else.
+rewritten. The same file can also hold transcription corrections (``kind: "transcription"``: legacy-store
+transcription sections moved to the record they belong to, or detached), which the merge marks with the record-level
+``transcriptions_corrections`` / ``transcriptions_removed`` lists. This updater rewrites exactly those fields and
+nothing else.
 
 Affected documents: every ``from_canonical_id`` and ``to_canonical_id`` in the corrections file, plus every merged
-record whose ``images.fjp_corrections`` or ``images.fjp_removed`` is non-empty. Each one is built with
+record that carries a marker (``images.fjp_corrections``, ``images.fjp_removed``, ``transcriptions_corrections``,
+``transcriptions_removed``). Each one is built with
 ``GenizahDocument.from_merged_format(record).to_elasticsearch_document()`` and only its image fields are kept
 (:data:`IMAGE_FIELDS`):
 
@@ -23,10 +27,18 @@ record whose ``images.fjp_corrections`` or ``images.fjp_removed`` is non-empty. 
   ``image_preferred_source``, ``ktiv_images``, ``ktiv_iiif_manifest_url``, ``bodleian_images``,
   ``bodleian_catalogue_url``, ``bodleian_tei_part_id``, ``bodleian_match``.
 
+A *transcription-affected* document (named by a transcription correction, or carrying a transcription marker) also
+has :data:`TRANSCRIPTION_FIELDS` compared and written: ``has_transcriptions``, the nested ``transcriptions`` and
+``full_text_content`` (which carries the transcription text for lexical search). These are large, so they are read
+and stored in the plan for those documents only. The embedding vector is never recomputed here: a document whose
+transcriptions change keeps a vector embedded from its old text (the report counts them).
+
 The document ``_id`` is ``es_document_id(doc)`` (the canonical id for a merged record); the served
 ``canonical_id`` is read too, and a document whose ``canonical_id`` differs is never written (``id_mismatch``).
 
-Modes (the default is the dry run; nothing is written without ``--apply``):
+Modes (the default is the dry run; nothing is written without ``--apply``, and nothing is written to the served
+index -- any name in ``index_merged_genizah.LIVE_INDEX_NAMES``, the default target -- without
+``--i-know-this-is-live`` as well):
 
 * **dry run**: read the served documents (``mget``) and the index mapping, diff the image fields, and write the plan
   (:data:`DEFAULT_PLAN`: a header row, then one row per affected document with its before and after values) and a
@@ -35,11 +47,13 @@ Modes (the default is the dry run; nothing is written without ``--apply``):
 * **apply** (``--apply``): apply that plan as bulk partial ``update`` actions (only the changed fields of each
   document, never a reindex), with ``refresh="wait_for"``, read every written document back to verify it, and write
   a result file (:data:`DEFAULT_RESULT`). The plan is first copied next to itself as ``*.applied-<UTC time>.jsonl``,
-  the copy a rollback uses;
-* **rollback** (``--rollback PLAN``): check that the plan's documents hold its after values and, with ``--apply``,
-  write the before values back (a field the index did not hold is written as ``null``).
+  the copy a rollback uses. Needs ``--i-know-this-is-live`` too for the served index;
+* **rollback** (``--rollback PLAN``): check that the plan's documents hold its after values and, with ``--apply``
+  (and ``--i-know-this-is-live`` for the served index), write the before values back (a field the index did not
+  hold is written as ``null``).
 
-Apply refuses (:class:`ApplyRefused`, nothing written) when the plan is older than the merged file or the merged
+Apply refuses (:class:`ApplyRefused`, nothing written) when the target is the served index and
+``--i-know-this-is-live`` was not given, when the plan is older than the merged file or the merged
 file changed since the plan, when the plan was built from another merged or corrections file or against another
 index, when more than ``--max-docs`` documents would change, when a write would add a field the mapping does not
 have, or when any document no longer holds the plan's before values (re-run the dry run). Rollback applies the
@@ -52,8 +66,10 @@ cluster host or the index name (the plan stores a fingerprint of the index name,
 Usage (repo root)::
 
     PYTHONPATH=. .venv/bin/python -m src.datasets.indexing.update_image_corrections [--merged M] [--corrections C]
-    PYTHONPATH=. .venv/bin/python -m src.datasets.indexing.update_image_corrections [--merged M] [--corrections C] --apply
-    PYTHONPATH=. .venv/bin/python -m src.datasets.indexing.update_image_corrections --rollback PLAN [--apply]
+    PYTHONPATH=. .venv/bin/python -m src.datasets.indexing.update_image_corrections [--merged M] [--corrections C] \\
+        --apply --i-know-this-is-live
+    PYTHONPATH=. .venv/bin/python -m src.datasets.indexing.update_image_corrections --rollback PLAN \\
+        [--apply --i-know-this-is-live]
 """
 
 from __future__ import annotations
@@ -76,7 +92,7 @@ from elasticsearch.helpers import bulk
 
 from src.datasets.document_models.genizah_document import GenizahDocument
 from src.datasets.indexing.elastic_index_genizah import es_document_id
-from src.datasets.indexing.index_merged_genizah import DEFAULT_MERGED, LIVE_INDEX_NAME
+from src.datasets.indexing.index_merged_genizah import DEFAULT_MERGED, LIVE_INDEX_NAME, LIVE_INDEX_NAMES
 from src.datasets.indexing.update_generated_descriptions import MGET_CHUNK, default_es_client
 
 logger = logging.getLogger(__name__)
@@ -90,7 +106,7 @@ DEFAULT_REPORT = os.path.join(DEFAULT_OUT_DIR, "site_image_update_report.md")
 DEFAULT_RESULT = os.path.join(DEFAULT_OUT_DIR, "site_image_update_result.jsonl")
 DEFAULT_ROLLBACK_RESULT = os.path.join(DEFAULT_OUT_DIR, "site_image_rollback_result.jsonl")
 DEFAULT_MAX_DOCS = 2000
-PLAN_VERSION = 1
+PLAN_VERSION = 2
 SAMPLE_DIFFS = 10
 WRITE_CHUNK = 200
 
@@ -104,14 +120,24 @@ METADATA_FIELD = "tei_metadata"
 #: The image-provenance keys ``from_merged_format`` writes into ``full_metadata`` (from the merged ``images`` block).
 METADATA_IMAGE_KEYS = ("image_preferred_source", "ktiv_images", "ktiv_iiif_manifest_url", "bodleian_images",
                        "bodleian_catalogue_url", "bodleian_tei_part_id", "bodleian_match")
-#: Every field this updater compares and may write, nested ones as dotted paths.
+#: The image fields this updater compares and may write, nested ones as dotted paths.
 IMAGE_FIELDS = TOP_LEVEL_IMAGE_FIELDS + tuple(f"{METADATA_FIELD}.{key}" for key in METADATA_IMAGE_KEYS)
-#: ``_source`` paths read per served document.
+#: The transcription fields of ``to_elasticsearch_document``, compared and written for transcription-affected
+#: documents only (``transcriptions`` is the nested per-section list, ``full_text_content`` holds the text too).
+TRANSCRIPTION_FIELDS = ("has_transcriptions", "transcriptions", "full_text_content")
+#: Every field this updater may compare, in report order.
+ALL_FIELDS = IMAGE_FIELDS + TRANSCRIPTION_FIELDS
+#: ``_source`` paths read per served document (transcription-affected documents also read
+#: :data:`TRANSCRIPTION_FIELDS`).
 READ_FIELDS = ["canonical_id", *IMAGE_FIELDS]
 #: Lists in :data:`IMAGE_FIELDS` that hold image URLs (shown as file names in the report).
 IMAGE_LIST_FIELDS = ("image_urls", f"{METADATA_FIELD}.ktiv_images", f"{METADATA_FIELD}.bodleian_images")
 #: Keys of a merged record's ``images`` block that mark it as corrected (data field names of the merge).
 CORRECTION_MARKERS = ("fjp_corrections", "fjp_removed")
+#: Top-level merged-record keys that mark a transcription correction (``merge_shelfmarks``).
+TRANSCRIPTION_MARKERS = ("transcriptions_corrections", "transcriptions_removed")
+#: The corrections-file ``kind`` of a transcription correction (``image_corrections.KIND_TRANSCRIPTION``).
+TRANSCRIPTION_KIND = "transcription"
 
 CHANGED = "changed"
 UNCHANGED = "unchanged"
@@ -175,6 +201,16 @@ def correction_ids(corrections: Iterable[Mapping[str, Any]]) -> Set[str]:
     return ids
 
 
+def transcription_correction_ids(corrections: Iterable[Mapping[str, Any]]) -> Set[str]:
+    """The canonical ids a transcription correction names, as source or target.
+
+    :param corrections: Rows of :func:`read_corrections`.
+    :return: Canonical ids.
+    :rtype: Set[str]
+    """
+    return correction_ids(row for row in corrections if row.get("kind") == TRANSCRIPTION_KIND)
+
+
 def file_sha256(path: Any) -> str:
     """SHA-256 of a file's bytes.
 
@@ -213,15 +249,25 @@ def line_canonical_id(line: str) -> Optional[str]:
     return json.loads(line).get("canonical_id")
 
 
-def has_correction_marker(record: Mapping[str, Any]) -> bool:
-    """Whether a merged record says the merge corrected its images.
+def has_transcription_marker(record: Mapping[str, Any]) -> bool:
+    """Whether a merged record says the merge corrected its transcriptions.
 
     :param record: Merged record.
-    :return: True when ``images.fjp_corrections`` or ``images.fjp_removed`` is non-empty.
+    :return: True when ``transcriptions_corrections`` or ``transcriptions_removed`` is non-empty.
+    :rtype: bool
+    """
+    return any(record.get(key) for key in TRANSCRIPTION_MARKERS)
+
+
+def has_correction_marker(record: Mapping[str, Any]) -> bool:
+    """Whether a merged record says the merge corrected its images or its transcriptions.
+
+    :param record: Merged record.
+    :return: True when ``images.fjp_corrections``, ``images.fjp_removed`` or a transcription marker is non-empty.
     :rtype: bool
     """
     images = record.get("images") or {}
-    return any(images.get(key) for key in CORRECTION_MARKERS)
+    return any(images.get(key) for key in CORRECTION_MARKERS) or has_transcription_marker(record)
 
 
 def scan_merged(merged_path: Any, ids: Iterable[str]) -> Tuple[Dict[str, Dict[str, Any]], Set[str]]:
@@ -235,7 +281,7 @@ def scan_merged(merged_path: Any, ids: Iterable[str]) -> Tuple[Dict[str, Dict[st
     :rtype: Tuple[Dict[str, Dict[str, Any]], Set[str]]
     """
     wanted = set(ids)
-    markers = tuple(f'"{key}"' for key in CORRECTION_MARKERS)
+    markers = tuple(f'"{key}"' for key in CORRECTION_MARKERS + TRANSCRIPTION_MARKERS)
     records: Dict[str, Dict[str, Any]] = {}
     marked: Set[str] = set()
     with open(merged_path, encoding="utf-8") as fh:
@@ -268,6 +314,22 @@ def normalise(value: Any) -> Any:
     return json.loads(json.dumps(value, ensure_ascii=False))
 
 
+def document_fields(source: Mapping[str, Any], names: Iterable[str]) -> Dict[str, Any]:
+    """Fields of an index document (built or served) by dotted path; an absent field reads as ``None``.
+
+    :param source: ``to_elasticsearch_document()`` output or a served ``_source``.
+    :param names: Field paths (top level, or ``tei_metadata.<key>``).
+    :return: ``{field: value}`` for every name, in the given order.
+    :rtype: Dict[str, Any]
+    """
+    fields: Dict[str, Any] = {}
+    for name in names:
+        head, dot, tail = name.partition(".")
+        value = (source.get(head) or {}).get(tail) if dot else source.get(name)
+        fields[name] = normalise(value)
+    return fields
+
+
 def image_fields(source: Mapping[str, Any]) -> Dict[str, Any]:
     """The image fields of an index document (built or served), dotted paths for the metadata keys; an absent field
     reads as ``None``.
@@ -276,10 +338,30 @@ def image_fields(source: Mapping[str, Any]) -> Dict[str, Any]:
     :return: ``{field: value}`` for every :data:`IMAGE_FIELDS` entry.
     :rtype: Dict[str, Any]
     """
-    metadata = source.get(METADATA_FIELD) or {}
-    fields = {name: normalise(source.get(name)) for name in TOP_LEVEL_IMAGE_FIELDS}
-    fields.update({f"{METADATA_FIELD}.{key}": normalise(metadata.get(key)) for key in METADATA_IMAGE_KEYS})
-    return fields
+    return document_fields(source, IMAGE_FIELDS)
+
+
+def compared_names(with_transcriptions: bool) -> Tuple[str, ...]:
+    """The fields compared for a document.
+
+    :param with_transcriptions: Whether the document is transcription-affected.
+    :return: :data:`IMAGE_FIELDS`, plus :data:`TRANSCRIPTION_FIELDS` when *with_transcriptions*.
+    :rtype: Tuple[str, ...]
+    """
+    return ALL_FIELDS if with_transcriptions else IMAGE_FIELDS
+
+
+def target_fields(record: Mapping[str, Any], with_transcriptions: bool = False) -> Tuple[str, Dict[str, Any]]:
+    """The document id and compared fields a merged record gets under the current document model.
+
+    :param record: Merged record.
+    :param with_transcriptions: Also return :data:`TRANSCRIPTION_FIELDS`.
+    :return: ``(es document id, fields)``.
+    :rtype: Tuple[str, Dict[str, Any]]
+    """
+    doc = GenizahDocument.from_merged_format(dict(record))
+    es_doc = doc.to_elasticsearch_document()
+    return es_document_id(doc) or record["canonical_id"], document_fields(es_doc, compared_names(with_transcriptions))
 
 
 def target_image_fields(record: Mapping[str, Any]) -> Tuple[str, Dict[str, Any]]:
@@ -289,19 +371,18 @@ def target_image_fields(record: Mapping[str, Any]) -> Tuple[str, Dict[str, Any]]
     :return: ``(es document id, image fields)``.
     :rtype: Tuple[str, Dict[str, Any]]
     """
-    doc = GenizahDocument.from_merged_format(dict(record))
-    return es_document_id(doc) or record["canonical_id"], image_fields(doc.to_elasticsearch_document())
+    return target_fields(record, with_transcriptions=False)
 
 
 def changed_fields(before: Mapping[str, Any], after: Mapping[str, Any]) -> List[str]:
-    """The image fields whose value differs.
+    """The compared fields whose value differs (the fields *after* holds).
 
-    :param before: Served image fields.
-    :param after: Target image fields.
-    :return: Field names in :data:`IMAGE_FIELDS` order.
+    :param before: Served fields.
+    :param after: Target fields.
+    :return: Field names in :data:`ALL_FIELDS` order.
     :rtype: List[str]
     """
-    return [name for name in IMAGE_FIELDS if before.get(name) != after.get(name)]
+    return [name for name in ALL_FIELDS if name in after and before.get(name) != after.get(name)]
 
 
 def image_file_name(url: Any) -> str:
@@ -370,26 +451,56 @@ def check_index_exists(es: Any, index_name: str) -> None:
         raise ValueError("the target index does not exist; this updater only rewrites fields of existing documents")
 
 
-def fetch_served(es: Any, index_name: str, ids: Sequence[str]) -> Dict[str, Optional[Dict[str, Any]]]:
-    """The served ``canonical_id`` and image fields of each document (``None`` = not in the index).
+def fetch_served(es: Any, index_name: str, ids: Sequence[str], with_transcriptions: bool = False
+                 ) -> Dict[str, Optional[Dict[str, Any]]]:
+    """The served ``canonical_id`` and compared fields of each document (``None`` = not in the index).
 
     :param es: Elasticsearch client.
     :param index_name: Index.
     :param ids: Document ids.
+    :param with_transcriptions: Also read :data:`TRANSCRIPTION_FIELDS` (large; transcription-affected documents only).
     :return: ``{doc_id: _source subset or None}``.
     :rtype: Dict[str, Optional[Dict[str, Any]]]
     :raises RuntimeError: When the cluster reports an error for a document.
     """
     ids = list(ids)
+    includes = READ_FIELDS + list(TRANSCRIPTION_FIELDS) if with_transcriptions else READ_FIELDS
     out: Dict[str, Optional[Dict[str, Any]]] = {}
     for start in range(0, len(ids), MGET_CHUNK):
-        resp = es.mget(index=index_name, ids=ids[start:start + MGET_CHUNK], source_includes=READ_FIELDS)
+        resp = es.mget(index=index_name, ids=ids[start:start + MGET_CHUNK], source_includes=includes)
         for doc in resp["docs"]:
             if "error" in doc:
                 error = doc["error"]
                 kind = error.get("type") if isinstance(error, Mapping) else "error"
                 raise RuntimeError(f"reading document {doc.get('_id')} failed ({kind})")
             out[doc["_id"]] = (doc.get("_source") or {}) if doc.get("found") else None
+    return out
+
+
+def row_compares_transcriptions(row: Mapping[str, Any]) -> bool:
+    """Whether a plan row compares the transcription fields.
+
+    :param row: Plan document row.
+    :return: True for a transcription-affected document.
+    :rtype: bool
+    """
+    return bool(row.get("compares_transcriptions"))
+
+
+def fetch_rows(es: Any, index_name: str, rows: Sequence[Mapping[str, Any]]) -> Dict[str, Optional[Dict[str, Any]]]:
+    """The served sources of plan rows, reading the transcription fields only for the rows that compare them.
+
+    :param es: Elasticsearch client.
+    :param index_name: Index.
+    :param rows: Plan document rows.
+    :return: ``{doc_id: _source subset or None}``.
+    :rtype: Dict[str, Optional[Dict[str, Any]]]
+    """
+    out: Dict[str, Optional[Dict[str, Any]]] = {}
+    for with_transcriptions in (False, True):
+        ids = [row["doc_id"] for row in rows if row_compares_transcriptions(row) == with_transcriptions]
+        if ids:
+            out.update(fetch_served(es, index_name, ids, with_transcriptions))
     return out
 
 
@@ -439,17 +550,18 @@ def unmapped_writes(rows: Iterable[Mapping[str, Any]], mapped: Set[str], values_
 
 
 def plan_row(canonical_id: str, doc_id: Optional[str], source: Optional[Mapping[str, Any]],
-             after: Optional[Dict[str, Any]]) -> Dict[str, Any]:
-    """One plan row: the document's served and target image fields and what would change.
+             after: Optional[Dict[str, Any]], with_transcriptions: bool = False) -> Dict[str, Any]:
+    """One plan row: the document's served and target fields and what would change.
 
     :param canonical_id: Canonical id.
     :param doc_id: Index ``_id`` (``None`` when the merged file has no record).
     :param source: Served ``_source`` subset (``None`` = not in the index).
-    :param after: Target image fields (``None`` = not in the merged file).
+    :param after: Target fields (``None`` = not in the merged file).
+    :param with_transcriptions: Whether the transcription fields are compared (transcription-affected document).
     :return: Plan row (``kind: document``).
     :rtype: Dict[str, Any]
     """
-    before = image_fields(source) if source is not None else None
+    before = document_fields(source, compared_names(with_transcriptions)) if source is not None else None
     if after is None:
         status = NOT_IN_MERGED
     elif before is None:
@@ -461,38 +573,45 @@ def plan_row(canonical_id: str, doc_id: Optional[str], source: Optional[Mapping[
     changed = changed_fields(before, after) if status == CHANGED else []
     added, removed = (images_diff(before["image_urls"], after["image_urls"]) if status == CHANGED else ([], []))
     return {"kind": "document", "doc_id": doc_id, "canonical_id": canonical_id, "status": status,
-            "changed_fields": changed,
+            "compares_transcriptions": with_transcriptions, "changed_fields": changed,
             "before_image_urls": before["image_urls"] if before is not None else None,
             "after_image_urls": after["image_urls"] if after is not None else None,
             "images_added": added, "images_removed": removed, "before": before, "after": after}
 
 
 def build_plan_rows(affected: Sequence[str], records: Mapping[str, Mapping[str, Any]], es: Any,
-                    index_name: str) -> List[Dict[str, Any]]:
+                    index_name: str, transcription_affected: Iterable[str] = ()) -> List[Dict[str, Any]]:
     """Plan rows for every affected canonical id (reads the index only).
 
     :param affected: Canonical ids.
     :param records: Merged records by canonical id (:func:`scan_merged`).
     :param es: Elasticsearch client.
     :param index_name: Index.
+    :param transcription_affected: The affected ids whose transcription fields are compared too.
     :return: Rows sorted by canonical id.
     :rtype: List[Dict[str, Any]]
     """
-    targets = {cid: target_image_fields(records[cid]) for cid in affected if cid in records}
-    served = fetch_served(es, index_name, sorted({doc_id for doc_id, _ in targets.values()}))
+    with_text = set(transcription_affected)
+    targets = {cid: target_fields(records[cid], cid in with_text) for cid in affected if cid in records}
+    served: Dict[str, Optional[Dict[str, Any]]] = {}
+    for flag in (False, True):
+        ids = sorted({doc_id for cid, (doc_id, _) in targets.items() if (cid in with_text) == flag})
+        if ids:
+            served.update(fetch_served(es, index_name, ids, flag))
     rows = []
     for cid in sorted(affected):
         if cid not in targets:
-            rows.append(plan_row(cid, None, None, None))
+            rows.append(plan_row(cid, None, None, None, cid in with_text))
             continue
         doc_id, after = targets[cid]
-        rows.append(plan_row(cid, doc_id, served.get(doc_id), after))
+        rows.append(plan_row(cid, doc_id, served.get(doc_id), after, cid in with_text))
     return rows
 
 
 def plan_header(merged_path: Any, merged_stat: os.stat_result, corrections_path: Any, corrections_sha256: str,
                 corrections_rows: int, index_name: str, from_corrections: int, from_markers: int,
-                created: datetime, unmapped: Mapping[str, int], max_docs: int) -> Dict[str, Any]:
+                created: datetime, unmapped: Mapping[str, int], max_docs: int,
+                transcription_documents: int = 0) -> Dict[str, Any]:
     """The plan's header row: what it was built from (an apply checks every item).
 
     :param merged_path: Merged JSONL.
@@ -506,6 +625,7 @@ def plan_header(merged_path: Any, merged_stat: os.stat_result, corrections_path:
     :param created: Plan time (UTC).
     :param unmapped: :func:`unmapped_writes` at plan time.
     :param max_docs: ``--max-docs`` of the dry run (for the report; the apply takes its own).
+    :param transcription_documents: Affected canonical ids whose transcription fields are compared.
     :return: Header row (``kind: header``).
     :rtype: Dict[str, Any]
     """
@@ -516,7 +636,8 @@ def plan_header(merged_path: Any, merged_stat: os.stat_result, corrections_path:
             "corrections": {"path": str(Path(corrections_path).resolve()), "sha256": corrections_sha256,
                             "rows": corrections_rows},
             "target": target_fingerprint(index_name), "ids_from_corrections": from_corrections,
-            "ids_from_markers": from_markers, "unmapped_writes": dict(unmapped), "max_docs": max_docs}
+            "ids_from_markers": from_markers, "transcription_documents": transcription_documents,
+            "unmapped_writes": dict(unmapped), "max_docs": max_docs}
 
 
 def write_jsonl(path: Any, rows: Iterable[Mapping[str, Any]]) -> None:
@@ -542,7 +663,7 @@ def read_plan(path: Any) -> Tuple[Dict[str, Any], List[Dict[str, Any]]]:
     with open(path, encoding="utf-8") as fh:
         lines = [json.loads(line) for line in fh if line.strip()]
     if not lines or lines[0].get("kind") != "header" or lines[0].get("plan_version") != PLAN_VERSION:
-        raise ValueError(f"{path} is not a version-{PLAN_VERSION} image update plan")
+        raise ValueError(f"{path} is not a version-{PLAN_VERSION} image update plan: re-run the dry run")
     return lines[0], [row for row in lines[1:] if row.get("kind") == "document"]
 
 
@@ -551,7 +672,8 @@ def plan_counts(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
 
     :param rows: Plan document rows.
     :return: ``documents_affected``, one count per :data:`STATUSES` entry, ``changed_fields``, ``images_added``,
-        ``images_removed``.
+        ``images_removed``, ``transcription_documents`` (rows comparing the transcription fields) and
+        ``transcriptions_changed`` (changed rows whose ``transcriptions`` differ: their vectors go stale).
     :rtype: Dict[str, Any]
     """
     counts: Dict[str, Any] = {"documents_affected": len(rows), **dict.fromkeys(STATUSES, 0)}
@@ -563,7 +685,9 @@ def plan_counts(rows: Sequence[Mapping[str, Any]]) -> Dict[str, Any]:
             fields[name] = fields.get(name, 0) + 1
         added += len(row["images_added"])
         removed += len(row["images_removed"])
-    counts.update(changed_fields=fields, images_added=added, images_removed=removed)
+    counts.update(changed_fields=fields, images_added=added, images_removed=removed,
+                  transcription_documents=sum(1 for row in rows if row_compares_transcriptions(row)),
+                  transcriptions_changed=sum(1 for row in rows if "transcriptions" in row["changed_fields"]))
     return counts
 
 
@@ -582,13 +706,19 @@ def repo_relative(path: Any) -> str:
 
 
 def display_value(name: str, value: Any) -> str:
-    """A field value for the report: image URLs and URL lists as file names, other values as JSON.
+    """A field value for the report: image URLs and URL lists as file names, transcription sections as editor and
+    length, ``full_text_content`` as its length (never the text), other values as JSON.
 
     :param name: Field path.
     :param value: Value.
     :return: Markdown-safe text.
     :rtype: str
     """
+    if name == "transcriptions" and isinstance(value, list):
+        return "[" + ", ".join(f"`{(section or {}).get('editor')}` ({len((section or {}).get('text') or ''):,} chars)"
+                               for section in value) + "]"
+    if name == "full_text_content" and isinstance(value, str):
+        return f"{len(value):,} chars"
     if isinstance(value, list) and (name in IMAGE_LIST_FIELDS or all(isinstance(v, str) for v in value)):
         return "[" + ", ".join(f"`{image_file_name(v)}`" for v in value) + "]"
     if isinstance(value, str) and "://" in value:
@@ -629,15 +759,19 @@ def render_report(header: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], 
               "## Counts", "", "| | documents |", "|---|---:|",
               f"| affected (canonical ids) | {counts['documents_affected']} |",
               f"| named by a correction | {header['ids_from_corrections']} |",
-              f"| found through a merged-record marker (`images.fjp_corrections` / `images.fjp_removed`) "
-              f"| {header['ids_from_markers']} |",
+              f"| found through a merged-record marker (`images.fjp_corrections`, `images.fjp_removed`, "
+              f"`transcriptions_corrections`, `transcriptions_removed`) | {header['ids_from_markers']} |",
+              f"| transcription fields compared (named by a transcription correction or marked) "
+              f"| {counts['transcription_documents']} |",
               f"| would change | {counts[CHANGED]} |",
               f"| unchanged | {counts[UNCHANGED]} |",
               f"| missing in the index (never created) | {counts[MISSING_IN_INDEX]} |",
               f"| not in the merged file | {counts[NOT_IN_MERGED]} |",
               f"| served `canonical_id` differs (never written) | {counts[ID_MISMATCH]} |", "",
               f"Images added: {counts['images_added']}; images removed: {counts['images_removed']} "
-              "(over all changed documents, by `image_urls`).", "", gate, ""]
+              "(over all changed documents, by `image_urls`).", "",
+              f"Transcriptions change on {counts['transcriptions_changed']} documents; their embedding vectors are "
+              "NOT recomputed by this updater (they keep the vector of the old text).", "", gate, ""]
     unmapped = header.get("unmapped_writes") or {}
     lines += ["Mapping: " + (", ".join(f"`{name}` ({n})" for name, n in sorted(unmapped.items()))
                              + " would be added by a write; an apply would be REFUSED."
@@ -654,7 +788,18 @@ def render_report(header: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], 
                          f"{', '.join(f'`{n}`' for n in row['images_removed']) or '-'} |")
     else:
         lines.append("No document would change.")
-    lines += ["", f"## Sample diffs (first {SAMPLE_DIFFS} changed documents; image file names only)", ""]
+    text_rows = [row for row in changed if set(row["changed_fields"]) & set(TRANSCRIPTION_FIELDS)]
+    if text_rows:
+        lines += ["", "## Transcription changes per document", "",
+                  "| canonical id | sections before | sections after | characters before | characters after |",
+                  "|---|---:|---:|---:|---:|"]
+        for row in text_rows:
+            before_sections = row["before"].get("transcriptions") or []
+            after_sections = row["after"].get("transcriptions") or []
+            lines.append(f"| {row['canonical_id']} | {len(before_sections)} | {len(after_sections)} | "
+                         f"{sum(len((s or {}).get('text') or '') for s in before_sections):,} | "
+                         f"{sum(len((s or {}).get('text') or '') for s in after_sections):,} |")
+    lines += ["", f"## Sample diffs (first {SAMPLE_DIFFS} changed documents; image file names only, no text)", ""]
     for row in changed[:SAMPLE_DIFFS]:
         lines += [f"### {row['canonical_id']}", ""]
         lines += [f"- `{name}`: {display_value(name, row['before'][name])} -> {display_value(name, row['after'][name])}"
@@ -677,7 +822,7 @@ def dry_run(merged_path: Any = DEFAULT_MERGED, corrections_path: Any = DEFAULT_C
             index_name: str = LIVE_INDEX_NAME, plan_path: Any = DEFAULT_PLAN, report_path: Any = DEFAULT_REPORT,
             max_docs: int = DEFAULT_MAX_DOCS, note: Optional[str] = None, es_client: Optional[Any] = None
             ) -> Dict[str, Any]:
-    """Diff the served image fields of every affected document with the merged file; write the plan and report.
+    """Diff the served fields of every affected document with the merged file; write the plan and report.
 
     Reads only (``indices.exists``, ``mget``, ``indices.get_mapping``); never writes to the index.
 
@@ -700,12 +845,15 @@ def dry_run(merged_path: Any = DEFAULT_MERGED, corrections_path: Any = DEFAULT_C
     if Path(merged_path).stat().st_mtime != merged_stat.st_mtime:
         raise RuntimeError("the merged file changed while it was being read; run the dry run again")
     affected = sorted(ids | marked)
+    text_ids = transcription_correction_ids(corrections) | {
+        cid for cid, record in records.items() if has_transcription_marker(record)}
     es = es_client if es_client is not None else default_es_client()
     check_index_exists(es, index_name)
-    rows = build_plan_rows(affected, records, es, index_name)
+    rows = build_plan_rows(affected, records, es, index_name, text_ids)
     unmapped = unmapped_writes(rows, mapped_paths(es.indices.get_mapping(index=index_name)))
     header = plan_header(merged_path, merged_stat, corrections_path, corrections_sha256, len(corrections),
-                         index_name, len(ids), len(marked - ids), datetime.now(timezone.utc), unmapped, max_docs)
+                         index_name, len(ids), len(marked - ids), datetime.now(timezone.utc), unmapped, max_docs,
+                         transcription_documents=len(text_ids & set(affected)))
     write_jsonl(plan_path, [header, *rows])
     Path(report_path).parent.mkdir(parents=True, exist_ok=True)
     Path(report_path).write_text(render_report(header, rows, plan_path, max_docs, note) + "\n", encoding="utf-8")
@@ -717,7 +865,8 @@ def dry_run(merged_path: Any = DEFAULT_MERGED, corrections_path: Any = DEFAULT_C
     print(f"dry run: {counts['documents_affected']} affected, {counts[CHANGED]} would change, "
           f"{counts[UNCHANGED]} unchanged, {counts[MISSING_IN_INDEX]} missing in the index, "
           f"{counts[NOT_IN_MERGED]} not in the merged file, {counts[ID_MISMATCH]} id mismatch; images +"
-          f"{counts['images_added']} / -{counts['images_removed']}"
+          f"{counts['images_added']} / -{counts['images_removed']}; transcriptions change on "
+          f"{counts['transcriptions_changed']} (vectors not recomputed)"
           + (f"; an apply would be refused ({'; '.join(refuse)})" if refuse else ""), flush=True)
     print(f"plan {summary['plan']}, report {summary['report']}; nothing was written to the index", flush=True)
     return summary
@@ -753,6 +902,17 @@ def check_plan_current(header: Mapping[str, Any], plan_path: Any, merged_path: A
         raise ApplyRefused("the corrections file changed since the plan was built: re-run the dry run")
 
 
+def check_live_gate(index_name: str, allow_live: bool) -> None:
+    """Refuse a write to the served index (or a previous one) without ``--i-know-this-is-live``.
+
+    :param index_name: Target index of this run.
+    :param allow_live: ``--i-know-this-is-live`` was passed.
+    :raises ApplyRefused: For a name in ``LIVE_INDEX_NAMES`` without *allow_live* (the message does not name it).
+    """
+    if index_name in LIVE_INDEX_NAMES and not allow_live:
+        raise ApplyRefused("the target is the served index: add --i-know-this-is-live to --apply")
+
+
 def check_target_and_size(header: Mapping[str, Any], rows: Sequence[Mapping[str, Any]], index_name: str,
                           max_docs: int) -> List[Dict[str, Any]]:
     """Refuse another index or too many documents; return the rows to act on.
@@ -786,7 +946,7 @@ def document_state(row: Mapping[str, Any], source: Optional[Mapping[str, Any]], 
         return MISSING_IN_INDEX
     if source.get("canonical_id") not in (None, row["canonical_id"]):
         return ID_MISMATCH
-    current = image_fields(source)
+    current = document_fields(source, row["after"])
     start, goal = (row["after"], row["before"]) if rollback else (row["before"], row["after"])
     if all(current[name] == goal[name] for name in row["changed_fields"]):
         return DONE
@@ -840,7 +1000,7 @@ def served_states(es: Any, index_name: str, changed: Sequence[Mapping[str, Any]]
     :raises ApplyRefused: When any document is missing, has another canonical id or holds neither the start nor the
         goal values.
     """
-    served = fetch_served(es, index_name, [row["doc_id"] for row in changed])
+    served = fetch_rows(es, index_name, changed)
     states = {row["doc_id"]: document_state(row, served.get(row["doc_id"]), rollback) for row in changed}
     blocked = sorted(doc_id for doc_id, state in states.items() if state not in (TO_WRITE, DONE))
     if blocked:
@@ -886,10 +1046,10 @@ def execute_rows(es: Any, index_name: str, changed: Sequence[Mapping[str, Any]],
             failures = write_partial_updates(es, index_name, [
                 (row["doc_id"], partial_doc({name: row[goal_key][name] for name in row["changed_fields"]}))
                 for row in chunk])
-            readback = fetch_served(es, index_name, [row["doc_id"] for row in chunk])
+            readback = fetch_rows(es, index_name, chunk)
             for row in chunk:
                 source = readback.get(row["doc_id"])
-                current = image_fields(source) if source is not None else None
+                current = document_fields(source, row["after"]) if source is not None else None
                 mismatched = (list(row["changed_fields"]) if current is None else
                               [name for name in row["changed_fields"] if current[name] != row[goal_key][name]])
                 error = failures.get(row["doc_id"])
@@ -925,7 +1085,7 @@ def archive_plan(plan_path: Any, stamp: str) -> Path:
 def apply_plan(plan_path: Any = DEFAULT_PLAN, *, merged_path: Any = DEFAULT_MERGED,
                corrections_path: Any = DEFAULT_CORRECTIONS, index_name: str = LIVE_INDEX_NAME,
                max_docs: int = DEFAULT_MAX_DOCS, result_path: Any = DEFAULT_RESULT,
-               es_client: Optional[Any] = None) -> Dict[str, Any]:
+               es_client: Optional[Any] = None, allow_live: bool = False) -> Dict[str, Any]:
     """Apply a dry-run plan to the index (the ``--apply`` path): checks, archive copy, writes, read-back.
 
     :param plan_path: Plan written by :func:`dry_run`.
@@ -935,10 +1095,12 @@ def apply_plan(plan_path: Any = DEFAULT_PLAN, *, merged_path: Any = DEFAULT_MERG
     :param max_docs: Most documents this run may change.
     :param result_path: Result JSONL.
     :param es_client: Elasticsearch client (default: from the repository ``.env``).
+    :param allow_live: ``--i-know-this-is-live``: required when *index_name* is the served index.
     :return: Summary counts plus ``archived_plan``.
     :rtype: Dict[str, Any]
     :raises ApplyRefused: When a refusal rule applies (nothing is written).
     """
+    check_live_gate(index_name, allow_live)
     header, rows = read_plan(plan_path)
     check_plan_current(header, plan_path, merged_path, corrections_path)
     changed = check_target_and_size(header, rows, index_name, max_docs)
@@ -964,7 +1126,7 @@ def apply_plan(plan_path: Any = DEFAULT_PLAN, *, merged_path: Any = DEFAULT_MERG
 
 def rollback_plan(plan_path: Any, *, execute: bool = False, index_name: str = LIVE_INDEX_NAME,
                   max_docs: int = DEFAULT_MAX_DOCS, result_path: Any = DEFAULT_ROLLBACK_RESULT,
-                  es_client: Optional[Any] = None) -> Dict[str, Any]:
+                  es_client: Optional[Any] = None, allow_live: bool = False) -> Dict[str, Any]:
     """Restore a plan's before values (``--rollback PLAN``); writes only with ``execute`` (``--apply``).
 
     The merged-file freshness checks do not apply (a rollback restores what the index held), the index, size and
@@ -976,10 +1138,13 @@ def rollback_plan(plan_path: Any, *, execute: bool = False, index_name: str = LI
     :param max_docs: Most documents this run may change.
     :param result_path: Result JSONL.
     :param es_client: Elasticsearch client (default: from the repository ``.env``).
+    :param allow_live: ``--i-know-this-is-live``: required with *execute* when *index_name* is the served index.
     :return: Summary counts.
     :rtype: Dict[str, Any]
     :raises ApplyRefused: When a refusal rule applies (nothing is written).
     """
+    if execute:
+        check_live_gate(index_name, allow_live)
     header, rows = read_plan(plan_path)
     changed = check_target_and_size(header, rows, index_name, max_docs)
     if not changed:
@@ -1032,6 +1197,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--apply", action="store_true",
                         help="Write to the index (apply --plan, or with --rollback restore). Without it nothing is "
                              "written.")
+    parser.add_argument("--i-know-this-is-live", dest="allow_live", action="store_true",
+                        help="Second gate: needed together with --apply (and with --rollback --apply) when the "
+                             "target is the served index or a previous one (LIVE_INDEX_NAMES).")
     return parser
 
 
@@ -1049,11 +1217,11 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         if args.rollback:
             summary = rollback_plan(args.rollback, execute=args.apply, index_name=args.index, max_docs=args.max_docs,
-                                    result_path=args.result or DEFAULT_ROLLBACK_RESULT)
+                                    result_path=args.result or DEFAULT_ROLLBACK_RESULT, allow_live=args.allow_live)
         elif args.apply:
             summary = apply_plan(args.plan, merged_path=args.merged, corrections_path=args.corrections,
                                  index_name=args.index, max_docs=args.max_docs,
-                                 result_path=args.result or DEFAULT_RESULT)
+                                 result_path=args.result or DEFAULT_RESULT, allow_live=args.allow_live)
         else:
             dry_run(args.merged, args.corrections, index_name=args.index, plan_path=args.plan,
                     report_path=args.report, max_docs=args.max_docs, note=args.note)
