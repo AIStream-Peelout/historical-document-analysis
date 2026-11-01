@@ -551,3 +551,192 @@ def test_dominance_ratio_and_triage() -> None:
     assert bl.triage_band(bl.dominance_ratio("a", spill, {"a": {0: pair(0.3), 1: pair(0.25)}})) == "competing_text"
     assert bl.dominance_ratio("a", {"image_index": 0, "reasons": ["n3_below_p95"]}, pairs) is None
     assert bl.triage_band(None) is None
+
+
+# ------------------------------------------------------------------------------------ slip-corrected images manifest
+
+def test_decide_document_slip_side_relaxes_p95_like_a_side_label() -> None:
+    """Between p95 and p99 a side is accepted when the image's slip names its side, even without a file-name token;
+    a slip naming the other side relaxes nothing, and the 5-matched-grams rule still holds."""
+    side = bl.make_side(record("S", SIDE_TEXT, side="1v"), 0, [])
+    slipped = [bl.ImageInfo("S", 0, "S_0.jpg", "/tmp/S_0.jpg", "u/S/0", "S-0", 100, 120, "", "1r"),
+               bl.ImageInfo("S", 1, "S_1.jpg", "/tmp/S_1.jpg", "u/S/1", "S-1", 100, 120, "", "1v")]
+    out = bl.decide_document([side], slipped, {side.key: {0: pair(0.0), 1: pair(0.15)}}, {})
+    assert out[side.key]["outcome"] == "accepted" and out[side.key]["basis"] == "p95+slip_side"
+    assert bl.priors_of(side, slipped[1]) == {"side_label": None, "slip_side": True, "order_prior": None}
+    wrong = bl.decide_document([side], slipped, {side.key: {0: pair(0.15), 1: pair(0.0)}}, {})
+    assert wrong[side.key]["outcome"] == "needs_review"
+    assert wrong[side.key]["reasons"] == ["clears_p95_not_p99_without_agreeing_prior"]
+    both = [bl.ImageInfo("S", 0, "S_0.jpg", "/tmp/S_0.jpg", "u/S/0", "S-0", 100, 120, "1v", "1v")]
+    out = bl.decide_document([side], both, {side.key: {0: pair(0.15)}}, {})
+    assert out[side.key]["basis"] == "p95+slip_side" and out[side.key]["outcome"] == "accepted"
+    short = bl.make_side(record("S", LETTERS + LETTERS[0], side="v"), 0, [])          # 20 4-grams
+    thin = bl.decide_document([short], slipped[1:], {short.key: {1: pair(0.15, p95=0.1, p99=0.2)}}, {})
+    assert thin[short.key]["basis"] == "p95+slip_side" and thin[short.key]["outcome"] == "needs_review"
+    assert thin[short.key]["reasons"] == [bl.UNDER_MATCHED_REASON]
+
+
+def test_load_images_applies_moves_detachments_and_slip_sides(tmp_path: Path) -> None:
+    """A corrected manifest: a moved row joins its new document without the old file-name token, a detached row is
+    nobody's image, an emptied document stays with no images, and slip sides reach the images.
+
+    :param tmp_path: pytest's temporary directory.
+    """
+    base = {"file_name": "f.jpg", "path": "/tmp/f.jpg", "url": "u", "width": 10, "height": 10}
+    rows = [dict(base, canonical_id="A", old_canonical_id="A", image_index=0, sha256="a0", side_token="r", folio=1,
+                 slip_side="1r"),
+            dict(base, canonical_id="A", old_canonical_id="B", image_index=1, sha256="b0", side_token=None, folio=None,
+                 old_side_token="r", slip_side="1v"),
+            dict(base, canonical_id=None, old_canonical_id="B", image_index=None, sha256="b1", side_token="v", folio=1,
+                 slip_side=None),
+            dict(base, canonical_id="C", image_index=0, sha256="c0", side_token="none", folio=None)]
+    path = tmp_path / "images_manifest_v2.jsonl"
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    images = bl.load_images(path)
+    assert sorted(images) == ["A", "B", "C"] and images["B"] == []
+    assert [(im.index, im.token, im.slip_side, im.old_canonical_id) for im in images["A"]] == [(0, "1r", "1r", ""),
+                                                                                             (1, "", "1v", "B")]
+    assert images["C"][0].slip_side == "" and images["C"][0].old_canonical_id == ""
+    assert bl.manifest_corrections(path) == {"rows": 4, "detached": 1, "relabelled": 1, "with_slip_side": 2}
+    moved = images["A"][1]
+    assert bl.row_stem(bl.make_side(record("A", SIDE_TEXT, side="v"), 0, []), moved) == ("1v", "legacy_A_1v_c1_page")
+
+
+def test_build_with_a_corrected_images_manifest(tmp_path: Path) -> None:
+    """A photo filed under the wrong document: not found with the original manifest, accepted after the slip pass
+    moves it (``--images-manifest``); the emptied document's side becomes ``no_image``; the original manifest stays
+    the default.
+
+    :param tmp_path: pytest's temporary directory.
+    """
+    rng = random.Random(11)
+    t = {name: hebrew_text(rng, 40) for name in ("P", "O")}
+    records = [record("Doc_P", t["P"], side="1r"), record("Doc_O", t["O"])]
+    images = [{"cid": "Doc_P", "index": 0, "token": "1r"}, {"cid": "Doc_O", "index": 0, "token": "1r"}]
+    reads = {"Doc_P#0": (hebrew_text(rng), 8), "Doc_O#0": (noisy(t["P"], rng), 8)}     # P's photo filed under O
+    for i in range(60):
+        images.append({"cid": f"Noise_{i}", "index": 0, "token": ""})
+        reads[f"Noise_{i}#0"] = (hebrew_text(rng), 8)
+    src = tmp_path / "legacy_store_diplomatic"
+    write_inputs(src, records, images, reads)
+    leakage = bl.LeakageResources(held=d25.HeldOut(), pgp_index={}, gate=fake_gate(), gt_sets={}, pgpids={})
+
+    before = bl.build(src, tmp_path / "legacy_store_diplomatic_v1", None, None, None, False, 50, 1, leakage)
+    assert before["rows"] == {"train_page": 0, "val": 0} or sum(before["rows"].values()) == 0
+    assert before["scope"]["images_manifest"]["relabelled"] == 0
+    first = {d["key"]: d for d in (json.loads(l) for l in
+                                    (tmp_path / "legacy_store_diplomatic_v1" / "decisions.jsonl").read_text().splitlines())}
+    assert first["Doc_P#0"]["outcome"] == "unassigned" and first["Doc_P#0"]["reasons"] == ["not_found"]
+
+    manifest = [json.loads(l) for l in (src / "images_manifest.jsonl").read_text().splitlines()]
+    v2 = []
+    for row in manifest:
+        row = dict(row, old_canonical_id=row["canonical_id"], slip_side=None, relabel_source=None)
+        if row["canonical_id"] == "Doc_O":         # its slip names Doc_P, photograph 1
+            row.update(canonical_id="Doc_P", image_index=1, old_image_index=0, side_token=None, folio=None,
+                       old_side_token="r", slip_side="1r", relabel_source="shelf_mark_slip")
+        elif row["canonical_id"] == "Doc_P":       # its slip names a fragment outside the set
+            row.update(canonical_id=None, image_index=None, relabel_source="shelf_mark_slip")
+        v2.append(row)
+    corrected = src / "images_manifest_v2.jsonl"
+    corrected.write_text("".join(json.dumps(r) + "\n" for r in v2), encoding="utf-8")
+
+    out = tmp_path / "legacy_store_diplomatic_v2"
+    after = bl.build(src, out, None, tmp_path / "R.md", tmp_path / "q.jsonl", True, 50, 1, leakage,
+                     images_manifest=corrected)
+    decisions = {d["key"]: d for d in (json.loads(l) for l in (out / "decisions.jsonl").read_text().splitlines())}
+    assert decisions["Doc_P#0"]["outcome"] == "accepted" and decisions["Doc_P#0"]["image_index"] == 1
+    assert decisions["Doc_P#0"]["images"][0]["filed_under"] == "Doc_O"
+    assert decisions["Doc_O#0"]["outcome"] == "unassigned" and decisions["Doc_O#0"]["reasons"] == [bl.NO_IMAGE_REASON]
+    rows = [json.loads(l) for l in (out / "manifest.jsonl").read_text().splitlines()]
+    assert [r["stem"] for r in rows] == ["legacy_Doc_P_1r_c1_page"]
+    assert rows[0]["image_filed_under"] == "Doc_O" and rows[0]["image_slip_side"] == "1r"
+    assert rows[0]["prior_conflict"] is False and decisions["Doc_P#0"]["prior_conflict"] is False
+    assert after["scope"]["images_manifest"] == {"path": str(corrected), "rows": len(v2), "detached": 1,
+                                                 "relabelled": 1, "with_slip_side": 1}
+    assert "moved to another document by a shelf-mark slip 1" in (tmp_path / "R.md").read_text()
+
+
+# ------------------------------------------------------------------------------- slip side against file-name token
+
+def slip_image(cid: str, index: int, token: str, slip_side: str) -> bl.ImageInfo:
+    """A synthetic image with a file-name token and a slip side.
+
+    :param cid: Document.
+    :param index: Image index.
+    :param token: File-name token.
+    :param slip_side: Side the shelf-mark slip names.
+    :return: Image.
+    """
+    return bl.ImageInfo(cid, index, f"{cid}_{index}.jpg", f"/tmp/{cid}_{index}.jpg", f"u/{cid}/{index}",
+                        f"{cid}-{index}", 100, 120, token, slip_side)
+
+
+def test_sides_conflict_and_image_side() -> None:
+    """Token and slip side conflict only when both are set and disagree (leaf too when both have one); the slip side
+    names the image, an agreeing token only fills in a missing leaf."""
+    assert bl.sides_conflict("1v", "1r") and bl.sides_conflict("1r", "2r") and bl.sides_conflict("1r", "v")
+    assert not bl.sides_conflict("r", "1r") and not bl.sides_conflict("1v", "v") and not bl.sides_conflict("1v", "1v")
+    assert not bl.sides_conflict("", "1r") and not bl.sides_conflict("1r", "")
+    pairs = (("1v", "1r"), ("1v", ""), ("", "2r"), ("1v", "v"), ("r", "1r"), ("", ""))
+    assert [bl.image_side(slip_image("X", 0, tok, slip)) for tok, slip in pairs] == ["1r", "1v", "2r", "1v", "1r", ""]
+
+
+def test_conflicting_token_and_slip_side_relax_nothing() -> None:
+    """Token 1v and slip side 1r (a photograph-number slip read against the file name): a side labelled 1r, 1v, r or
+    v between p95 and p99 goes to review with the conflict recorded; nothing breaks ties; p99 still accepts."""
+    im = [slip_image("R", 0, "1v", "1r")]
+    for label in ("1r", "1v", "r", "v"):
+        side = bl.make_side(record("R", SIDE_TEXT, side=label), 0, [])
+        d = bl.decide_document([side], im, {side.key: {0: pair(0.15)}}, {})[side.key]
+        assert d["outcome"] == "needs_review" and d["basis"] is None and d["prior_conflict"] is True, label
+        assert d["reasons"] == ["clears_p95_not_p99_without_agreeing_prior", bl.PRIOR_CONFLICT_REASON], label
+        assert bl.relaxing_prior(side, im[0]) is None and bl.prior_weight(side, im[0]) == 0.0, label
+    raw = bl.priors_of(bl.make_side(record("R", SIDE_TEXT, side="1v"), 0, []), im[0])
+    assert raw == {"side_label": True, "slip_side": False, "order_prior": None}      # diagnostics keep both sources
+    bare = bl.make_side(record("R", SIDE_TEXT), 0, [])
+    d = bl.decide_document([bare], im, {bare.key: {0: pair(0.15)}}, {})[bare.key]
+    assert d["reasons"] == ["clears_p95_not_p99_without_agreeing_prior"] and d["prior_conflict"] is True
+    strong = bl.make_side(record("R", SIDE_TEXT, side="1r"), 0, [])
+    d = bl.decide_document([strong], im, {strong.key: {0: pair(0.5)}}, {})[strong.key]
+    assert d["outcome"] == "accepted" and d["basis"] == "p99" and d["prior_conflict"] is True
+
+
+def test_slip_side_alone_relaxes() -> None:
+    """An image with a slip side and no file-name token relaxes p95 through the slip side, without a conflict."""
+    im = [slip_image("Q", 0, "", "1r")]
+    for label in ("1r", "r"):
+        side = bl.make_side(record("Q", SIDE_TEXT, side=label), 0, [])
+        d = bl.decide_document([side], im, {side.key: {0: pair(0.15)}}, {})[side.key]
+        assert d["outcome"] == "accepted" and d["basis"] == "p95+slip_side" and d["prior_conflict"] is False, label
+        assert bl.prior_weight(side, im[0]) == bl.PRIOR_EPS["slip_side"]
+    other = bl.make_side(record("Q", SIDE_TEXT, side="1v"), 0, [])
+    d = bl.decide_document([other], im, {other.key: {0: pair(0.15)}}, {})[other.key]
+    assert d["outcome"] == "needs_review" and d["reasons"] == ["clears_p95_not_p99_without_agreeing_prior"]
+
+
+def test_agreeing_token_and_slip_side_relax_once() -> None:
+    """A token and a slip side naming the same side relax once (basis ``p95+slip_side``, one tie-break weight); an
+    agreeing token fills in a leafless slip side, and a leafless token agrees with a slip side's letter."""
+    for token, slip in (("1v", "1v"), ("1v", "v"), ("v", "1v")):
+        im = [slip_image("G", 0, token, slip)]
+        side = bl.make_side(record("G", SIDE_TEXT, side="1v"), 0, [])
+        d = bl.decide_document([side], im, {side.key: {0: pair(0.15)}}, {})[side.key]
+        assert d["outcome"] == "accepted" and d["basis"] == "p95+slip_side" and d["prior_conflict"] is False, slip
+        assert bl.relaxing_prior(side, im[0]) in bl.RELAXING_PRIORS
+        assert bl.prior_weight(side, im[0]) == bl.PRIOR_EPS["slip_side"], slip
+    token_only = bl.make_side(record("G", SIDE_TEXT, side="v"), 0, [])
+    d = bl.decide_document([token_only], [image("G", 0, "1v")], {token_only.key: {0: pair(0.15)}}, {})[token_only.key]
+    assert d["basis"] == "p95+side_label" and d["prior_conflict"] is False
+
+
+def test_row_stem_prefers_the_slip_side() -> None:
+    """The stem names the slip side over the file-name token, also when the two disagree; an agreeing token fills in a
+    leafless slip side; the label only when the image names no side."""
+    side = bl.make_side(record("Doc_S", SIDE_TEXT, side="2v"), 0, [])
+    assert bl.row_stem(side, slip_image("Doc_S", 0, "1v", "1r")) == ("1r", "legacy_Doc_S_1r_c0_page")
+    assert bl.row_stem(side, slip_image("Doc_S", 1, "1v", "1v")) == ("1v", "legacy_Doc_S_1v_c1_page")
+    assert bl.row_stem(side, slip_image("Doc_S", 2, "1v", "v")) == ("1v", "legacy_Doc_S_1v_c2_page")
+    assert bl.row_stem(side, slip_image("Doc_S", 3, "", "2r")) == ("2r", "legacy_Doc_S_2r_c3_page")
+    assert bl.row_stem(side, slip_image("Doc_S", 4, "1r", "")) == ("1r", "legacy_Doc_S_1r_c4_page")
+    assert bl.row_stem(side, slip_image("Doc_S", 5, "", "")) == ("2v", "legacy_Doc_S_2v_c5_page")

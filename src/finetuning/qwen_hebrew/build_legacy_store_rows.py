@@ -30,9 +30,12 @@ Gemini reads. Nothing is called here: no API, no LM Studio, no Kraken.
    runner-up's; the other documents' copies are dropped (``shared_text_not_owner``); no document clearing, a tie, or a
    lead under that margin (``ownership_contested``) sends every copy to review.
 5. **Assignment.** Per document, sides are matched one to one to distinct images by Hungarian assignment on 4-gram
-   recall (side labels and the stored-order prior only break ties). An assigned pair is accepted when the recall
-   clears the side's p99 for the image's read-length bin (p95 when the side label agrees with the image's file-name
-   token; the order prior never relaxes the threshold), the side shares at least :data:`MIN_MATCHED_GRAMS` 4-grams
+   recall (side labels, slip sides and the stored-order prior only break ties). An assigned pair is accepted when the
+   recall clears the side's p99 for the image's read-length bin (p95 when the side label agrees with the image's
+   side: the side its shelf-mark slip names, ``slip_side`` of a corrected manifest, which replaces the file-name
+   token, else the token; an image whose slip side and token disagree relaxes nothing and its decision carries
+   ``prior_conflict``; the order prior never relaxes the threshold), the side shares at least
+   :data:`MIN_MATCHED_GRAMS` 4-grams
    with the read, its 3-gram recall clears the 3-gram p95, no other side of the document clears its own p95 on the
    image, and the side clears its p95 on no other image. Everything else goes to ``needs_review`` (some image clears
    p95) or ``unassigned`` (none does), with reasons. An image accepted for two documents goes to review.
@@ -51,9 +54,15 @@ Gemini reads. Nothing is called here: no API, no LM Studio, no Kraken.
    the Arabic-script benchmark v0 and the clean v2 val texts. Any hit holds the row out with its reason.
 8. **Rows.** KTIV ``FEATURES`` schema: ``question`` = ``SCRIPT_NEUTRAL_PROMPT``, ``answer`` = the cleaned text
    (explicit line breaks kept where the record has them, flat otherwise), ``task`` = ``fragment_transcribe``,
-   ``section`` = :data:`SECTION`, stem ``legacy_<canonical_id>_<side>_c<k>_page`` (``<side>`` = the image's file-name
-   token, the record's label only when the image has none). Splits ``train_page`` / ``val``
-   by a hash of the document (``build_pgp_arabic_editions.split_of``, 5 %).
+   ``section`` = :data:`SECTION`, stem ``legacy_<canonical_id>_<side>_c<k>_page`` (``<side>`` = the image's side,
+   :func:`image_side`: its slip side, else its file-name token; else the record's label). Splits ``train_page`` /
+   ``val`` by a hash of the document (``build_pgp_arabic_editions.split_of``, 5 %).
+
+Images manifest: ``<source>/images_manifest.jsonl`` by default; ``--images-manifest`` takes a corrected one (the
+shelf-mark slip pass, ``images_manifest_v2.jsonl``) whose rows may carry ``slip_side``, ``old_canonical_id`` and
+``relabel_source``. A row with ``canonical_id`` null is detached (its slip names a fragment outside the set): it is no
+document's image, though its read stays in the null pool. A document whose every image moved away or was detached
+keeps its side records, which go ``unassigned`` with reason ``no_image``.
 
 Output::
 
@@ -66,7 +75,7 @@ used for training until the build report has been reviewed.
 Usage::
 
     PYTHONPATH=. .venv/bin/python -m src.finetuning.qwen_hebrew.build_legacy_store_rows [--source DIR] [--out DIR]
-        [--docs-list FILE] [--report FILE] [--eye-queue FILE] [--no-export]
+        [--images-manifest FILE] [--docs-list FILE] [--report FILE] [--eye-queue FILE] [--no-export]
 """
 import argparse
 import csv
@@ -117,7 +126,14 @@ MIN_BIN_NULL = 20
 N_BOOT = 500
 SEED = 1030
 #: tie-break weights added to the recall in the Hungarian assignment (priors never outweigh a recall difference)
-PRIOR_EPS = {"side_label": 1e-6, "order_prior": 1e-7}
+PRIOR_EPS = {"side_label": 1e-6, "slip_side": 1e-6, "order_prior": 1e-7}
+#: sources of the side-label prior that let p95 stand in for p99 when they name the assigned image: ``side_label`` (the
+#: file-name token) or ``slip_side`` (the side the shelf-mark slip names, which replaces the token); the order prior
+#: never does
+RELAXING_PRIORS = ("side_label", "slip_side")
+#: review reason when an image's slip side and file-name token disagree and the side label agrees with one of them
+PRIOR_CONFLICT_REASON = "slip_side_conflicts_with_file_token"
+NO_IMAGE_REASON = "no_image"
 LETTER_RATIO_RANGE = (0.5, 1.5)
 MAX_READ_OVER_TARGET = 2.0                 # read letters / target letters above this: the page holds untranscribed text
 MIN_MATCHED_GRAMS = 5                      # an acceptance needs at least this many matched PRIMARY_N-grams
@@ -312,6 +328,8 @@ class ImageInfo:
     :ivar width: Pixels.
     :ivar height: Pixels.
     :ivar token: File-name side token with its leaf (``"1r"``, ``"2v"``), ``""`` when the name gives none.
+    :ivar slip_side: Side the image's shelf-mark slip names (``"1v"``), ``""`` when unknown.
+    :ivar old_canonical_id: Document the image was filed under before the slip correction (``""``: unchanged).
     """
     canonical_id: str
     index: int
@@ -322,6 +340,8 @@ class ImageInfo:
     width: int
     height: int
     token: str
+    slip_side: str = ""
+    old_canonical_id: str = ""
 
 
 def image_token(row: Mapping[str, Any]) -> str:
@@ -342,17 +362,42 @@ def image_token(row: Mapping[str, Any]) -> str:
 def load_images(manifest: Path) -> Dict[str, List[ImageInfo]]:
     """Images per document, in image order.
 
-    :param manifest: ``images_manifest.jsonl``.
+    A corrected manifest (slip pass) may detach a row (``canonical_id`` null: skipped) or move it to another document
+    (``old_canonical_id`` differs); a document that lost every image keeps an empty list, so its side records are
+    still decided (``unassigned``, :data:`NO_IMAGE_REASON`).
+
+    :param manifest: ``images_manifest.jsonl`` or a corrected ``images_manifest_v2.jsonl``.
     :type manifest: Path
     :return: ``{canonical_id: [ImageInfo]}``.
     :rtype: Dict[str, List[ImageInfo]]
     """
     out: Dict[str, List[ImageInfo]] = defaultdict(list)
     for row in read_jsonl(manifest):
-        out[row["canonical_id"]].append(ImageInfo(row["canonical_id"], int(row["image_index"]), row["file_name"],
-                                                  row["path"], row["url"], row["sha256"], int(row["width"]),
-                                                  int(row["height"]), image_token(row)))
+        old = row.get("old_canonical_id") or ""
+        if old:
+            out.setdefault(old, [])
+        cid = row.get("canonical_id")
+        if not cid:
+            continue
+        out[cid].append(ImageInfo(cid, int(row["image_index"]), row["file_name"], row["path"], row["url"],
+                                  row["sha256"], int(row["width"]), int(row["height"]), image_token(row),
+                                  row.get("slip_side") or "", old if old and old != cid else ""))
     return {cid: sorted(images, key=lambda im: im.index) for cid, images in out.items()}
+
+
+def manifest_corrections(manifest: Path) -> Dict[str, int]:
+    """What a corrected images manifest changed (zero counts for an original one).
+
+    :param manifest: Images manifest.
+    :type manifest: Path
+    :return: ``{rows, detached, relabelled, with_slip_side}``.
+    :rtype: Dict[str, int]
+    """
+    rows = read_jsonl(manifest)
+    return {"rows": len(rows), "detached": sum(1 for r in rows if not r.get("canonical_id")),
+            "relabelled": sum(1 for r in rows if r.get("canonical_id") and r.get("old_canonical_id")
+                              and r["old_canonical_id"] != r["canonical_id"]),
+            "with_slip_side": sum(1 for r in rows if r.get("canonical_id") and r.get("slip_side"))}
 
 
 @dataclass
@@ -760,18 +805,107 @@ def label_agrees(label: str, token: str) -> Optional[bool]:
     return token.endswith(label)
 
 
-def priors_of(side: SideRecord, image: ImageInfo) -> Dict[str, Optional[bool]]:
-    """The tie-break priors of placing a side on an image.
+def sides_conflict(token: str, slip_side: str) -> bool:
+    """Whether an image's file-name token and the side its shelf-mark slip names disagree (the slip pass's agreement
+    rule: two sides with a leaf must be equal, otherwise the r / v letters must match).
+
+    :param token: File-name token (``"1r"``, ``"r"`` or ``""``).
+    :type token: str
+    :param slip_side: Slip side (``"1v"``, ``"v"`` or ``""``).
+    :type slip_side: str
+    :return: True only when both are set and disagree.
+    :rtype: bool
+    """
+    if not token or not slip_side:
+        return False
+    if len(token) > 1 and len(slip_side) > 1:
+        return token != slip_side
+    return token[-1] != slip_side[-1]
+
+
+def image_side(image: ImageInfo) -> str:
+    """The side an image shows: the side its shelf-mark slip names, which replaces the file-name token (also when the
+    two disagree), else the token. An agreeing token only fills in the leaf of a slip side without one (slip ``v`` and
+    token ``1v`` give ``1v``).
+
+    :param image: Image.
+    :type image: ImageInfo
+    :return: The side, ``""`` when the image has neither.
+    :rtype: str
+    """
+    if not image.slip_side:
+        return image.token
+    if len(image.slip_side) == 1 and len(image.token) > 1 and not sides_conflict(image.token, image.slip_side):
+        return image.token
+    return image.slip_side
+
+
+def side_label_prior(side: SideRecord, image: ImageInfo) -> Tuple[str, Optional[bool], bool]:
+    """The side-label prior in effect when placing a side on an image: the side label against :func:`image_side`.
 
     :param side: Side.
     :type side: SideRecord
     :param image: Image.
     :type image: ImageInfo
-    :return: ``{"side_label": bool or None, "order_prior": bool or None}``.
+    :return: ``(source, agreement, conflict)``: ``source`` is ``slip_side`` when the image has a slip side, else
+        ``side_label`` (the file-name token); ``agreement`` is :func:`label_agrees` against the image's side (None when
+        either is missing); ``conflict`` is :func:`sides_conflict` of the token and the slip side.
+    :rtype: Tuple[str, Optional[bool], bool]
+    """
+    source = "slip_side" if image.slip_side else "side_label"
+    return source, label_agrees(side.label, image_side(image)), sides_conflict(image.token, image.slip_side)
+
+
+def relaxing_prior(side: SideRecord, image: ImageInfo) -> Optional[str]:
+    """The one prior that lets p95 stand in for p99 (and breaks ties) on an image, if any.
+
+    The slip side replaces the file-name token, so an image relaxes at most once; an image whose slip side and token
+    disagree relaxes nothing, whichever of the two the side label names.
+
+    :param side: Side.
+    :type side: SideRecord
+    :param image: Image.
+    :type image: ImageInfo
+    :return: ``side_label`` or ``slip_side`` (a :data:`RELAXING_PRIORS` name), or None.
+    :rtype: Optional[str]
+    """
+    source, agrees, conflict = side_label_prior(side, image)
+    return source if agrees and not conflict else None
+
+
+def prior_weight(side: SideRecord, image: ImageInfo) -> float:
+    """Tie-break weight of placing a side on an image (:data:`PRIOR_EPS`): the relaxing prior in effect and the
+    stored-order prior.
+
+    :param side: Side.
+    :type side: SideRecord
+    :param image: Image.
+    :type image: ImageInfo
+    :return: The weight added to the recall in the assignment.
+    :rtype: float
+    """
+    relaxing = relaxing_prior(side, image)
+    weight = PRIOR_EPS[relaxing] if relaxing else 0.0
+    if side.order_prior_index is not None and side.order_prior_index == image.index:
+        weight += PRIOR_EPS["order_prior"]
+    return weight
+
+
+def priors_of(side: SideRecord, image: ImageInfo) -> Dict[str, Optional[bool]]:
+    """The side label's agreement with each source of an image's side, and the order prior (diagnostics; the
+    assignment and the acceptance use :func:`relaxing_prior` and :func:`prior_weight`).
+
+    :param side: Side.
+    :type side: SideRecord
+    :param image: Image.
+    :type image: ImageInfo
+    :return: ``{"side_label": bool or None, "slip_side": bool or None, "order_prior": bool or None}``; ``side_label``
+        compares the side label with the file-name token, ``slip_side`` with the side the image's shelf-mark slip names.
     :rtype: Dict[str, Optional[bool]]
     """
     order = None if side.order_prior_index is None else side.order_prior_index == image.index
-    return {"side_label": label_agrees(side.label, image.token), "order_prior": order}
+    return {"side_label": label_agrees(side.label, image.token), "slip_side": label_agrees(side.label, image.slip_side),
+            "order_prior": order}
 
 
 def matched_grams(side: SideRecord, pair: Mapping[str, Any]) -> int:
@@ -977,9 +1111,10 @@ def decide_document(sides: Sequence[SideRecord], images: Sequence[ImageInfo],
         ``needs_review`` decision.
     :type blocked: Mapping[str, Dict[str, Any]]
     :return: Per side key: ``outcome`` (``accepted`` / ``needs_review`` / ``unassigned``), ``reasons``, ``image_index``
-        (assigned image or None), ``basis`` (``p99`` or ``p95+side_label``), ``matched_n4`` (matched 4-grams on the
-        image, when a basis holds), ``conflicts`` (side keys clearing p95 on the image), ``other_images`` (images where
-        the side also clears p95).
+        (assigned image or None), ``basis`` (``p99``, or ``p95+`` and the one relaxing prior, :func:`relaxing_prior`:
+        ``p95+side_label`` or ``p95+slip_side``), ``prior_conflict`` (the assigned image's slip side and file-name token
+        disagree, so nothing relaxed), ``matched_n4`` (matched 4-grams on the image, when a basis holds),
+        ``conflicts`` (side keys clearing p95 on the image), ``other_images`` (images where the side also clears p95).
     :rtype: Dict[str, Dict[str, Any]]
     """
     def pair(side: SideRecord, image: ImageInfo) -> Dict[str, Any]:
@@ -1014,8 +1149,7 @@ def decide_document(sides: Sequence[SideRecord], images: Sequence[ImageInfo],
         for c, image in enumerate(images):
             p = pair(side, image)
             if p.get("usable"):
-                prior = priors_of(side, image)
-                weights[r, c] = p[f"n{PRIMARY_N}"] + sum(PRIOR_EPS[k] for k, v in prior.items() if v)
+                weights[r, c] = p[f"n{PRIMARY_N}"] + prior_weight(side, image)
     assigned: Dict[str, ImageInfo] = {}
     if weights.size:
         rows, cols = linear_sum_assignment(weights, maximize=True)
@@ -1025,33 +1159,41 @@ def decide_document(sides: Sequence[SideRecord], images: Sequence[ImageInfo],
         if side.key in blocked:
             out[side.key] = dict(blocked[side.key])
             out[side.key].setdefault("image_index", None)
+            out[side.key].setdefault("prior_conflict", False)
             continue
         usable = [im for im in images if pair(side, im).get("usable")]
         cleared = [im for im in usable if clears95(side, im)]
         image = assigned.get(side.key)
         decision: Dict[str, Any] = {"outcome": "", "reasons": [], "image_index": image.index if image else None,
-                                    "basis": None, "conflicts": [], "other_images": []}
+                                    "basis": None, "prior_conflict": False, "conflicts": [], "other_images": []}
         out[side.key] = decision
         if not side.script or not side.grams[PRIMARY_N]:
             decision.update(outcome="unassigned", reasons=["side_without_grams"], image_index=None)
+            continue
+        if not images:
+            decision.update(outcome="unassigned", reasons=[NO_IMAGE_REASON], image_index=None)
             continue
         if not usable:
             decision.update(outcome="unassigned", reasons=["no_usable_read"], image_index=None)
             continue
         p = pair(side, image) if image is not None else {"usable": False}
-        prior = priors_of(side, image) if image is not None else {}
+        relaxing = relaxing_prior(side, image) if image is not None else None
+        conflict = image is not None and sides_conflict(image.token, image.slip_side)
         basis = None
         if p.get("usable") and p["clears_p99"]:
             basis = "p99"
-        elif p.get("usable") and p["clears_p95"] and prior.get("side_label"):
-            basis = "p95+side_label"
+        elif p.get("usable") and p["clears_p95"] and relaxing:
+            basis = f"p95+{relaxing}"
         if basis is None:
             if not cleared:
                 decision.update(outcome="unassigned", reasons=["not_found"], image_index=None)
                 continue
+            decision["prior_conflict"] = conflict
             reasons = []
             if image is not None and image in cleared:
                 reasons.append("clears_p95_not_p99_without_agreeing_prior")
+                if conflict and (label_agrees(side.label, image.token) or label_agrees(side.label, image.slip_side)):
+                    reasons.append(PRIOR_CONFLICT_REASON)
             for other in cleared:
                 if image is not None and other.index == image.index:
                     continue
@@ -1061,6 +1203,7 @@ def decide_document(sides: Sequence[SideRecord], images: Sequence[ImageInfo],
                             other_images=[im.index for im in cleared])
             continue
         decision["basis"] = basis
+        decision["prior_conflict"] = conflict
         decision["matched_n4"] = matched_grams(side, p)
         conflicts = [o.key for o in sides if o.key != side.key and clears95(o, image)]
         others = [im.index for im in cleared if im.index != image.index]
@@ -1544,7 +1687,8 @@ def decide_all(sides: Sequence[SideRecord], images: Mapping[str, Sequence[ImageI
             by_doc[side.canonical_id].append(side)
     for cid, doc_sides in by_doc.items():
         blocked = {s.key: {"outcome": "needs_review", "reasons": [OWNERSHIP_REVIEW_REASONS[ownership[s.key]["role"]]],
-                           "image_index": None, "basis": None, "conflicts": [], "other_images": []}
+                           "image_index": None, "basis": None, "prior_conflict": False, "conflicts": [],
+                           "other_images": []}
                    for s in doc_sides if ownership.get(s.key, {}).get("role") in OWNERSHIP_REVIEW_REASONS}
         distinct, _ = distinct_images(images.get(cid, []))
         decisions.update(decide_document(doc_sides, distinct, pairs, blocked))
@@ -1590,8 +1734,9 @@ def language_group(main_language: Optional[str]) -> str:
 
 
 def row_stem(side: SideRecord, image: ImageInfo) -> Tuple[str, str]:
-    """The side name and stem of a row. The image's file-name token names the side (the record's label only when the
-    image has no token), so the stem names the file the row sits on; the label stays in the manifest's ``side_label``.
+    """The side name and stem of a row. The image's side names it (:func:`image_side`: the side its shelf-mark slip
+    names, else its file-name token; else the record's label), so the stem names the page the row sits on; the label
+    stays in the manifest's ``side_label``, the token in ``image_token``.
 
     :param side: Side.
     :type side: SideRecord
@@ -1600,7 +1745,7 @@ def row_stem(side: SideRecord, image: ImageInfo) -> Tuple[str, str]:
     :return: ``(side name, stem)``.
     :rtype: Tuple[str, str]
     """
-    side_name = image.token or side.label or "none"
+    side_name = image_side(image) or side.label or "none"
     return side_name, f"legacy_{safe_token(side.canonical_id)}_{safe_token(side_name)}_c{image.index}_page"
 
 
@@ -1679,7 +1824,8 @@ review may turn into exclusions.
 Built by `src/finetuning/qwen_hebrew/build_legacy_store_rows.py` on {stats['built']} from the cleaned side records of
 the legacy store's diplomatic transcriptions; each side was placed on an image by matching its letter skeleton against
 cached Kraken / Gemini reads of the images, accepted only above a per-side null (p99 of its recall against other
-documents' reads, by read length). Prompt: `{PROMPT_NAME}` (script neutral).
+documents' reads, by read length). Prompt: `{PROMPT_NAME}` (script neutral). Images manifest:
+`{stats['inputs']['images_manifest']}`.
 
 - rows: train_page {rows.get('train_page', 0)}, val {rows.get('val', 0)} ({stats['row_documents']} documents, {stats['row_letters']} letters)
 - side records: {stats['sides']['records']}; accepted pairs: {stats['sides']['outcomes'].get('accepted', 0)};
@@ -1694,7 +1840,8 @@ has the decision for every side record; `stats.json` has the funnel.
 
 def build(source: Path = SOURCE_DIR, out: Path = DEFAULT_OUT, docs_list: Optional[Path] = None,
           report: Optional[Path] = None, eye_queue: Optional[Path] = None, export: bool = True,
-          n_boot: int = N_BOOT, seed: int = SEED, leakage: Optional[LeakageResources] = None) -> Dict[str, Any]:
+          n_boot: int = N_BOOT, seed: int = SEED, leakage: Optional[LeakageResources] = None,
+          images_manifest: Optional[Path] = None) -> Dict[str, Any]:
     """Build the dataset (and its images-once export, the report and the eye queue).
 
     :param source: Input directory (cleaned sections, images manifest, cached reads).
@@ -1716,6 +1863,9 @@ def build(source: Path = SOURCE_DIR, out: Path = DEFAULT_OUT, docs_list: Optiona
     :type seed: int
     :param leakage: Leakage resources; None loads the real ones (:func:`load_leakage_resources`).
     :type leakage: Optional[LeakageResources]
+    :param images_manifest: Images manifest to use; None: ``<source>/images_manifest.jsonl``. A corrected manifest
+        (shelf-mark slip pass) may move, detach and side-label images (:func:`load_images`).
+    :type images_manifest: Optional[Path]
     :return: Statistics (also ``stats.json``).
     :rtype: Dict[str, Any]
     """
@@ -1723,7 +1873,8 @@ def build(source: Path = SOURCE_DIR, out: Path = DEFAULT_OUT, docs_list: Optiona
     from src.finetuning.qwen_hebrew.images_once import export_images_once
 
     check_out_dir(out, source)
-    images = load_images(source / "images_manifest.jsonl")
+    manifest_path = images_manifest if images_manifest is not None else source / "images_manifest.jsonl"
+    images = load_images(manifest_path)
     reads, read_info = load_reads(source / "kraken_reads.jsonl", source / "gemini_reads_arabic")
     sides = load_sides(source / "cleaned_sections.jsonl", images)
     unknown = sorted({s.canonical_id for s in sides} - set(images))
@@ -1792,12 +1943,14 @@ def build(source: Path = SOURCE_DIR, out: Path = DEFAULT_OUT, docs_list: Optiona
             "language_group": language_group(rec.get("main_language")), "section_index": rec.get("section_index"),
             "record_index": side.record_index, "column": rec.get("column"), "side": side_name, "side_label": side.label,
             "side_decision": rec.get("side_decision"), "image_index": image.index, "image_file": image.file_name,
-            "image_token": image.token, "image_path": image.path, "image_sha256": image.sha256,
+            "image_token": image.token, "image_slip_side": image.slip_side,
+            "image_filed_under": image.old_canonical_id or None, "image_path": image.path, "image_sha256": image.sha256,
             "image_width": image.width, "image_height": image.height, "family": rec.get("family"),
             "flags": rec.get("flags") or {}, "letters": rec.get("letters"), "hebrew_letters": rec.get("hebrew_letters"),
             "arabic_letters": rec.get("arabic_letters"), "gaps": rec.get("gaps"), "gap_density": rec.get("gap_density"),
             "explicit_lines": "\n" in text, "first_words": first_words(text), "script": side.script, **pair_summary(pair),
             "assignment_basis": decision["basis"], "matched_n4": decision["matched_n4"], "priors": priors_of(side, image),
+            "prior_conflict": decision["prior_conflict"],
             "coverage_flags": cover[key]["flags"], "letter_ratio": cover[key]["letter_ratio"],
             "leakage": "clean", "shared_text": ({"role": own["role"], "group_docs": own["group_docs"]} if own else None),
             "legacy_store": True, "prompt_name": PROMPT_NAME, "prompt": PROMPT}))
@@ -1805,10 +1958,11 @@ def build(source: Path = SOURCE_DIR, out: Path = DEFAULT_OUT, docs_list: Optiona
 
     # ---- statistics, outputs ------------------------------------------------------------------------------------
     stats = summarize(result, images, reads, read_info, cover, identity, text_leaks, gt_sets, manifest, docs_list)
+    stats["scope"]["images_manifest"] = {"path": str(manifest_path), **manifest_corrections(manifest_path)}
     stats.update(name=out.name, built=datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
                  rows={k: len(v) for k, v in splits.items()}, prompt_name=PROMPT_NAME,
-                 inputs={"source": str(source), "pgp_export": str(PGP_EXPORT), "merged_corpus": str(MERGED_JSONL),
-                         "n_boot": n_boot, "seed": seed})
+                 inputs={"source": str(source), "images_manifest": str(manifest_path), "pgp_export": str(PGP_EXPORT),
+                         "merged_corpus": str(MERGED_JSONL), "n_boot": n_boot, "seed": seed})
     decision_rows = decision_records(result, images, cover, identity, text_leaks)
     readme = readme_text(stats)
     sidecars = {"manifest.jsonl": "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in manifest),
@@ -1989,12 +2143,20 @@ def summarize(result: Decisions, images: Mapping[str, Sequence[ImageInfo]], read
         "side_label": {"accepted_all": agreement("side_label", accepted), "accepted_on_p99": agreement("side_label", p99_keys),
                        "labelled_records": len(labelled),
                        "labelled_outcomes": dict(Counter(decisions[k]["outcome"] for k in labelled))},
+        "slip_side": {"accepted_all": agreement("slip_side", accepted), "accepted_on_p99": agreement("slip_side", p99_keys),
+                      "images_with_slip_side": sum(1 for im in all_images if im.slip_side),
+                      "images_with_slip_side_and_token": sum(1 for im in all_images if im.slip_side and im.token),
+                      "images_slip_side_conflicts_with_token": sum(1 for im in all_images
+                                                                   if sides_conflict(im.token, im.slip_side)),
+                      "decisions_with_prior_conflict": dict(Counter(d["outcome"] for d in decisions.values()
+                                                                    if d.get("prior_conflict")))},
         "order_prior": {"accepted_all": agreement("order_prior", accepted),
                         "accepted_on_p99": agreement("order_prior", p99_keys),
                         "records_with_order_prior": sum(1 for s in sides.values() if s.order_prior_index is not None)},
         "file_tokens": {"accepted_images_with_token": sum(1 for k in accepted if next(
             im for im in images[sides[k].canonical_id] if im.index == decisions[k]["image_index"]).token)},
         "side_label_vs_best_image": prior_vs_best_image(result, images, "side_label"),
+        "slip_side_vs_best_image": prior_vs_best_image(result, images, "slip_side"),
         "order_prior_vs_best_image": prior_vs_best_image(result, images, "order_prior")}
     review = [k for k, d in decisions.items() if d["outcome"] == "needs_review"]
     triage: Dict[str, Any] = {"needs_review": len(review),
@@ -2100,11 +2262,12 @@ def decision_records(result: Decisions, images: Mapping[str, Sequence[ImageInfo]
             "side_decision": rec.get("side_decision"), "family": rec.get("family"), "script": side.script,
             "letters": rec.get("letters"), "skeleton_letters": len(side.skeleton), "first_words": first_words(rec.get("text") or ""),
             "outcome": decision["outcome"], "reasons": decision["reasons"], "image_index": decision.get("image_index"),
-            "basis": decision.get("basis"), "matched_n4": decision.get("matched_n4"),
-            "conflicts": decision.get("conflicts", []),
+            "basis": decision.get("basis"), "prior_conflict": decision.get("prior_conflict", False),
+            "matched_n4": decision.get("matched_n4"), "conflicts": decision.get("conflicts", []),
             "other_images": decision.get("other_images", []), "kept_version": decision.get("kept"),
             "shared_text": result.ownership.get(key), "order_prior_index": side.order_prior_index,
-            "images": [{"index": im.index, "file": im.file_name, "token": im.token, "sha256": im.sha256,
+            "images": [{"index": im.index, "file": im.file_name, "token": im.token, "slip_side": im.slip_side,
+                        "filed_under": im.old_canonical_id or None, "sha256": im.sha256,
                         "priors": priors_of(side, im), **pair_summary(result.pairs.get(key, {}).get(im.index) or {})}
                        for im in images.get(side.canonical_id, [])],
             "null_reads": null["reads"] if null else None,
@@ -2141,6 +2304,7 @@ def eye_queue_records(result: Decisions, images: Mapping[str, Sequence[ImageInfo
                     "triage": decision.get("triage"), "dominance_ratio": round_floats(decision.get("dominance_ratio")),
                     "would_be": decision.get("would_be"),
                     "assigned_image_index": decision.get("image_index"),
+                    "prior_conflict": decision.get("prior_conflict", False),
                     "text_first_words": first_words(side.record.get("text") or ""),
                     "letters": side.record.get("letters"),
                     "images": [{"path": im.path, **{k: v for k, v in img.items() if k not in ("sha256",)}}
@@ -2194,6 +2358,9 @@ def render_report(stats: Mapping[str, Any], manifest: Sequence[Dict[str, Any]], 
                      f"{pct(sc['documents_in_scope'], sc['documents_listed'])}.")
     lines += [
         f"- In scope: {sc['documents_in_scope']:,} documents, {sc['images']:,} images ({sc['distinct_images']:,} distinct sha256).",
+        f"- Images manifest: `{sc['images_manifest']['path']}` ({sc['images_manifest']['rows']:,} rows; moved to another "
+        f"document by a shelf-mark slip {sc['images_manifest']['relabelled']:,}, detached {sc['images_manifest']['detached']:,}, "
+        f"with a slip side {sc['images_manifest']['with_slip_side']:,}).",
         f"- Documents with side records: {pct(sc['documents_with_side_records'], sc['documents_in_scope'])}; with at least one "
         f"usable read: {pct(sc['documents_with_usable_read'], sc['documents_in_scope'])}; with both: "
         f"{pct(sc['documents_with_records_and_usable_read'], sc['documents_in_scope'])}.",
@@ -2245,21 +2412,27 @@ def render_report(stats: Mapping[str, Any], manifest: Sequence[Dict[str, Any]], 
     pr = stats["priors"]
     lines += ["## Prior agreement", "",
               "Priors only break ties in the assignment; the side label also lets p95 stand in for p99 when it names the "
-              "image (the order prior does not). Agreement is measured on the accepted pairs, and separately on the pairs "
+              "image's side: the side its shelf-mark slip names, which replaces the file-name token, else the token. An "
+              "image whose slip side and token disagree relaxes nothing (`prior_conflict`); the order prior never relaxes. "
+              "Agreement of the label with each source is measured on the accepted pairs, and separately on the pairs "
               "accepted on p99 alone (independent of the prior).", ""]
-    for name in ("side_label", "order_prior"):
+    for name in ("side_label", "slip_side", "order_prior"):
         for scope_name in ("accepted_all", "accepted_on_p99"):
             a = pr[name][scope_name]
             lines.append(f"- {name}, {scope_name}: agree {pct(a.get('agree', 0), a.get('with_prior', 0))}, disagree "
                          f"{pct(a.get('disagree', 0), a.get('with_prior', 0))}.")
     lines += [f"- Labelled records: {pr['side_label']['labelled_records']:,}/{n_rec:,}; their outcomes "
               f"{pr['side_label']['labelled_outcomes']}.",
-              f"- Records with an order prior: {pr['order_prior']['records_with_order_prior']:,}/{n_rec:,}.", "",
+              f"- Records with an order prior: {pr['order_prior']['records_with_order_prior']:,}/{n_rec:,}; images with a "
+              f"slip side: {pr['slip_side']['images_with_slip_side']:,}/{sc['images']:,}; with a slip side and a file-name "
+              f"token: {pr['slip_side']['images_with_slip_side_and_token']:,}, of which the two disagree on "
+              f"{pr['slip_side']['images_slip_side_conflicts_with_token']:,}; decisions with a prior conflict by outcome: "
+              f"{pr['slip_side']['decisions_with_prior_conflict']}.", "",
               "Independent of the acceptance rule: does the prior name the image of best 4-gram recall? (sides not "
               "dropped, with two or more usable distinct images; by whether that best recall clears the side's p99)", "",
               "| prior | family | best clears p99: agree | disagree | best below p99: agree | disagree |",
               "|---|---|---|---|---|---|"]
-    for name in ("side_label_vs_best_image", "order_prior_vs_best_image"):
+    for name in ("side_label_vs_best_image", "slip_side_vs_best_image", "order_prior_vs_best_image"):
         for family, per in sorted(pr[name].items(), key=lambda kv: kv[0] != "total"):
             strong, weak = per.get("best_clears_p99", {}), per.get("best_below_p99", {})
             n_strong, n_weak = sum(strong.values()), sum(weak.values())
@@ -2348,7 +2521,8 @@ def method_lines() -> List[str]:
             f"text, documents sharing one of its images left out), bins {', '.join(BINS)} (letters of the read); a bin with "
             f"fewer than {MIN_BIN_NULL} reads uses the unstratified null; p95 / p99 (linear), {N_BOOT}-resample bootstrap CI.",
             "- Accept: Hungarian one-to-one on recall (priors add 1e-6 / 1e-7 as tie-breaks); recall > p99 (> p95 when the "
-            f"side label names the image; the order prior relaxes nothing); at least {MIN_MATCHED_GRAMS} matched "
+            "side label names the image's file-name token or its slip side; the order prior relaxes nothing); at least "
+            f"{MIN_MATCHED_GRAMS} matched "
             f"{PRIMARY_N}-grams (recall x the side's gram count; fewer = `{UNDER_MATCHED_REASON}`, review); no other side of "
             "the document > its p95 on the image; the side > its p95 on no other distinct image (added beyond the plan: a "
             "record covering both leaf sides would otherwise become one page target); an image accepted for two documents "
@@ -2418,7 +2592,9 @@ def caveat_lines(stats: Mapping[str, Any], manifest: Sequence[Dict[str, Any]]) -
             f"{pct(doc_label.get('agree', 0), sum(doc_label.values()))} cases (edition apparatus: "
             f"{pct(app_label.get('agree', 0), sum(app_label.values()))}); the stored-order prior in "
             f"{pct(order.get('agree', 0), sum(order.values()))}, a coin flip, so it no longer relaxes p99 to p95 (it "
-            f"only breaks ties); the side-label relaxation accepted {sd['accepted_basis'].get('p95+side_label', 0)} sides.",
+            f"only breaks ties); the side-label relaxation accepted {sd['accepted_basis'].get('p95+side_label', 0)} sides "
+            f"and the slip-side relaxation {sd['accepted_basis'].get('p95+slip_side', 0)} (the slip side replaces the "
+            f"file-name token; images where the two disagree relax nothing).",
             f"4. **Thin evidence and contested ownership go to review.** {thin} sides whose pair clears its threshold share "
             f"fewer than {MIN_MATCHED_GRAMS} matched {PRIMARY_N}-grams with the read (`{UNDER_MATCHED_REASON}`); {contested} copies "
             f"in {contested_groups} shared-text groups have a best recall under {MIN_OWNER_MARGIN:g}x the runner-up's while "
@@ -2442,6 +2618,9 @@ def build_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--source", type=Path, default=SOURCE_DIR, help=f"input directory (default {SOURCE_DIR})")
+    parser.add_argument("--images-manifest", type=Path, default=None,
+                        help="images manifest to use (default <source>/images_manifest.jsonl), e.g. the slip-corrected "
+                             "images_manifest_v2.jsonl")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help=f"dataset directory (default {DEFAULT_OUT})")
     parser.add_argument("--docs-list", type=Path, default=None, help="JSON list of the documents considered (scope counts)")
     parser.add_argument("--report", type=Path, default=None, help="write the build report here (Markdown)")
@@ -2462,7 +2641,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     """
     args = build_parser().parse_args(argv)
     stats = build(args.source, args.out, args.docs_list, args.report, args.eye_queue, not args.no_export,
-                  args.n_boot, args.seed)
+                  args.n_boot, args.seed, images_manifest=args.images_manifest)
     print(json.dumps({k: stats[k] for k in ("scope", "rows", "row_documents", "row_letters")}, ensure_ascii=False, indent=1))
     print(json.dumps({k: v for k, v in stats["sides"].items() if k != "reasons"}, ensure_ascii=False, indent=1))
 
