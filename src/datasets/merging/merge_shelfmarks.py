@@ -343,7 +343,7 @@ def load_pgp(
                 alias.setdefault(vcid, primary)
             alias_skipped.extend(skipped)
 
-            pgpids = [p.strip() for p in (row.get("pgpids") or "").split(",") if p.strip()]
+            pgpids = split_pgpids(row.get("pgpids"))
             documents = [docs_by_pgpid[p] for p in pgpids if p in docs_by_pgpid]
             block = {"fragment": row, "documents": documents}
             # Merge if two fragment rows collapse to the same canonical id.
@@ -361,6 +361,22 @@ def _split_semicolons(value: Optional[str]) -> List[str]:
     :returns: List of trimmed parts.
     """
     return [v.strip() for v in (value or "").split(";") if v.strip()]
+
+
+def split_pgpids(value: Optional[str]) -> List[str]:
+    """Split a PGP fragment row's ``pgpids`` column into document ids.
+
+    The export joins a fragment's document ids with ``" ; "`` (``"34078 ;
+    34079"``), like its other multi-valued columns; a comma is accepted too so
+    an export written either way links. Splitting on the comma alone left every
+    multi-document fragment (1,871 of 36,246 canonical records in the May 2026
+    export) with ``documents == []`` and ``pgpids == []`` in the merge, because
+    the whole ``"34078 ; 34079"`` string was looked up as one id.
+
+    :param value: Raw ``pgpids`` field or ``None``.
+    :returns: The trimmed non-empty ids in column order.
+    """
+    return [p.strip() for p in re.split(r"[;,]", value or "") if p.strip()]
 
 
 # ─────────────────────────────── FJP source ────────────────────────────────
