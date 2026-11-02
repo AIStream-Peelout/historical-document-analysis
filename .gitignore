@@ -51,3 +51,6 @@ src/datasets/evaluations/transcription_raw_outputs_probe_columns/
 .claude/worktrees/
 .claude/settings.local.json
 logs
+
+# the conversion kit must travel with its pinned requirements (the root *.txt rule would drop it)
+!src/finetuning/text27b/mlx_convert_kit/requirements.txt

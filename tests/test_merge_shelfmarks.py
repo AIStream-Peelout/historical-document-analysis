@@ -659,3 +659,160 @@ def test_ktiv_zip_paths_refuses_a_missing_search_directory(monkeypatch, tmp_path
         ms.ktiv_zip_paths()
     monkeypatch.setenv("KTIV_ALLOW_MISSING_ZIP_DIRS", "1")
     assert [os.path.basename(p) for p in ms.ktiv_zip_paths()] == ["ktiv_PNX_MANUSCRIPTS990000000000000001-1_images.zip"]
+
+
+# ── image corrections applied to built records (synthetic ids) ───────────────
+
+def test_preferred_image_source_matches_build_merged_record():
+    from src.datasets.merging.merge_shelfmarks import preferred_image_source
+    ktiv = {"pnx_id": "PNX_9", "sys_num": "990000000000000009", "shelf_mark": "x"}
+    fjp = [("Testville LIB: Q 1", {"images": ["Q_1_1r.jpg"]})]
+    cases = [
+        build_merged_record("Testville_LIB_Q_1", None, fjp, ktiv, {}, {"990000000000000009": ["K/9/1.jpg"]}),
+        build_merged_record("Testville_LIB_Q_1", None, fjp, ktiv, {}, {}),
+        build_merged_record("Testville_LIB_Q_1", None, [], ktiv, {}, {}),
+    ]
+    assert [rec["images"]["preferred_source"] for rec in cases] == ["ktiv", "fjp", None]
+    assert all(preferred_image_source(rec["images"]) == rec["images"]["preferred_source"] for rec in cases)
+
+
+def test_corrections_move_an_image_between_built_records_and_fix_the_image_gap():
+    from src.datasets.merging.image_corrections import validate_correction
+    from src.datasets.merging.merge_shelfmarks import apply_image_corrections, correction_record_ids
+    src = build_merged_record("Testville_LIB_Q_2", None,
+                              [("Testville LIB: Q 2", {"images": ["Q_2_1r.jpg", "Q_2_1v.jpg"]})], None)
+    dst = build_merged_record("Testville_LIB_Q_3", None, [("Testville LIB: Q 3", {"images": []})], None)
+    assert not record_has_image(dst)
+    correction = validate_correction({
+        "image": "Q_2_1r.jpg", "url": None, "sha256": None, "from_canonical_id": "Testville_LIB_Q_2",
+        "to_canonical_id": "Testville_LIB_Q_3", "to_shelfmark_text": "LIB Q 3", "side": "1", "basis": "eye",
+        "evidence": "LIB Q 3-1", "reviewed": True, "recorded_at": "2026-10-30", "source": "synthetic",
+    })
+    corrections = {"Q_2_1r.jpg": correction}
+    assert correction_record_ids(corrections) == {"Testville_LIB_Q_2", "Testville_LIB_Q_3"}
+    records = {"Testville_LIB_Q_2": src, "Testville_LIB_Q_3": dst}
+    stats = apply_image_corrections(records, corrections)
+    assert stats["moved"] == 1 and stats["applied"] == 1
+    assert src["images"]["fjp"] == ["Q_2_1v.jpg"]
+    assert dst["images"]["fjp"] == ["Q_2_1r.jpg"] and dst["images"]["fjp_sides"] == {"Q_2_1r.jpg": "1"}
+    assert dst["images"]["preferred_source"] == "fjp" and record_has_image(dst)
+    # The raw source payload is kept as scraped; only the served pointers move.
+    assert src["sources"]["fjp"][0]["images"] == ["Q_2_1r.jpg", "Q_2_1v.jpg"]
+
+
+def test_merge_cli_applies_corrections_by_default_and_can_skip_them():
+    from src.datasets.merging.image_corrections import DEFAULT_IMAGE_CORRECTIONS
+    from src.datasets.merging.merge_shelfmarks import build_parser
+    parser = build_parser()
+    assert parser.parse_args([]).image_corrections == DEFAULT_IMAGE_CORRECTIONS
+    assert parser.parse_args(["--no-image-corrections"]).image_corrections is None
+    assert parser.parse_args(["--image-corrections", "x.jsonl"]).image_corrections == "x.jsonl"
+    assert parser.parse_args(["--out-dir", "scratch"]).out_dir == "scratch"
+
+
+def test_an_explicit_corrections_path_that_does_not_exist_stops_the_merge(monkeypatch, tmp_path):
+    import pytest
+    from src.datasets.merging import merge_shelfmarks as ms
+
+    def no_sources(*args, **kwargs):
+        """Fail if the merge gets as far as loading a source.
+
+        :param args: Ignored.
+        :param kwargs: Ignored.
+        """
+        raise AssertionError("the merge started loading sources")
+
+    monkeypatch.setattr(ms, "load_pgp", no_sources)
+    with pytest.raises(FileNotFoundError, match="missing_corrections.jsonl"):
+        ms.merge(str(tmp_path / "out"), image_corrections_path=str(tmp_path / "missing_corrections.jsonl"))
+    assert not (tmp_path / "out").exists()
+
+
+def test_resolve_corrections_path_skips_only_an_absent_default(monkeypatch, tmp_path):
+    import pytest
+    from src.datasets.merging import merge_shelfmarks as ms
+    default = tmp_path / "image_corrections.jsonl"
+    monkeypatch.setattr(ms, "DEFAULT_IMAGE_CORRECTIONS", str(default))
+    assert ms.resolve_corrections_path(None) is None
+    assert ms.resolve_corrections_path(str(default)) is None              # the default may be absent
+    default.write_text("", encoding="utf-8")
+    assert ms.resolve_corrections_path(str(default)) == str(default)
+    with pytest.raises(FileNotFoundError):
+        ms.resolve_corrections_path(str(tmp_path / "typo.jsonl"))
+
+
+def test_transcription_correction_on_built_records_keeps_a_join_partner_intact():
+    from src.datasets.document_models.genizah_document import GenizahDocument
+    from src.datasets.merging.image_corrections import build_transcription_correction
+    from src.datasets.merging.merge_shelfmarks import apply_transcription_corrections, correction_record_ids
+    text = "synthetic letter line one\nsynthetic letter line two"
+    raw = {"doc_id": "syn-1", "shelf_mark": "Testville LIB: Q 5 + Q 6", "images": ["Q_5_1r.jpg"],
+           "transcriptions": {"1": text}, "translations": {}, "language": "Judaeo-Arabic"}
+    # A multi-shelfmark record is exploded onto both ids with the SAME raw dict.
+    q5 = build_merged_record("Testville_LIB_Q_5", None, [("Testville LIB: Q 5", raw)], None)
+    q6 = build_merged_record("Testville_LIB_Q_6", None, [("Testville LIB: Q 6", raw)], None)
+    q7 = build_merged_record("Testville_LIB_Q_7", None, [], None)
+    correction = build_transcription_correction(q5, "syn-1", ["1"], "Testville_LIB_Q_7", basis="eye",
+                                                evidence="text is Q 7's", reviewed=True, source="synthetic",
+                                                recorded_at="2026-10-31")
+    corrections = {("Testville_LIB_Q_5", "syn-1", "1"): correction}
+    assert correction_record_ids(corrections) == {"Testville_LIB_Q_5", "Testville_LIB_Q_7"}
+    records = {"Testville_LIB_Q_5": q5, "Testville_LIB_Q_7": q7}
+    stats = apply_transcription_corrections(records, corrections)
+    assert stats["moved"] == 1
+    assert GenizahDocument.from_merged_format(q5).transcriptions == []
+    assert [t.name for t in GenizahDocument.from_merged_format(q7).transcriptions] == ["Transcription 1"]
+    assert [t.name for t in GenizahDocument.from_merged_format(q6).transcriptions] == ["Transcription 1"]
+    assert raw["transcriptions"] == {"1": text}
+    assert q7["sources_present"] == []                       # provenance lives in the markers, not sources_present
+    assert record_is_rich(q7)
+
+
+def test_split_pgpids_takes_the_exports_semicolon_join_and_a_comma():
+    from src.datasets.merging.merge_shelfmarks import split_pgpids
+    assert split_pgpids("34078 ; 34079") == ["34078", "34079"]
+    assert split_pgpids("6555") == ["6555"]
+    assert split_pgpids("1, 2;3 ; ") == ["1", "2", "3"]
+    assert split_pgpids("") == []
+    assert split_pgpids(None) == []
+
+
+def test_load_pgp_links_every_document_of_a_multi_document_fragment(tmp_path):
+    """A fragment whose ``pgpids`` column joins several ids with ``" ; "`` gets
+    every one of its documents, the same as a single-id fragment; ids absent
+    from ``documents.csv`` are dropped, not fatal."""
+    import csv
+    from src.datasets.merging.merge_shelfmarks import load_pgp
+
+    frag_cols = ["shelfmark", "pgpids", "shelfmarks_historic", "collection", "library",
+                 "library_abbrev", "collection_name", "collection_abbrev", "url", "iiif_url"]
+    doc_cols = ["pgpid", "shelfmark", "description", "doc_date_standard"]
+    fragments = tmp_path / "fragments.csv"
+    documents = tmp_path / "documents.csv"
+    with fragments.open("w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.DictWriter(fh, fieldnames=frag_cols)
+        writer.writeheader()
+        writer.writerow({"shelfmark": "DK 314", "pgpids": "34078 ; 34079", "library": "MTA",
+                         "library_abbrev": "MTA", "collection": "DK"})
+        writer.writerow({"shelfmark": "DK 231.1 (alt: IX)", "pgpids": "6555 ; 40214 ; 99999",
+                         "shelfmarks_historic": "DK IX", "library": "MTA", "library_abbrev": "MTA"})
+        writer.writerow({"shelfmark": "DK 1", "pgpids": "7", "library": "MTA", "library_abbrev": "MTA"})
+    with documents.open("w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.DictWriter(fh, fieldnames=doc_cols)
+        writer.writeheader()
+        for pgpid, mark in (("34078", "DK 314"), ("34079", "DK 314"),
+                            ("6555", "DK 231.1"), ("40214", "DK 231.1"), ("7", "DK 1")):
+            writer.writerow({"pgpid": pgpid, "shelfmark": mark, "description": f"doc {pgpid}"})
+
+    records, alias, skipped = load_pgp(str(fragments), str(documents))
+
+    by_mark = {blk["fragment"]["shelfmark"]: blk for blk in records.values()}
+    assert [d["pgpid"] for d in by_mark["DK 314"]["documents"]] == ["34078", "34079"]
+    assert [d["pgpid"] for d in by_mark["DK 231.1 (alt: IX)"]["documents"]] == ["6555", "40214"]
+    assert [d["pgpid"] for d in by_mark["DK 1"]["documents"]] == ["7"]
+    assert skipped == []
+    # The merged record built from the block carries the ids and the first description.
+    rec = build_merged_record("Budapest_MTA_DK_314", by_mark["DK 314"], [], None)
+    assert rec["pgpids"] == ["34078", "34079"]
+    assert rec["description"] == "doc 34078"
+    assert "pgp" in rec["sources_present"]

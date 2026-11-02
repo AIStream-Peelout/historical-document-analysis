@@ -155,6 +155,8 @@ class L2Config:
     min_commentary_chars: int = 300
     min_target_chars: int = 300
     min_target_after_strip: int = _bld.ANALYSIS_MIN_CHARS
+    #: Prep pass 2026-10-26: shortest target kept after the evidence strip (:func:`builder.analysis_evidence_strip`).
+    min_target_after_evidence_strip: int = _bld.ANALYSIS_EVIDENCE_MIN_CHARS
     min_book_edition_chars: int = 150
     min_book_translation_chars: int = 150
     min_page_chars: int = 200
@@ -1786,6 +1788,13 @@ def build_rows(inp: L2Inputs, cfg: L2Config, tok: TokenFns) -> Tuple[List[Dict[s
         if len(target) < cfg.min_target_after_strip:
             drop(c, "target_short_after_strip", rec)
             continue
+        target, eops, evidence = _bld.analysis_evidence_strip(target, cfg.min_target_after_evidence_strip)
+        rec["evidence_strip"] = evidence
+        if target is None:
+            drop(c, "target_short_after_evidence_strip", rec)
+            continue
+        ops = ops + eops
+        rec["strip_ops"] = ops
         if _tn.overlap60(target, edition):
             drop(c, "target_overlaps_input", rec)
             continue
@@ -1855,7 +1864,8 @@ def build_rows(inp: L2Inputs, cfg: L2Config, tok: TokenFns) -> Tuple[List[Dict[s
             msgs = _rows.make_messages(user, t_final)
             meta = _meta(c, dec, dkey, v, lang, tr, msgs[2]["content"], raw, ops,
                          {"tokens": n_tok, "target_tokens": tok.count(msgs[2]["content"]), "target_truncated": t_trunc,
-                          "ocr_containment": rec.get("ocr_containment"), "context_note": ctx_note})
+                          "ocr_containment": rec.get("ocr_containment"), "context_note": ctx_note,
+                          **({"evidence_strip": evidence} if eops else {})})
             meta["input_truncated"] = bool(meta["input_truncated"] or i_trunc)
             texts = [m["content"] for m in msgs]
             if any(_tn.has_source_names(t) for t in texts):

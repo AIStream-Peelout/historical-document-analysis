@@ -779,3 +779,15 @@ def test_load_carry_and_carry_rows(tmp_path: Path) -> None:
     assert docs[0]["translate"]["drop"] == "independence_dup_pgp_translation" and drops
     kept2, _ = BP.carry_rows(carry, None, collections.Counter())
     assert len(kept2) == 2
+
+
+def test_independence_candidates_break_ties_by_pgpid() -> None:
+    """Equal shared-n-gram counts are ordered by pgpid, so the recorded nearest PGP translation is stable across runs."""
+    text = "the merchant sent the flax to his brother in the city of the west with the caravan"
+    tr = BP.PgpTranslations()
+    for pid in ("30", "4", "200", "17"):
+        tr.texts.setdefault("en", {})[pid] = [text]
+        for g in BP._grams(BP.independence_tokens(text)):
+            tr.grams.setdefault("en", {}).setdefault(g, set()).add(pid)
+    got = tr.candidates(text, "en", k=3)
+    assert [p for p, _ in got] == ["17", "200", "30"] and all(c == 1.0 for _, c in got)

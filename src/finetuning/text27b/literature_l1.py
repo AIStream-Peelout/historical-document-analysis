@@ -55,7 +55,7 @@ CLI::
 
     .venv/bin/python -m src.finetuning.text27b.literature_l1 manifest [--force]
     .venv/bin/python -m src.finetuning.text27b.literature_l1 build [--excluded-pages F] [--dry-run]
-        [--token-cap 300000] [--max-tokens 2048] [--probe-frac 0.03] [--works W ...]
+        [--token-cap 300000] [--max-tokens 2048] [--probe-frac 0.03] [--works W ...] [--no-hygiene]
 """
 from __future__ import annotations
 
@@ -387,6 +387,302 @@ def quality_ok(page: _pages.PageRec, heads: Optional[Iterable[str]] = None, use_
     :returns: True when no rule fails.
     """
     return not page_quality(page, heads, use_ocr)
+
+
+# ------------------------------------------------------------------------------------ hygiene (prep pass 2026-10-26)
+#: Pages whose share of citation-like lines (after the footnote cut) exceeds this are dropped (``reference_density``).
+REFERENCE_DENSITY_MAX = 0.33
+#: A page whose first lines carry a bibliography / index / contents heading, or whose layout is one, is dropped
+#: with this page kind as the reason (``page_kind:<kind>``).
+PAGE_KINDS: Tuple[str, ...] = ("bibliography", "endnotes", "index", "toc", "front_matter")
+#: Front matter is only looked for in the first pages of a part (PDF page index).
+FRONT_MATTER_MAX_PAGE = 25
+#: Lines of the page top searched for a heading.
+HEADING_LINES = 6
+#: Row text kinds (``meta.text_kind``).
+TEXT_KINDS: Tuple[str, ...] = ("argument", "edition_apparatus", "narrative", "other")
+
+_YEAR_P = r"(?:1[5-9]|20)\d{2}[a-z]?"
+_REF_LINE = re.compile(
+    r"\(\s*" + _YEAR_P + r"\s*[),:;]|\b" + _YEAR_P + r"\.\s|^\s*[—–-]{2,}\s*[.,]|"
+    r"\bpp?\.\s*\d|\bibid\b|\bIbid\b|\bop\.?\s*cit|\bloc\.?\s*cit|\bvols?\.\s*[\dIVX]|\beds?\.|\bedited by\b|\btrans\.|"
+    r"\b\d{1,3}\s*\(\s*" + _YEAR_P + r"\s*\)|\b\d{1,3}:\s*\d{1,4}\s*[–-]\s*\d{1,4}|"
+    r"\b(?:University\s+Press|Press|Brill|Routledge|Harrassowitz|Gruyter|Mohr\s+Siebeck|Peeters|Magnes|Ben-Zvi|Bialik)\b|"
+    r"\b(?:Leiden|London|Oxford|Cambridge|Jerusalem|New York|Berlin|Paris|Tel Aviv|Princeton|Wiesbaden|Leipzig|"
+    r"Philadelphia|Chicago|Boston|Ramat Gan|Haifa|Göttingen|Tübingen)\s*(?::|and\s+\w+\s*:)|"
+    r"\b(?:JQR|REJ|ZDMG|JAOS|BSOAS|HUCA|PAAJR|JNES|JSS|JJS|JSAI|Tarbiz|Zion|Sefunot|Speculum|Der Islam|Studia Islamica)\b|"
+    r"\b(?:Translated|Edited|translated|edited)\s+by\b|\bLoeb\b|,\s*" + _YEAR_P + r"\.?\s*$|"
+    r"עמ['׳]\s*\d|ירושלים\s+(?:תש|\d)|תל[-\s]אביב\s+(?:תש|\d)|(?:^|\s)שם,\s*עמ['׳]|הוצאת")
+_BIB_ENTRY = re.compile(
+    r"^\s*(?:[—–-]{2,}\s*[.,]|"
+    r"[A-ZÀ-Ž][A-Za-zÀ-ž'’-]+(?:\s(?:de|van|von|al-|el-|ben|ibn|bar|ha-)?\s?[A-ZÀ-Ž][A-Za-zÀ-ž'’-]+)?,\s+"
+    r"(?:(?:[A-Z]\.\s?){1,3}|[A-ZÀ-Ž][a-zà-ž]+(?:\s[A-Z]\.)?\.?\s+(?:\(?" + _YEAR_P + r"|[‘'“\"]))|"
+    r"(?:[A-Z]\.\s?){1,3}\s?[A-ZÀ-Ž][A-Za-zÀ-ž'’-]+,\s+[‘'“\"A-Z]|"
+    r"\S+(?:\s\S+)?,\s+\S+(?:\s\S+)?\s+=\s+|"
+    r"[A-ZÀ-Ž][\w'’-]+(?:\s[\w'’-]+){0,2}\.\s+[A-ZÀ-Ž])")
+_HEAD_BIB = re.compile(r"(?im)^\s*(?:select\s+)?(?:bibliography|references|works\s+cited|abbreviations|"
+                       r"(?:list\s+of\s+)?abbreviations(?:\s+and\s+[\w ]+)?|primary\s+sources|secondary\s+(?:sources|literature)|"
+                       r"literature\s+cited|sources\s+and\s+literature|ביבליוגרפיה|רשימת\s+(?:ה)?קיצורים(?:\s+\S+)?|"
+                       r"רשימת\s+(?:ה)?מקורות|מקורות\s+ומחקרים|קיצורים)\s*$")
+_HEAD_INDEX = re.compile(r"(?im)^\s*(?:general\s+|subject\s+|name\s+|author\s+|source\s+|scriptural\s+|geniza\s+)?"
+                         r"index(?:\s+of\s+[\w ]+)?\s*$|^\s*מפתח(?:ות)?(?:\s+\S+){0,2}\s*$")
+_HEAD_TOC = re.compile(r"(?im)^\s*(?:table\s+of\s+)?contents\s*$|^\s*תוכן\s+(?:ה)?עניינים\s*$|^\s*sommaire\s*$|"
+                       r"^\s*inhalt(?:sverzeichnis)?\s*$|^\s*list\s+of\s+(?:illustrations|figures|plates|tables|maps|"
+                       r"documents)\s*$")
+_LEADER = re.compile(r"(?:\.\s?){4,}\s*\d+\s*$|(?:…\s*){2,}\s*\d+\s*$")
+_LOCATOR = re.compile(r"\d+(?:[–-]\d+)?(?:n\d+)?(?:,\s*\d+(?:[–-]\d+)?(?:n\d+)?)+\s*[.;]?\s*$|,\s*\d+(?:[–-]\d+)?(?:n\d+)?\s*$|"
+                      r"\bSee also\b|\bsee also\b")
+_FRONT = re.compile(r"(?i)\bISBN\b|all\s+rights\s+reserved|Library\s+of\s+Congress|Cataloging[-\s]in[-\s]Publication|"
+                    r"copyright\s+©|©\s*(?:1[89]|20)\d\d\s+by\b|printed\s+and\s+bound\s+in\b|first\s+published|typeset\s+(?:by|in)|"
+                    r"cover\s+(?:image|design|illustration)|acid-free\s+paper|\bISSN\b|"
+                    r"^\s*(?:acknowledg(?:e)?ments|dedication|in\s+memor(?:y|iam)|תודות)\s*$")
+_HEAD_NOTES = re.compile(r"(?im)^\s*(?:notes|endnotes|notes\s+to\s+[\w ]+|הערות)\s*$")
+_NOTE_LINE = re.compile(r"^\s*\d{1,3}[.)]?\s+\S")
+_NOTE_START = re.compile(r"^\s*(\d{1,3}|[¹²³⁴⁵⁶⁷⁸⁹⁰]+)[.)]?\s+\S")
+_NOTE_CITE = re.compile(r"\b(?:See|see|Cf\.|cf\.|ibid|Ibid|op\.\s*cit|pp?\.\s*\d|vol\.|eds?\.)|\(\s*" + _YEAR_P + r"|"
+                        r"ראה|השווה|עמ['׳]\s*\d")
+_SUP = str.maketrans("¹²³⁴⁵⁶⁷⁸⁹⁰", "1234567890")
+_HYPHEN_END = re.compile(r"([A-Za-zÀ-ž])[-­‐]$")
+_SENT_FINAL = re.compile(r"[.!?:;\"”’»)\]]$")
+_LATIN_START_LOWER = re.compile(r"^[a-zà-ž(\[“\"‘'0-9]")
+_NUMBERED_LINE = re.compile(r"^\s*(?:\(?\d{1,3}[.)]?|[IVX]{1,4}\.|§)\s")
+_ARG_MARKERS = re.compile(r"(?i)\b(?:however|therefore|thus|hence|argue[sd]?|suggests?|suggested|evidence|indicates?|"
+                          r"conclude[sd]?|conclusion|seems?|apparently|probably|likely|perhaps|possibly|whether|"
+                          r"because|although|whereas|rather|claim(?:s|ed)?|interpret\w*|reading|assume[sd]?|"
+                          r"hypothes\w*|in\s+other\s+words|this\s+means|cf\.|see)\b|"
+                          r"נראה|אפשר|ייתכן|כנראה|לפיכך|אולם|מכאן|לדעתי|טוען|מסקנ|הוכח|ראי[הי]|"
+                          r"\b(?:cependant|donc|il\s+semble|jedoch|daher|scheint|vielleicht|peut-être)\b")
+_NARR_MARKERS = re.compile(r"(?i)\b(?:was|were|had|became|died|lived|went|came|returned|married|appointed|ruled|"
+                           r"arrived|left|wrote|sent|traveled|travelled|settled|born|during|in\s+(?:1[0-9]|[5-9])\d\d)\b|"
+                           r"היה|היו|נפטר|עבר|נולד|נשא|הגיע|חזר|בשנת")
+
+
+def reference_line(line: str) -> bool:
+    """Whether a line looks like a citation (bibliography entry, footnote reference, publisher / journal / page reference).
+
+    :param line: One text line.
+    :returns: True for citation-like lines.
+    """
+    return bool(_REF_LINE.search(line or ""))
+
+
+def reference_density(text: str) -> float:
+    """Share of non-empty lines that look like citations (:func:`reference_line`).
+
+    :param text: Page text (after the footnote cut).
+    :returns: Share in [0, 1] (0 for an empty text).
+    """
+    lines = [ln for ln in (text or "").split("\n") if ln.strip()]
+    return sum(1 for ln in lines if reference_line(ln)) / len(lines) if lines else 0.0
+
+
+def page_kind(text: str, page_no: Optional[int] = None) -> Optional[str]:
+    """Apparatus kind of a page: ``bibliography``, ``endnotes``, ``index``, ``toc`` or ``front_matter`` (None = body).
+
+    * bibliography -- a bibliography / references / abbreviations heading in the first lines, or ≥ 25 % of the lines
+      opening like a bibliography entry (``Surname, Initials``, ``Surname, First. 1999.``, ``———.``, Hebrew
+      ``Author, short title = ...``) with a citation-line share ≥ 0.2;
+    * endnotes -- a notes heading with a citation-line share ≥ 0.15, or numbered note paragraphs (:func:`note_paragraphs`,
+      Latin script; RTL line-numbered translations are not notes) on ≥ 20 % of the lines, ≥ 40 % of which carry a
+      reference marker (see, cf., ibid., a page or year reference) (an endnote section: footnotes collected at the end of a chapter);
+    * index -- an index heading, or ≥ 35 % of the lines ending in page locators (``74–75, 215``, ``347n55``) / ``See
+      also``;
+    * toc -- a contents / list-of heading, ≥ 25 % dot-leader lines, or (in the first :data:`FRONT_MATTER_MAX_PAGE`
+      pages) ≥ 40 % of the lines ending in a page number;
+    * front_matter -- in the first :data:`FRONT_MATTER_MAX_PAGE` pages: two or more imprint markers (ISBN, all rights
+      reserved, Library of Congress, printed in, first published ...) or an acknowledgments / dedication heading.
+
+    :param text: Furniture-stripped page text.
+    :param page_no: PDF page index of the page in its part (None = unknown: no front-matter / early-toc rules).
+    :returns: The kind or None.
+    """
+    lines = [ln.strip() for ln in (text or "").split("\n") if ln.strip()]
+    if not lines:
+        return None
+    n = len(lines)
+    top = "\n".join(lines[:HEADING_LINES])
+    early = page_no is not None and page_no <= FRONT_MATTER_MAX_PAGE
+    if _HEAD_TOC.search(top) or sum(1 for ln in lines if _LEADER.search(ln)) / n >= 0.25:
+        return "toc"
+    if early and sum(1 for ln in lines if re.search(r"\s\d{1,4}\s*$", ln)) / n >= 0.4:
+        return "toc"
+    if _HEAD_INDEX.search(top) or (n >= 8 and sum(1 for ln in lines if _LOCATOR.search(ln)) / n >= 0.35):
+        return "index"
+    notes = note_paragraphs(lines)
+    if (_HEAD_NOTES.search(top) and reference_density(text) >= 0.15) or (
+            notes and len(notes) / n >= 0.2 and sum(1 for p in notes if _NOTE_CITE.search(p) or reference_line(p))
+            / len(notes) >= 0.4):
+        return "endnotes"
+    entries = sum(1 for ln in lines if _BIB_ENTRY.match(ln)) / n
+    if _HEAD_BIB.search(top) or (n >= 6 and entries >= 0.25 and reference_density(text) >= 0.2):
+        return "bibliography"
+    if early and (len(_FRONT.findall(text)) >= 2 or re.search(
+            r"(?im)^\s*(?:acknowledg(?:e)?ments|dedication|תודות)\s*$", top)):
+        return "front_matter"
+    return None
+
+
+def note_paragraphs(lines: Sequence[str]) -> List[str]:
+    """Group the lines of a page into numbered-note paragraphs (a Latin-script line opening with ``N.`` / ``N)`` / ``N``
+    and its continuation lines up to the next numbered line).
+
+    :param lines: Non-empty page lines.
+    :returns: One string per note paragraph (empty when no line opens with a note number).
+    """
+    out: List[str] = []
+    for ln in lines:
+        if _NOTE_LINE.match(ln) and not _is_rtl(ln):
+            out.append(ln)
+        elif out:
+            out[-1] += " " + ln
+    return out
+
+
+def _note_ref_in_body(body: str, num: str) -> bool:
+    """Whether the body carries a note reference ``num`` attached to a word or punctuation (``...grudging.44``).
+
+    :param body: Text above the candidate note block.
+    :param num: Note number (ASCII digits).
+    :returns: True when a reference marker is found.
+    """
+    return bool(re.search(r"(?<=[A-Za-zÀ-ž֐-׿؀-ۿ.,;:”\"’)\]])" + re.escape(num) + r"(?!\d)", body))
+
+
+def footnote_block_start(text: str, min_offset: float = 0.35) -> Optional[int]:
+    """Fallback footnote-region detector for pages whose structuring carries no footnote strings.
+
+    The region starts at the first line in the lower part of the page (offset ≥ ``min_offset`` of the text) that
+    opens with a note number (``12 See ...``, ``¹²``) when the body above carries that number as a note reference and
+    the block from there on has citation markers (``See``, ``cf.``, ``ibid.``, ``p. 12``, a year in brackets). Line-
+    numbered edition / translation text (``21 the establishing ...``) has no matching body reference and is left alone.
+
+    :param text: Page text.
+    :param min_offset: Earliest start as a share of the text length.
+    :returns: Offset of the region's first line, or None.
+    """
+    lines = text.split("\n")
+    pos = 0
+    for ln in lines:
+        m = _NOTE_START.match(ln)
+        if m and pos >= min_offset * len(text):
+            num = m.group(1).translate(_SUP)
+            block = text[pos:]
+            if _NOTE_CITE.search(block) and _note_ref_in_body(text[:pos], num):
+                return pos
+        pos += len(ln) + 1
+    return None
+
+
+def cut_footnotes(text: str, page: Optional[_pages.PageRec] = None) -> Tuple[str, Optional[str]]:
+    """Cut the footnote region off a page text.
+
+    The region start is :func:`pages.footnote_region_start` (the page's footnote strings located in the text; the
+    strings are only used to find the cut, never as text), else :func:`footnote_block_start`.
+
+    :param text: Furniture-stripped page text.
+    :param page: The page (for its footnote strings; None = fallback only).
+    :returns: ``(body text, method)`` with method ``structured`` / ``fallback`` / None (nothing cut).
+    """
+    start = _pages.footnote_region_start(text, page.data) if page is not None and page.data else None
+    method = "structured" if start is not None else None
+    if start is None:
+        start = footnote_block_start(text)
+        method = "fallback" if start is not None else None
+    if start is None:
+        return text, None
+    return text[:start].rstrip(), method
+
+
+def _is_rtl(line: str) -> bool:
+    """Whether a line is mostly Hebrew / Arabic script.
+
+    :param line: A line.
+    :returns: True when RTL letters outnumber Latin letters.
+    """
+    return len(_HEB.findall(line)) + len(_ARA.findall(line)) > len(_LAT.findall(line))
+
+
+def join_broken_lines(text: str) -> Tuple[str, Dict[str, int]]:
+    """Repair OCR line-break artifacts inside paragraphs.
+
+    * ``histor-`` + ``ical`` → ``historical`` (a letter, a hyphen at the line end and a lower-case continuation);
+      ``Judaeo-`` + ``Arabic`` keeps the hyphen and joins without a space;
+    * a Latin-script prose line that does not end a sentence, followed by a Latin line starting in lower case (or with a
+      bracket, quote or digit), joins with a space;
+    * a long Hebrew prose line (≥ 75 % of the page's typical line length, :func:`pages.ja_or_he` = ``he``) that does not
+      end a sentence joins the next RTL line, unless either line is numbered; Judaeo-Arabic / Arabic lines (quoted
+      editions) keep their line structure.
+
+    Blank lines, headings and numbered lines are never joined across.
+
+    :param text: Page body text.
+    :returns: ``(text, counts)`` with ``hyphen`` / ``latin`` / ``rtl`` join counts.
+    """
+    lines = text.split("\n")
+    lens = sorted(len(ln.strip()) for ln in lines if len(ln.strip()) > 15)
+    width = lens[int(len(lens) * 0.8)] if lens else 60
+    counts = {"hyphen": 0, "latin": 0, "rtl": 0}
+    out: List[str] = []
+    for ln in lines:
+        cur = ln.rstrip()
+        if out and cur.strip() and out[-1].strip():
+            prev = out[-1]
+            nxt = cur.lstrip()
+            if _HYPHEN_END.search(prev) and not _is_rtl(prev):
+                if nxt[:1].islower():
+                    out[-1] = prev[:-1] + nxt
+                else:
+                    out[-1] = prev + nxt
+                counts["hyphen"] += 1
+                continue
+            numbered = _NUMBERED_LINE.match(nxt) or _NUMBERED_LINE.match(prev.lstrip())
+            if not numbered and not _SENT_FINAL.search(prev):
+                if not _is_rtl(prev) and not _is_rtl(nxt) and _LATIN_START_LOWER.match(nxt) \
+                        and len(prev.strip()) >= 0.5 * width:
+                    out[-1] = prev + " " + nxt
+                    counts["latin"] += 1
+                    continue
+                if _is_rtl(prev) and _is_rtl(nxt) and len(prev.strip()) >= 0.75 * width \
+                        and _pages.ja_or_he(prev + " " + nxt) == "he":
+                    out[-1] = prev + " " + nxt
+                    counts["rtl"] += 1
+                    continue
+        out.append(cur)
+    return "\n".join(out), counts
+
+
+def text_kind(text: str) -> str:
+    """Coarse kind of a chunk's text (``meta.text_kind``, a label for analysis and weighting, not a filter).
+
+    * ``edition_apparatus`` -- the text is mostly an edition or its apparatus: ≥ 30 % Judaeo-Arabic / Arabic lines
+      (Arabic-script lines or lines :func:`pages.ja_or_he` calls ``ja``; Hebrew-language prose is scholarship), ≥ 30 %
+      numbered lines, or a translated-document voice (:func:`pages.docness` ≥ 1.0);
+    * ``argument`` -- scholarly reasoning markers (however, therefore, suggests, evidence, probably, cf. ...; Hebrew /
+      French / German equivalents) at ≥ 1.2 per 100 words and at least as dense as narrative markers;
+    * ``narrative`` -- narrative markers (was, became, died, in 1050 ...) at ≥ 1.5 per 100 words;
+    * ``other`` -- everything else.
+
+    :param text: Chunk text.
+    :returns: One of :data:`TEXT_KINDS`.
+    """
+    lines = [ln for ln in (text or "").split("\n") if ln.strip()]
+    if not lines:
+        return "other"
+    edition_rtl = sum(1 for ln in lines if _is_rtl(ln) and (len(_ARA.findall(ln)) > len(_HEB.findall(ln))
+                                                           or _pages.ja_or_he(ln) == "ja")) / len(lines)
+    numbered = sum(1 for ln in lines if _NUMBERED_LINE.match(ln)) / len(lines)
+    if edition_rtl >= 0.3 or numbered >= 0.3 or _pages.docness(text) >= 1.0:
+        return "edition_apparatus"
+    words = max(1, len(text.split()))
+    arg = 100 * len(_ARG_MARKERS.findall(text)) / words
+    nar = 100 * len(_NARR_MARKERS.findall(text)) / words
+    if arg >= 1.2 and arg >= nar:
+        return "argument"
+    if nar >= 1.5:
+        return "narrative"
+    if arg >= 1.2:
+        return "argument"
+    return "other"
 
 
 # ------------------------------------------------------------------------------------ manifest
@@ -1165,7 +1461,7 @@ def make_row(chunk: Chunk, info: Mapping[str, Any], split: str, open_frac: float
         source=SOURCE, work=chunk.work, part=first.part,
         page_range=f"{first.page_no}" if first is last else f"{first.page_no}-{last.page_no}",
         printed_pages=label, piece=chunk.piece, strip_ops=ops, source_scrub_hits=source_scrub_hits, target_raw=None,
-        reader_exposed=None, exposure_level=None)
+        reader_exposed=None, exposure_level=None, text_kind=text_kind(chunk.text))
     return {"messages": _rows.make_messages(user, rest), "meta": meta}
 
 
@@ -1176,6 +1472,7 @@ def _tally() -> Dict[str, Any]:
     :returns: Counters for pages, tokens, drops and rows.
     """
     return {"pages_total": 0, "page_tokens_total": 0, "dropped": collections.defaultdict(lambda: {"pages": 0, "tokens": 0}),
+            "cuts": {"footnotes": {"pages": 0, "tokens": 0}, "footnote_method": collections.Counter()},
             "quality_multilabel": collections.Counter(), "train": {"pages": 0, "page_tokens": 0, "rows": 0, "row_tokens": 0, "target_tokens": 0},
             "probe": {"pages": 0, "page_tokens": 0, "rows": 0, "row_tokens": 0, "target_tokens": 0}}
 
@@ -1215,7 +1512,8 @@ def build(pages: Sequence[_pages.PageRec], lit_manifest: Mapping[str, Any],
           max_tokens: int = DEFAULT_MAX_TOKENS, probe_frac: float = DEFAULT_PROBE_FRAC,
           open_frac: float = DEFAULT_OPEN_FRAC, min_containment: float = DEFAULT_MIN_CONTAINMENT,
           seed: int = DEFAULT_SEED, tokenizer_path: Optional[Union[str, Path]] = None,
-          template_path: Optional[Union[str, Path]] = None, dedupe: bool = True) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+          template_path: Optional[Union[str, Path]] = None, dedupe: bool = True,
+          hygiene: bool = True) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
     """Run the L1 pipeline (module docstring) on literature pages.
 
     :param pages: Pages from :func:`pages.iter_pages` (with OCR).
@@ -1230,6 +1528,9 @@ def build(pages: Sequence[_pages.PageRec], lit_manifest: Mapping[str, Any],
     :param tokenizer_path: Explicit ``tokenizer.json`` (default ``paths.tokenizer_json``).
     :param template_path: Explicit ``chat_template.jinja`` (default ``paths.chat_template``).
     :param dedupe: Drop near-duplicate pages.
+    :param hygiene: Prep-pass target hygiene (2026-10-26): cut footnote regions (:func:`cut_footnotes`), drop apparatus
+        pages (:func:`page_kind`) and reference-dense pages (:func:`reference_density`), repair OCR line breaks
+        (:func:`join_broken_lines`); the quality rules then judge the body text. False = the earlier pipeline.
     :returns: ``(rows, report)``; rows are train then probe rows in page order, each rendered and
         counted; the report carries per-work pages / tokens kept and dropped by reason.
     """
@@ -1239,28 +1540,41 @@ def build(pages: Sequence[_pages.PageRec], lit_manifest: Mapping[str, Any],
     heads = running_heads_by_part(pages)
     report: Dict[str, Dict[str, Any]] = collections.defaultdict(_tally)
 
-    texts, opses = [], []
+    texts, opses, bodies, cut_methods = [], [], [], []
     for p in pages:
         raw = p.ocr_text or ""
         t, ops = strip_furniture(raw, heads.get((p.work, p.part), ())) if raw else (p.full_main_text or "", [])
         texts.append(t)
         opses.append(ops)
+        body, method = cut_footnotes(t, p) if (raw and hygiene) else (t, None)
+        bodies.append(body)
+        cut_methods.append(method)
     toks = count_batch(texts)
+    body_toks = count_batch(bodies) if hygiene else toks
     furniture: collections.Counter = collections.Counter()
+    joins: collections.Counter = collections.Counter()
 
     stage1: List[PageCand] = []
-    for p, t, ops, n_tok in zip(pages, texts, opses, toks):
+    for p, t, ops, n_tok, body, method, n_body in zip(pages, texts, opses, toks, bodies, cut_methods, body_toks):
         w = report[p.work]
         w["pages_total"] += 1
         w["page_tokens_total"] += n_tok
         if not p.ocr_text:
             _drop(w, "no_ocr", n_tok)
             continue
-        q = quality_reasons(t, p.page_type)
+        q = quality_reasons(body, p.page_type)
         w["quality_multilabel"].update(q)
         if q:
             _drop(w, f"quality:{q[0]}", n_tok)
             continue
+        if hygiene:
+            kind = page_kind(body, p.page_no)
+            if kind:
+                _drop(w, f"page_kind:{kind}", n_tok)
+                continue
+            if reference_density(body) > REFERENCE_DENSITY_MAX:
+                _drop(w, "reference_density", n_tok)
+                continue
         if p.ocr_containment is None:
             _drop(w, "containment_none", n_tok)
             continue
@@ -1268,9 +1582,26 @@ def build(pages: Sequence[_pages.PageRec], lit_manifest: Mapping[str, Any],
             _drop(w, "low_containment", n_tok)
             continue
         furniture.update(ops)
+        page_ops = sorted(set(ops))
+        text_out, n_out = t, n_tok
+        if hygiene:
+            if method:
+                w["cuts"]["footnotes"]["pages"] += 1
+                w["cuts"]["footnotes"]["tokens"] += n_tok - n_body
+                w["cuts"]["footnote_method"][method] += 1
+                page_ops.append(f"footnote_cut:{method}")
+            text_out, jc = join_broken_lines(body)
+            joins.update(jc)
+            if any(jc.values()):
+                page_ops.append("line_join")
+            n_out = n_body
         printed = p.printed_page_num if p.printed_page_source in ("extracted", "inferred") else None
-        stage1.append(PageCand(p.page_key, p.work, p.part, p.page_no, t, n_tok, printed, p.ocr_source,
-                               p.ocr_containment, sorted(set(ops))))
+        stage1.append(PageCand(p.page_key, p.work, p.part, p.page_no, text_out, n_out, printed, p.ocr_source,
+                               p.ocr_containment, page_ops))
+    if hygiene:
+        joined = [c for c in stage1 if "line_join" in c.ops]
+        for c, n in zip(joined, count_batch([c.text for c in joined])):
+            c.tokens = n
 
     dups = find_duplicates({c.key: c.text for c in stage1}) if dedupe else {}
     groups: Dict[str, List[str]] = collections.defaultdict(list)
@@ -1336,8 +1667,24 @@ def build(pages: Sequence[_pages.PageRec], lit_manifest: Mapping[str, Any],
     summary = _summarise(report, rows, lit_manifest)
     summary.update({"source_scrub_hits_removed": scrub_total, "rows_with_source_names_after": sum(1 for r in rows if any(
         _tn.has_source_names(m["content"]) for m in r["messages"])), "furniture_lines_removed": dict(furniture),
-        "duplicate_pages": len(dups), "chunks": len(chunks), "capped_rows": len(capped)})
+        "duplicate_pages": len(dups), "chunks": len(chunks), "capped_rows": len(capped), "hygiene": hygiene,
+        "line_joins": dict(joins), "text_kinds": _text_kind_counts(rows)})
     return rows, summary
+
+
+def _text_kind_counts(rows: Sequence[Dict[str, Any]]) -> Dict[str, Dict[str, Dict[str, int]]]:
+    """Rows and tokens per ``meta.text_kind`` and split.
+
+    :param rows: Built rows.
+    :returns: ``{split: {kind: {"rows", "tokens"}}}``.
+    """
+    out: Dict[str, Dict[str, Dict[str, int]]] = {}
+    for r in rows:
+        m = r["meta"]
+        cell = out.setdefault(m["split"], {}).setdefault(str(m.get("text_kind")), {"rows": 0, "tokens": 0})
+        cell["rows"] += 1
+        cell["tokens"] += int(m.get("tokens") or 0)
+    return out
 
 
 def _chunk_key_of(row: Mapping[str, Any]) -> str:
@@ -1370,7 +1717,11 @@ def _summarise(report: Mapping[str, Dict[str, Any]], rows: Sequence[Dict[str, An
         works[w] = {"licence_class": entry.get("licence_class", "unknown"), "pages_total": t["pages_total"],
                     "page_tokens_total": t["page_tokens_total"], "train": dict(t["train"]), "probe": dict(t["probe"]),
                     "dropped": {k: dict(v) for k, v in sorted(t["dropped"].items())},
-                    "quality_multilabel": dict(t["quality_multilabel"])}
+                    "quality_multilabel": dict(t["quality_multilabel"]),
+                    "cuts": {"footnotes": dict(t["cuts"]["footnotes"]),
+                             "footnote_method": dict(t["cuts"]["footnote_method"])}}
+        tot["footnote_cut_pages"] += t["cuts"]["footnotes"]["pages"]
+        tot["footnote_cut_tokens"] += t["cuts"]["footnotes"]["tokens"]
         for k, v in t["dropped"].items():
             tot_drop[k]["pages"] += v["pages"]
             tot_drop[k]["tokens"] += v["tokens"]
@@ -1477,7 +1828,7 @@ def cmd_build(args: argparse.Namespace) -> int:
         pages = sample
     rows, summary = build(pages, lit, excluded, token_cap=args.token_cap or None, max_tokens=args.max_tokens,
                           probe_frac=args.probe_frac, open_frac=args.open_frac, min_containment=args.min_containment,
-                          seed=args.seed, dedupe=not args.no_dedupe)
+                          seed=args.seed, dedupe=not args.no_dedupe, hygiene=not args.no_hygiene)
     build_args = {k: v for k, v in vars(args).items() if k not in ("func",)}
     for k in ("root", "literature_manifest", "excluded_pages", "out", "report"):
         if build_args.get(k):
@@ -1537,6 +1888,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     b.add_argument("--works", nargs="*", help="restrict to these work directories (sampling)")
     b.add_argument("--max-pages-per-work", type=int, default=0, help="sample the first N pages per work (0 = all)")
     b.add_argument("--no-dedupe", action="store_true", help="keep near-duplicate pages")
+    b.add_argument("--no-hygiene", action="store_true",
+                   help="skip the prep-pass hygiene (footnote cut, apparatus pages, reference density, line joins)")
     b.add_argument("--dry-run", action="store_true", help="write only literature_l1_dry_report.json, no rows")
     b.add_argument("--report", help="report path override")
     b.set_defaults(func=cmd_build)

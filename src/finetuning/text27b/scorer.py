@@ -88,11 +88,15 @@ PROBE_PROMPT_VERSION = "probe-v1-20261018"
 #: Judge version of the 2026-10-18 cache (read only; v2 makes no judge calls).
 JUDGE_VERSION_V1 = "judge-v1-20261018"
 #: Version of the canon-comparison metrics (E8).
-CANON_SCORER_VERSION = "canon_v1-20261026"
+CANON_SCORER_VERSION = "canon_v2-20261026"
 #: Longest anchor (words) a canon_identify answer may quote; longer = recitation of the canon (over-quoting).
 CANON_ANCHOR_WORDS = 12
-#: The canon_diff variant types.
-CANON_VARIANT_TYPES: Tuple[str, ...] = ("omission", "addition", "substitution", "orthographic", "order")
+#: The canon_diff variant types (prep pass 2026-10-26: ``orthographic`` renamed ``orthographic_or_minor``).
+CANON_VARIANT_TYPES: Tuple[str, ...] = ("omission", "addition", "substitution", "orthographic_or_minor", "order")
+#: Earlier / alternative type names mapped onto :data:`CANON_VARIANT_TYPES` before scoring (a model or a stored output
+#: that still says ``orthographic`` is scored as ``orthographic_or_minor``).
+CANON_TYPE_ALIASES: Dict[str, str] = {"orthographic": "orthographic_or_minor", "orthographic-or-minor": "orthographic_or_minor",
+                                      "orthographic or minor": "orthographic_or_minor"}
 
 CHRFPP = CHRF(word_order=2)
 CHRF_PLAIN = CHRF()
@@ -1283,6 +1287,7 @@ def variant_keys(variants: Any, mode: str = "typed") -> Counter:
             continue
         frag, canon = canon_norm(v.get("fragment")), canon_norm(v.get("canon"))
         typ = str(v.get("type") or "").strip().lower()
+        typ = CANON_TYPE_ALIASES.get(typ, typ)
         key: Tuple[str, ...] = (frag, canon) if mode == "untyped" else (typ, frag, canon)
         if mode == "strict":
             key = key + (str(v.get("pos") or "").strip(),)

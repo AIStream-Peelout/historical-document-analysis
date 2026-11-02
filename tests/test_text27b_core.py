@@ -423,3 +423,20 @@ def test_write_jsonl_nfc_target_raw(tmp_path: Path) -> None:
     R.write_jsonl(f, [row])
     back = R.load_jsonl(f)[0]
     assert back["meta"]["target_raw"] == "Fus\u1e6d\u0101\u1e6d (ll. 3\u20134)" and R.non_nfc_roles(back) == []
+
+
+def test_render_chat_reasoning_effort_with_real_template() -> None:
+    """``reasoning_effort`` reaches the template only when given: training renders are unchanged; a thinking render with
+    ``low`` carries the template's effort sentence and an open think block (skipped without the local template)."""
+    try:
+        p = P.load_paths()
+    except FileNotFoundError:
+        pytest.skip("no paths.json")
+    if not Path(p.chat_template).exists():
+        pytest.skip("no local chat template")
+    msgs = R.make_messages("Translate this.", "x")[:2]
+    off = R.render_chat(msgs, add_generation_prompt=True)
+    assert off == R.render_chat(msgs, add_generation_prompt=True, reasoning_effort=None)
+    assert off.endswith("<|im_start|>assistant\n" + R.EMPTY_THINK)
+    low = R.render_chat(msgs, enable_thinking=True, add_generation_prompt=True, check=False, reasoning_effort="low")
+    assert R.EFFORT_MARKER in low and low.endswith("<|im_start|>assistant\n<think>\n")
