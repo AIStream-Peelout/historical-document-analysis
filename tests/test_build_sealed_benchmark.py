@@ -107,6 +107,60 @@ def test_doc_exclusion_layers():
     assert check("4", "Q", names=["T-S 12.11"]) is None
 
 
+#: The sealed build's fragment keys (``build_pgp_editions.fragment_key``, FROZEN 2026-11): the PR-3 values, pinned.
+_CUL_KTIV = "Cambridge University Library, Cambridge, England Ms. "
+FROZEN_FRAGMENT_KEYS = {
+    "T-S 12.301": "ts12|301", "Cambridge_CUL_T_S_12_301": "ts12|301", "cambridgecults12|301": "ts12|301",
+    "Bodl. MS heb. d 79/36": "mshebd79|36", "Oxford_Bodleian_MS_heb_d_79_36": "mshebd79|36",
+    "Oxford_Bodleian_Bodl_MS_heb_d_79_36": "mshebd79|36",
+    _CUL_KTIV + "T-S F 1(1).20": "tsf1|1|20", _CUL_KTIV + "T-S F 1(2).20": "tsf1|2|20",
+    "University of Birmingham Library, Birmingham, England Ms. Mingana 7": "mingana7",
+    "Birmingham_Mingana_7": "birminghammingana7", "ENA 3919.3": "ena3919|3",
+}
+
+
+def test_sealed_fragment_key_is_frozen() -> None:
+    """The sealed build keeps the PR-3 key format whatever the facade does (PR-4 membership gate).
+
+    The facade ``loose_key`` would join ``T-S F 1(1).20`` with ``T-S F 1(2).20`` (both ``Cambridge_CUL_T_S_F1_20``)
+    and the KTIV ``Mingana 7`` with ``Birmingham_Mingana_7``, which would change the sealed exclusion inventory.
+
+    :return: None.
+    :rtype: None
+    """
+    for name, key in FROZEN_FRAGMENT_KEYS.items():
+        assert bpe.fragment_key(name, GATE) == bpe.fragment_key(name) == key, name
+    facade = bpe.shelfmarks.loose_key
+    assert facade(_CUL_KTIV + "T-S F 1(1).20") == facade(_CUL_KTIV + "T-S F 1(2).20")
+
+
+def test_sealed_benchmark_ids_on_the_fixture_are_unchanged() -> None:
+    """A fixture inventory and candidate set: the documents and manuscripts the sealed build keeps are pinned.
+
+    The inventory holds the KTIV manuscript ``T-S F 1(2).20``, the merged record ``Birmingham_Mingana_7`` and a
+    training id ``Cambridge_CUL_T_S_12_301``. Kept (as before PR-4): a document on ``T-S F 1(1).20`` and the KTIV
+    manuscript ``Mingana 7``, which the facade key would have excluded; excluded: the ``T-S 12.301`` shelf mark.
+
+    :return: None.
+    :rtype: None
+    """
+    ktiv_meta = {"990000000000000001": {"shelf_mark": _CUL_KTIV + "T-S F 1(2).20"}}
+    merged = _merged({"Birmingham_Mingana_7": [], "Cambridge_CUL_T_S_12_301": ["1"]},
+                     sys_of={"Cambridge_CUL_T_S_F1_20": "990000000000000001"})
+    inv = sb.Inventory()
+    inv.add("training:t", "training", "t", ids=["Cambridge_CUL_T_S_12_301", "Birmingham_Mingana_7"],
+            sys_nums=["990000000000000001"])
+    sb.expand_inventory(inv, merged, {}, {}, ktiv_meta, GATE)
+    candidates = {"7": ("Cambridge_CUL_T_S_99_1", ["T-S F 1(1).20"]), "8": ("Cambridge_CUL_T_S_99_2", ["T-S 12.301"]),
+                  "9": ("Cambridge_CUL_T_S_99_3", ["T-S 99.3"])}
+    kept = sorted(pid for pid, (cid, names) in candidates.items()
+                  if sb.doc_exclusion(pid, cid, [cid, *names], (), inv, merged, GATE, {}) is None)
+    assert kept == ["7", "9"]
+    shelf = "University of Birmingham Library, Birmingham, England Ms. Mingana 7"
+    assert bpe.fragment_key(shelf, GATE) not in inv.keys                 # literary key layer: Mingana 7 kept
+    assert bpe.shelfmarks.loose_key(shelf) == bpe.shelfmarks.loose_key("Birmingham_Mingana_7")
+
+
 def test_strata_and_genres():
     assert sb.language_stratum("Hebrew, Judaeo-Arabic") == "Judaeo-Arabic"
     assert sb.language_stratum("Arabic") == "Arabic"

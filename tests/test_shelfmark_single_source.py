@@ -69,27 +69,19 @@ _SQUASH_CLASS = re.compile(r"\[\^(?:a-z0-9|0-9a-z|A-Za-z0-9|a-zA-Z0-9|0-9A-Za-z|
 _KEY_NAMES = ("*shelf*key*", "loose_key", "canonical_id", "shelfmark_core_id")
 
 #: Git-tracked path -> the violations it may keep (PR-1: every tracked caller found today). Shrinks in PRs 3, 4, 6
-#: and 7. Untracked files go in :data:`LOCAL_ALLOWLIST_FILE`, never here.
+#: and 7 (PR-4 removed decontam_gate, build_documentary_grounding, build_script_tags,
+#: screen_training_misalignment, verify_decontamination, es_image_gap_report, enrich_fragment_people,
+#: normalizer_report and oxford_id_map). Untracked files go in :data:`LOCAL_ALLOWLIST_FILE`, never here.
 ALLOWLIST: Dict[str, FrozenSet[str]] = {
-    # Group C key wrappers and validators (PR-4)
-    "src/datasets/cleaning/screen_training_misalignment.py": frozenset({"import:ShelfmarkNormalizer"}),
-    "src/datasets/cleaning/verify_decontamination.py": frozenset({"import:ShelfmarkNormalizer"}),
-    "src/datasets/evaluations/helper_eval_scripts/build_script_tags.py": frozenset({"import:ShelfmarkNormalizer"}),
-    "src/datasets/evaluations/helper_eval_scripts/decontam_gate.py": frozenset(
-        {"def:loose_key", "import:ShelfmarkNormalizer"}),
+    # Group C key wrappers still to migrate (arabic_scrape_queue: deferred while it carries unrelated work;
+    # the legacy-store trio)
     "src/datasets/indexing/arabic_scrape_queue.py": frozenset({"def:loose_key", "import:ShelfmarkNormalizer"}),
-    "src/datasets/indexing/es_image_gap_report.py": frozenset({"import:institution_tokens"}),
     "src/datasets/indexing/legacy_store/pdf_transcriptions.py": frozenset(
         {"def:shelfmark_core_id", "import:ShelfmarkNormalizer"}),
-    "src/datasets/indexing/neo4j/enrich_fragment_people.py": frozenset({"import:ShelfmarkNormalizer"}),
-    "src/finetuning/qwen_hebrew/build_documentary_grounding.py": frozenset(
-        {"def:loose_key", "import:institution_tokens"}),
-    # merging/ engine users outside the merge recipe (PR-4: legacy-store trio, normalizer_report, oxford_id_map;
-    # bodleian_images / ktiv_transcription_gap use classify / institution lookups until the facade covers them)
+    # merging/ engine users outside the merge recipe (bodleian_images / ktiv_transcription_gap use classify /
+    # institution lookups until the facade covers them)
     "src/datasets/merging/bodleian_images.py": frozenset({"import:ShelfmarkNormalizer"}),
     "src/datasets/merging/ktiv_transcription_gap.py": frozenset({"import:institution_tokens"}),
-    "src/datasets/merging/normalizer_report.py": frozenset({"import:ShelfmarkNormalizer"}),
-    "src/datasets/merging/oxford_id_map.py": frozenset({"import:ShelfmarkNormalizer", "import:institution_tokens"}),
     # not a shelf mark: case-folded book / metadata-file names
     "src/datasets/indexing/bibliography/index_all_bibliography.py": frozenset({"squash:_name_key"}),
     # FROZEN key grammars (PR-7 marks them; they stay)

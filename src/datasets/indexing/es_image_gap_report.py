@@ -16,7 +16,7 @@ Grouping is by descriptive institution token (``Cambridge_CUL``,
 sources spell the same holding library many ways (``Rylands`` /
 ``John Rylands Library, University of Manchester`` / ``Manchester``). The token
 is the same one that prefixes every canonical id, so the grouping matches the
-ids in the output. See :mod:`src.datasets.merging.institution_tokens`.
+ids in the output. See :mod:`src.datasets.shelfmarks` (``split_id``, ``institution_token``).
 
 Usage::
 
@@ -39,17 +39,13 @@ from typing import Any, Dict, Iterator, List, Optional, Sequence
 import dotenv
 from elasticsearch import Elasticsearch
 
+from src.datasets import shelfmarks
 from src.datasets.indexing.elastic_index_genizah import es_config_from_env
-from src.datasets.merging.institution_tokens import _REGISTRY, institution_token, resolve_token
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 DEFAULT_INDEX = "genizah_merged_v4"
 DEFAULT_OUT_DIR = _REPO_ROOT / "src/datasets/raw_data/cairo_genizah/merged"
 PAGE_SIZE = 1000
-
-#: Registry tokens, longest first, so ``Cambridge_Lewis_Gibson`` is tested
-#: before ``Cambridge_CUL`` when prefix-matching a canonical id.
-_TOKENS_BY_LENGTH: List[str] = sorted((token for token, _ in _REGISTRY), key=len, reverse=True)
 
 #: Fields pulled from ``_source``. Excludes the dense vector and the bulky text
 #: bodies — a 21k-row worklist should not drag 200MB of transcriptions with it.
@@ -148,23 +144,21 @@ def build_gap_query() -> Dict[str, Any]:
 def institution_group(canonical_id: str, institution_raw: Optional[str] = None) -> str:
     """Resolve the descriptive institution token for a record.
 
-    Canonical ids are *built* from these tokens, so prefix-matching the id is
-    exact wherever the institution is in the registry. Records whose
-    institution fell back to a slug (rare / private collections) are resolved
-    from the raw institution text instead.
+    Canonical ids are *built* from these tokens, so the id's own registry token
+    (:func:`src.datasets.shelfmarks.split_id`, longest token first) is exact
+    wherever the institution is in the registry. Records whose institution fell
+    back to a slug (rare / private collections) are resolved from the raw
+    institution text instead (:func:`src.datasets.shelfmarks.institution_token`).
 
     :param canonical_id: Institution-qualified canonical id.
     :param institution_raw: Raw institution string from the index, if any.
     :returns: A descriptive token, never empty (``Unknown`` at worst).
     """
-    for token in _TOKENS_BY_LENGTH:
-        if canonical_id == token or canonical_id.startswith(token + "_"):
-            return token
-    resolved = resolve_token(institution_raw)
-    if resolved:
-        return resolved
+    token = shelfmarks.split_id(canonical_id)[0]
+    if token:
+        return token
     if institution_raw:
-        return institution_token(institution_raw)
+        return shelfmarks.institution_token(institution_raw)
     return canonical_id.split("_")[0] or "Unknown"
 
 

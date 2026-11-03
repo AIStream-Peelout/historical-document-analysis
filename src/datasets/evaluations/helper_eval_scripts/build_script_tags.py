@@ -25,40 +25,34 @@ import collections
 import json
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Set
+from typing import Any, Dict, List
 
 _REPO = Path(__file__).resolve().parents[4]
 sys.path.insert(0, str(_REPO))
 
-from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+from src.datasets import shelfmarks  # noqa: E402
 
 _BENCH_DIR = _REPO / "src/datasets/raw_data/cairo_genizah/evaluations/genizah_test_v1"
 _PGP_DIR = _REPO / "src/datasets/raw_data/cairo_genizah/pgp_raw/data"
 SIDECAR = _BENCH_DIR / "genizah_test_v1_script_tags.json"
 
 
-def _key(shelf_mark: str) -> str:
-    """Digit-boundary-safe fuzzy key for the PGP join.
+def _variants(shelf_mark: str) -> List[str]:
+    """Candidate join keys for one benchmark shelfmark, most exact first.
+
+    :func:`src.datasets.shelfmarks.loose_key` (institution-qualified, the institution inferred from the mark) of
+    every :func:`src.datasets.shelfmarks.variants` spelling, in that order (the mark itself first); spellings that
+    cannot be keyed are dropped.
 
     :param shelf_mark: Raw shelfmark.
-    :returns: Loose key of the canonical form.
+    :type shelf_mark: str
+    :returns: Distinct loose keys (empty when no spelling can be keyed).
+    :rtype: List[str]
     """
-    return ShelfmarkNormalizer.loose_key(
-        ShelfmarkNormalizer.to_canonical_id(shelf_mark))
-
-
-def _variants(shelf_mark: str) -> Set[str]:
-    """Candidate join keys for one shelfmark (institution-prefix tolerant).
-
-    :param shelf_mark: Raw shelfmark.
-    :returns: Set of loose keys.
-    """
-    out = {_key(shelf_mark)}
-    lk = ShelfmarkNormalizer.loose_key(shelf_mark)
-    out.add(lk)
-    for pref in ("oxford", "bodl", "cambridgecul", "cambridge"):
-        if lk.startswith(pref):
-            out.add(lk[len(pref):])
+    out: List[str] = []
+    for key in (shelfmarks.loose_key(v) for v in shelfmarks.variants(shelf_mark)):
+        if key and key not in out:
+            out.append(key)
     return out
 
 
@@ -97,11 +91,10 @@ def main() -> None:
 
     frag_idx: Dict[str, List[Any]] = {}
     for _, f in frags.iterrows():
-        for key in _variants(f["shelfmark"]):
+        marks = [f["shelfmark"]] + (f["shelfmarks_historic"].split(";") if f["shelfmarks_historic"] else [])
+        # a historic spelling often keys to the current mark: index each fragment once per key
+        for key in {shelfmarks.loose_key(m) for m in marks} - {""}:
             frag_idx.setdefault(key, []).append(f)
-        if f["shelfmarks_historic"]:
-            for h in f["shelfmarks_historic"].split(";"):
-                frag_idx.setdefault(ShelfmarkNormalizer.loose_key(h), []).append(f)
 
     bench_docs: Dict[str, str] = {}
     for name in ("genizah_test_v1.json", "genizah_test_v1_verified.json"):

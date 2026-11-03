@@ -9,6 +9,7 @@ assembly and line numbering, the two reader cross-checks, the split and decontam
 """
 import json
 import random
+import types
 from typing import Dict, Iterable, List
 
 import pytest
@@ -507,6 +508,22 @@ def test_fragment_key_matches_bodleian_aliases():
     assert B.fragment_key("T-S 16.110", gate) == B.fragment_key("Cambridge_CUL_T_S_16_110", gate)
 
 
+def test_benchmark_layer_keys_on_the_facade() -> None:
+    """The builder's own benchmark layer keys with the facade ``loose_key``: a raw mark, its KTIV form and its ES id
+    hit one key, and the gate's stored benchmark keys are taken as they are (no re-keying of a key).
+
+    :return: None.
+    :rtype: None
+    """
+    gate = types.SimpleNamespace(bench_keys={"cambridgecults16|110"})
+    bench = B.load_benchmark(gate, extra_ids={"New_York_JTS_ENA_3919_3"})
+    assert "cambridgecults16|110" in bench.keys and "newyorkjtsena3919|3" in bench.keys
+    for name in ("ENA 3919.3", "New_York_JTS_ENA_3919_3",
+                 "The Jewish Theological Seminary of America, New York, NY, USA Ms. ENA 3919.3"):
+        assert B.shelfmarks.loose_key(name) == "newyorkjtsena3919|3"
+    assert B.shelfmarks.loose_key("ENA 3919.31") not in bench.keys
+
+
 def test_benchmark_overlap_containment():
     """A text duplicate has high pair containment; a shared formula does not."""
     text = " ".join(RECTO * 2)
@@ -566,4 +583,4 @@ def test_load_benchmark_holds_out_the_registered_benchmarks():
     without = B.load_benchmark(gate, extra_ids=())
     with_one = B.load_benchmark(gate, extra_ids={"New_York_JTS_ENA_3919_3"})
     assert "New_York_JTS_ENA_3919_3" in with_one.ids - without.ids
-    assert B.fragment_key("ENA 3919.3", gate) in with_one.keys - without.keys          # the same fragment under its shelfmark
+    assert B.shelfmarks.loose_key("ENA 3919.3") in with_one.keys - without.keys  # same fragment, its shelfmark

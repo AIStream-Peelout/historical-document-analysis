@@ -80,6 +80,7 @@ from datasets import Dataset, DatasetDict
 from PIL import Image as PILImage
 from PIL import ImageOps
 
+from src.datasets import shelfmarks
 from src.datasets.cleaning.clean_genizah_transcriptions import GAP, clean_diplomatic
 from src.datasets.consensus.line_rule import letters, similarity
 from src.datasets.evaluations.benchmark_registry import registered_benchmark_documents
@@ -1242,19 +1243,26 @@ _INSTITUTION_PREFIXES = ("oxfordbodleian", "oxford", "bodleian", "bodl", "cambri
                          "budapest", "mta", "paris", "philadelphia", "penn", "london", "washington")
 
 
-def fragment_key(shelfmark_or_id: str, gate: DecontamGate) -> Optional[str]:
+def fragment_key(shelfmark_or_id: str, gate: Optional[DecontamGate] = None) -> Optional[str]:
     """Institution-free fragment key, so one fragment matches across naming schemes.
+
+    FROZEN 2026-11: key format of the sealed benchmark; new code must use src.datasets.shelfmarks.
+    ``build_sealed_benchmark`` keys its exclusion inventory with it, and the PR-4 membership gate found that the
+    facade ``loose_key`` would change which documents and manuscripts that inventory excludes, so this key stays
+    byte-identical: :func:`src.datasets.shelfmarks.legacy_gate_key` (the pre-PR-4 gate key) of the input with
+    ``_`` as spaces, then up to 22 institution prefixes stripped. This builder's own benchmark layer
+    (:func:`load_benchmark`, :func:`gate_documents`) uses :func:`src.datasets.shelfmarks.loose_key`.
 
     The Bodleian source added canonical ids ``Oxford_Bodleian_Bodl_MS_heb_d_79_36`` for
     fragments the benchmark knows as ``Oxford_Bodleian_MS_heb_d_79_36`` and PGP as
-    ``Bodl. MS heb. d 79/36``; :meth:`DecontamGate.loose_key` keeps the institution tokens, so
+    ``Bodl. MS heb. d 79/36``; the gate key keeps the institution tokens, so
     they are stripped here (all three -> ``mshebd79|36``).
 
     :param shelfmark_or_id: Shelfmark or canonical id.
-    :param gate: Decontamination gate (loose-key normaliser).
+    :param gate: Ignored; kept so the sealed build's calls (``fragment_key(name, gate)``) stay unchanged.
     :returns: The key, or None when unkeyable.
     """
-    key = gate.loose_key(shelfmark_or_id.replace("_", " "))
+    key = shelfmarks.legacy_gate_key(shelfmark_or_id.replace("_", " "))
     if not key:
         return None
     changed = True
@@ -1282,7 +1290,8 @@ class Benchmark:
     """The frozen benchmark in the forms the document gate compares against.
 
     :param ids: Benchmark canonical ids.
-    :param keys: Fragment keys of the benchmark ids, shelfmarks and gate inventory.
+    :param keys: Loose keys (:func:`src.datasets.shelfmarks.loose_key`) of the benchmark ids and shelfmarks,
+        plus the gate's benchmark-key inventory as stored (already loose keys).
     :param shingles: Per benchmark document, its GT shingle set.
     :param all_shingles: Union of the GT shingles.
     """
@@ -1295,7 +1304,7 @@ class Benchmark:
 
 def load_benchmark(gate: DecontamGate, ids_path: Path = BENCH_IDS_JSON, gt_path: Path = BENCH_GT_JSON,
                    extra_ids: Optional[Iterable[str]] = None) -> Benchmark:
-    """Load benchmark ids, fragment keys and GT shingles.
+    """Load benchmark ids, loose keys and GT shingles.
 
     :param gate: Decontamination gate.
     :param ids_path: ``decontam/benchmark_ids.json``.
@@ -1307,8 +1316,8 @@ def load_benchmark(gate: DecontamGate, ids_path: Path = BENCH_IDS_JSON, gt_path:
     ids = set(json.loads(ids_path.read_text(encoding="utf-8")))
     ids |= set(registered_benchmark_documents()[0] if extra_ids is None else extra_ids)
     docs = json.loads(gt_path.read_text(encoding="utf-8"))["docs"]
-    keys = {k for k in (fragment_key(x, gate) for x in list(ids) + [d.get("shelf_mark", "") for d in docs]) if k}
-    keys |= {k for k in (fragment_key(k0, gate) for k0 in gate.bench_keys) if k}
+    keys = {k for k in (shelfmarks.loose_key(x) for x in list(ids) + [d.get("shelf_mark", "") for d in docs] if x) if k}
+    keys |= set(gate.bench_keys)
     sh = {d["doc_id"]: shingle_set(d.get("gt") or "") for d in docs}
     return Benchmark(ids, keys, sh, set().union(*sh.values()) if sh else set())
 
@@ -1388,8 +1397,8 @@ def gate_documents(docs: Dict[str, DocInfo], editions: Dict[str, Dict[str, str]]
     """Set each usable document's document-level drop reason and trained flag (in place).
 
     Benchmark layers, each sufficient: a join partner (shares a PGP id or is a sub-part of a
-    benchmark id), the same fragment under another name (:func:`fragment_key` of any canonical
-    id or shelfmark part), and a text duplicate (>= ``containment`` of the smaller side's 25-letter
+    benchmark id), the same fragment under another name (:func:`src.datasets.shelfmarks.loose_key` of any
+    canonical id or shelfmark part), and a text duplicate (>= ``containment`` of the smaller side's 25-letter
     shingles shared with one benchmark document). Sharing a few shingles is NOT exclusion:
     documentary formulae (deeds in one scribe's hand, ketubba clauses) put >= 2 shared shingles on
     a quarter of all editions; that count is reported instead.
@@ -1424,7 +1433,7 @@ def gate_documents(docs: Dict[str, DocInfo], editions: Dict[str, Dict[str, str]]
         if d.canonical_id in bench_partners or pid in bench_pgpids or any(
                 subpart_related(d.canonical_id, b, merged.pgpids_of) for b in bench.ids):
             d.reason = "benchmark_join_partner"
-        elif any(fragment_key(x, gate) in bench.keys for x in names if x):
+        elif any(shelfmarks.loose_key(x) in bench.keys for x in names if x):
             d.reason = "benchmark_fragment_key"
         elif best_id is not None and cont >= containment:
             d.reason = "benchmark_text_duplicate"

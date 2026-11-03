@@ -33,8 +33,8 @@ frame both readers saw), which is stored at original resolution.
 Decontamination (per document, before any download) drops a doc when:
 its canonical id is a PGP-131 benchmark id; one of the two ids is the other
 plus a trailing ``_<n>`` join suffix; its image URL is a benchmark image; its
-loose shelfmark key (:meth:`DecontamGate.loose_key`, from the canonical id,
-the join base and the merged record's shelfmarks) is a benchmark key; or it
+loose shelfmark key (:func:`src.datasets.shelfmarks.loose_key`, institution-qualified,
+from the canonical id, the join base and the merged record's shelfmarks) is a benchmark key; or it
 maps to a religious-benchmark manuscript by KTIV sys_num (merged record or
 ``/KTIV/<sys>/`` image URL) or by loose shelfmark key.  Ids that merely share a
 volume after stripping BOTH trailing numbers (T-S 16.106 vs T-S 16.110) are
@@ -82,15 +82,14 @@ from src.finetuning.qwen_hebrew.build_ktiv_dataset import (
     _READBOX_PROMPT,
     _positive,
 )
+from src.datasets import shelfmarks
 from src.datasets.evaluations.benchmark_registry import registered_benchmark_documents
 from src.finetuning.qwen_hebrew.ktiv_layout import GAP_TOKEN, hebrew_letters
 
-try:  # optional layer: without it the id / image-url / sys_num layers still apply
+try:  # optional inventory: without it the benchmark keys come from the benchmark files alone
     from src.datasets.evaluations.helper_eval_scripts.decontam_gate import DecontamGate
-    from src.datasets.merging.institution_tokens import canonical_id
 except ImportError:
     DecontamGate = None
-    canonical_id = None
 
 PILImage.MAX_IMAGE_PIXELS = None
 logger = logging.getLogger(__name__)
@@ -548,17 +547,6 @@ def join_base(doc_id: str) -> str:
     return _JOIN_SUFFIX_RE.sub("", doc_id)
 
 
-def loose_key(shelfmark: str) -> Optional[str]:
-    """:meth:`DecontamGate.loose_key`, or None when the gate did not import.
-
-    :param shelfmark: Canonical id or shelfmark string.
-    :type shelfmark: str
-    :return: Loose key or None.
-    :rtype: Optional[str]
-    """
-    return DecontamGate.loose_key(shelfmark) if DecontamGate is not None else None
-
-
 def build_benchmark_index(ids: Iterable[str], image_urls: Iterable[str] = (),
                           religious_docs: Iterable[Dict] = (),
                           extra_keys: Iterable[str] = ()) -> BenchmarkIndex:
@@ -572,20 +560,19 @@ def build_benchmark_index(ids: Iterable[str], image_urls: Iterable[str] = (),
     :type religious_docs: Iterable[Dict]
     :param extra_keys: Precomputed benchmark loose keys (the gate's inventory).
     :type extra_keys: Iterable[str]
-    :return: The index.
+    :return: The index. Keys are :func:`src.datasets.shelfmarks.loose_key` (a KTIV shelf mark is keyed on its
+        ES canonical id, :func:`src.datasets.shelfmarks.canonical_id`, the institution read from its head).
     :rtype: BenchmarkIndex
     """
     ids = set(ids)
     religious_docs = list(religious_docs)
     marks = [d["shelf_mark"] for d in religious_docs if d.get("shelf_mark")]
-    rel_keys = {loose_key(m) for m in marks}
-    if canonical_id is not None:
-        rel_keys |= {loose_key(canonical_id(m, m)) for m in marks}
+    rel_keys = {shelfmarks.loose_key(m) for m in marks}
     return BenchmarkIndex(
         ids=ids, image_urls=set(image_urls),
-        loose_keys=({loose_key(i) for i in ids} | set(extra_keys)) - {None},
+        loose_keys=({shelfmarks.loose_key(i) for i in ids} | set(extra_keys)) - {""},
         religious_sys={str(d["sys_num"]) for d in religious_docs if d.get("sys_num")},
-        religious_keys=rel_keys - {None})
+        religious_keys=rel_keys - {""})
 
 
 def load_benchmark_index(bench_ids_path: Path = BENCH_IDS_PATH, bench_path: Path = BENCH_PATH,
@@ -701,7 +688,7 @@ def decontam_reason(doc_id: str, image_urls: Iterable[str], refs: DocRefs,
     urls = set(image_urls)
     if urls & index.image_urls:
         return "benchmark_image_url"
-    keys = {k for k in (loose_key(x) for x in (doc_id, base, *refs.shelfmarks)) if k}
+    keys = {k for k in (shelfmarks.loose_key(x) for x in (doc_id, base, *refs.shelfmarks)) if k}
     if keys & index.loose_keys:
         return "benchmark_loose_key"
     sys_nums = set(refs.sys_nums)
@@ -1019,7 +1006,8 @@ def build(batch_path: Path, out_dir: Path, images_dir: Path, raw_dir: Path = DEF
             "excluded_docs": [{"doc_id": d, "reason": w} for d, w in sorted(excluded.items())],
             "volume_level_rule": volume_level,
             "volume_level_would_also_exclude_docs": volume_extra,
-            "loose_key_layer": DecontamGate is not None,
+            "loose_key_layer": True,
+            "gate_benchmark_keys_loaded": DecontamGate is not None,
             "merged_refs_found": len(refs),
             "index_sizes": {"ids": len(index.ids), "image_urls": len(index.image_urls),
                             "loose_keys": len(index.loose_keys),

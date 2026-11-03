@@ -24,7 +24,7 @@ PR-1 behaviour (kept)
     ``Chabad_Lubavitch_Library_…``, ``Unknown_…`` ids, bare NLI numbers; 256 ids on 2026-11-03) is read like a
     raw mark.
 
-PR-2 behaviour (implemented; this version, :data:`NORMALISER_VERSION` ``2026.11.03-3``)
+PR-2 behaviour (implemented; :data:`NORMALISER_VERSION` ``2026.11.03-3``, kept in ``2026.11.03-4``)
     Facade-only fixes; the engines and the merge recipe are unchanged, so no ES id changes.
 
     * :func:`side_suffix` and one id per leaf: ``T-S 12.301 r/recto/verso/ע"א/ע"ב``, ``T-S 10J5.17 1r`` and
@@ -58,6 +58,15 @@ PR-2 behaviour (implemented; this version, :data:`NORMALISER_VERSION` ``2026.11.
       re-key is listed in section 4 of the migration plan and ``resolve()`` (PR-6) falls back to the side-ful id.
     * :func:`split`, :func:`variants` and :func:`parent`.
 
+PR-4 behaviour (this version, :data:`NORMALISER_VERSION` ``2026.11.03-4``)
+    * A colon between two digits with no space (``TS 12:301``, ``T-S NS 327:140``, ``T-S Ar.41:18``) is a
+      class-mark separator, not the end of a catalogue head: a facade pre-pass (:func:`_class_colon`) rewrites it
+      to ``.`` before head detection, in :func:`canonical_id`, :func:`core_id` (so :func:`core_key` and
+      :func:`loose_key`), :func:`side_suffix` and :func:`variants`. Before, the engine read everything up to the
+      colon as a head (``core_key("T-S NS 327:140") == "140"``, ``loose_key("TS 12:301") ==
+      loose_key("TS 5:301")``). A colon followed by a space stays a head (``Cambridge CUL: T-S 12.301``). Every
+      probe of the golden fixture keeps its value; no ES id changes.
+
 Planned in PR-6 (NOT implemented here)
     ``resolve(x, *, index=None)`` and ``ShelfmarkIndex``: the ES-backed resolver chain (exact id, merge aliases,
     :func:`loose_key`, unique :func:`core_key`, :func:`parent`). It supplies the ES id set that :func:`parent`
@@ -73,13 +82,16 @@ from __future__ import annotations
 import re
 from typing import AbstractSet, Dict, List, Optional, Pattern, Tuple
 
-from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
+from src.datasets.document_models.genizah_normalizer import OxfordShelfmark, ShelfmarkNormalizer
 from src.datasets.merging import institution_tokens as _engine
 from src.finetuning.text27b import lit_segment as _lit
 
+#: The Bodleian registry token (``Oxford_Bodleian``), re-exported from the engine.
+OXFORD_TOKEN: str = _engine.OXFORD_TOKEN
+
 #: Version of the normalisation output. Bump on any change to an engine's or this facade's output, and
 #: include it in every cache keyed by shelf-mark keys.
-NORMALISER_VERSION: str = "2026.11.03-3"
+NORMALISER_VERSION: str = "2026.11.03-4"
 
 # ------------------------------------------------------------------------------------ patterns (facade-owned)
 
@@ -116,6 +128,8 @@ _KTIV_HEAD = re.compile(r"^(?P<head>.*,.*?)\s(?:Ms|Cod)\.\s+(?P<rest>.*)$", re.I
 #: Taylor-Schechter spellings the normaliser reads as ``T-S`` but that are not a ``SERIES_TOKENS`` word
 #: (``T.-S.``, ``T.S.``, ``T. S.``, ``TS``): rewritten for institution inference only (the core is the engine's).
 _TS_SPELLING = re.compile(r"\bT\.\s*-?\s*S\.|\bTS\b(?=[\s\d])", re.I)
+#: A colon between two digits with no space (``TS 12:301``): a class-mark separator, never a catalogue head.
+_CLASS_COLON = re.compile(r"(?<=\d):(?=\d)")
 #: A bare NLI system number (``990000412230205171``): a catalogue record number, not a shelf mark.
 _NLI_SYSTEM_NUMBER = re.compile(r"\d{12,}")
 #: Trailing join punctuation a splitter can leave on a part (``T-S 16.22 +``, ``T-S 12.613;``).
@@ -137,6 +151,20 @@ _SIDE_FOLIO = re.compile(
 _JOINED_BASE = re.compile(r"(?:\band|\bund|[+&/;]|\b(?:recto|verso))(?:\s+\d+)?$", re.I)
 _SIDE_LETTER = re.compile(r"^(?P<base>.*\d[A-Za-z]?)[\s,]+(?P<side>[rv])\.?$", re.S)
 _SIDE_GLUED = re.compile(r"^(?P<base>.*\d)(?P<side>[rv])\.?$", re.S)
+
+
+def _class_colon(mark: str) -> str:
+    """*mark* with every colon between two digits (no space) rewritten to ``.`` (``TS 12:301`` -> ``TS 12.301``).
+
+    Such a colon separates the parts of a class mark; read as the colon of a ``<head>: <mark>`` catalogue head it
+    would drop everything before it. A colon followed by a space (``Cambridge CUL: T-S 12.301``) is left alone.
+
+    :param mark: Raw mark.
+    :type mark: str
+    :return: The rewritten mark (the mark itself when it has no such colon).
+    :rtype: str
+    """
+    return _CLASS_COLON.sub(".", mark) if mark else mark
 
 
 def _squash(text: str) -> str:
@@ -343,15 +371,18 @@ def core_id(mark: str) -> str:
     gives its own core (``Cambridge_CUL_T_S_12_301`` -> ``T_S_12_301``, the token stripped by :func:`split_id`;
     a pre-fix Oxford id gives its current core, ``Oxford_Bodleian_MS_heb_c_13_25`` -> ``Bodl_MS_heb_c_13_25``);
     the bare-token id ``Cambridge_Lewis_Gibson`` gives ``""`` (see :func:`_id_input_core`). Returns ``""`` for a
-    join string (call :func:`split` first), a bare NLI system number and garbage (:func:`_is_garbage`).
+    join string (call :func:`split` first), a bare NLI system number and garbage (:func:`_is_garbage`). A colon
+    between two digits is read as ``.`` (:func:`_class_colon`: ``T-S NS 327:140`` -> ``T_S_NS_327_140``).
 
     :param mark: Raw shelf mark or ES id.
     :type mark: str
     :return: The core, or ``""``.
     :rtype: str
     """
-    if _id_input_core(mark) is None and (_is_join(mark) or _is_nli_system_number(mark) or _is_garbage(mark)):
-        return ""
+    if _id_input_core(mark) is None:
+        mark = _class_colon(mark)
+        if _is_join(mark) or _is_nli_system_number(mark) or _is_garbage(mark):
+            return ""
     return _core(mark)
 
 
@@ -485,7 +516,8 @@ def canonical_id(mark: str, institution: Optional[str] = None) -> Optional[str]:
     """The ES canonical id of a shelf mark: ``<institution token>_<core>``, one id per leaf.
 
     Same recipe as the primary ES index (``institution_tokens.canonical_id(institution, mark)``) with a facade
-    pre-pass: a glued ``T-S12.301`` gets its boundary back, the legacy series spellings are folded
+    pre-pass: a colon between two digits is read as ``.`` (:func:`_class_colon`: ``TS 12:301`` ->
+    ``Cambridge_CUL_T_S_12_301``), a glued ``T-S12.301`` gets its boundary back, the legacy series spellings are folded
     (:func:`_series_fold`), a spaced institution head is stripped (:func:`_head`) and one terminal side marker is
     removed (:func:`side_suffix`). The token comes from *institution* when one is given (blank, or a spelling whose
     token is ``Unknown…`` such as ``Unknown Library``, counts as none); otherwise it is inferred
@@ -538,6 +570,7 @@ def canonical_id(mark: str, institution: Optional[str] = None) -> Optional[str]:
         return _engine.canonical_id(institution, mark)
     if inst is None and _is_slug_id(mark):
         return None if mark.startswith("Unknown_") else mark
+    mark = _class_colon(mark)
     if _is_join(mark) or _is_nli_system_number(mark) or _is_garbage(mark, inst):
         return None
     text = _series_fold(_GLUED_TS.sub(r"\1 ", mark.strip().rstrip(_JOIN_TAIL)))
@@ -612,12 +645,15 @@ def side_suffix(mark: str) -> Tuple[str, Optional[str]]:
     (:func:`_is_join`: ``T-S 16.22v / T-S 10J5.17r``) and a side whose base would end in a join, a join and a
     number, or another side (``T-S 12.301 recto and verso``, ``… recto + verso``, ``T-S 12.301 f. 1r and 2v``).
 
+    A colon between two digits is read as ``.`` first (:func:`_class_colon`), so ``T-S 12:301 1r`` gives
+    ``("T-S 12.301", "1r")``; a mark with no side comes back unchanged.
+
     :param mark: Raw shelf mark.
     :type mark: str
     :return: ``(base, side)``; ``(mark, None)`` when the mark ends in no side marker.
     :rtype: Tuple[str, Optional[str]]
     """
-    text = (mark or "").rstrip()
+    text = _class_colon((mark or "").rstrip())
     if _is_join(text):
         return mark, None
     for pattern in (_SIDE_WORD, _SIDE_HEBREW):
@@ -720,7 +756,8 @@ def _is_join(mark: str) -> bool:
 def variants(mark: str) -> List[str]:
     """Legacy or printed spellings of a mark, rewritten into forms the normaliser accepts; the input first.
 
-    In order: the input; the series folds (:func:`_series_fold`, ``BnF Hebr.`` -> ``hebr.`` included);
+    In order: the input; the series folds (:func:`_series_fold`, ``BnF Hebr.`` -> ``hebr.`` included) of the
+    input with a colon between two digits read as ``.`` (:func:`_class_colon`);
     ``lit_segment.legacy_variants`` of the folded mark (and of the input when the folds changed it; its
     last-resort candidates come last within its list); the text27b ``prep_shelfmark`` cleaning; the safe
     spelling rewrites of the unseen-data key cleaner (:data:`_SAFE_SPELLINGS`); ``lit_segment._clean_sm``
@@ -736,7 +773,7 @@ def variants(mark: str) -> List[str]:
     # Lazy import: the text27b key module loads its corpus paths and is itself a facade caller-to-be (PR-6).
     from src.finetuning.text27b.shelfmarks import prep_shelfmark
 
-    folded = _series_fold(mark, bnf=True)
+    folded = _series_fold(_class_colon(mark), bnf=True)
     candidates: List[Optional[str]] = [mark, folded]
     candidates += _lit.legacy_variants(folded)[1:]
     if folded != mark:
@@ -782,7 +819,68 @@ def parent(mark: str, ids: Optional[AbstractSet[str]] = None, institution: Optio
     return candidate if candidate in ids else None
 
 
+# ------------------------------------------------------------------------------------ frozen legacy keys
+
+def legacy_gate_key(mark: str) -> str:
+    """FROZEN 2026-11: the pre-PR-4 decontamination-gate key; new code must use :func:`loose_key`.
+
+    ``ShelfmarkNormalizer.loose_key`` of ``ShelfmarkNormalizer._strip_institution(mark)`` (of *mark* itself when
+    the stripped core is empty): institution-free, with no facade pre-pass. It is the base of
+    ``build_pgp_editions.fragment_key``, the key format of the sealed benchmark's exclusion inventory, which must
+    not drift (the PR-4 membership gate found that the facade key would change that inventory's membership).
+    Do not use it for anything else.
+
+    :param mark: Raw shelf mark, ES id or loose key.
+    :type mark: str
+    :return: The key (``""`` for an empty mark).
+    :rtype: str
+    """
+    if not mark:
+        return ""
+    return ShelfmarkNormalizer.loose_key(ShelfmarkNormalizer._strip_institution(mark) or mark)
+
+
 # ------------------------------------------------------------------------------------ re-exports
+
+def institution_token(institution: Optional[str]) -> str:
+    """The registry token of an institution spelling, else a slug of it (thin re-export of the engine).
+
+    ``institution_tokens.institution_token``: the registry token whose needle occurs in *institution*
+    (``John Rylands Library, University of Manchester`` -> ``Manchester_JRL``), else an underscore slug of the text
+    (``Unknown`` for ``None`` / empty), never empty. Unlike the token :func:`canonical_id` takes from its
+    ``institution`` argument, a series word written as an institution (``Westminster College``) is not mapped to
+    its series' token here.
+
+    :param institution: Institution / collection spelling of any source.
+    :type institution: Optional[str]
+    :return: The token.
+    :rtype: str
+    """
+    return _engine.institution_token(institution)
+
+
+def parse_oxford(mark: Optional[str]) -> Optional[OxfordShelfmark]:
+    """The engine's parse of a Bodleian shelf mark (thin re-export of :meth:`ShelfmarkNormalizer.parse_oxford`).
+
+    :param mark: Raw mark (``MS Heb. d 66, fol. 9r``, ``Bodl. MS heb. c 13/25``).
+    :type mark: Optional[str]
+    :return: The engine's parsed Bodleian mark (``letter``, ``volume``, ``leaf``, ``core`` …), or ``None`` when
+        *mark* is not a Bodleian shelf mark.
+    :rtype: Optional[OxfordShelfmark]
+    """
+    return ShelfmarkNormalizer.parse_oxford(mark)
+
+
+def classify_shelfmark(mark: str) -> str:
+    """Validator class of a string (thin re-export of :meth:`ShelfmarkNormalizer.classify_shelfmark`).
+
+    :param mark: Candidate string.
+    :type mark: str
+    :return: ``"standard"``, ``"berlin"``, ``"bibliographic"`` (a Davidson *Thesaurus* citation) or ``"reject"``.
+    :rtype: str
+    """
+    return ShelfmarkNormalizer.classify_shelfmark(mark)
+
 
 def is_shelfmark(mark: str) -> bool:
     """Whether a string is a manuscript shelf mark (validator for parsed / LLM-emitted marks).

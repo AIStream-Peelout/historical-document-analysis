@@ -127,7 +127,7 @@ def test_fixture_shape() -> None:
     """
     assert len(PROBES) == 170 and len({p["id"] for p in PROBES}) == 170
     assert ES_IDS == {p["expected_es_id"] for p in PROBES if p["expected_in_es"]}
-    assert shelfmarks.NORMALISER_VERSION == "2026.11.03-3"
+    assert shelfmarks.NORMALISER_VERSION == "2026.11.03-4"
 
 
 def test_id_input_probes_are_exactly_the_es_id_inputs() -> None:
@@ -426,6 +426,53 @@ def test_a_child_folio_keeps_its_number(mark: str, side: str) -> None:
     assert shelfmarks.canonical_id("T-S Misc. 28.79, f. 14") == shelfmarks.canonical_id(BY_ID["P013"]["mark"]) == child
     for pid in ("P053", "P054"):
         assert shelfmarks.canonical_id(BY_ID[pid]["mark"]) == _CUL_10J5_17
+
+
+#: PR-4 colon fix: a colon between two digits (no space) is a class-mark separator -> (mark, ES id, core).
+#: Before the fix the engine read the colon as the end of a catalogue head (``T-S NS 327:140`` ->
+#: core ``140``). No probe and no merged ``shelfmark_display`` mark has such a colon.
+CLASS_COLON_GOLDEN: Tuple[Tuple[str, str, str], ...] = (
+    ("TS 12:301", _CUL_12_301, "T_S_12_301"),
+    ("T-S NS 327:140", "Cambridge_CUL_T_S_NS_327_140", "T_S_NS_327_140"),
+    ("T-S Ar.41:18", "Cambridge_CUL_T_S_Ar_41_18", "T_S_Ar_41_18"),
+)
+
+
+@pytest.mark.parametrize("mark,es_id,core", CLASS_COLON_GOLDEN, ids=[m for m, _, _ in CLASS_COLON_GOLDEN])
+def test_colon_between_digits_is_a_class_mark_separator(mark: str, es_id: str, core: str) -> None:
+    """A colon between two digits reads as ``.`` in every key; it equals the dotted mark's keys.
+
+    :param mark: A mark with a digit-colon-digit separator.
+    :type mark: str
+    :param es_id: Its ES id.
+    :type es_id: str
+    :param core: Its core.
+    :type core: str
+    :return: None.
+    :rtype: None
+    """
+    dotted = mark.replace(":", ".")
+    assert shelfmarks.canonical_id(mark) == shelfmarks.canonical_id(dotted) == es_id
+    assert shelfmarks.core_id(mark) == shelfmarks.core_id(dotted) == core
+    assert shelfmarks.core_key(mark) == shelfmarks.core_key(dotted) == ShelfmarkNormalizer.loose_key(core)
+    assert shelfmarks.loose_key(mark) == shelfmarks.loose_key(es_id) == ShelfmarkNormalizer.loose_key(es_id)
+    assert shelfmarks.side_suffix(mark) == (mark, None)
+    assert shelfmarks.side_suffix(f"{mark} 1r") == (dotted, "1r")
+    assert dotted in shelfmarks.variants(mark)
+
+
+def test_colon_after_a_head_stays_a_head() -> None:
+    """A colon followed by a space ends a catalogue head (P029), with or without a digit colon after it.
+
+    :return: None.
+    :rtype: None
+    """
+    probe = BY_ID["P029"]
+    assert probe["mark"] == "Cambridge CUL: T-S 12.301"
+    assert shelfmarks.canonical_id(probe["mark"]) == _CUL_12_301
+    assert shelfmarks.canonical_id("Cambridge CUL: T-S 12:301") == _CUL_12_301
+    assert shelfmarks.core_id("Cambridge CUL: T-S 12:301") == "T_S_12_301"
+    assert shelfmarks.canonical_id("Geneva: 119") == shelfmarks.canonical_id(BY_ID["P138"]["mark"])
 
 
 def test_join_punctuation_is_trimmed() -> None:

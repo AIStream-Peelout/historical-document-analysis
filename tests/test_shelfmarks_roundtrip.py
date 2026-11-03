@@ -417,3 +417,27 @@ def test_es_id_with_a_conflicting_institution_defers_to_the_engine() -> None:
         assert shelfmarks.canonical_id(es_id, institution) == expected
     assert shelfmarks.canonical_id(es_id, "Cambridge University Library") == es_id
     assert shelfmarks.canonical_id(es_id) == es_id != institution_tokens.canonical_id(None, es_id)
+
+
+#: PR-4 colon fix: a colon between two digits (no space) separates class-mark parts. Before the fix the engine read
+#: it as a catalogue head, so these marks shared a key with their last number alone.
+CLASS_COLON_PAIRS = [("TS 12:301", "TS 5:301"), ("T-S NS 327:140", "T-S NS 140"), ("T-S Ar.41:18", "T-S Ar.18")]
+
+
+@pytest.mark.parametrize("mark,other", CLASS_COLON_PAIRS, ids=[m for m, _ in CLASS_COLON_PAIRS])
+def test_class_colon_round_trip_and_distinct(mark: str, other: str) -> None:
+    """A digit-colon mark, its canonical id and its dotted form give one key; another item gives another key.
+
+    :param mark: A mark with a digit-colon-digit separator.
+    :type mark: str
+    :param other: A different item that the old head reading merged with *mark*.
+    :type other: str
+    :return: None.
+    :rtype: None
+    """
+    cid = shelfmarks.canonical_id(mark)
+    assert cid is not None
+    assert shelfmarks.loose_key(mark) == shelfmarks.loose_key(cid) == shelfmarks.loose_key(mark.replace(":", "."))
+    assert shelfmarks.canonical_id(cid) == cid and shelfmarks.core_id(cid) == shelfmarks.core_id(mark)
+    assert shelfmarks.loose_key(mark) != shelfmarks.loose_key(other)
+    assert shelfmarks.core_key(mark) != shelfmarks.core_key(other)
