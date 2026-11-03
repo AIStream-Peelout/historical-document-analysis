@@ -42,7 +42,7 @@ dotenv.load_dotenv(project_root / ".env")
 
 from src.datasets.document_models.place_normalizer import PlaceNormalizer  # noqa: E402
 from src.datasets.document_models.institution_normalizer import InstitutionNormalizer  # noqa: E402
-from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+from src.datasets.shelfmarks import classify_shelfmark  # noqa: E402
 
 from neo4j import GraphDatabase
 
@@ -835,7 +835,7 @@ def _run_institution_geocoding(session, geolocator, args, gmaps_client=None):
     # shelfmark-shaped name (AIU/BL/Bodl./CUL/ENA/T-S + digit).
     institutions, shelfmark_skipped = [], []
     for name in all_institutions:
-        if ShelfmarkNormalizer.classify_shelfmark(name) == "standard":
+        if classify_shelfmark(name) == "standard":
             shelfmark_skipped.append(name)
         else:
             institutions.append(name)

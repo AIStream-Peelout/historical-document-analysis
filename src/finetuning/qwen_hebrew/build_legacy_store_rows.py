@@ -45,9 +45,13 @@ Gemini reads. Nothing is called here: no API, no LM Studio, no Kraken.
    ``editorial_terms`` flag (editor prose kept as ink), gap density over :data:`MAX_GAP_DENSITY` gaps per 100 letters
    (30 %), fewer than :data:`MIN_TARGET_LETTERS` letters, a read with more than :data:`MAX_READ_OVER_TARGET` times
    the target's letters (Kraken under-reads, so such a page holds text the target lacks).
-7. **Leakage** (before export). Identity: ``derive_v25a.held_out_reason`` on a ``DocRef`` built from the PGP ids of
-   the merged-corpus record, the canonical id and the shelf-mark parts (split on ``" + "``); ``decontam_gate`` loose
-   keys in the clean v2 and benchmark inventories (the frozen 131 are in both rules). Text: 25-letter Hebrew shingles
+7. **Leakage** (before export). Identity, keyed on the ES canonical id (:func:`held_out_reason`): the document's ES
+   ids (its canonical id, plus ``shelfmarks.resolve`` of the canonical id and of the recorded shelf mark through a
+   ``ShelfmarkIndex`` of the merged corpus) and PGP ids (the merged-corpus record's, plus those the index links to
+   its ES ids) against the registered benchmarks' PGP ids and ES ids (registry ids, the ES ids of their registered PGP
+   documents) and the frozen 131-fragment benchmark's ES ids (:class:`HeldOut`); ``decontam_gate`` loose keys in the
+   clean v2 and benchmark inventories (the frozen 131 are in both rules). Rows built before 2026-11 used
+   ``derive_v25a``'s shelf-mark keys; that dataset is not rebuilt. Text: 25-letter Hebrew shingles
    (``DecontamGate.content_contaminated``) and 20-letter rasm shingles (at least :data:`ARABIC_MIN_SHARED_ONE_DOC`
    shared with one GT document, or :data:`ARABIC_MIN_SHARE_UNION` of the target's shingles in the union) against the
    GT of genizah_test_v1, genizah_religious_v1, sealed_v1 (documentary and literary), the two-edition footnote GT,
@@ -88,11 +92,12 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
+from typing import AbstractSet, Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
+from src.datasets import shelfmarks as shelf
 from src.datasets.cleaning.clean_genizah_transcriptions import _strip_letters, near_duplicates
 from src.datasets.evaluations import arabic_script as ar
 from src.datasets.evaluations import benchmark_registry as br
@@ -100,7 +105,6 @@ from src.datasets.evaluations.helper_eval_scripts.arabic_bench_coverage import n
 from src.datasets.evaluations.helper_eval_scripts.decontam_gate import _HEB, _SHINGLE_N, DecontamGate
 from src.finetuning.qwen_hebrew import build_pgp_arabic_editions as pae
 from src.finetuning.qwen_hebrew import side_match as sm
-from src.finetuning.qwen_hebrew.colab import derive_v25a as d25
 from src.finetuning.qwen_hebrew.prompts import SCRIPT_NEUTRAL_PROMPT
 
 REPO = Path(__file__).resolve().parents[3]
@@ -1470,38 +1474,148 @@ def text_leakage(text: str, gt: GtIndex, contaminated: Callable[[str, set], bool
     return out
 
 
-def identity_leakage(canonical_id: str, shelf_mark: str, pgpids: Sequence[str], held: d25.HeldOut,
-                     pgp_index: Mapping[str, Set[str]], gate: DecontamGate) -> Dict[str, Any]:
-    """Identity rule of one document.
+@dataclass(frozen=True)
+class HeldOut:
+    """Documents no row may come from, as ES canonical ids (the hold-out of new rows).
+
+    :ivar ids: ES ids of the registered benchmark documents (``benchmark_registry.BENCHMARK_REGISTRIES``, ``sealed_v1``
+        included): the registry ids, what they resolve to, and the ES ids of the registered PGP documents.
+    :ivar pgpids: PGP ids of the registered benchmarks.
+    :ivar frozen_ids: ES ids of the frozen 131-fragment benchmark (``decontam/benchmark_ids.json``).
+    """
+    ids: FrozenSet[str] = frozenset()
+    pgpids: FrozenSet[str] = frozenset()
+    frozen_ids: FrozenSet[str] = frozenset()
+
+
+def es_ids(mark: str, index: shelf.ShelfmarkIndex) -> Set[str]:
+    """ES ids of a shelf mark, an ES id or ``pgpid:<n>``: every id ``shelfmarks.resolve`` returns through *index*.
+
+    An ambiguous or partly matched resolution (a join with an unmatched part) still gives all its ids: a hold-out
+    errs on the side of holding out.
+
+    :param mark: Raw shelf mark (joins included), ES id or ``pgpid:<n>``.
+    :type mark: str
+    :param index: ES index of the merged corpus.
+    :type index: shelf.ShelfmarkIndex
+    :return: ES ids of the index (empty when nothing matches).
+    :rtype: Set[str]
+    """
+    return set(shelf.resolve(mark, index=index).cids) if (mark or "").strip() else set()
+
+
+def held_out_ids(ids: Iterable[str], pgpids: Iterable[str], frozen: Iterable[str],
+                 pgp_shelf_marks: Mapping[str, str], index: shelf.ShelfmarkIndex) -> HeldOut:
+    """The held-out sets in ES-id space.
+
+    :param ids: Canonical ids of the registered benchmarks (kept as written, plus what they resolve to).
+    :type ids: Iterable[str]
+    :param pgpids: PGP ids of the registered benchmarks.
+    :type pgpids: Iterable[str]
+    :param frozen: Canonical ids of the frozen 131-fragment benchmark.
+    :type frozen: Iterable[str]
+    :param pgp_shelf_marks: ``{pgpid: shelf mark}`` of the pinned PGP export (joins as written); each registered PGP
+        document's mark is resolved too, besides ``pgpid:<n>``.
+    :type pgp_shelf_marks: Mapping[str, str]
+    :param index: ES index of the merged corpus.
+    :type index: shelf.ShelfmarkIndex
+    :return: The sets.
+    :rtype: HeldOut
+    """
+    pgpids = {str(p) for p in pgpids}
+    held: Set[str] = set()
+    for cid in ids:
+        held |= {cid} | es_ids(cid, index)
+    for pgpid in pgpids:
+        held |= es_ids(f"pgpid:{pgpid}", index) | es_ids(pgp_shelf_marks.get(pgpid, ""), index)
+    frozen_ids: Set[str] = set()
+    for cid in frozen:
+        frozen_ids |= {cid} | es_ids(cid, index)
+    return HeldOut(frozenset(held - {""}), frozenset(pgpids), frozenset(frozen_ids - {""}))
+
+
+def pgp_shelf_marks(documents_csv: Path) -> Dict[str, str]:
+    """Shelf mark of every document of a PGP export.
+
+    :param documents_csv: ``documents.csv`` of a PGP export.
+    :type documents_csv: Path
+    :return: ``{pgpid: shelf mark}`` (joins as written, ``A + B``).
+    :rtype: Dict[str, str]
+    """
+    csv.field_size_limit(1 << 30)
+    with open(documents_csv, encoding="utf-8-sig", newline="") as fh:
+        return {str(r["pgpid"]): r.get("shelfmark") or "" for r in csv.DictReader(fh)}
+
+
+def load_held_out(index: shelf.ShelfmarkIndex, pgp_export: Path = PGP_EXPORT) -> HeldOut:
+    """The registered benchmarks and the frozen 131-fragment benchmark as ES ids (read only).
+
+    :param index: ES index of the merged corpus.
+    :type index: shelf.ShelfmarkIndex
+    :param pgp_export: Pinned PGP export (``documents.csv``).
+    :type pgp_export: Path
+    :return: The sets.
+    :rtype: HeldOut
+    :raises FileNotFoundError: When a registry, the frozen benchmark list or the export is missing.
+    """
+    ids, pgpids = br.registered_benchmark_documents()
+    frozen = json.loads((br.REGISTRY_DIR / "benchmark_ids.json").read_text(encoding="utf-8"))
+    return held_out_ids(ids, pgpids, frozen, pgp_shelf_marks(pgp_export / "documents.csv"), index)
+
+
+def held_out_reason(ids: AbstractSet[str], pgpids: AbstractSet[str], held: HeldOut) -> str:
+    """Why a document may not give a row, or empty: a registered PGP id, a registered ES id, a frozen-benchmark ES id.
+
+    :param ids: The document's ES ids (:func:`identity_leakage`).
+    :type ids: AbstractSet[str]
+    :param pgpids: The document's PGP ids.
+    :type pgpids: AbstractSet[str]
+    :param held: Held-out sets.
+    :type held: HeldOut
+    :return: Reason, or ``""``.
+    :rtype: str
+    """
+    if pgpids & held.pgpids:
+        return f"registered benchmark PGP id {sorted(pgpids & held.pgpids)}"
+    if ids & held.ids:
+        return f"registered benchmark id {sorted(ids & held.ids)}"
+    if ids & held.frozen_ids:
+        return f"frozen 131-fragment benchmark id {sorted(ids & held.frozen_ids)}"
+    return ""
+
+
+def identity_leakage(canonical_id: str, shelf_mark: str, pgpids: Sequence[str], held: HeldOut,
+                     index: shelf.ShelfmarkIndex, gate: DecontamGate) -> Dict[str, Any]:
+    """Identity rule of one document, keyed on its ES canonical ids.
 
     :param canonical_id: Canonical id.
     :type canonical_id: str
-    :param shelf_mark: Shelf mark as recorded (joins split on ``" + "``).
+    :param shelf_mark: Shelf mark as recorded (joins split by ``shelfmarks.split`` inside ``resolve``).
     :type shelf_mark: str
     :param pgpids: PGP ids of the merged-corpus record.
     :type pgpids: Sequence[str]
-    :param held: ``derive_v25a.held_out_sets`` result.
-    :type held: d25.HeldOut
-    :param pgp_index: ``derive_v25a.pgp_shelfmark_index`` of the pinned export.
-    :type pgp_index: Mapping[str, Set[str]]
+    :param held: Held-out sets (:func:`load_held_out`).
+    :type held: HeldOut
+    :param index: ES index of the merged corpus.
+    :type index: shelf.ShelfmarkIndex
     :param gate: Decontamination gate (``clean_keys``, ``bench_keys``, ``loose_key``).
     :type gate: DecontamGate
-    :return: ``{pgpids, keys, derive, clean_v2_keys, benchmark_keys, reasons}``.
+    :return: ``{pgpids, ids, holdout, clean_v2_keys, benchmark_keys, reasons}`` (``ids``: the document's ES ids).
     :rtype: Dict[str, Any]
     """
-    source = d25.PoolSource(LABEL_SOURCE, "legacy_", 0, f"val/{LABEL_SOURCE}")
-    record = {"stem": canonical_id, "pgpids": list(pgpids), "shelfmark": shelf_mark, "canonical_id": canonical_id,
-              "doc_id": canonical_id}
-    ref = d25.doc_ref(source, record, pgp_index)
-    derive = d25.held_out_reason(ref, held)
+    ids = ({canonical_id} - {""}) | es_ids(canonical_id, index) | es_ids(shelf_mark, index)
+    doc_pgpids = {str(p) for p in pgpids}
+    for cid in ids:
+        doc_pgpids |= {str(p) for p in index.pgpids.get(cid) or ()}
+    holdout = held_out_reason(ids, doc_pgpids, held)
     parts = [canonical_id] + [p.strip() for p in (shelf_mark or "").split(" + ") if p.strip()]
     loose = {gate.loose_key(p) for p in parts} - {None, ""}
     clean = sorted(loose & gate.clean_keys)
     bench = sorted(loose & gate.bench_keys)
-    reasons = ([f"identity:derive_v25a:{derive}"] if derive else []) + \
+    reasons = ([f"identity:canonical_id:{holdout}"] if holdout else []) + \
               ([f"identity:clean_v2_key:{','.join(clean)}"] if clean else []) + \
               ([f"identity:benchmark_key:{','.join(bench)}"] if bench else [])
-    return {"pgpids": sorted(ref.pgpids), "keys": sorted(ref.keys), "derive": derive, "clean_v2_keys": clean,
+    return {"pgpids": sorted(doc_pgpids), "ids": sorted(ids), "holdout": holdout, "clean_v2_keys": clean,
             "benchmark_keys": bench, "reasons": reasons}
 
 
@@ -1581,14 +1695,14 @@ def load_gt_sets(eval_dir: Path = EVAL_DIR, pgp_export: Path = PGP_EXPORT, arabi
 class LeakageResources:
     """Everything the leakage scan reads.
 
-    :ivar held: ``derive_v25a.held_out_sets`` result.
-    :ivar pgp_index: ``derive_v25a.pgp_shelfmark_index`` of the pinned export.
+    :ivar held: Held-out sets (:func:`load_held_out`).
+    :ivar index: ES index of the merged corpus (``shelfmarks.ShelfmarkIndex``, PGP fragments linked).
     :ivar gate: Decontamination gate (inventories and the Hebrew content rule).
     :ivar gt_sets: GT texts per set (:func:`load_gt_sets`).
     :ivar pgpids: PGP ids of the merged-corpus record per document.
     """
-    held: d25.HeldOut
-    pgp_index: Dict[str, Set[str]]
+    held: HeldOut
+    index: shelf.ShelfmarkIndex
     gate: DecontamGate
     gt_sets: Dict[str, List[Tuple[str, str]]]
     pgpids: Dict[str, List[str]]
@@ -1602,9 +1716,12 @@ def load_leakage_resources(doc_ids: Set[str]) -> LeakageResources:
     :return: Resources.
     :rtype: LeakageResources
     """
-    documents_csv = PGP_EXPORT / "documents.csv"
-    return LeakageResources(d25.held_out_sets(None, documents_csv), d25.pgp_shelfmark_index(documents_csv),
-                            DecontamGate(), load_gt_sets(), merged_pgpids(MERGED_JSONL, doc_ids))
+    csv.field_size_limit(1 << 30)
+    with open(PGP_EXPORT / "fragments.csv", encoding="utf-8-sig", newline="") as fh:
+        fragments = list(csv.DictReader(fh))
+    index = shelf.ShelfmarkIndex(MERGED_JSONL, fragments=fragments)
+    return LeakageResources(load_held_out(index), index, DecontamGate(), load_gt_sets(),
+                            merged_pgpids(MERGED_JSONL, doc_ids))
 
 
 # ===================================================================================================================
@@ -1901,8 +2018,8 @@ def build(source: Path = SOURCE_DIR, out: Path = DEFAULT_OUT, docs_list: Optiona
     doc_ids = sorted(images)
     res = leakage if leakage is not None else load_leakage_resources(set(doc_ids))
     pgpids, gt_sets = res.pgpids, res.gt_sets
-    shelf = {s.canonical_id: s.record.get("shelf_mark") or "" for s in sides}
-    identity = {cid: identity_leakage(cid, shelf.get(cid, ""), pgpids.get(cid, []), res.held, res.pgp_index, res.gate)
+    marks = {s.canonical_id: s.record.get("shelf_mark") or "" for s in sides}
+    identity = {cid: identity_leakage(cid, marks.get(cid, ""), pgpids.get(cid, []), res.held, res.index, res.gate)
                 for cid in doc_ids}
     gt = build_gt_index(gt_sets)
     text_leaks = {k: text_leakage(s.record.get("text") or "", gt, res.gate.content_contaminated)
@@ -1938,7 +2055,8 @@ def build(source: Path = SOURCE_DIR, out: Path = DEFAULT_OUT, docs_list: Optiona
         own = result.ownership.get(key)
         manifest.append(round_floats({
             "stem": stem, "split": split, "canonical_id": side.canonical_id, "doc_id": rec.get("doc_id"),
-            "shelf_mark": rec.get("shelf_mark"), "pgpids": identity[side.canonical_id]["pgpids"],
+            "shelf_mark": rec.get("shelf_mark"), "es_ids": identity[side.canonical_id]["ids"],
+            "pgpids": identity[side.canonical_id]["pgpids"],
             "merged_record_pgpids": pgpids.get(side.canonical_id, []), "main_language": rec.get("main_language"),
             "language_group": language_group(rec.get("main_language")), "section_index": rec.get("section_index"),
             "record_index": side.record_index, "column": rec.get("column"), "side": side_name, "side_label": side.label,
@@ -2175,7 +2293,7 @@ def summarize(result: Decisions, images: Mapping[str, Sequence[ImageInfo]], read
     passing_cover = [k for k in accepted if not cover[k]["exclusions"]]
     id_rule = Counter()
     for cid, info in identity.items():
-        for name in ("derive", "clean_v2_keys", "benchmark_keys"):
+        for name in ("holdout", "clean_v2_keys", "benchmark_keys"):
             if info[name]:
                 id_rule[name] += 1
     text_rule = Counter(name for k in text_leaks for name in list(text_leaks[k]["hebrew"]) + list(text_leaks[k]["arabic"]))
@@ -2538,8 +2656,9 @@ def method_lines() -> List[str]:
             f"{', '.join(EXCLUDED_FAMILIES)}, {', '.join(EXCLUDED_FLAGS)}, gap density over {MAX_GAP_DENSITY:g} gaps per 100 "
             f"letters (the cleaner's `gap_density`), under {MIN_TARGET_LETTERS} letters, read letters over "
             f"{MAX_READ_OVER_TARGET:g}x the target's (`read_exceeds_target_{MAX_READ_OVER_TARGET:g}x`).",
-            f"- Leakage: identity = `derive_v25a.held_out_reason` (registered PGP ids / canonical ids / shelf-mark keys, "
-            f"frozen 131) on PGP ids from the merged corpus, the canonical id and the shelf-mark parts, plus the decontam "
+            f"- Leakage: identity = `held_out_reason` on ES canonical ids (registered PGP ids / registered ES ids / "
+            f"frozen 131 ES ids) for the document's ES ids (canonical id + `shelfmarks.resolve` of it and of the shelf "
+            f"mark) and PGP ids (merged corpus + the index's links), plus the decontam "
             f"gate's clean v2 and benchmark loose keys; text = `DecontamGate.content_contaminated` ({HEBREW_SHINGLE}-letter "
             f"Hebrew shingles, 2 hits) and {ARABIC_SHINGLE}-letter rasm shingles ({ARABIC_MIN_SHARED_ONE_DOC} with one GT "
             f"document or {ARABIC_MIN_SHARE_UNION:.0%} of the target's shingles in the union) against {', '.join(GT_SETS)}.",

@@ -1069,6 +1069,21 @@ def legacy_gate_key(mark: str) -> str:
 
 # ------------------------------------------------------------------------------------ re-exports
 
+def registry_token(text: Optional[str]) -> Optional[str]:
+    """The registry token an institution / collection spelling names, or ``None`` (thin re-export of the engine).
+
+    ``institution_tokens.resolve_token``: the first registry token whose needle occurs in *text* as a whole word
+    (``Cambridge University Library, Cambridge, England Ms. T-S NS 25.288`` -> ``Cambridge_CUL``). Unlike
+    :func:`institution_token` it never falls back to a slug.
+
+    :param text: Institution / collection spelling, or a KTIV long shelf mark whose head names the library.
+    :type text: Optional[str]
+    :return: The token, or ``None`` when no registry institution is named.
+    :rtype: Optional[str]
+    """
+    return _engine.resolve_token(text)
+
+
 def institution_token(institution: Optional[str]) -> str:
     """The registry token of an institution spelling, else a slug of it (thin re-export of the engine).
 

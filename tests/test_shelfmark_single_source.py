@@ -68,37 +68,35 @@ LOCAL_ALLOWLIST_FILE = REPO / "tests/fixtures/shelfmark_allowlist.local.json"
 _SQUASH_CLASS = re.compile(r"\[\^(?:a-z0-9|0-9a-z|A-Za-z0-9|a-zA-Z0-9|0-9A-Za-z|0-9a-zA-Z|A-Z0-9|0-9A-Z)\]")
 _KEY_NAMES = ("*shelf*key*", "loose_key", "canonical_id", "shelfmark_core_id")
 
-#: Git-tracked path -> the violations it may keep (PR-1: every tracked caller found today). Shrinks in PRs 3, 4, 6
-#: and 7 (PR-4 removed decontam_gate, build_documentary_grounding, build_script_tags,
+#: Git-tracked path -> the violations it may keep. PR-1 listed every tracked caller found then; PRs 3, 4, 6 and 7
+#: shrank it (PR-4 removed decontam_gate, build_documentary_grounding, build_script_tags,
 #: screen_training_misalignment, verify_decontamination, es_image_gap_report, enrich_fragment_people,
-#: normalizer_report and oxford_id_map; PR-6 removed none: ``lit_segment`` and ``contamination`` never tripped the
-#: scan, and ``text27b/shelfmarks.py`` stays as a FROZEN key grammar). Untracked files go in
-#: :data:`LOCAL_ALLOWLIST_FILE`, never here.
+#: normalizer_report and oxford_id_map; PR-6 removed none; PR-7 removed bodleian_images, ktiv_transcription_gap and
+#: geocode_places, which now call the facade's ``parse_oxford`` / ``registry_token`` / ``classify_shelfmark``). What
+#: stays is a FROZEN key grammar's module, a non-shelf-mark key, or a caller whose migration is blocked or not
+#: byte-identical (each says why). Untracked files go in :data:`LOCAL_ALLOWLIST_FILE`, never here.
 ALLOWLIST: Dict[str, FrozenSet[str]] = {
-    # Group C key wrappers still to migrate (arabic_scrape_queue: deferred while it carries unrelated work;
-    # the legacy-store trio)
-    "src/datasets/indexing/arabic_scrape_queue.py": frozenset({"def:loose_key", "import:ShelfmarkNormalizer"}),
+    # FROZEN modules. text27b: the t27b hold-out / mixture key grammar. pdf_transcriptions: series_key_for /
+    # shelfmark_from_filename are FROZEN (image file names on disk); its normalise_shelfmark / shelfmark_core_id /
+    # same_shelfmark key the heading checks stored in the raw-package records and migrate with that package's rebuild
+    "src/finetuning/text27b/shelfmarks.py": frozenset({"import:ShelfmarkNormalizer", "import:institution_tokens"}),
     "src/datasets/indexing/legacy_store/pdf_transcriptions.py": frozenset(
         {"def:shelfmark_core_id", "import:ShelfmarkNormalizer"}),
-    # merging/ engine users outside the merge recipe (bodleian_images / ktiv_transcription_gap use classify /
-    # institution lookups until the facade covers them)
-    "src/datasets/merging/bodleian_images.py": frozenset({"import:ShelfmarkNormalizer"}),
-    "src/datasets/merging/ktiv_transcription_gap.py": frozenset({"import:institution_tokens"}),
     # not a shelf mark: case-folded book / metadata-file names
     "src/datasets/indexing/bibliography/index_all_bibliography.py": frozenset({"squash:_name_key"}),
-    # FROZEN key grammars (PR-7 marks them; they stay)
-    "src/finetuning/text27b/shelfmarks.py": frozenset({"import:ShelfmarkNormalizer", "import:institution_tokens"}),
-    # engine users for validation / KG cores (classify_shelfmark, to_canonical_id, get_institution_info): PR-4
+    # blocked: these files carry unrelated pending work (arabic_scrape_queue, genizah_document, src/models/**)
+    "src/datasets/indexing/arabic_scrape_queue.py": frozenset({"def:loose_key", "import:ShelfmarkNormalizer"}),
     "src/datasets/document_models/genizah_document.py": frozenset({"import:ShelfmarkNormalizer"}),
+    "src/models/llm/academic/coreference_resolver.py": frozenset({"import:ShelfmarkNormalizer"}),
+    "src/models/llm/academic/relationship_extractor.py": frozenset({"import:ShelfmarkNormalizer"}),
+    # KG Fragment keys (engine to_canonical_id; the facade's core_id differs on joins, garbage, NLI numbers and old
+    # Oxford ids, so a swap would re-key graph nodes: plan Q8, KG work lives in the site repository)
     "src/datasets/indexing/neo4j/academic_kg_import.py": frozenset({"import:ShelfmarkNormalizer"}),
     "src/datasets/indexing/neo4j/backfill_es_doc_id.py": frozenset({"import:ShelfmarkNormalizer"}),
     "src/datasets/indexing/neo4j/biblio_import.py": frozenset({"import:ShelfmarkNormalizer"}),
-    "src/datasets/indexing/neo4j/geocode_places.py": frozenset({"import:ShelfmarkNormalizer"}),
     "src/datasets/indexing/neo4j/knowlege_graph_poc.py": frozenset({"import:ShelfmarkNormalizer"}),
     "src/datasets/indexing/neo4j/ktiv_biblio.py": frozenset({"import:ShelfmarkNormalizer"}),
     "src/datasets/indexing/neo4j/merged_shelfmarks_import.py": frozenset({"import:ShelfmarkNormalizer"}),
-    "src/models/llm/academic/coreference_resolver.py": frozenset({"import:ShelfmarkNormalizer"}),
-    "src/models/llm/academic/relationship_extractor.py": frozenset({"import:ShelfmarkNormalizer"}),
 }
 
 
