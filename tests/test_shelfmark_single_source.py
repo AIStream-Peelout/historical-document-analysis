@@ -90,8 +90,6 @@ ALLOWLIST: Dict[str, FrozenSet[str]] = {
     "src/datasets/merging/ktiv_transcription_gap.py": frozenset({"import:institution_tokens"}),
     "src/datasets/merging/normalizer_report.py": frozenset({"import:ShelfmarkNormalizer"}),
     "src/datasets/merging/oxford_id_map.py": frozenset({"import:ShelfmarkNormalizer", "import:institution_tokens"}),
-    # squash family (PR-3)
-    "src/finetuning/text27b/exposure.py": frozenset({"squash:id_key"}),
     # not a shelf mark: case-folded book / metadata-file names
     "src/datasets/indexing/bibliography/index_all_bibliography.py": frozenset({"squash:_name_key"}),
     # FROZEN key grammars (PR-7 marks them; they stay)

@@ -45,6 +45,7 @@ Public API:
 
 * :data:`LEVELS`, :data:`LEVEL_RANK`, :data:`READ_CONDITIONS`, :data:`READER_MIXTURES`,
   :data:`PILOT_REVISION`.
+* :func:`fragment_key` (the fragment-level key: ``src.datasets.shelfmarks.loose_key``).
 * :class:`ExposureSources` (``from_paths``), :class:`TrainingIndex`, :func:`build_training_index`
   and the per-source loaders :func:`add_pilot`, :func:`add_clean`, :func:`add_ktiv_dirs`.
 * :class:`Read`, :func:`load_read_pages`, :func:`collect_reads`, :func:`merged_sys_nums`.
@@ -76,6 +77,7 @@ import orjson
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from src.datasets import shelfmarks as _shelfmarks
 from src.finetuning.text27b import paths as _paths
 from src.finetuning.text27b import rows as _rows
 
@@ -141,13 +143,41 @@ _CID_HEAD = re.compile(rb'"canonical_id":\s*"([^"]+)"')
 
 
 # ------------------------------------------------------------------------------------ helpers
+def fragment_key(cid: str, institution: Optional[str] = None) -> str:
+    """Fragment-level key of the training index: the facade's institution-qualified loose key.
+
+    ``src.datasets.shelfmarks.loose_key``: an ES id (or a dataset stem that is one) gives its own key, and a raw
+    shelf mark queried with its institution gives the same key as its ES id. A ``|`` marks the boundary between two
+    digit runs, so ``ENA NS 2.26`` / ``ENA NS 22.6`` keep separate keys (the former alphanumeric squash merged them).
+    The few ids the facade cannot key (garbage or bare system-number ids, for which ``loose_key`` gives ``""``) are
+    keyed on themselves behind a ``=`` so they still match exactly and never meet a loose key.
+
+    :param cid: Canonical id, dataset stem or raw shelf mark.
+    :type cid: str
+    :param institution: Institution of a raw shelf mark (None for an ES id).
+    :type institution: Optional[str]
+    :return: The key (``"Cambridge_CUL_T_S_13J2_5"`` → ``"cambridgecults13j2|5"``), ``""`` for an empty input.
+    :rtype: str
+    """
+    if not cid:
+        return ""
+    return _shelfmarks.loose_key(cid, institution) or f"={cid}"
+
+
 def id_key(cid: str) -> str:
-    """Normalised canonical-id key (lower-case alphanumerics, as the 10-18 probe and decontam use).
+    """Deprecated alias of :func:`fragment_key` (kept for the audit scripts that import it).
+
+    The former body was an alphanumeric squash that merged distinct fragments (``ENA NS 2.26`` / ``22.6``); new
+    code calls :func:`fragment_key` or ``src.datasets.shelfmarks.loose_key`` directly. The alias returns the new
+    key format (``cambridgecultsas181|163``), not the squash (``cambridgecultsas181163``): a caller that compares
+    against stored squash keys must re-key them.
 
     :param cid: Canonical id or dataset stem.
-    :returns: The key (``"Cambridge_CUL_T_S_13J2_5"`` → ``"cambridgecults13j25"``).
+    :type cid: str
+    :return: :func:`fragment_key` of ``cid``.
+    :rtype: str
     """
-    return re.sub(r"[^0-9a-z]", "", (cid or "").lower())
+    return fragment_key(cid)
 
 
 def parse_pilot_stem(stem: str) -> Optional[Tuple[str, str, Optional[int]]]:
@@ -306,7 +336,7 @@ class TrainingIndex:
     """What the reader mixtures trained on, by match kind, each key mapped to the mixtures that hold it.
 
     Kinds: ``url`` (page image URL), ``sha256`` (page image bytes), ``ktiv_page`` (``"<sys>/<FL>"``)
-    give page-level evidence; ``pgpid`` gives document-level; ``fragment`` (:func:`id_key` of a
+    give page-level evidence; ``pgpid`` gives document-level; ``fragment`` (:func:`fragment_key` of a
     canonical id) and ``ktiv_sys`` give fragment-level evidence.
     """
 
@@ -442,9 +472,9 @@ def add_pilot(index: TrainingIndex, train_parquet: Path, manifests: Mapping[str,
             pgpids.add(ident)
             cid = maps["cid_of_pgp"].get((ident, page))
             if cid:
-                index.add("fragment", id_key(cid), mixture)
+                index.add("fragment", fragment_key(cid), mixture)
         else:
-            index.add("fragment", id_key(ident), mixture)
+            index.add("fragment", fragment_key(ident), mixture)
         url = maps["url_of_stem"].get(stem) or maps["url_of_page"].get((kind, ident, page))
         sha = maps["sha_of_stem"].get(stem) or maps["sha_of_page"].get((kind, ident, page))
         if url:
@@ -489,7 +519,7 @@ def add_clean(index: TrainingIndex, path: Path, mixture: str) -> Dict[str, Any]:
                 stems = batch.column(i_stem).to_pylist()
                 images = batch.column(i_img).to_pylist() if i_img >= 0 else [None] * len(stems)
                 for stem, img in zip(stems, images):
-                    index.add("fragment", id_key(stem), mixture)
+                    index.add("fragment", fragment_key(stem), mixture)
                     docs += 1
                     if img and img.get("bytes"):
                         index.add("sha256", hashlib.sha256(img["bytes"]).hexdigest(), mixture)
@@ -741,7 +771,7 @@ def classify_read(read: Read, index: TrainingIndex, sys_of_cid: Mapping[str, Set
     frag_routes: Set[str] = set()
     sys_nums: Set[str] = set()
     for cid in read.cids:
-        frag_routes |= {f"{m}:fragment" for m in index.hits("fragment", id_key(cid), mix)}
+        frag_routes |= {f"{m}:fragment" for m in index.hits("fragment", fragment_key(cid), mix)}
         sys_nums |= set(sys_of_cid.get(cid, ()))
     for pg in read.pages:
         kp = ktiv_page_of_url(pg.get("image_url"))
