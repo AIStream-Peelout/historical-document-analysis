@@ -188,6 +188,22 @@ def test_load_corpus_cache_invalidation(corpus_paths: P.Paths) -> None:
     assert "New_York_JTS_ENA_9999_1" in S.load_corpus(corpus_paths).read_ids
 
 
+def test_load_corpus_cache_keyed_on_normaliser_version(corpus_paths: P.Paths, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A facade ``NORMALISER_VERSION`` bump invalidates the pickle cache (shelf-mark migration plan, PR-6).
+
+    :param corpus_paths: Synthetic configuration.
+    :param monkeypatch: Pytest monkeypatch fixture.
+    """
+    S.load_corpus(corpus_paths)
+    cache = corpus_paths.out("cache", "corpus.pkl")
+    stamp = cache.stat().st_mtime_ns
+    S.load_corpus(corpus_paths)
+    assert cache.stat().st_mtime_ns == stamp
+    monkeypatch.setattr(S._shelf, "NORMALISER_VERSION", "test-bump")
+    S.load_corpus(corpus_paths)
+    assert cache.stat().st_mtime_ns != stamp
+
+
 def test_match_shelfmark_paths(corpus_paths: P.Paths) -> None:
     """Exact, core, fragment-only, junk and unmatched outcomes.
 

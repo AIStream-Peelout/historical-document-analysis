@@ -72,6 +72,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
+from src.datasets.shelfmarks import resolve as resolve_shelfmark
 from src.finetuning.text27b import book_pairs as _bp
 from src.finetuning.text27b import builder as _bd
 from src.finetuning.text27b import lit_segment as ls
@@ -167,22 +168,18 @@ def pgp_doc_crosswalk(fn_rows: Iterable[Mapping[str, Any]], slug: str) -> Dict[s
 
 
 def pgp_fragment_cids(corpus: Any, pgpids: Sequence[str]) -> List[str]:
-    """Canonical ids synthesised from the PGP fragment shelfmarks of PGP ids that have no merged record (for an
-    image lookup in the served index by id; the index carries no PGP-id field).
+    """ES ids of PGP ids that no shelfmark resolved to a merged record (for an image lookup in the served index by id;
+    the index carries no PGP-id field): ``src.datasets.shelfmarks.resolve("pgpid:<n>")`` over the corpus index.
 
-    :param corpus: :class:`shelfmarks.Corpus` (``fragments``).
+    Since PR-6 these are real ES ids only: the records carrying the PGP id, else the ES ids its PGP fragment
+    shelfmarks resolve to. An id is no longer synthesised from a fragment shelfmark the ES does not hold.
+
+    :param corpus: :class:`shelfmarks.Corpus` (``merged``, ``fragments``).
     :param pgpids: PGP ids.
-    :returns: Ids (institution token + normalised core), possibly empty.
+    :returns: ES ids, possibly empty.
     """
-    want = {str(p) for p in pgpids}
-    out: Set[str] = set()
-    for fr in getattr(corpus, "fragments", None) or []:
-        if want & set(fr.get("pgpids") or []):
-            s = _sm.prep_shelfmark(fr["shelfmark"])
-            tok, core = _sm.token_of(s), _sm.core_of(s)
-            if tok and core:
-                out.add(_sm.combine(tok, core))
-    return sorted(out)
+    idx = _sm.corpus_index(corpus)
+    return sorted({cid for p in pgpids for cid in resolve_shelfmark(f"pgpid:{p}", index=idx).cids})
 
 
 class Resolver:
