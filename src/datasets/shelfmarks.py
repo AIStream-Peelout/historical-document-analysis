@@ -2,9 +2,11 @@
 
 Every module outside the facade, the two engines and ``merging/merge_shelfmarks.py`` imports shelf-mark helpers
 from here, never from ``document_models/genizah_normalizer.py`` (:class:`ShelfmarkNormalizer`) or
-``merging/institution_tokens.py`` directly. The facade is thin: it calls those engines (and the join / legacy
-spelling helpers of ``merging/merge_shelfmarks.py``, ``finetuning/text27b/lit_segment.py`` and
-``finetuning/text27b/shelfmarks.py``) and does not copy their code. The lint test
+``merging/institution_tokens.py`` directly. The facade is thin: it calls those engines (and the join splitter of
+``merging/merge_shelfmarks.py``) and does not copy their code. Since PR-6 it owns the printed-mark helpers that
+used to live in ``finetuning/text27b/lit_segment.py`` (:func:`split_joins`, :func:`split_piece_lists`,
+:func:`legacy_variants`, ``_clean_sm``, :func:`alt_classmark`) and ``finetuning/text27b/shelfmarks.py``
+(:func:`prep_shelfmark`), and :func:`cudl_manifest`; those modules re-import them. The lint test
 ``tests/test_shelfmark_single_source.py`` enforces this rule over ``src/``.
 
 Tracking key
@@ -67,11 +69,25 @@ PR-4 behaviour (this version, :data:`NORMALISER_VERSION` ``2026.11.03-4``)
       loose_key("TS 5:301")``). A colon followed by a space stays a head (``Cambridge CUL: T-S 12.301``). Every
       probe of the golden fixture keeps its value; no ES id changes.
 
-Planned in PR-6 (NOT implemented here)
-    ``resolve(x, *, index=None)`` and ``ShelfmarkIndex``: the ES-backed resolver chain (exact id, merge aliases,
-    :func:`loose_key`, unique :func:`core_key`, :func:`parent`). It supplies the ES id set that :func:`parent`
-    takes as ``ids``; the ``lit_segment`` split / variant helpers and :func:`cudl_manifest` move into the facade
-    then.
+PR-6 behaviour (no existing output changes; :data:`NORMALISER_VERSION` stays ``2026.11.03-4``)
+    * :class:`ShelfmarkIndex`: the ES ids of the merged corpus (``merged/merged_shelfmarks.jsonl``, read-only) with
+      their alias ids (PGP historic spellings and every source spelling of a record, :func:`record_marks`),
+      :func:`loose_key` and :func:`core_key` maps, the PGP ids and the parent lookup (:func:`parent` with the index's
+      ids). Built from a path or from records; cached on disk only under a caller-given directory, keyed by
+      :data:`NORMALISER_VERSION`, the index format and the merged file's size and modification time.
+    * :func:`resolve` (``x`` = raw mark, ES id or ``pgpid:<n>``) -> :class:`Resolution` ``(cids, how)``: :func:`split`
+      -> per part :func:`side_suffix` -> per :func:`variants` spelling (``lossy=False``): exact ES id -> alias ->
+      :func:`loose_key` -> :func:`core_key` (only when its ids name one institution); then the side-ful ES id (R3:
+      three ES ids keep a side) and :func:`parent` (a multi-fragment parent only, never a box / volume id). It never
+      returns an id that is not in the index. An optional ``institution`` is tried before the inferred one. A
+      numeric range (``T-S 12.6-7``, ``ff. 9-10``) gets ``note="range"`` and is ``unmatched`` unless the ES holds
+      a record of that very range: what a range names is open question Q11 of the migration plan, so it never
+      collapses to its first leaf or to a parent.
+    * :func:`variants` / :func:`legacy_variants` gain ``lossy`` (default True = unchanged output): False leaves out
+      the rewrites that drop a glued note number or a piece letter (they can name another leaf).
+    * The printed-mark helpers of ``text27b/lit_segment.py`` and ``text27b.shelfmarks.prep_shelfmark`` moved here
+      verbatim; :func:`cudl_manifest` is implemented here (a verbatim copy of the scrape-queue function; the
+      queue's own copy is removed when that file's pending work lands).
 
 :data:`NORMALISER_VERSION` is bumped on any change to engine or facade output and belongs in every key
 cache signature.
@@ -79,12 +95,21 @@ cache signature.
 
 from __future__ import annotations
 
+import collections
+import csv
+import functools
+import hashlib
+import json
+import os
+import pickle
 import re
-from typing import AbstractSet, Dict, List, Optional, Pattern, Tuple
+import tempfile
+from pathlib import Path
+from typing import (AbstractSet, Any, Dict, FrozenSet, Iterable, Iterator, List, Mapping, NamedTuple, Optional,
+                    Pattern, Set, Tuple, Union)
 
 from src.datasets.document_models.genizah_normalizer import OxfordShelfmark, ShelfmarkNormalizer
 from src.datasets.merging import institution_tokens as _engine
-from src.finetuning.text27b import lit_segment as _lit
 
 #: The Bodleian registry token (``Oxford_Bodleian``), re-exported from the engine.
 OXFORD_TOKEN: str = _engine.OXFORD_TOKEN
@@ -714,11 +739,11 @@ def split(mark: str) -> List[str]:
     """Split a join string into single marks.
 
     The union of the two existing splitters: ``merge_shelfmarks.split_shelfmarks`` (legacy-store ``Inst:``
-    prefixes carried forward, `` - `` joins) and, on each of its parts, ``lit_segment.split_joins`` (``+``,
+    prefixes carried forward, `` - `` joins) and, on each of its parts, :func:`split_joins` (``+``,
     ``;``, ``and``, ``&``, prefix inheritance for a bare second number, piece lists such as ``8J5.2 a, b, c``).
     Trailing join punctuation is trimmed (``T-S 16.22 +`` -> ``T-S 16.22``). A part with no digit is not a
     mark: a merge part such as the ``CAJS`` of ``CAJS Halper 472`` is glued back (:func:`_merge_split`), and a
-    ``split_joins`` result with a digit-free piece (the ``and`` of ``The National and University Library of
+    :func:`split_joins` result with a digit-free piece (the ``and`` of ``The National and University Library of
     Strasbourg, … Ms. 4038``) is not taken as a join. A single mark returns ``[mark]`` unchanged; a blank
     string returns ``[]``.
 
@@ -731,7 +756,7 @@ def split(mark: str) -> List[str]:
         return []
     parts: List[str] = []
     for part in _merge_split(mark):
-        pieces = [p.strip().rstrip(_JOIN_TAIL).strip() for p in _lit.split_joins(part)]
+        pieces = [p.strip().rstrip(_JOIN_TAIL).strip() for p in split_joins(part)]
         pieces = [p for p in pieces if p]
         if any(not any(ch.isdigit() for ch in p) for p in pieces):
             # an "and" inside an institution name (``The National and University Library of …``) is not a join
@@ -750,39 +775,43 @@ def _is_join(mark: str) -> bool:
     :rtype: bool
     """
     parts = split(mark)
-    return len(parts) > 1 and parts != _lit.split_piece_lists(re.sub(r"\s+", " ", mark.strip()))
+    return len(parts) > 1 and parts != split_piece_lists(re.sub(r"\s+", " ", mark.strip()))
 
 
-def variants(mark: str) -> List[str]:
+def variants(mark: str, lossy: bool = True) -> List[str]:
     """Legacy or printed spellings of a mark, rewritten into forms the normaliser accepts; the input first.
 
     In order: the input; the series folds (:func:`_series_fold`, ``BnF Hebr.`` -> ``hebr.`` included) of the
     input with a colon between two digits read as ``.`` (:func:`_class_colon`);
-    ``lit_segment.legacy_variants`` of the folded mark (and of the input when the folds changed it; its
-    last-resort candidates come last within its list); the text27b ``prep_shelfmark`` cleaning; the safe
-    spelling rewrites of the unseen-data key cleaner (:data:`_SAFE_SPELLINGS`); ``lit_segment._clean_sm``
-    (old-number parentheses, glued note digits) and ``lit_segment.alt_classmark`` (a second classmark printed
+    :func:`legacy_variants` of the folded mark (and of the input when the folds changed it; its
+    last-resort candidates come last within its list); the :func:`prep_shelfmark` cleaning; the safe
+    spelling rewrites of the unseen-data key cleaner (:data:`_SAFE_SPELLINGS`); ``_clean_sm``
+    (old-number parentheses, glued note digits) and :func:`alt_classmark` (a second classmark printed
     in parentheses). Duplicates and empty strings are dropped. Candidates are not checked against the ES:
-    ``resolve()`` (PR-6) does that.
+    :func:`resolve` does that.
+
+    With ``lossy=False`` (what :func:`resolve` uses) the lossy candidates are left out: the lossy last-resort
+    variants of :func:`legacy_variants` and ``_clean_sm`` (a trailing note number dropped), each of which can name
+    another leaf (``T-S AS 18.1163`` -> ``T-S AS 18.11``, ``TS 12 301`` -> ``TS 12``).
 
     :param mark: Raw mark (one part; see :func:`split`).
     :type mark: str
+    :param lossy: Include the lossy candidates (default True: the PR-2 behaviour).
+    :type lossy: bool
     :return: Distinct candidate spellings, the input first.
     :rtype: List[str]
     """
-    # Lazy import: the text27b key module loads its corpus paths and is itself a facade caller-to-be (PR-6).
-    from src.finetuning.text27b.shelfmarks import prep_shelfmark
-
     folded = _series_fold(_class_colon(mark), bnf=True)
     candidates: List[Optional[str]] = [mark, folded]
-    candidates += _lit.legacy_variants(folded)[1:]
+    candidates += legacy_variants(folded, lossy=lossy)[1:]
     if folded != mark:
-        candidates += _lit.legacy_variants(mark)[1:]
+        candidates += legacy_variants(mark, lossy=lossy)[1:]
     safe = mark
     for pattern, repl in _SAFE_SPELLINGS:
         safe = pattern.sub(repl, safe)
-    candidates += [prep_shelfmark(mark), re.sub(r"\s+", " ", safe).strip(" ,;."), _lit._clean_sm(mark),
-                   _lit.alt_classmark(mark)]
+    candidates += [prep_shelfmark(mark), re.sub(r"\s+", " ", safe).strip(" ,;."),
+                   _clean_sm(mark) if lossy else None,
+                   alt_classmark(mark)]
     out: List[str] = []
     for cand in candidates:
         if cand and cand.strip() and cand not in out:
@@ -795,7 +824,7 @@ def parent(mark: str, ids: Optional[AbstractSet[str]] = None, institution: Optio
 
     ``T-S Misc.28.79.14`` -> ``Cambridge_CUL_T_S_Misc_28_79`` when *ids* holds it. The parent is returned only
     when it is in *ids*: with ``ids=None`` the result is always ``None`` (``resolve()``, PR-6, supplies the ES id
-    set).
+    set). A numeric range (``T-S 10J5.17-18``) has no parent: its ``-18`` is a range end, not a child number.
 
     :param mark: Raw shelf mark or ES id.
     :type mark: str
@@ -806,7 +835,7 @@ def parent(mark: str, ids: Optional[AbstractSet[str]] = None, institution: Optio
     :return: The parent ES id, or ``None``.
     :rtype: Optional[str]
     """
-    if ids is None:
+    if ids is None or _is_range(mark):
         return None
     cid = canonical_id(mark, institution)
     if cid is None:
@@ -817,6 +846,204 @@ def parent(mark: str, ids: Optional[AbstractSet[str]] = None, institution: Optio
         return None
     candidate = _engine.combine(token, "_".join(parts[:-1]))
     return candidate if candidate in ids else None
+
+
+# ------------------------------------------------------------------------------------ printed-mark helpers
+# Moved verbatim from ``finetuning/text27b/lit_segment.py`` in PR-6 (``_SIDE_WORDS`` renamed
+# ``_LIT_SIDE_WORDS``: the facade's own ``_SIDE_WORDS`` maps side words to sides). ``lit_segment``
+# re-imports them; :func:`split` and :func:`variants` call them.
+
+_LANG_PAREN = re.compile(r"\s*\((?:[^()]*\b(?:Arabic|Hebrew|Aramaic|Persian|Greek|Ladino|Cat\.|\*)[^()]*|\*)\)\s*")
+
+
+_LIT_SIDE_WORDS = re.compile(r"\s*\((?:and\s+)?(?:recto|verso|not listed)[^()]*\)|\s+(?:recto|verso)\b\.?", re.I)
+
+
+_NOS_LIST = re.compile(r"^(?P<base>.*?\d[a-z]?)\s*,?\s*nos\.?\s*(?P<list>\d+[a-z]?(?:\s*,\s*\d+[a-z]?)+)[\s,]*"
+                       r"(?P<tail>\(\*\))?\s*$")
+_LETTER_LIST = re.compile(r"^(?P<base>.*\d)\s*(?P<list>[a-z](?:\s*,\s*[a-z])+)[\s,]*(?P<tail>\(\*\))?\s*$")
+
+
+def split_piece_lists(part: str) -> List[str]:
+    """Split one shelfmark that lists several numbered or lettered pieces into one shelfmark per piece.
+
+    ``TS NS J 185, nos. 5, 6, 2`` → ``TS NS J 185, no. 5`` / ``no. 6`` / ``no. 2``; ``TS NS J 67 a, b (*)`` →
+    ``TS NS J 67a`` / ``TS NS J 67b``. A list of side letters only (``r, v``) is left alone.
+
+    :param part: One shelfmark (one part of a join).
+    :returns: The pieces (the part alone when it lists no pieces).
+    """
+    m = _NOS_LIST.match(part)
+    if m:
+        return [f"{m.group('base').rstrip(' ,')}, no. {n}" for n in re.findall(r"\d+[a-z]?", m.group("list"))]
+    m = _LETTER_LIST.match(part)
+    if m:
+        lets = re.findall(r"[a-z]", m.group("list"))
+        if not set(lets) <= {"r", "v"}:
+            return [f"{m.group('base')}{x}" for x in lets]
+    return [part]
+
+
+def split_joins(raw: str) -> List[str]:
+    """Split a printed join (``A and B``, ``A + B``, ``A; B``) into its shelfmarks; a bare second number inherits
+    the first mark's collection prefix (``TS NS J 110 and 152`` → ``TS NS J 110``, ``TS NS J 152``; ``..., f. 141 and
+    f. 10`` → ``..., f. 141``, ``..., f. 10``). A part that lists several pieces (``nos. 5, 6, 2``, ``67 a, b``) is
+    split into one shelfmark per piece (:func:`split_piece_lists`).
+
+    :param raw: Printed shelfmark.
+    :returns: Parts (the raw string alone when it is not a join and lists no pieces).
+    """
+    s = re.sub(r"\s+", " ", (raw or "").strip())
+    bits = [b.strip(" ,;") for b in re.split(r"\s+(?:and|\+|&)\s+|\s*;\s*", s) if b.strip(" ,;")]
+    if len(bits) < 2:
+        return split_piece_lists(s) if s else []
+    out = [bits[0]]
+    for b in bits[1:]:
+        if re.match(r"^(?:ff?\.|fols?\.|nos?\.)\s*\d", b):
+            base = re.sub(r",?\s*(?:ff?\.|fols?\.|nos?\.)\s*[\d\w ,]+$", "", bits[0]).strip(" ,")
+            out.append(f"{base}, {b}")
+        elif re.fullmatch(r"\d+[a-z]?", b):
+            base = re.sub(r"\d+[a-z]?\s*$", "", bits[0]).rstrip()
+            out.append(f"{base} {b}" if base else b)
+        else:
+            out.append(b)
+    return [p for b in out for p in split_piece_lists(b)]
+
+
+def legacy_variants(raw: str, neubauer: Optional[Mapping[str, str]] = None, lossy: bool = True) -> List[str]:
+    """Rewrite an old-style shelfmark into the spellings the corpus normaliser matches.
+
+    Covers the forms of 1920s–1970s scholarship: ``TS`` for ``T-S``, ``Box`` volumes, ``f.`` / ``fol.`` / ``no.`` /
+    ``no`` folio markers (the first of a list of folios / numbers / part letters), ``TS 8 J 34`` for ``T-S 8J34``,
+    ``TS Arabic (Box)`` for ``T-S Ar.``, a part letter in parentheses or after a space (``J 318(a)``, ``J 67 a``),
+    a volume in parentheses (``Ar. Box 18 (1).33`` → ``Ar.18(1).33``), ``ULC Or Box 5, f. 13`` for
+    ``CUL Or.1080 5.13``, ``Westminster College, Misc. 34`` / ``West. Coll., Frag. Cairens., f. 34`` for
+    ``L-G Misc. 34`` (and ``Arabica I, f. N`` for ``L-G Ar. I.N``), ``Bodl. MS Heb. c 28, fol. 33`` /
+    ``Bodleian MS Heb. d 66.5`` for ``Bodl. MS Heb. c 28/33`` / ``d 66/5``, Neubauer catalogue numbers
+    (``Oxford (Neubauer) 2878/4``) when a crosswalk to MS Heb. volumes is supplied, side words (``Verso``,
+    ``(and Verso)``) and a language / ``(Cat. N)`` / ``(*)`` parenthesis after the mark. Last-resort variants (marked
+    by their position in the list): a footnote number glued to the folio (``37.1141`` → ``37.11``; ``15.60v74`` →
+    ``15.60``), the folio without a part letter, a Dropsie / Penn ``E 16.510`` as ``UPenn E 16510`` and
+    ``JTS Krengel 5.123`` as ``JTS Krengel 123``.
+
+    :param raw: Shelfmark as printed (one part of a join; see :func:`split_joins`).
+    :param neubauer: Optional Neubauer catalogue number -> ``MS Heb. <letter> <number>`` crosswalk.
+    :param lossy: Also add the lossy last-resort variants (glued footnote number, side letter + note and part letter
+        dropped; each can name another leaf, e.g. ``T-S AS 18.1163`` -> ``T-S AS 18.11``). Default True (the
+        behaviour before PR-6); :func:`resolve` passes False. The Penn / Krengel rewrites are always added.
+    :returns: Distinct candidate spellings, the raw (stripped) form first.
+    """
+    s0 = re.sub(r"\s+", " ", (raw or "").strip())
+    out: List[str] = [s0] if s0 else []
+    s = _LANG_PAREN.sub(" ", s0)
+    s = _LIT_SIDE_WORDS.sub(" ", s).strip(" ,;")
+    s = re.sub(r"(?<=\d)\s*\(([a-z])\)", r"\1", s)
+    s = re.sub(r"(?<=\d)\s*\((\d)\)(?=\s*[.,])", r"(\1)", s)
+    s, n_or = re.subn(r"^(?:ULC|CUL|T\.?-?\s?S\.?)\s+Or\.?\s*(?:1080\s*)?Box\s+(\d+)", r"CUL Or.1080 \1", s)
+    s = re.sub(r"^(?:Westminster\s+College|West\.?\s*Coll\.?)\s*(?:\(Westminster College\))?\s*,?\s*"
+               r"(?:Misc\.?|Frag\.?\s*Cairens\.?)\s*,?\s*(?:(?:ff?\.|fols?\.)\s*)?(\d+)", r"L-G Misc. \1", s)
+    s = re.sub(r"^(?:Westminster\s+College|West\.?\s*Coll\.?)\s*(?:\(Westminster College\))?\s*,?\s*"
+               r"(?:Ar\.?|Arabica)\s*(?:\(Arabica\)\s*)?(I{1,2})\s*,?\s*(?:ff?\.|fols?\.)\s*(\d+)", r"L-G Ar. \1.\2", s)
+    if not n_or:
+        s = re.sub(r"^(?:ULC|CUL)\s+(?=Or)", "T-S ", s)
+    s = re.sub(r"^T\.?\s?S\.?\b\.?", "T-S", s)
+    s = re.sub(r"^T-S\s+Arabic\s*(?:Box\s*)?", "T-S Ar.", s)
+    s = re.sub(r"^T-S\s+(NS\s+J|NS|Misc\.?|AS|K|Box\s+K)\s*Box\s+", lambda m: f"T-S {m.group(1)} ", s)
+    s = re.sub(r"^T-S\s+Box\s+", "T-S ", s)
+    s = re.sub(r"^T-S\s+Misc\w*\.?\s+(?:Box\s+)?", "T-S Misc.", s)
+    s = re.sub(r"^T-S\s+(\d+)\s*J\s*(\d+)", r"T-S \1J\2", s)
+    s = re.sub(r"^T-S\s+NS\s+J\s*(\d+)", r"T-S NS J\1", s)
+    s = re.sub(r"^T-S\s+K\s+(\d+)", r"T-S K\1", s)
+    s = re.sub(r"^Bodleian\b\.?", "Bodl.", s)
+    s = re.sub(r"(MS\.?\s+Heb\.?\s+[a-f])\.?\s*(\d+)\s*[.,]\s*(?:ff?\.|fols?\.)?\s*(\d+[a-z]?)", r"\1 \2/\3", s)
+    m = re.match(r"^(?:Oxford|Bodl\.?)\s*(?:\(Neubauer\)|Neubauer)?\s*(?:Cat\.?\s*)?(\d{4})\s*/\s*(\d+[a-z]?)", s)
+    if m and neubauer and m.group(1) in neubauer:
+        s = f"Bodl. {neubauer[m.group(1)]}/{m.group(2)}"
+    s = re.sub(r",?\s*(?:ff?\.|fols?\.)\s*(\d+)\s*([a-d])(?:\s*,\s*[a-d])*\b", r".\1\2", s)
+    s = re.sub(r",?\s*(?:ff?\.|fols?\.)\s*(\d+[a-zA-Z]?)(?:\s*[-–]\s*\d+)?", r".\1", s)
+    s = re.sub(r",?\s*\bnos?(?:\.\s*|\s+)(\d+)(?:\s*,\s*\d+)*,?", r".\1", s)
+    s = re.sub(r"^(ENA\s+\d+[A-Za-z]?)\s*\.\s*(\d+)([A-Z])\b",
+               lambda mm: f"{mm.group(1)}.{mm.group(2)}{mm.group(3).lower()}", s)
+    s = re.sub(r"(?<=\d)\s+([a-z])(?:\s*,\s*[a-z])*\s*$", r"\1", s)
+    s = re.sub(r"\s+\.", ".", s).strip(" ,;.")
+    if s and s not in out:
+        out.append(s)
+    # last resort: glued footnote numbers, side letter + note, part letter, Penn E numbers, Krengel box numbers
+    g = re.match(r"^(.*\.\d{1,3})(\d{2})$", s)
+    if lossy and g and len(re.sub(r"\D", "", s.split(".")[-1])) >= 4:
+        out.append(g.group(1))
+    g = re.match(r"^(.*\.\d{1,3})[rv]\d{0,3}$", s)
+    if lossy and g:
+        out.append(g.group(1))
+    g = re.match(r"^(.*\.\d{1,3})[a-d]$", s)
+    if lossy and g and g.group(1) not in out:
+        out.append(g.group(1))
+    g = re.match(r"^E\s?(\d{1,2})\.(\d{3})$", s)
+    if g:
+        out.append(f"UPenn E {g.group(1)}{g.group(2)}")
+    g = re.match(r"^(JTS\s+Krengel)\s+\d{1,2}\.(\d{1,3})$", s)
+    if g:
+        out.append(f"{g.group(1)} {g.group(2)}")
+    return out
+
+
+def _clean_sm(sm: str) -> str:
+    """Shelfmark of an anthology line without a ``(formerly ...)`` / old-number parenthesis or glued note digits.
+
+    :param sm: Text before the language parenthesis.
+    :returns: Cleaned shelfmark.
+    """
+    sm = re.sub(r"(?<=\d)\s*\((\d)\)(?=\.\d)", r"(\1)", sm)
+    sm = re.sub(r"\s*\((?!\d\)\.)(?:formerly|olim|old|=)?[^()]*\)\s*[\d¹²³⁴-⁹]*", "", sm).strip()
+    sm = re.sub(r"[¹²³⁴-⁹]+$", "", sm)
+    sm = re.sub(r"\s+\d{1,3}$", "", sm) if re.search(r"\d[\d.]*\s+\d{1,3}$", sm) else sm
+    return sm.strip(" ·,;")
+
+
+def alt_classmark(sm: str) -> Optional[str]:
+    """A second classmark printed in parentheses after a shelfmark (``Mosseri L 129.1 (II 127.1)``,
+    ``Mosseri L 291 (Ia, 21)``, ``X (formerly Y)``), completed with the mark's collection word when it starts with a
+    volume number (``Mosseri II 127.1``).
+
+    :param sm: Shelfmark text as printed (before :func:`_clean_sm`).
+    :returns: The alternate classmark, or None.
+    """
+    for m in re.finditer(r"\(([^()]{1,40})\)", sm or ""):
+        inner = m.group(1).strip()
+        if re.fullmatch(r"\d|[a-z]|\*", inner) or not re.search(r"\d", inner):
+            continue
+        if re.search(r"Arabic|Hebrew|Aramaic|Persian|Greek|Ladino|Cat\.", inner):
+            continue
+        inner = re.sub(r"^(?:formerly|olim|old|now|=)\s*:?\s*", "", inner).strip(" ,;")
+        if re.match(r"^(?:[IVX]+[a-z]?|\d)", inner):
+            first = (sm.split() or [""])[0]
+            inner = f"{first} {inner}" if first and not first[0].isdigit() else inner
+        return inner
+    return None
+
+
+# Moved verbatim from ``finetuning/text27b/shelfmarks.py`` in PR-6 (that module re-imports it).
+def prep_shelfmark(raw: str) -> str:
+    """Clean a raw shelfmark key before normalising (underscore keys, stray prefixes, folio / side tails).
+
+    :param raw: Raw key (from a page's ``shelf_marks_mentioned``, a PGP record, prose).
+    :returns: Cleaned shelfmark string.
+    """
+    s = str(raw).strip()
+    s = re.sub(r"^(?:Loc|Ref|Book|Doc_ref|Ms|MS_ref)_(?=[A-Z])", "", s)
+    s = re.sub(r"^MS\.?\s+(?=ENA|T-S|TS\b|JTS)", "", s)
+    s = re.sub(r"^(?:[uxv](?=_?[A-Z]{2}|_?T_S)|_+)", "", s).lstrip("_")
+    if "_" in s and " " not in s.strip("_ "):
+        s = s.replace("_", " ")
+    s = re.sub(r"\s*\([^()]*\)?\s*$", "", s)
+    # Folio designators become ", f. N" -- but neither a Bodleian size letter ("MS heb. f 56/12")
+    # nor the Taylor-Schechter F series ("T-S F99.22"): the 2026-10-18 prototype matched "f"
+    # case-insensitively, which dropped those letters and broke their keys.
+    s = re.sub(r"(?<!heb\.)(?<!heb)(?<!Heb\.)(?<!Heb)(?<!arab\.)(?<!Arab\.)(?<!arab)(?<!Arab)"
+               r"[\s,]+(?:f|fol|fols|folio|ff|Fol|Fols|Folio|FOL)\.?\s*(?=\d)", ", f. ", s)
+    s = re.sub(r"(?<=\d)\s?[rv]$", "", s)
+    s = re.sub(r"\s+", " ", s).strip(" .,;:()[]{}")
+    return s
 
 
 # ------------------------------------------------------------------------------------ frozen legacy keys
@@ -910,26 +1137,811 @@ def institution_info(mark: str) -> Dict[str, Optional[str]]:
     return ShelfmarkNormalizer.get_institution_info(mark)
 
 
-def cudl_manifest(shelfmark: str, known: Optional[AbstractSet[str]] = None) -> Optional[str]:
-    """Construct the CUDL IIIF manifest URL for a single Cambridge shelfmark (thin re-export).
+#: CUDL IIIF manifest base (copied verbatim from the Arabic scrape queue with :func:`cudl_manifest`).
+CUDL_BASE = "https://cudl.lib.cam.ac.uk/iiif/"
+# Cambridge shelfmark prefixes -> CUDL manifest id prefix (learned from the
+# export rows that carry both a shelfmark and a CUDL manifest URL).
+_CUDL_PREFIXES = [("T-S ", "MS-TS"), ("CUL Or.", "MS-OR"), ("CUL Add.", "MS-ADD"),
+                  ("Moss. ", "MS-MOSSERI")]
+#: The PGP export the default fragment list of :func:`cudl_manifest` is read from (read-only, on first use).
+PGP_EXPORT = Path(__file__).resolve().parent / "raw_data/cairo_genizah/pgp_raw/data"
 
-    Calls ``src.datasets.indexing.arabic_scrape_queue.cudl_manifest`` unchanged; the implementation moves into
-    the facade in PR-6. Tokens after the collection prefix become ``-``-joined id parts: numbers zero-padded to
-    five digits, letters upper-cased, e.g. ``T-S 13J1.10`` -> ``MS-TS-00013-J-00001-00010``.
+
+@functools.lru_cache(maxsize=None)
+def _fragment_shelfmarks(fragments_csv: Path) -> FrozenSet[str]:
+    """Shelfmarks listed in one ``fragments.csv``, read once per path.
+
+    :param fragments_csv: PGP export ``fragments.csv``.
+    :type fragments_csv: Path
+    :return: Shelfmarks (empty when the file does not exist).
+    :rtype: FrozenSet[str]
+    """
+    if not fragments_csv.exists():
+        return frozenset()
+    with open(fragments_csv, encoding="utf-8-sig") as fh:
+        return frozenset(r["shelfmark"] for r in csv.DictReader(fh))
+
+
+def known_fragments(pgp_dir: Optional[Path] = None) -> FrozenSet[str]:
+    """Shelfmarks of the physical fragments of a PGP export, read on first use (not at import).
+
+    :param pgp_dir: PGP export directory holding ``fragments.csv``; default :data:`PGP_EXPORT`.
+    :type pgp_dir: Optional[Path]
+    :return: Fragment shelfmarks (empty when the export has no ``fragments.csv``).
+    :rtype: FrozenSet[str]
+    """
+    return _fragment_shelfmarks((pgp_dir if pgp_dir is not None else PGP_EXPORT) / "fragments.csv")
+
+
+def cudl_manifest(shelfmark: str, known: Optional[AbstractSet[str]] = None) -> Optional[str]:
+    """Construct the CUDL IIIF manifest URL for a single Cambridge shelfmark.
+
+    Owned by the facade since PR-6: a verbatim copy of ``indexing/arabic_scrape_queue.cudl_manifest`` (with
+    :data:`CUDL_BASE`, the prefix table and :func:`known_fragments`). The queue keeps its own copy, untouched, while
+    that file carries unrelated pending work; the copy is removed (the queue then re-exports this one) when that
+    work lands. ``tests/test_shelfmarks_resolve.py`` pins that both give identical URLs on the probe set.
+
+    Tokens after the collection prefix become ``-``-joined id parts: numbers
+    zero-padded to five digits, letters upper-cased — e.g. ``T-S 13J1.10`` ->
+    ``MS-TS-00013-J-00001-00010``, ``T-S Ar.18(1).135`` ->
+    ``MS-TS-AR-00018-00001-00135``, ``CUL Or.1080 J10`` -> ``MS-OR-01080-J-00010``.
 
     NOT an identity key: a document-level sub-number of a known fragment is dropped, so a sub-numbered child
     returns its **parent's** manifest (``T-S Misc.28.79.14`` -> ``MS-TS-MISC-00028-00079``).
 
-    :param shelfmark: Single (non-joined) PGP-style shelfmark.
+    :param shelfmark: Single (non-joined) shelfmark.
     :type shelfmark: str
-    :param known: Fragment shelfmarks of the PGP export in use; default: those of the PGP export the queue
-        module reads, read only when needed.
+    :param known: Fragment shelfmarks of the PGP export in use (:func:`known_fragments`);
+        default: those of the export under :data:`PGP_EXPORT`, read only when needed.
     :type known: Optional[AbstractSet[str]]
     :return: Manifest URL, or ``None`` for non-Cambridge / joined shelfmarks.
     :rtype: Optional[str]
     """
-    # Lazy import: the queue module is an indexing script (not loaded on every facade import) and will itself
-    # import this facade once PR-4 migrates it.
-    from src.datasets.indexing.arabic_scrape_queue import cudl_manifest as _queue_cudl_manifest
+    if " + " in shelfmark:
+        return None
+    # Manifests are per physical fragment: a document-level sub-number
+    # (``T-S 13J4.15.1`` is the first document on fragment ``T-S 13J4.15``)
+    # is dropped when the base shelfmark is a known fragment.
+    base = re.sub(r"\.[0-9]+$", "", shelfmark)
+    if base != shelfmark and base in (known if known is not None else known_fragments()):
+        shelfmark = base
+    for prefix, ms in _CUDL_PREFIXES:
+        if shelfmark.startswith(prefix):
+            rest = shelfmark[len(prefix):]
+            tokens = re.findall(r"[A-Za-z]+|[0-9]+", rest)
+            if not tokens:
+                return None
+            parts = [t.zfill(5) if t.isdigit() else t.upper() for t in tokens]
+            return CUDL_BASE + "-".join([ms] + parts)
+    return None
 
-    return _queue_cudl_manifest(shelfmark, known)
+
+# ------------------------------------------------------------------------------------ resolver (PR-6)
+
+#: The merged corpus the default :class:`ShelfmarkIndex` is built from (read-only; never written, never a cache).
+MERGED_SHELFMARKS = Path(__file__).resolve().parent / "raw_data/cairo_genizah/merged/merged_shelfmarks.jsonl"
+#: Layout / build-rule version of a pickled :class:`ShelfmarkIndex` (part of the cache signature with
+#: :data:`NORMALISER_VERSION`).
+INDEX_FORMAT = 4
+#: Every ``how`` of a :class:`Resolution`, strongest first; a join takes the ``how`` of its weakest part.
+HOW_ORDER: Tuple[str, ...] = ("exact", "alias", "loose", "core", "parent", "pgpid", "unmatched")
+_PGPID_PREFIX = "pgpid:"
+#: A bare page / folio / line reference (``p. 23``, ``f. 12r``, ``fols. 3-4``), never a shelf mark on its own (the
+#: whole string: ``F 1908.44BB`` is a Freer mark).
+_PAGE_REF = re.compile(r"^\s*(?:pp?|ff?|fols?|folios?|pages?|ll?|lines?|nos?)\.?\s*\d+[rvab]?"
+                       r"(?:\s*[-\u2013]\s*\d+[rvab]?)?\s*$", re.IGNORECASE)
+#: A number, an optional side / piece letter, a dash and a number (candidate numeric range, see :func:`_is_range`).
+_RANGE = re.compile(r"(?<!\d)(\d+)([^\W\d_]?)\s*[-\N{EN DASH}\N{EM DASH}]\s*(\d+)([^\W\d_]?)")
+#: An ES id that ends in a numbered child component (``Cambridge_CUL_T_S_Misc_28_79_14``), group 1 = the parent id.
+_CHILD_ID = re.compile(r"^(.+)_\d+[^\W\d_]?$")
+
+
+def _is_range(mark: str) -> bool:
+    """Whether a raw mark names a numeric range (``T-S 10J5.17-18``, ``T-S 12.6-7``, ``ff. 9-10``, ``1v-2r``).
+
+    What a range names is open (migration plan Q11). A range is ``<n1>-<n2>`` (hyphen, en or em dash) where the
+    end is larger than the start (``17-18``), or equal with a side / piece letter (``21r-21v``, ``2-2a``), or a
+    one- or two-digit abbreviation of a larger end (``161-63``, ``6416-18``). A zero-padded end is a number
+    component, not a range end: CUDL ids (``MS-TS-00012-00301``) and box numbers (``FR 9-004/20``) are no ranges,
+    nor is an accession number (``AM 2005-125``).
+
+    :param mark: Raw mark (one part of :func:`split`).
+    :type mark: str
+    :return: True when the mark holds a numeric range.
+    :rtype: bool
+    """
+    for m in _RANGE.finditer(mark or ""):
+        start, start_letter, end, end_letter = m.groups()
+        if len(end) > 1 and end.startswith("0"):
+            continue
+        if len(end) < len(start) and len(end) <= 2:
+            end = start[:len(start) - len(end)] + end
+        if int(end) > int(start) or (int(end) == int(start) and (start_letter or end_letter)):
+            return True
+    return False
+
+
+class Resolution(NamedTuple):
+    """The ES ids a shelf mark, an ES id or a ``pgpid:<n>`` resolves to, and how.
+
+    :param cids: ES ids (sorted; every one is in the index), empty when unmatched.
+    :param how: One of :data:`HOW_ORDER`.
+    :param ambiguous: True when an ``alias`` / ``loose`` / ``core`` step of a single mark (of any part of a join)
+        matched more than one ES id: the ids are an over-match (several leaves, or a leaf and its duplicate record),
+        not one leaf. ``exact``, ``parent`` and ``pgpid`` results are never ambiguous (a PGP id naming several
+        records is a join, not an ambiguity).
+    :param note: ``"range"`` when the mark (or a part of a join) is a numeric range (``T-S 12.6-7``): migration
+        plan Q11 is open, so a range is ``unmatched`` (never its first leaf or a parent) unless the ES holds a
+        record of that very range (``exact``). ``""`` otherwise.
+    """
+
+    cids: List[str]
+    how: str
+    ambiguous: bool = False
+    note: str = ""
+
+
+def record_marks(record: Mapping[str, Any]) -> List[str]:
+    """Every single-mark spelling a merged record is known by, its canonical id first.
+
+    Lifted from ``merging/legacy_store_inventory.record_marks`` and made source-generic: the canonical id, the
+    display form, the PGP fragment mark and its historic marks (also those of ``_extra_fragments``), the
+    ``shelf_mark`` of every other source (list-valued sources: each entry's), the KTIV catalogue mark, and the
+    ``aliases`` / ``source_marks`` lists of a slim record (the test fixture's form). A join string (more than one
+    part under :func:`split`) is skipped: its partners have records of their own.
+
+    :param record: One ``merged_shelfmarks.jsonl`` line (full or slim form).
+    :type record: Mapping[str, Any]
+    :return: Distinct non-empty spellings.
+    :rtype: List[str]
+    """
+    marks: List[str] = [record.get("canonical_id") or "", record.get("shelfmark_display") or ""]
+    marks += list(record.get("source_marks") or []) + list(record.get("aliases") or [])
+    sources = record.get("sources") or {}
+    pgp = sources.get("pgp") or {}
+    for fragment in [pgp.get("fragment") or {}] + list(pgp.get("_extra_fragments") or []):
+        marks.append(fragment.get("shelfmark") or "")
+        marks += (fragment.get("shelfmarks_historic") or "").split(";")
+    for name, block in sources.items():
+        if name == "pgp":
+            continue
+        for entry in (block if isinstance(block, list) else [block]):
+            if not isinstance(entry, dict):
+                continue
+            marks.append(entry.get("shelf_mark") or "")
+            listed = entry.get("shelfmarks")
+            if isinstance(listed, dict) and isinstance(listed.get("shelfmark"), dict):
+                marks.append(listed["shelfmark"].get("value") or "")
+    out: List[str] = []
+    for i, mark in enumerate(m.strip() for m in marks if isinstance(m, str)):
+        if mark and mark not in out and (i == 0 or len(split(mark)) == 1):
+            out.append(mark)
+    return out
+
+
+#: An upper-case Roman numeral token (``AIU VII C``, ``Reinach III``, ``Paris_AIU_VII_C``).
+_ROMAN = re.compile(r"(?<![A-Za-z])[IVX]+(?![a-z])(?=$|[^A-Za-z]|[A-Z](?![A-Za-z]))")
+
+
+def _has_digit(text: str) -> bool:
+    """Whether a spelling, id or key carries a number: a digit, or (in a spelling or id) an upper-case Roman
+    numeral token. A shelf mark names a numbered item; ``BL``, ``Bodl.``, ``JRL`` or ``AIU`` do not.
+
+    :param text: Spelling, id or key.
+    :type text: str
+    :return: True when *text* has a digit or a Roman numeral token.
+    :rtype: bool
+    """
+    return any(ch.isdigit() for ch in text) or bool(_ROMAN.search(text))
+
+
+#: A siglum-like token: an all-capitals word of 2+ letters (``PER``, ``BL``), a dotted abbreviation (``Heid.``,
+#: ``inv.``) or letters glued to digits (``1900b``, ``44BB``, ``F3``); a prose word (``Genizah``, ``Letter``) is none.
+_SIGLUM = re.compile(r"(?<![^\W\d_])(?:[A-Z]{2,}(?![a-z])|[^\W\d_]+\.|\d+[^\W\d_]+|[^\W\d_]+\d+)")
+#: Dotted prose / reference abbreviations that are no siglum (``Fig. 12``, ``Vol. 2``, ``Doc. 32``, ``p. 23``).
+_PROSE_ABBREVIATIONS = frozenset({"art", "cf", "ch", "chap", "doc", "docs", "ed", "eds", "f", "ff", "fig", "figs",
+                                  "fol", "fols", "ibid", "l", "ll", "n", "nn", "no", "nos", "p", "pl", "pp", "pt",
+                                  "sec", "tab", "vol", "vols"})
+
+
+def _has_siglum(spelling: str) -> bool:
+    """Whether a spelling carries a siglum-like token (:data:`_SIGLUM`) other than a prose abbreviation.
+
+    :param spelling: The spelling.
+    :type spelling: str
+    :return: True for ``PER H 34``, ``p. Heid. Hebr. 17``, ``Lévi 1900b``; False for ``Genizah 5``, ``Fig. 12``.
+    :rtype: bool
+    """
+    for m in _SIGLUM.finditer(spelling):
+        token = m.group(0)
+        if not (token.endswith(".") and token[:-1].lower() in _PROSE_ABBREVIATIONS):
+            return True
+    return False
+
+
+def _core_key_usable(key: str, spelling: str) -> bool:
+    """Whether an institution-free :func:`core_key` is strong enough for the unique-core step of :func:`resolve`.
+
+    The spelling must carry a number (:func:`_has_digit`) and either pass :func:`is_shelfmark` (a series or holder
+    word) or name an institution (:func:`canonical_id` is not ``None``); or the key has at least 4 characters with
+    a letter and a digit (the text27b ``match_shelfmark`` junk rule), the spelling is not a bare page / folio /
+    line reference, and it has at least two digit groups or a siglum-like token (:func:`_has_siglum`: ``PER``,
+    ``Heid.``, ``1900b``). ``5``, ``152``, ``a5``, ``p. 23``, ``f. 12r`` and prose-like mentions (``Genizah 5``,
+    ``Letter 12``, ``Fig. 12``) are not usable; ``F 1908.44BB`` (Freer), ``PER H 34`` and ``p. Heid. Hebr. 17``
+    are.
+
+    :param key: The core key.
+    :type key: str
+    :param spelling: The spelling the key came from.
+    :type spelling: str
+    :return: True when the core step may use the key.
+    :rtype: bool
+    """
+    if not key or not _has_digit(spelling):
+        return False
+    if is_shelfmark(spelling) or canonical_id(spelling) is not None:
+        return True
+    if not (len(key) >= 4 and any(ch.isalpha() for ch in key) and any(ch.isdigit() for ch in key)
+            and not _PAGE_REF.match(spelling)):
+        return False
+    return len(re.findall(r"\d+", spelling)) >= 2 or _has_siglum(spelling)
+
+
+#: One segment of a bare-number core: digits with at most one glued piece letter (``5``, ``132``, ``5a``) or an
+#: upper-case Roman numeral (``VII``). A core made only of such segments names no collection.
+_BARE_NUMBER_SEGMENT = re.compile(r"\d+[^\W\d_]?|[IVX]+")
+
+
+def _is_bare_number_core(spelling: str) -> bool:
+    """Whether the institution-free core of a spelling is only a number: every segment of its case-kept
+    :func:`core_id` is digits with at most one piece letter, or an upper-case Roman numeral
+    (:data:`_BARE_NUMBER_SEGMENT`).
+
+    ``JTS 5`` (``5``), ``CUL 132`` (``132``), ``JTS 12.301`` (``12_301``), ``JTS 5a`` and ``JTS VII`` are bare; ``ENA
+    5`` (``ENA_5``), ``Mingana 5`` (``Mingana_5``), ``CUL VII C 5`` and ``Sassoon 526`` are not: their core keeps a
+    series or holder word.
+
+    :param spelling: The spelling the core key came from.
+    :type spelling: str
+    :return: True when the core has at least one segment and all of them are bare numbers.
+    :rtype: bool
+    """
+    segments = [seg for seg in core_id(spelling).split("_") if seg]
+    return bool(segments) and all(_BARE_NUMBER_SEGMENT.fullmatch(seg) for seg in segments)
+
+
+def _named_tokens(spelling: str, institution: Optional[str]) -> Set[str]:
+    """The registry tokens a spelling names: the token of its own :func:`canonical_id` (the institution inferred from
+    the mark: ``JTS 5`` -> ``New_York_JTS``) and, when an institution is given with it, that institution's registry
+    token (``resolve_token`` or a series word; a slug of an unregistered holder name counts as none).
+
+    :param spelling: The spelling.
+    :type spelling: str
+    :param institution: Institution spelling given with the mark, or ``None``.
+    :type institution: Optional[str]
+    :return: The tokens (empty when neither names a registry institution).
+    :rtype: Set[str]
+    """
+    tokens: Set[str] = set()
+    cid = canonical_id(spelling)
+    if cid is not None and _engine.split_id(cid)[0]:
+        tokens.add(_engine.split_id(cid)[0])
+    if institution and institution.strip():
+        given = _engine.resolve_token(institution) or _engine.SERIES_TOKENS.get(institution.strip())
+        if given:
+            tokens.add(given)
+    return tokens
+
+
+def _core_hits_of_named_institution(ids: AbstractSet[str], spelling: str, institution: Optional[str]) -> Set[str]:
+    """Drop the unique-core hits of a bare-number core (:func:`_is_bare_number_core`) whose institution token is not
+    one the spelling names (:func:`_named_tokens`).
+
+    A bare number carries no collection: ``JTS 5``, ``CUL 5`` and ``CUL 132`` give the core keys ``5`` / ``132``,
+    which can be unique in the index to ``Birmingham_Mingana_5`` or ``Budapest_MTA_132``; the mark names another
+    institution, so the hit is a coincidence of numbers, not the leaf. A core that keeps a series or holder word
+    (``Sassoon 526`` -> ``Various_Sassoon_526``, a legacy-store ``New York JTS: T-S AS 62.262`` ->
+    ``Cambridge_CUL_T_S_AS_62_262``) is left alone: its word carries the collection. A spelling that names no
+    registry institution is left alone too.
+
+    :param ids: The ids of :meth:`ShelfmarkIndex.core_unique` for the spelling's core key.
+    :type ids: AbstractSet[str]
+    :param spelling: The spelling the core key came from.
+    :type spelling: str
+    :param institution: Institution spelling given with the mark, or ``None``.
+    :type institution: Optional[str]
+    :return: The ids kept (all of *ids* unless the core is a bare number and the spelling names an institution).
+    :rtype: Set[str]
+    """
+    if not ids or not _is_bare_number_core(spelling):
+        return set(ids)
+    named = _named_tokens(spelling, institution)
+    if not named:
+        return set(ids)
+    return {cid for cid in ids if _engine.split_id(cid)[0] in named}
+
+
+def _narrow(ids: AbstractSet[str], spelling: str, how: str) -> "Resolution":
+    """A multi-id ``alias`` / ``loose`` / ``core`` hit narrowed to the one id whose core equals the spelling's
+    case-exact :func:`core_id` (``p. Heid. Hebr. 17`` -> ``Heidelberg_p_Heid_Hebr_17``, not its case-variant
+    duplicate ``Heidelberg_P_Heid_Hebr_17``); otherwise every id, ``ambiguous`` when there are several.
+
+    :param ids: The ids the step matched.
+    :type ids: AbstractSet[str]
+    :param spelling: The spelling resolved.
+    :type spelling: str
+    :param how: The step.
+    :type how: str
+    :return: The resolution.
+    :rtype: Resolution
+    """
+    if len(ids) > 1:
+        core = core_id(spelling)
+        same = [cid for cid in ids if core and _engine.split_id(cid)[1] == core]
+        if len(same) == 1:
+            return Resolution(same, how)
+    return Resolution(sorted(ids), how, len(ids) > 1)
+
+
+def _verbatim_key(spelling: str) -> str:
+    """The key of a spelling in the ``verbatim`` table of :class:`ShelfmarkIndex`: :func:`prep_shelfmark`, white
+    space collapsed, case-folded.
+
+    :param spelling: A record's own spelling, or a raw part.
+    :type spelling: str
+    :return: The key (``""`` for an empty spelling).
+    :rtype: str
+    """
+    return re.sub(r"\s+", " ", prep_shelfmark(spelling)).strip().casefold()
+
+
+def _read_jsonl(path: Path) -> Iterator[Dict[str, Any]]:
+    """Records of a JSONL file, one per non-blank line.
+
+    :param path: JSONL file.
+    :type path: Path
+    :return: Iterator of records.
+    :rtype: Iterator[Dict[str, Any]]
+    """
+    with open(path, "rb") as fh:
+        for line in fh:
+            if line.strip():
+                yield json.loads(line)
+
+
+class ShelfmarkIndex:
+    """The ES ids of the merged corpus and the lookups :func:`resolve` walks.
+
+    Lifted from ``text27b.shelfmarks`` (``Corpus`` / ``_load_merged`` / ``compact_index``) and
+    ``legacy_store_inventory.record_marks`` (:func:`record_marks`). Tables:
+
+    * ``ids``: every ``canonical_id``;
+    * ``alias``: alias id -> ES ids. An alias id is the record's own registry token + :func:`core_id` of another
+      spelling of the record (PGP historic marks, source marks, the display form; side stripped by
+      :func:`side_suffix`) when that differs from the record's id. A spelling whose core has no number
+      (:func:`_has_digit`: ``BL``, ``Bodl.``, ``JRL``) gives no alias id and no key: it names no item;
+    * ``loose``: :func:`loose_key` of each id and alias id -> ES ids (ids and spellings with a number only);
+    * ``core``: :func:`core_key` of each id and spelling -> ES ids (institution-free, ids and spellings with a
+      number only;
+      :func:`resolve` uses a core key only when its ids carry one institution token, see :meth:`core_unique`, and
+      the key is strong enough, see :func:`_core_key_usable`);
+    * ``by_pgpid``: PGP id -> ES ids, and ``pgpids``: ES id -> PGP ids; from the records' ``pgpids`` and from the
+      optional ``fragments`` rows: a fragment mark that resolves to ONE id by an ``exact`` / ``alias`` / ``loose``
+      step links that id to the row's PGP ids (merged records miss the PGP ids of many multi-document fragments);
+    * ``fragment_marks``: PGP id -> fragment shelf marks (optional ``fragments`` rows, e.g. PGP ``fragments.csv``
+      or ``text27b`` ``Corpus.fragments``), resolved like raw marks for a ``pgpid:<n>`` that still has no id;
+    * ``verbatim``: :func:`_verbatim_key` of each spelling of a record (:func:`record_marks`, with a number) -> ES
+      ids, plus the historic marks (``historic`` / ``shelfmarks_historic``) of a ``fragments`` row whose mark
+      resolves to one id by an ``exact`` / ``alias`` / ``loose`` step. A spelling other than the display form is
+      left out when its institution-free :func:`core_key` names another record (:meth:`_add_verbatim`).
+      :func:`resolve` uses the table as a last resort (``alias``) when it names exactly one id: a record's own
+      display form reaches the record even when its id has no registry token (``Bar-Ilan University Library, Ramat
+      Gan, Israel Ms. 1039``), and a historic mark reaches its fragment although the core step may refuse it as a
+      weak mention.
+
+    The parent lookup is :func:`parent` with ``ids``; :meth:`numbered_parents` (ids with numbered child ids) gates
+    the parent fallback of :func:`resolve`.
+
+    :param source: Path of a ``merged_shelfmarks.jsonl`` file, or an iterable of records (full or slim form:
+        ``canonical_id``, ``shelfmark_display``, ``institution``, ``pgpids``, ``aliases``, ``source_marks``).
+    :type source: Union[str, os.PathLike, Iterable[Mapping[str, Any]]]
+    :param cache_dir: Directory for the pickled index when *source* is a path; keyed by
+        :data:`NORMALISER_VERSION`, :data:`INDEX_FORMAT` and the file's size and modification time. Never under
+        ``raw_data`` (``ValueError``). ``None``: no cache.
+    :type cache_dir: Optional[Union[str, os.PathLike]]
+    :param fragments: Rows with ``shelfmark`` and ``pgpids`` (a list, or a ``;`` / ``,`` separated string).
+    :type fragments: Optional[Iterable[Mapping[str, Any]]]
+    """
+
+    def __init__(self, source: Union[str, "os.PathLike[str]", Iterable[Mapping[str, Any]]], *,
+                 cache_dir: Optional[Union[str, "os.PathLike[str]"]] = None,
+                 fragments: Optional[Iterable[Mapping[str, Any]]] = None) -> None:
+        """Build the index, or load it from the cache.
+
+        :param source: See the class docstring.
+        :type source: Union[str, os.PathLike, Iterable[Mapping[str, Any]]]
+        :param cache_dir: See the class docstring.
+        :type cache_dir: Optional[Union[str, os.PathLike]]
+        :param fragments: See the class docstring.
+        :type fragments: Optional[Iterable[Mapping[str, Any]]]
+        :return: None.
+        :rtype: None
+        """
+        self.ids: Set[str] = set()
+        self.alias: Dict[str, Set[str]] = collections.defaultdict(set)
+        self.loose: Dict[str, Set[str]] = collections.defaultdict(set)
+        self.core: Dict[str, Set[str]] = collections.defaultdict(set)
+        self.by_pgpid: Dict[str, Set[str]] = collections.defaultdict(set)
+        self.pgpids: Dict[str, List[str]] = {}
+        self.fragment_marks: Dict[str, List[str]] = collections.defaultdict(list)
+        self.verbatim: Dict[str, Set[str]] = collections.defaultdict(set)
+        self._numbered_parents: Optional[Set[str]] = None
+        if isinstance(source, (str, os.PathLike)):
+            path = Path(source)
+            cache = self._cache_file(path, cache_dir) if cache_dir is not None else None
+            sig = (NORMALISER_VERSION, INDEX_FORMAT, path.stat().st_size, path.stat().st_mtime_ns)
+            if cache is not None and cache.exists():
+                with open(cache, "rb") as fh:
+                    blob = pickle.load(fh)
+                if blob.get("sig") == sig:
+                    self.__dict__.update(blob["tables"])
+                    self._add_fragments(fragments)
+                    return
+            self._build(_read_jsonl(path))
+            if cache is not None:
+                self._write_cache(cache, sig)
+        else:
+            self._build(source)
+        self._add_fragments(fragments)
+
+    @staticmethod
+    def _cache_file(path: Path, cache_dir: Union[str, "os.PathLike[str]"]) -> Path:
+        """The pickle file of the index of *path* under *cache_dir* (never under ``raw_data``).
+
+        :param path: Merged corpus file.
+        :type path: Path
+        :param cache_dir: Caller-given cache directory.
+        :type cache_dir: Union[str, os.PathLike]
+        :return: The cache file path (named by the file's stem and a hash of its full path, so two corpora with one
+            stem do not share a pickle).
+        :rtype: Path
+        :raises ValueError: When *cache_dir* lies under a ``raw_data`` directory.
+        """
+        directory = Path(cache_dir).resolve()
+        if "raw_data" in directory.parts:
+            raise ValueError(f"the shelf-mark index cache must not live under raw_data: {directory}")
+        tag = hashlib.sha1(str(path.resolve()).encode("utf-8")).hexdigest()[:10]
+        return directory / f"shelfmark_index_{path.stem}_{tag}.pkl"
+
+    def _write_cache(self, cache: Path, sig: Tuple[Any, ...]) -> None:
+        """Pickle the tables atomically (temporary file + rename).
+
+        :param cache: Cache file.
+        :type cache: Path
+        :param sig: Cache signature.
+        :type sig: Tuple[Any, ...]
+        :return: None.
+        :rtype: None
+        """
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        tables = {k: v for k, v in self.__dict__.items() if k not in ("fragment_marks", "_numbered_parents")}
+        fd, tmp = tempfile.mkstemp(prefix=".shelfmark_index.", suffix=".tmp", dir=str(cache.parent))
+        with os.fdopen(fd, "wb") as fh:
+            pickle.dump({"sig": sig, "tables": tables}, fh, protocol=pickle.HIGHEST_PROTOCOL)
+        os.replace(tmp, cache)
+
+    def _build(self, records: Iterable[Mapping[str, Any]]) -> None:
+        """Fill the tables from merged records.
+
+        :param records: Merged records (full or slim form).
+        :type records: Iterable[Mapping[str, Any]]
+        :return: None.
+        :rtype: None
+        """
+        pending: List[Tuple[str, str, str]] = []
+        for record in records:
+            cid = record.get("canonical_id") or ""
+            if not cid:
+                continue
+            self.ids.add(cid)
+            pgpids = [str(p) for p in record.get("pgpids") or []]
+            self.pgpids[cid] = pgpids
+            for pgpid in pgpids:
+                self.by_pgpid[pgpid].add(cid)
+            token = _engine.split_id(cid)[0]
+            # an id or spelling without a number (``London_BL``, ``Bodl.``) gives no key and no alias id
+            loose = {loose_key(cid)} if _has_digit(cid) else set()
+            cores = {core_key(cid)} if _has_digit(cid) else set()
+            display = (record.get("shelfmark_display") or "").strip()
+            for mark in record_marks(record)[1:]:
+                if _has_digit(mark):
+                    (self.verbatim[_verbatim_key(mark)].add(cid) if mark == display
+                     else pending.append((_verbatim_key(mark), cid, core_key(mark))))
+                core = core_id(side_suffix(mark)[0])
+                if not core or not _has_digit(core):
+                    continue
+                cores.add(ShelfmarkNormalizer.loose_key(core))
+                if token:
+                    alias = _engine.combine(token, core)
+                    loose.add(ShelfmarkNormalizer.loose_key(alias))
+                    if alias != cid:
+                        self.alias[alias].add(cid)
+            for key in loose - {""}:
+                self.loose[key].add(cid)
+            for key in cores - {""}:
+                self.core[key].add(cid)
+        self._add_verbatim(pending)
+        self.verbatim.pop("", None)
+        for table in (self.alias, self.loose, self.core, self.by_pgpid, self.verbatim):
+            table.default_factory = None
+
+    def _add_verbatim(self, spellings: Iterable[Tuple[str, str, str]]) -> None:
+        """Add a record's other spellings (historic and source marks; not its display form) to ``verbatim``, unless
+        the spelling's institution-free :func:`core_key` names another record: ``L 124`` is the historic mark of a
+        Mosseri fragment and also the core of ``Manchester_JRL_L_124``, so it names neither for sure.
+
+        :param spellings: ``(verbatim key, ES id, core key)`` triples (the full ``core`` table must be built).
+        :type spellings: Iterable[Tuple[str, str, str]]
+        :return: None.
+        :rtype: None
+        """
+        for key, cid, core in spellings:
+            if key and not (self.core.get(core) or set()) - {cid}:
+                self.verbatim.setdefault(key, set()).add(cid)
+
+    def _add_fragments(self, fragments: Optional[Iterable[Mapping[str, Any]]]) -> None:
+        """Record the fragment shelf marks of PGP ids, and link a fragment mark's PGP ids to the one ES id it names.
+
+        A mark that resolves to exactly one id by an ``exact`` / ``alias`` / ``loose`` step (never ``core`` or
+        ``parent``, never ambiguous) adds the row's PGP ids to ``pgpids`` / ``by_pgpid`` of that id, and the row's
+        historic marks (``historic`` or ``shelfmarks_historic``, ``;`` separated) to ``verbatim`` (added after every
+        row is resolved, so the order of the rows does not matter). Every mark is also kept in ``fragment_marks``
+        for :func:`resolve` of a ``pgpid:<n>``.
+
+        :param fragments: Rows with ``shelfmark``, ``pgpids`` and optional historic marks.
+        :type fragments: Optional[Iterable[Mapping[str, Any]]]
+        :return: None.
+        :rtype: None
+        """
+        historic: List[Tuple[str, str, str]] = []
+        for row in fragments or ():
+            mark = (row.get("shelfmark") or "").strip()
+            raw = row.get("pgpids") or []
+            items = raw if isinstance(raw, (list, tuple, set)) else re.split(r"[;,]", str(raw))
+            pgpids = [p for p in (str(x).strip() for x in items) if p]
+            if not mark or not pgpids:
+                continue
+            for pgpid in pgpids:
+                if mark not in self.fragment_marks[pgpid]:
+                    self.fragment_marks[pgpid].append(mark)
+            res = resolve(mark, index=self)
+            if len(res.cids) != 1 or res.ambiguous or res.how not in ("exact", "alias", "loose"):
+                continue
+            cid = res.cids[0]
+            known = self.pgpids.setdefault(cid, [])
+            for pgpid in pgpids:
+                if pgpid not in known:
+                    known.append(pgpid)
+                self.by_pgpid.setdefault(pgpid, set()).add(cid)
+            for old in str(row.get("historic") or row.get("shelfmarks_historic") or "").split(";"):
+                if _has_digit(old):
+                    historic.append((_verbatim_key(old), cid, core_key(old)))
+        self._add_verbatim(historic)
+
+    def numbered_parents(self) -> Set[str]:
+        """The ES ids that have numbered child ids in the index (``…_Misc_28_79`` with ``…_Misc_28_79_14``): the ids
+        that are evidently multi-fragment parents (computed once, on first use).
+
+        :return: The parent ids.
+        :rtype: Set[str]
+        """
+        if self._numbered_parents is None:
+            found = (_CHILD_ID.match(cid) for cid in self.ids)
+            self._numbered_parents = {m.group(1) for m in found if m and m.group(1) in self.ids}
+        return self._numbered_parents
+
+    def core_unique(self, key: str) -> Set[str]:
+        """The ES ids of a :func:`core_key` when they carry one institution token, else nothing.
+
+        :param key: Institution-free core key.
+        :type key: str
+        :return: The ids (empty when the key is unknown or names several institutions).
+        :rtype: Set[str]
+        """
+        ids = self.core.get(key) or set()
+        tokens = {_engine.split_id(cid)[0] or cid for cid in ids}
+        return set(ids) if len(tokens) == 1 else set()
+
+    def institutions(self, key: str) -> int:
+        """The number of institutions (registry tokens; an id without one counts as its own) behind a core key.
+
+        :param key: Institution-free core key.
+        :type key: str
+        :return: The count (0 for an unknown key).
+        :rtype: int
+        """
+        return len({_engine.split_id(cid)[0] or cid for cid in self.core.get(key) or ()})
+
+    def __len__(self) -> int:
+        """The number of ES ids.
+
+        :return: ``len(ids)``.
+        :rtype: int
+        """
+        return len(self.ids)
+
+
+def _resolve_spelling(spelling: str, index: ShelfmarkIndex, institution: Optional[str]) -> Optional[Resolution]:
+    """The exact -> alias -> loose -> unique-core chain for one spelling.
+
+    The unique-core step never crosses institutions on a bare number: when the core is only a number (``JTS 5``,
+    ``CUL 132``) and the spelling names an institution, a hit of another institution's token is dropped
+    (:func:`_core_hits_of_named_institution`).
+
+    :param spelling: One candidate spelling (a :func:`variants` entry).
+    :type spelling: str
+    :param index: The ES index.
+    :type index: ShelfmarkIndex
+    :param institution: Institution spelling given with the mark (see :func:`canonical_id`), or ``None``; when
+        given, each step tries it first and then the institution inferred from the mark.
+    :type institution: Optional[str]
+    :return: The first step that matches (``ambiguous`` when an alias / loose / core step names several ids and
+        :func:`_narrow` cannot pick the case-exact one), or ``None``. A spelling without a number (no digit, no
+        Roman numeral token) matches only as an ES id itself: it names no item.
+    :rtype: Optional[Resolution]
+    """
+    if spelling in index.ids:
+        return Resolution([spelling], "exact")
+    if not _has_digit(spelling):
+        return None
+    # the given institution first, then the one inferred from the mark (a holder name can disagree with the
+    # token the ES id carries, e.g. ``Strasbourg 4038`` given with the library's full name)
+    institutions = [institution, None] if institution else [None]
+    cids = [cid for cid in (canonical_id(spelling, inst) for inst in institutions) if cid is not None]
+    for cid in cids:
+        if cid in index.ids:
+            return Resolution([cid], "exact")
+    for cid in cids:
+        if cid in index.alias:
+            return _narrow(index.alias[cid], spelling, "alias")
+    for inst in institutions:
+        key = loose_key(spelling, inst)
+        if key and key in index.loose:
+            return _narrow(index.loose[key], spelling, "loose")
+    key = core_key(spelling)
+    ids = index.core_unique(key) if _core_key_usable(key, spelling) else set()
+    ids = _core_hits_of_named_institution(ids, spelling, institution)
+    return _narrow(ids, spelling, "core") if ids else None
+
+
+def _resolve_part(part: str, index: ShelfmarkIndex, institution: Optional[str]) -> Resolution:
+    """Resolve one single mark (no join): per :func:`variants` spelling of its side-less base the exact -> alias ->
+    loose -> unique-core chain, then a record's own spelling naming one id (``verbatim``, ``alias``), then the
+    side-ful ES id (R3), then :func:`parent` when the parent is a multi-fragment parent
+    (:func:`_is_fragment_parent`). The spellings are ``variants(base, lossy=False)``.
+
+    :param part: One part of :func:`split`.
+    :type part: str
+    :param index: The ES index.
+    :type index: ShelfmarkIndex
+    :param institution: Institution spelling given with the mark, or ``None``.
+    :type institution: Optional[str]
+    :return: The resolution (``unmatched`` with no ids when nothing matches).
+    :rtype: Resolution
+    """
+    if part.strip() in index.ids:
+        return Resolution([part.strip()], "exact")
+    if _is_range(part):
+        # only the ES's own record of that very range (``ENA 1846.3-4`` -> ``New_York_JTS_ENA_1846_3_4``)
+        for inst in ([institution, None] if institution else [None]):
+            cid = canonical_id(part, inst)
+            if cid in index.ids:
+                return Resolution([cid], "exact", False, "range")
+        return Resolution([], "unmatched", False, "range")
+    base, side = side_suffix(part)
+    spellings = variants(base, lossy=False)
+    for spelling in spellings:
+        hit = _resolve_spelling(spelling, index, institution)
+        if hit is not None:
+            return hit
+    if _has_digit(part):
+        # last resort: a record's own spelling (display form, historic / source mark) naming exactly one id
+        own = index.verbatim.get(_verbatim_key(part)) or set()
+        if len(own) == 1:
+            return Resolution(sorted(own), "alias")
+    if side is not None:
+        cid = canonical_id(base, institution)
+        token = _engine.split_id(cid)[0] if cid else None
+        core = _core(_class_colon(part.strip()))
+        sideful = _engine.combine(token, core) if token and core else None
+        if sideful in index.ids:
+            return Resolution([sideful], "exact")
+    for spelling in spellings:
+        up = parent(spelling, ids=index.ids, institution=institution)
+        if up is not None and _is_fragment_parent(up, index):
+            return Resolution([up], "parent")
+    return Resolution([], "unmatched")
+
+
+def _is_fragment_parent(cid: str, index: ShelfmarkIndex) -> bool:
+    """Whether an ES id is a multi-fragment parent: its core keeps at least two segments with a digit AND the index
+    holds numbered children of it (:meth:`ShelfmarkIndex.numbered_parents`).
+
+    ``T-S Misc.28.79.14`` -> ``Cambridge_CUL_T_S_Misc_28_79`` qualifies when the ES also holds
+    ``…_Misc_28_79_1`` … (a fragment whose documents are numbered under it). An ordinary two-segment leaf
+    (``Cambridge_CUL_T_S_10J5_17``) with no numbered children does not, nor does a box or volume id
+    (``Cambridge_CUL_T_S_NS_322`` for ``T-S NS 322.64``, ``Strasbourg_4038`` for ``… Ms. 4038.10``): the leaf is not
+    part of a multi-fragment document there, and a box id would join every leaf of the box.
+
+    :param cid: Candidate parent ES id.
+    :type cid: str
+    :param index: The ES index.
+    :type index: ShelfmarkIndex
+    :return: True when the parent fallback may use it.
+    :rtype: bool
+    """
+    core = _engine.split_id(cid)[1]
+    if sum(any(ch.isdigit() for ch in seg) for seg in core.split("_")) < 2:
+        return False
+    return cid in index.numbered_parents()
+
+
+def resolve(x: str, *, index: ShelfmarkIndex, institution: Optional[str] = None) -> Resolution:
+    """Resolve a raw shelf mark, an ES id or ``pgpid:<n>`` to the ES ids of *index*.
+
+    Chain: :func:`split` -> per part :func:`side_suffix` -> per :func:`variants` spelling of the base (the input
+    first): an ES id itself or :func:`canonical_id` in the index (``exact``) -> an alias id (``alias``) ->
+    :func:`loose_key` (``loose``) -> :func:`core_key` when its ids carry one institution token (``core``; a
+    bare-number core such as ``JTS 5`` never reaches another institution's record,
+    :func:`_core_hits_of_named_institution`); when no spelling matches, a record's own spelling (display form, PGP
+    historic mark; ``verbatim`` table of the index) when it names exactly one id (``alias``), then the side-ful ES
+    id (``exact``: three ES ids keep a side, R3) and then :func:`parent` of the first spelling that has one in the
+    index, when it is a multi-fragment parent (two or more numbered segments left and numbered children in the
+    index, never a bare box or volume id; ``parent``). The spellings are ``variants(base, lossy=False)``: the lossy
+    last-resort rewrites (a glued note number or a piece letter dropped) could name another leaf. ``pgpid:<n>``
+    gives the records carrying that PGP id (``pgpid``), else the resolution of its fragment shelf marks
+    (``fragments`` of the index; ``how`` = ``pgpid``).
+
+    A part that is a numeric range (:func:`_is_range`: ``T-S 10J5.17-18``, ``T-S 12.6-7``, ``ff. 9-10``) gets
+    ``note="range"`` and only the ES's own record of that very range (an ES id itself, or :func:`canonical_id` in
+    the index: ``ENA 1846.3-4`` -> ``New_York_JTS_ENA_1846_3_4``, ``exact``); otherwise it is ``unmatched`` with
+    ``ambiguous=False``. No variant, alias, loose, core or parent step runs: migration plan Q11 (one id per range,
+    or one per leaf?) is open, so a range never collapses to its first leaf or to a parent.
+
+    A join returns the union of its parts' ids with the ``how`` of its weakest part (:data:`HOW_ORDER`; one
+    unmatched part makes the join ``unmatched``, with the other parts' ids). It never returns an id that is not in
+    the index. Multi-id contract: an ``alias`` / ``loose`` / ``core`` step that names several ids returns the one
+    whose core is the input's case-exact core when there is exactly one (:func:`_narrow`), else all of them with
+    ``ambiguous=True`` (an over-match: several sys-number records of one manuscript, or a leaf and its duplicate
+    record); a caller that needs one leaf must treat an ambiguous result as unresolved. A spelling without a number
+    (``BL``, ``Bodl.``) matches only as an ES id itself, and the institution-free core step needs a strong key
+    (:func:`_core_key_usable`), so garbage stays ``unmatched``.
+
+    :param x: Raw mark, ES id or ``pgpid:<n>``.
+    :type x: str
+    :param index: The ES index (:class:`ShelfmarkIndex`).
+    :type index: ShelfmarkIndex
+    :param institution: Optional institution spelling given with the mark (PGP ``library``, a KTIV holding
+        library, a catalogue's collection), used as by :func:`canonical_id` / :func:`loose_key`; ``None`` infers it
+        from the mark. Ignored for ``pgpid:<n>``.
+    :type institution: Optional[str]
+    :return: The ids and how they were found.
+    :rtype: Resolution
+    """
+    text = (x or "").strip()
+    if not text:
+        return Resolution([], "unmatched")
+    if text.lower().startswith(_PGPID_PREFIX):
+        pgpid = text[len(_PGPID_PREFIX):].strip()
+        ids = set(index.by_pgpid.get(pgpid) or ())
+        if not ids:
+            for mark in index.fragment_marks.get(pgpid) or ():
+                ids |= set(resolve(mark, index=index).cids)
+        return Resolution(sorted(ids & index.ids), "pgpid" if ids else "unmatched")
+    parts = [_resolve_part(part, index, institution) for part in split(text)]
+    if not parts:
+        return Resolution([], "unmatched")
+    how = max((p.how for p in parts), key=HOW_ORDER.index)
+    note = "range" if any(p.note == "range" for p in parts) else ""
+    return Resolution(sorted({c for p in parts for c in p.cids} & index.ids), how, any(p.ambiguous for p in parts),
+                      note)

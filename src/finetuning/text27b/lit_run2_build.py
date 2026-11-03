@@ -412,8 +412,8 @@ def commentary_candidates(ctx: Any, anth_records: Sequence[Mapping[str, Any]]) -
 
 # ===================================================================================== images and gates
 def _cids_of(rec: Mapping[str, Any]) -> List[str]:
-    """Canonical ids of a candidate (none for over-broad matches; ids synthesised from the PGP fragment shelfmark
-    when PGP ids resolved without a merged record, :func:`lit_run2.pgp_fragment_cids`).
+    """Canonical ids of a candidate (none for over-broad matches; when PGP ids resolved without a merged record, the
+    ES ids :func:`lit_run2.pgp_fragment_cids` resolves for them; the field keeps its old name ``canonical_ids_synth``).
 
     :param rec: Candidate or row.
     :returns: Ids.

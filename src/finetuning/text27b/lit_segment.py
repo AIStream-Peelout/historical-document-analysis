@@ -31,6 +31,14 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, FrozenSet, List, Mapping, Optional, Sequence, Set, Tuple
 
+from src.datasets.shelfmarks import (  # noqa: F401  (moved to the facade in PR-6; re-exported for callers)
+    _clean_sm,
+    alt_classmark,
+    legacy_variants,
+    split_joins,
+    split_piece_lists,
+)
+
 # ------------------------------------------------------------------------------------ stamps
 #: Lines of download stamps / reproduction notices that must never enter a training text.
 _STAMP_RES: Tuple[re.Pattern, ...] = (
@@ -142,62 +150,8 @@ def word_order_reversal(text: str, min_hits: int = 5) -> Optional[float]:
 
 
 # ------------------------------------------------------------------------------------ shelfmarks
-_LANG_PAREN = re.compile(r"\s*\((?:[^()]*\b(?:Arabic|Hebrew|Aramaic|Persian|Greek|Ladino|Cat\.|\*)[^()]*|\*)\)\s*")
-
-
-_SIDE_WORDS = re.compile(r"\s*\((?:and\s+)?(?:recto|verso|not listed)[^()]*\)|\s+(?:recto|verso)\b\.?", re.I)
-
-
-_NOS_LIST = re.compile(r"^(?P<base>.*?\d[a-z]?)\s*,?\s*nos\.?\s*(?P<list>\d+[a-z]?(?:\s*,\s*\d+[a-z]?)+)[\s,]*"
-                       r"(?P<tail>\(\*\))?\s*$")
-_LETTER_LIST = re.compile(r"^(?P<base>.*\d)\s*(?P<list>[a-z](?:\s*,\s*[a-z])+)[\s,]*(?P<tail>\(\*\))?\s*$")
-
-
-def split_piece_lists(part: str) -> List[str]:
-    """Split one shelfmark that lists several numbered or lettered pieces into one shelfmark per piece.
-
-    ``TS NS J 185, nos. 5, 6, 2`` → ``TS NS J 185, no. 5`` / ``no. 6`` / ``no. 2``; ``TS NS J 67 a, b (*)`` →
-    ``TS NS J 67a`` / ``TS NS J 67b``. A list of side letters only (``r, v``) is left alone.
-
-    :param part: One shelfmark (one part of a join).
-    :returns: The pieces (the part alone when it lists no pieces).
-    """
-    m = _NOS_LIST.match(part)
-    if m:
-        return [f"{m.group('base').rstrip(' ,')}, no. {n}" for n in re.findall(r"\d+[a-z]?", m.group("list"))]
-    m = _LETTER_LIST.match(part)
-    if m:
-        lets = re.findall(r"[a-z]", m.group("list"))
-        if not set(lets) <= {"r", "v"}:
-            return [f"{m.group('base')}{x}" for x in lets]
-    return [part]
-
-
-def split_joins(raw: str) -> List[str]:
-    """Split a printed join (``A and B``, ``A + B``, ``A; B``) into its shelfmarks; a bare second number inherits
-    the first mark's collection prefix (``TS NS J 110 and 152`` → ``TS NS J 110``, ``TS NS J 152``; ``..., f. 141 and
-    f. 10`` → ``..., f. 141``, ``..., f. 10``). A part that lists several pieces (``nos. 5, 6, 2``, ``67 a, b``) is
-    split into one shelfmark per piece (:func:`split_piece_lists`).
-
-    :param raw: Printed shelfmark.
-    :returns: Parts (the raw string alone when it is not a join and lists no pieces).
-    """
-    s = re.sub(r"\s+", " ", (raw or "").strip())
-    bits = [b.strip(" ,;") for b in re.split(r"\s+(?:and|\+|&)\s+|\s*;\s*", s) if b.strip(" ,;")]
-    if len(bits) < 2:
-        return split_piece_lists(s) if s else []
-    out = [bits[0]]
-    for b in bits[1:]:
-        if re.match(r"^(?:ff?\.|fols?\.|nos?\.)\s*\d", b):
-            base = re.sub(r",?\s*(?:ff?\.|fols?\.|nos?\.)\s*[\d\w ,]+$", "", bits[0]).strip(" ,")
-            out.append(f"{base}, {b}")
-        elif re.fullmatch(r"\d+[a-z]?", b):
-            base = re.sub(r"\d+[a-z]?\s*$", "", bits[0]).rstrip()
-            out.append(f"{base} {b}" if base else b)
-        else:
-            out.append(b)
-    return [p for b in out for p in split_piece_lists(b)]
-
+# split_joins / split_piece_lists / legacy_variants / _clean_sm / alt_classmark moved to the shelf-mark facade
+# (src.datasets.shelfmarks, PR-6) and are re-imported at the top of this module.
 
 #: A numbered piece of a box / volume (``no. 7``, ``no 7``) at the end of a printed shelfmark.
 PIECE_NO = re.compile(r"[\s,]*\bno\.?\s*(?P<no>\d+[a-z]?)\s*(?:\(\*\))?\s*$")
@@ -213,79 +167,6 @@ def piece_of(raw: str) -> Optional[Tuple[str, str]]:
     if not m or not re.search(r"\d", raw[:m.start()]):
         return None
     return raw[:m.start()].rstrip(" ,"), f"no. {m.group('no')}"
-
-
-def legacy_variants(raw: str, neubauer: Optional[Mapping[str, str]] = None) -> List[str]:
-    """Rewrite an old-style shelfmark into the spellings the corpus normaliser matches.
-
-    Covers the forms of 1920s–1970s scholarship: ``TS`` for ``T-S``, ``Box`` volumes, ``f.`` / ``fol.`` / ``no.`` /
-    ``no`` folio markers (the first of a list of folios / numbers / part letters), ``TS 8 J 34`` for ``T-S 8J34``,
-    ``TS Arabic (Box)`` for ``T-S Ar.``, a part letter in parentheses or after a space (``J 318(a)``, ``J 67 a``),
-    a volume in parentheses (``Ar. Box 18 (1).33`` → ``Ar.18(1).33``), ``ULC Or Box 5, f. 13`` for
-    ``CUL Or.1080 5.13``, ``Westminster College, Misc. 34`` / ``West. Coll., Frag. Cairens., f. 34`` for
-    ``L-G Misc. 34`` (and ``Arabica I, f. N`` for ``L-G Ar. I.N``), ``Bodl. MS Heb. c 28, fol. 33`` /
-    ``Bodleian MS Heb. d 66.5`` for ``Bodl. MS Heb. c 28/33`` / ``d 66/5``, Neubauer catalogue numbers
-    (``Oxford (Neubauer) 2878/4``) when a crosswalk to MS Heb. volumes is supplied, side words (``Verso``,
-    ``(and Verso)``) and a language / ``(Cat. N)`` / ``(*)`` parenthesis after the mark. Last-resort variants (marked
-    by their position in the list): a footnote number glued to the folio (``37.1141`` → ``37.11``; ``15.60v74`` →
-    ``15.60``), the folio without a part letter, a Dropsie / Penn ``E 16.510`` as ``UPenn E 16510`` and
-    ``JTS Krengel 5.123`` as ``JTS Krengel 123``.
-
-    :param raw: Shelfmark as printed (one part of a join; see :func:`split_joins`).
-    :param neubauer: Optional Neubauer catalogue number -> ``MS Heb. <letter> <number>`` crosswalk.
-    :returns: Distinct candidate spellings, the raw (stripped) form first.
-    """
-    s0 = re.sub(r"\s+", " ", (raw or "").strip())
-    out: List[str] = [s0] if s0 else []
-    s = _LANG_PAREN.sub(" ", s0)
-    s = _SIDE_WORDS.sub(" ", s).strip(" ,;")
-    s = re.sub(r"(?<=\d)\s*\(([a-z])\)", r"\1", s)
-    s = re.sub(r"(?<=\d)\s*\((\d)\)(?=\s*[.,])", r"(\1)", s)
-    s, n_or = re.subn(r"^(?:ULC|CUL|T\.?-?\s?S\.?)\s+Or\.?\s*(?:1080\s*)?Box\s+(\d+)", r"CUL Or.1080 \1", s)
-    s = re.sub(r"^(?:Westminster\s+College|West\.?\s*Coll\.?)\s*(?:\(Westminster College\))?\s*,?\s*"
-               r"(?:Misc\.?|Frag\.?\s*Cairens\.?)\s*,?\s*(?:(?:ff?\.|fols?\.)\s*)?(\d+)", r"L-G Misc. \1", s)
-    s = re.sub(r"^(?:Westminster\s+College|West\.?\s*Coll\.?)\s*(?:\(Westminster College\))?\s*,?\s*"
-               r"(?:Ar\.?|Arabica)\s*(?:\(Arabica\)\s*)?(I{1,2})\s*,?\s*(?:ff?\.|fols?\.)\s*(\d+)", r"L-G Ar. \1.\2", s)
-    if not n_or:
-        s = re.sub(r"^(?:ULC|CUL)\s+(?=Or)", "T-S ", s)
-    s = re.sub(r"^T\.?\s?S\.?\b\.?", "T-S", s)
-    s = re.sub(r"^T-S\s+Arabic\s*(?:Box\s*)?", "T-S Ar.", s)
-    s = re.sub(r"^T-S\s+(NS\s+J|NS|Misc\.?|AS|K|Box\s+K)\s*Box\s+", lambda m: f"T-S {m.group(1)} ", s)
-    s = re.sub(r"^T-S\s+Box\s+", "T-S ", s)
-    s = re.sub(r"^T-S\s+Misc\w*\.?\s+(?:Box\s+)?", "T-S Misc.", s)
-    s = re.sub(r"^T-S\s+(\d+)\s*J\s*(\d+)", r"T-S \1J\2", s)
-    s = re.sub(r"^T-S\s+NS\s+J\s*(\d+)", r"T-S NS J\1", s)
-    s = re.sub(r"^T-S\s+K\s+(\d+)", r"T-S K\1", s)
-    s = re.sub(r"^Bodleian\b\.?", "Bodl.", s)
-    s = re.sub(r"(MS\.?\s+Heb\.?\s+[a-f])\.?\s*(\d+)\s*[.,]\s*(?:ff?\.|fols?\.)?\s*(\d+[a-z]?)", r"\1 \2/\3", s)
-    m = re.match(r"^(?:Oxford|Bodl\.?)\s*(?:\(Neubauer\)|Neubauer)?\s*(?:Cat\.?\s*)?(\d{4})\s*/\s*(\d+[a-z]?)", s)
-    if m and neubauer and m.group(1) in neubauer:
-        s = f"Bodl. {neubauer[m.group(1)]}/{m.group(2)}"
-    s = re.sub(r",?\s*(?:ff?\.|fols?\.)\s*(\d+)\s*([a-d])(?:\s*,\s*[a-d])*\b", r".\1\2", s)
-    s = re.sub(r",?\s*(?:ff?\.|fols?\.)\s*(\d+[a-zA-Z]?)(?:\s*[-–]\s*\d+)?", r".\1", s)
-    s = re.sub(r",?\s*\bnos?(?:\.\s*|\s+)(\d+)(?:\s*,\s*\d+)*,?", r".\1", s)
-    s = re.sub(r"^(ENA\s+\d+[A-Za-z]?)\s*\.\s*(\d+)([A-Z])\b", lambda mm: f"{mm.group(1)}.{mm.group(2)}{mm.group(3).lower()}", s)
-    s = re.sub(r"(?<=\d)\s+([a-z])(?:\s*,\s*[a-z])*\s*$", r"\1", s)
-    s = re.sub(r"\s+\.", ".", s).strip(" ,;.")
-    if s and s not in out:
-        out.append(s)
-    # last resort: glued footnote numbers, side letter + note, part letter, Penn E numbers, Krengel box numbers
-    g = re.match(r"^(.*\.\d{1,3})(\d{2})$", s)
-    if g and len(re.sub(r"\D", "", s.split(".")[-1])) >= 4:
-        out.append(g.group(1))
-    g = re.match(r"^(.*\.\d{1,3})[rv]\d{0,3}$", s)
-    if g:
-        out.append(g.group(1))
-    g = re.match(r"^(.*\.\d{1,3})[a-d]$", s)
-    if g and g.group(1) not in out:
-        out.append(g.group(1))
-    g = re.match(r"^E\s?(\d{1,2})\.(\d{3})$", s)
-    if g:
-        out.append(f"UPenn E {g.group(1)}{g.group(2)}")
-    g = re.match(r"^(JTS\s+Krengel)\s+\d{1,2}\.(\d{1,3})$", s)
-    if g:
-        out.append(f"{g.group(1)} {g.group(2)}")
-    return out
 
 
 # ------------------------------------------------------------------------------------ page layout
@@ -676,41 +557,6 @@ ANTH_HEAD = re.compile(r"^(?P<no>\d{1,3})\.\s+(?P<title>[\"“”'‘A-Z].{3,})$
 LANG_LINE = re.compile(r"^(?P<sm>[A-Z].{2,90}?)\s*\((?P<lang>(?:Judaeo-|Judeo-)?(?:Arabic|Hebrew|Aramaic|Persian)"
                        r"[^()]{0,40})\)\s*[\d¹²³⁴-⁹]{0,3}\s*$")
 LIST_START = re.compile(r"^(?:Recto|Verso|Col(?:umn)?\.?\s*[IVX1-9]|Side\s+[A-Z1-9]|Page\s+\d|1\.\s|\[?Right|\[?Left)")
-
-
-def _clean_sm(sm: str) -> str:
-    """Shelfmark of an anthology line without a ``(formerly ...)`` / old-number parenthesis or glued note digits.
-
-    :param sm: Text before the language parenthesis.
-    :returns: Cleaned shelfmark.
-    """
-    sm = re.sub(r"(?<=\d)\s*\((\d)\)(?=\.\d)", r"(\1)", sm)
-    sm = re.sub(r"\s*\((?!\d\)\.)(?:formerly|olim|old|=)?[^()]*\)\s*[\d¹²³⁴-⁹]*", "", sm).strip()
-    sm = re.sub(r"[¹²³⁴-⁹]+$", "", sm)
-    sm = re.sub(r"\s+\d{1,3}$", "", sm) if re.search(r"\d[\d.]*\s+\d{1,3}$", sm) else sm
-    return sm.strip(" ·,;")
-
-
-def alt_classmark(sm: str) -> Optional[str]:
-    """A second classmark printed in parentheses after a shelfmark (``Mosseri L 129.1 (II 127.1)``,
-    ``Mosseri L 291 (Ia, 21)``, ``X (formerly Y)``), completed with the mark's collection word when it starts with a
-    volume number (``Mosseri II 127.1``).
-
-    :param sm: Shelfmark text as printed (before :func:`_clean_sm`).
-    :returns: The alternate classmark, or None.
-    """
-    for m in re.finditer(r"\(([^()]{1,40})\)", sm or ""):
-        inner = m.group(1).strip()
-        if re.fullmatch(r"\d|[a-z]|\*", inner) or not re.search(r"\d", inner):
-            continue
-        if re.search(r"Arabic|Hebrew|Aramaic|Persian|Greek|Ladino|Cat\.", inner):
-            continue
-        inner = re.sub(r"^(?:formerly|olim|old|now|=)\s*:?\s*", "", inner).strip(" ,;")
-        if re.match(r"^(?:[IVX]+[a-z]?|\d)", inner):
-            first = (sm.split() or [""])[0]
-            inner = f"{first} {inner}" if first and not first[0].isdigit() else inner
-        return inner
-    return None
 
 
 def _is_lang_line(line: str) -> Optional[Tuple[str, str, Optional[str]]]:

@@ -18,6 +18,14 @@ between two digit runs (``ENA NS 7.71`` → ``enans7_71`` ≠ ``ENA NS 77.1`` �
 without a digit, or shorter than 4 characters (3 with a letter), are junk (``""``). Keys carry no institution, so two
 libraries' identical cores share a key: a deliberate over-match for hold-out checks.
 
+FROZEN 2026-11 (shelf-mark migration plan, PR-6). :func:`keys`, :func:`key`, :func:`core_key`, :func:`compact` and
+:func:`canonical_to_key` are the key format of the t27b hold-outs / mixtures and stay byte-identical (snapshot test
+``tests/test_text27b_shelfmarks_frozen.py``); :func:`core_of` and :func:`token_of` stay too, because the facade has
+no byte-identical replacement (``core_id`` differs on 153 and ``split_id(canonical_id(...))[0]`` on 38 of the 309
+probe inputs of that snapshot). New code must use ``src.datasets.shelfmarks``. :func:`prep_shelfmark` moved
+verbatim into the facade and is re-imported here; :func:`match_shelfmark` is a call to the facade's ``resolve``
+over :func:`corpus_index`.
+
 Public API (other text27b modules import these names):
 
 * :data:`ShelfmarkNormalizer`, :func:`resolve_token`, :func:`combine` -- the tracked normaliser,
@@ -27,7 +35,8 @@ Public API (other text27b modules import these names):
   prompt used as examples (they leak into ``shelf_marks_mentioned``; count only when located).
 * :func:`prep_shelfmark`, :func:`core_of`, :func:`token_of`, :func:`compact`.
 * :func:`key`, :func:`keys`, :func:`canonical_to_key`, :func:`core_key`.
-* :class:`Corpus`, :func:`load_corpus`, :func:`match_shelfmark`, :func:`pgp_flags`, :func:`compact_index`.
+* :class:`Corpus`, :func:`load_corpus`, :func:`match_shelfmark`, :func:`corpus_index`, :func:`pgp_flags`,
+  :func:`compact_index`.
 * :func:`tokens_with_pos`, :func:`strip_paren_tokens`, :func:`locate`, :func:`is_located`,
   :func:`located_keys`, :data:`STOP_TOKENS`.
 """
@@ -43,6 +52,7 @@ import pickle
 import re
 import sys
 import tempfile
+import weakref
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
@@ -54,6 +64,8 @@ with contextlib.redirect_stdout(io.StringIO()):
     from src.datasets.merging import institution_tokens as _it
     from src.datasets.merging.institution_tokens import combine, resolve_token
 
+from src.datasets import shelfmarks as _shelf
+from src.datasets.shelfmarks import prep_shelfmark  # noqa: F401  (moved to the facade in PR-6; re-exported)
 from src.finetuning.text27b import paths as _paths
 
 #: Re-exported for callers that need the full normaliser (``to_canonical_id``, ``parse_oxford`` ...).
@@ -68,31 +80,10 @@ LEAKED_RAW: Tuple[str, ...] = ("T-S A43.1", "T-S NS 322.64", "T-S Ar.31.30", "EN
 
 
 # ------------------------------------------------------------------------------------ cleaning
-def prep_shelfmark(raw: str) -> str:
-    """Clean a raw shelfmark key before normalising (underscore keys, stray prefixes, folio / side tails).
-
-    :param raw: Raw key (from a page's ``shelf_marks_mentioned``, a PGP record, prose).
-    :returns: Cleaned shelfmark string.
-    """
-    s = str(raw).strip()
-    s = re.sub(r"^(?:Loc|Ref|Book|Doc_ref|Ms|MS_ref)_(?=[A-Z])", "", s)
-    s = re.sub(r"^MS\.?\s+(?=ENA|T-S|TS\b|JTS)", "", s)
-    s = re.sub(r"^(?:[uxv](?=_?[A-Z]{2}|_?T_S)|_+)", "", s).lstrip("_")
-    if "_" in s and " " not in s.strip("_ "):
-        s = s.replace("_", " ")
-    s = re.sub(r"\s*\([^()]*\)?\s*$", "", s)
-    # Folio designators become ", f. N" -- but neither a Bodleian size letter ("MS heb. f 56/12")
-    # nor the Taylor-Schechter F series ("T-S F99.22"): the 2026-10-18 prototype matched "f"
-    # case-insensitively, which dropped those letters and broke their keys.
-    s = re.sub(r"(?<!heb\.)(?<!heb)(?<!Heb\.)(?<!Heb)(?<!arab\.)(?<!Arab\.)(?<!arab)(?<!Arab)"
-               r"[\s,]+(?:f|fol|fols|folio|ff|Fol|Fols|Folio|FOL)\.?\s*(?=\d)", ", f. ", s)
-    s = re.sub(r"(?<=\d)\s?[rv]$", "", s)
-    s = re.sub(r"\s+", " ", s).strip(" .,;:()[]{}")
-    return s
-
-
 def compact(core: str) -> str:
     """Compact a canonical core: lower-case, drop separators except between two digit runs.
+
+    FROZEN 2026-11: key format of the t27b hold-outs/mixtures; new code must use src.datasets.shelfmarks.
 
     :param core: Canonical core (underscore-separated).
     :returns: Compact key (``T_S_NS_999_64`` → ``tsns999_64``).
@@ -103,6 +94,9 @@ def compact(core: str) -> str:
 
 def core_of(sm: str) -> str:
     """Return the normaliser's canonical core for a shelfmark ('' for junk the normaliser rejects).
+
+    FROZEN 2026-11 with the t27b keys (the facade's ``core_id`` is not byte-identical: it returns ``""`` for joins,
+    garbage and NLI numbers and gives an ES id's core); new code must use ``src.datasets.shelfmarks.core_id``.
 
     :param sm: Shelfmark string.
     :returns: Canonical core.
@@ -115,6 +109,9 @@ def core_of(sm: str) -> str:
 
 def token_of(sm: str) -> Optional[str]:
     """Resolve the institution token of a shelfmark.
+
+    FROZEN 2026-11 with the t27b keys (no byte-identical facade function: the facade infers the token from
+    series words as well); new code must use ``src.datasets.shelfmarks.canonical_id`` / ``split_id``.
 
     :param sm: Shelfmark string.
     :returns: Institution token (``Oxford_Bodleian`` ...) or None.
@@ -139,6 +136,8 @@ INSTITUTION_WORDS: frozenset = frozenset(
 def core_key(core: str) -> str:
     """Key of a canonical core or canonical id (leading institution words dropped, compacted).
 
+    FROZEN 2026-11: key format of the t27b hold-outs/mixtures; new code must use src.datasets.shelfmarks.
+
     A KTIV ``__sys<digits>`` suffix and a final side letter after a digit (``225.25r``) are
     dropped, as :func:`prep_shelfmark` drops ``r`` / ``v`` from shelfmark strings.
 
@@ -159,6 +158,8 @@ def core_key(core: str) -> str:
 def key(shelfmark: Optional[str]) -> str:
     """Institution-free normalised key of one shelfmark (any source spelling).
 
+    FROZEN 2026-11: key format of the t27b hold-outs/mixtures; new code must use src.datasets.shelfmarks.
+
     :param shelfmark: Shelfmark (``Bodl. MS heb. d 99/7``, ``T-S 99J1.2``, ``Oxford: MS heb. e.99/6`` ...).
         A joined shelfmark (``A + B``) gives the key of its first part; use :func:`keys` for all.
     :returns: The key, or '' for junk.
@@ -171,6 +172,8 @@ def key(shelfmark: Optional[str]) -> str:
 
 def keys(shelfmark: Optional[str]) -> List[str]:
     """Keys of every part of a (possibly joined) shelfmark, in order, without duplicates.
+
+    FROZEN 2026-11: key format of the t27b hold-outs/mixtures; new code must use src.datasets.shelfmarks.
 
     :param shelfmark: Shelfmark string; parts joined by ``+`` (PGP joins) are keyed separately.
     :returns: Non-empty keys.
@@ -187,6 +190,8 @@ def keys(shelfmark: Optional[str]) -> List[str]:
 
 def canonical_to_key(canonical_id: Optional[str]) -> str:
     """Key of a merge / benchmark canonical id (``Oxford_Bodleian_MS_heb_d_99_7`` → ``mshebd99_7``).
+
+    FROZEN 2026-11: key format of the t27b hold-outs/mixtures; new code must use src.datasets.shelfmarks.
 
     :param canonical_id: Fully qualified canonical id (institution token + core).
     :returns: The same key :func:`key` gives the shelfmark the id names, or '' for junk.
@@ -283,7 +288,8 @@ def load_corpus(p: Optional[_paths.Paths] = None, read_files: Optional[Sequence[
 
     Reads ``paths.merged_shelfmarks`` and ``documents/footnotes/fragments/sources.csv`` of
     ``paths.pgp_export``. The result is pickled under ``out_dir/cache/`` and reused while every
-    input file keeps its size and modification time.
+    input file keeps its size and modification time and the facade's ``NORMALISER_VERSION`` is
+    unchanged (shelf-mark migration plan, PR-6).
 
     :param p: Build paths (default :func:`paths.load_paths`).
     :param read_files: Reads JSONL files for ``read_ids_by_model`` (default: every ``*.jsonl`` in
@@ -293,7 +299,8 @@ def load_corpus(p: Optional[_paths.Paths] = None, read_files: Optional[Sequence[
     """
     p = p or _paths.load_paths()
     inputs = _corpus_inputs(p, read_files)
-    sig = [(str(f), f.stat().st_size, f.stat().st_mtime_ns) for f in inputs]
+    sig = [("NORMALISER_VERSION", _shelf.NORMALISER_VERSION)] + [
+        (str(f), f.stat().st_size, f.stat().st_mtime_ns) for f in inputs]
     cp = p.out("cache", "corpus.pkl")
     if cache and cp.exists():
         with open(cp, "rb") as fh:
@@ -361,18 +368,90 @@ def compact_index(corpus: Corpus) -> Dict[str, Set[str]]:
     return idx
 
 
-def match_shelfmark(raw: str, corpus: Corpus, _retry: bool = True) -> Dict[str, Any]:
-    """Match a raw shelfmark to merged ids and PGP ids (port of ``analysis_lib.match_shelfmark``).
+#: Single-entry cache of :func:`corpus_index`: ``key`` = ``(id(corpus), NORMALISER_VERSION, INDEX_FORMAT)``, a
+#: WEAK reference ``ref`` to the corpus (so a reused ``id`` cannot alias another corpus, and the cache never keeps a
+#: corpus alive) and its ``index``. The entry is dropped when its corpus is freed (weakref callback) or replaced by
+#: another corpus' index, so the cache never outlives the caller's corpus.
+_INDEX_CACHE: Dict[str, Any] = {}
+
+
+def _drop_index(ref: "weakref.ReferenceType[Any]") -> None:
+    """Weakref callback: empty :data:`_INDEX_CACHE` when the freed corpus is the cached one.
+
+    :param ref: The dead reference.
+    :type ref: weakref.ReferenceType
+    :return: None.
+    :rtype: None
+    """
+    if _INDEX_CACHE.get("ref") is ref:
+        _INDEX_CACHE.clear()
+
+
+def _build_corpus_index(corpus: Any) -> _shelf.ShelfmarkIndex:
+    """Build the facade's ES index over a corpus' merged records (no cache).
+
+    :param corpus: :class:`Corpus` (or a stand-in with ``merged`` / ``fragments``).
+    :type corpus: Any
+    :return: The index.
+    :rtype: ShelfmarkIndex
+    """
+    records = [{"canonical_id": cid, "shelfmark_display": (rec or {}).get("disp") or "",
+                "pgpids": list((rec or {}).get("pgpids") or [])}
+               for cid, rec in (getattr(corpus, "merged", None) or {}).items()]
+    return _shelf.ShelfmarkIndex(records, fragments=getattr(corpus, "fragments", None) or [])
+
+
+def corpus_index(corpus: Any) -> _shelf.ShelfmarkIndex:
+    """The facade's ES index over a corpus' merged records (built once per corpus object; the last one is cached).
+
+    Records come from ``corpus.merged`` (canonical id, display form, PGP ids); ``corpus.fragments`` (PGP
+    ``fragments.csv`` rows: shelf mark, PGP ids, historic marks) give the fragment marks of a ``pgpid:<n>`` that no
+    merged record carries, and the historic spellings of a fragment's record. The cache holds only a weak
+    reference to the corpus; a stand-in that cannot be weakly referenced (``types.SimpleNamespace``) is not
+    cached (its index is rebuilt on every call).
+
+    :param corpus: :class:`Corpus` (or a stand-in with ``merged`` / ``fragments``).
+    :type corpus: Any
+    :return: The index.
+    :rtype: ShelfmarkIndex
+    """
+    key = (id(corpus), _shelf.NORMALISER_VERSION, _shelf.INDEX_FORMAT)
+    ref = _INDEX_CACHE.get("ref")
+    if _INDEX_CACHE.get("key") == key and ref is not None and ref() is corpus:
+        return _INDEX_CACHE["index"]
+    index = _build_corpus_index(corpus)
+    try:
+        ref = weakref.ref(corpus, _drop_index)
+    except TypeError:  # not weakly referenceable: never cached, so never kept alive
+        return index
+    _INDEX_CACHE.clear()
+    _INDEX_CACHE.update(key=key, ref=ref, index=index)
+    return index
+
+
+#: The facade's ``how`` (``how_detail``) -> the ``how`` name ``match_shelfmark`` emitted before PR-6 (``rag_l3``
+#: counts ``match_<how>`` and writes ``match_how`` rows). ``parent`` has no pre-PR-6 counterpart and keeps its name.
+_HOW_TO_LEGACY: Dict[str, str] = {"exact": "exact", "alias": "core", "loose": "core_compact", "core": "core",
+                                  "parent": "parent", "pgpid": "exact", "unmatched": "unmatched"}
+
+
+def _match_shelfmark_head(raw: str, corpus: Corpus, _retry: bool = True) -> Dict[str, Any]:
+    """The pre-PR-6 ``match_shelfmark``, verbatim (port of ``analysis_lib.match_shelfmark``); used for numeric ranges.
 
     Order: exact (institution token + core is a merged id) → unique core → unique lower-cased
     core → unique compact core; PGP ``fragments.csv`` cores add pgpids; all-caps words are re-cased
-    once on a miss.
+    once on a miss. Kept because what a range (``T-S 12.6-7``) names is open (migration plan Q11): a range
+    gets exactly what it got before PR-6.
 
     :param raw: Raw shelfmark string.
+    :type raw: str
     :param corpus: Loaded corpus.
+    :type corpus: Corpus
     :param _retry: Internal; retry once with re-cased all-caps words.
-    :returns: ``{"norm", "core", "how", "cids", "pgpids"}`` where ``how`` ∈ {junk, exact, core,
+    :type _retry: bool
+    :return: ``{"norm", "core", "how", "cids", "pgpids"}`` where ``how`` ∈ {junk, exact, core,
         core_lc, core_compact, ambiguous, unmatched, pgp_fragment} (``_recase`` suffix on a retry hit).
+    :rtype: Dict[str, Any]
     """
     s = prep_shelfmark(raw)
     c = core_of(s)
@@ -419,11 +498,86 @@ def match_shelfmark(raw: str, corpus: Corpus, _retry: bool = True) -> Dict[str, 
     out["pgpids"] = sorted(pg, key=lambda x: int(x) if x.isdigit() else 0)
     if not cids and not pg and _retry and re.search(r"\b[A-Z]{4,}\b", s):
         s2 = " ".join(w.capitalize() if w.isalpha() and w.isupper() and len(w) > 3 else w for w in s.split())
-        alt = match_shelfmark(s2, corpus, _retry=False)
+        alt = _match_shelfmark_head(s2, corpus, _retry=False)
         if alt["cids"] or alt["pgpids"]:
             alt["how"] = alt["how"] + "_recase"
             alt["norm"] = s
             return alt
+    return out
+
+
+def match_shelfmark(raw: str, corpus: Corpus) -> Dict[str, Any]:
+    """Match a raw shelfmark to merged ids and PGP ids through the facade's ``resolve`` over
+    :func:`corpus_index`.
+
+    Return shape: ``{"norm", "core", "how", "how_detail", "ambiguous", "cids", "pgpids"}``; ``cids`` are ES ids.
+
+    * ``how`` keeps the pre-PR-6 vocabulary (``rag_l3`` counts ``match_<how>``): the facade step ``how_detail`` maps
+      ``exact`` → ``exact``, ``alias`` → ``core``, ``loose`` → ``core_lc`` when the corpus' lower-cased core
+      index (``core_idx_lc``, as before PR-6) names exactly the matched ids, else ``core_compact``; ``core`` →
+      ``core``, ``unmatched`` → ``unmatched`` (``pgp_fragment`` when the mark's ``fragments.csv`` core names PGP
+      ids and no ES id resolves); ``parent`` (new in PR-6) keeps its name. ``junk`` when the frozen
+      :func:`core_of` finds no usable core (``how_detail`` = ``junk``); ``ambiguous`` (no ids, no PGP ids,
+      ``ambiguous=True``) when the alias / loose / core step of a single mark or of any part of a join names
+      several ids. ``_recase`` is no longer emitted outside ranges: the loose step folds the case of a mark, but
+      not every all-capitals prefix (``ULC OR 1080 J 138`` keeps ``ULC`` in its id; it resolves only as a known
+      spelling of a record, through the case-blind ``verbatim`` step of the index).
+    * A numeric range (``T-S 10J5.17-18``, ``ff. 9-10``; ``resolve`` gives ``unmatched`` with ``note="range"``)
+      gets exactly the pre-PR-6 result (:func:`_match_shelfmark_head`), with ``how_detail="range"``: migration plan
+      Q11 is open.
+    * PGP ids and siblings as before PR-6: the matched records' own PGP ids, plus the ``fragments.csv`` PGP ids of
+      the mark's core (``frag_core_pgpids``; the institution-stripped core too when it has 6+ characters) for an
+      ``exact`` / ``core`` / ``core_lc`` / ``parent`` / ``unmatched`` result; ``cids`` gain the records of those PGP
+      ids from ``corpus.pgp_to_cids`` only. The index's fragment-linked PGP ids (``ShelfmarkIndex.pgpids`` /
+      ``by_pgpid``) are added only when that already names several ids (a join or a multi-document fragment), so a
+      mark that names one record still names exactly that one.
+
+    :param raw: Raw shelfmark string.
+    :type raw: str
+    :param corpus: Loaded corpus.
+    :type corpus: Corpus
+    :return: The match (see above).
+    :rtype: Dict[str, Any]
+    """
+    s = prep_shelfmark(raw)
+    c = core_of(s)
+    out: Dict[str, Any] = {"norm": s, "core": c, "how": "junk", "how_detail": "junk", "ambiguous": False,
+                           "cids": [], "pgpids": []}
+    if not c or len(c) < 4 or not re.search(r"\d", c):
+        return out
+    idx = corpus_index(corpus)
+    res = _shelf.resolve(raw, index=idx)
+    if res.note == "range":
+        head = _match_shelfmark_head(raw, corpus)
+        head.update(how_detail="range", ambiguous=head["how"] == "ambiguous")
+        return head
+    out["how_detail"] = res.how
+    if res.ambiguous:
+        out.update(how="ambiguous", ambiguous=True)
+        return out
+    how = _HOW_TO_LEGACY.get(res.how, res.how)
+    cids: Set[str] = set(res.cids)
+    c2 = core_of(N._strip_institution(re.sub(r"^(ULC|CUL)\s+", "", s)))
+    if how == "core_compact":
+        lc = getattr(corpus, "core_idx_lc", None) or {}
+        if cids and set(lc.get(c.lower()) or lc.get(c2.lower()) or ()) == cids:
+            how = "core_lc"  # the pre-PR-6 lower-cased core hit (it takes the fragments.csv PGP ids below)
+    merged = getattr(corpus, "merged", None) or {}
+    pg: Set[str] = {str(p) for cid in cids for p in (merged.get(cid) or {}).get("pgpids") or []}
+    frag = getattr(corpus, "frag_core_pgpids", None) or {}
+    fp = set(frag.get(c, ())) | (set(frag.get(c2, ())) if c2 and len(c2) >= 6 else set())
+    if fp and how in ("unmatched", "exact", "core", "core_lc", "parent"):
+        if not cids and how == "unmatched":
+            how = "pgp_fragment"
+        pg |= fp
+    p2c = getattr(corpus, "pgp_to_cids", None) or {}
+    cids |= {x for p in pg for x in p2c.get(p, ())}
+    if len(cids) > 1:
+        pg |= {p for cid in cids for p in idx.pgpids.get(cid, [])}
+        cids |= {x for p in pg for x in idx.by_pgpid.get(p, ())}
+    out["how"] = how
+    out["cids"] = sorted(cids)
+    out["pgpids"] = sorted(pg, key=lambda x: int(x) if x.isdigit() else 0)
     return out
 
 

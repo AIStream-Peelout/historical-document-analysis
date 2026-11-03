@@ -273,10 +273,11 @@ class PieceCorpus(FakeCorpus):
     core_idx = {"T_S_NS_J185a": {"C_J185a"}, "T_S_NS_J185b": {"C_J185b"}, "T_S_NS_J303a": {"C_J303a"},
                 "T_S_NS_J303b": {"C_J303b"}}
     merged = {"C_J185a": {"pgpids": ["601"]}, "C_J185b": {"pgpids": ["602"]}, "C_J303a": {"pgpids": ["701"]},
-              "C_J303b": {"pgpids": ["702"]}}
+              "C_J303b": {"pgpids": ["702"]}, "New_York_JTS_ENA_NS_77_36": {"pgpids": [], "disp": "ENA NS 77.36"}}
     pgp_to_cids = {"777": {"C_HINT"}, "601": {"C_J185a"}, "602": {"C_J185b"}, "701": {"C_J303a"}, "702": {"C_J303b"}}
     fragments = [{"shelfmark": "T-S NS J401a", "pgpids": ["801"], "historic": "T-S NS J401.7"},
-                 {"shelfmark": "ENA NS 77.36", "pgpids": ["901"], "historic": ""}]
+                 {"shelfmark": "ENA NS 77.36", "pgpids": ["901"], "historic": ""},
+                 {"shelfmark": "ENA NS 77.37", "pgpids": ["902"], "historic": ""}]
     fn_rows = [{"pgpid": "601", "slug": "w-1970", "location": "Doc. 216"},
                {"pgpid": "602", "slug": "w-1970", "location": "Docs. 220, 221"},
                {"pgpid": "603", "slug": "w-1970", "location": "doc. 159-160"},
@@ -351,9 +352,11 @@ def test_doc_numbers_and_crosswalk() -> None:
 
 
 def test_pgp_fragment_cids() -> None:
-    """PGP ids without a merged record get canonical ids synthesised from their fragment shelfmark."""
-    ids = L.pgp_fragment_cids(PieceCorpus(), ["901"])
-    assert len(ids) == 1 and ids[0].endswith("ENA_NS_77_36")
+    """PGP ids without a merged record resolve through their fragment shelfmark to ES ids only (``resolve("pgpid:N")``):
+    a fragment the ES does not hold gives no id (before PR-6 one was synthesised)."""
+    assert L.pgp_fragment_cids(PieceCorpus(), ["901"]) == ["New_York_JTS_ENA_NS_77_36"]
+    assert L.pgp_fragment_cids(PieceCorpus(), ["902"]) == []
+    assert L.pgp_fragment_cids(PieceCorpus(), ["601"]) == ["C_J185a"]
     assert L.pgp_fragment_cids(PieceCorpus(), ["000"]) == []
 
 

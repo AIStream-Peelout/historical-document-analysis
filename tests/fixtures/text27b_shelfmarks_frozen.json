@@ -1,0 +1,4603 @@
+{
+ "description": "FROZEN 2026-11 snapshot of src/finetuning/text27b/shelfmarks.py key functions (the key format of the t27b hold-outs / mixtures) over every probe mark and expected ES id of shelfmark_probes.json. Regenerate only with an explicit decision to re-key t27b.",
+ "rows": [
+  {
+   "id": "P001",
+   "input": "mark",
+   "value": "T-S 12.301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "t-s 12.301",
+   "core_key": "t-s 12.301",
+   "compact": "t-s 12.301",
+   "prep_shelfmark": "T-S 12.301",
+   "core_of": "T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P001",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P002",
+   "input": "mark",
+   "value": "T-S 8J4.3.1",
+   "keys": [
+    "ts8j4_3_1"
+   ],
+   "key": "ts8j4_3_1",
+   "canonical_to_key": "t-s 8j4.3.1",
+   "core_key": "t-s 8j4.3.1",
+   "compact": "t-s 8j4.3.1",
+   "prep_shelfmark": "T-S 8J4.3.1",
+   "core_of": "T_S_8J4_3_1",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P002",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_8J4_3_1",
+   "keys": [
+    "ts8j4_3_1"
+   ],
+   "key": "ts8j4_3_1",
+   "canonical_to_key": "ts8j4_3_1",
+   "core_key": "ts8j4_3_1",
+   "compact": "cambridgecults8j4_3_1",
+   "prep_shelfmark": "Cambridge CUL T S 8J4 3 1",
+   "core_of": "Cambridge_CUL_T_S_8J4_3_1",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P003",
+   "input": "mark",
+   "value": "T-S 16.22",
+   "keys": [
+    "ts16_22"
+   ],
+   "key": "ts16_22",
+   "canonical_to_key": "t-s 16.22",
+   "core_key": "t-s 16.22",
+   "compact": "t-s 16.22",
+   "prep_shelfmark": "T-S 16.22",
+   "core_of": "T_S_16_22",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P003",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_16_22",
+   "keys": [
+    "ts16_22"
+   ],
+   "key": "ts16_22",
+   "canonical_to_key": "ts16_22",
+   "core_key": "ts16_22",
+   "compact": "cambridgecults16_22",
+   "prep_shelfmark": "Cambridge CUL T S 16 22",
+   "core_of": "Cambridge_CUL_T_S_16_22",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P004",
+   "input": "mark",
+   "value": "T-S 10J5.17",
+   "keys": [
+    "ts10j5_17"
+   ],
+   "key": "ts10j5_17",
+   "canonical_to_key": "t-s 10j5.17",
+   "core_key": "t-s 10j5.17",
+   "compact": "t-s 10j5.17",
+   "prep_shelfmark": "T-S 10J5.17",
+   "core_of": "T_S_10J5_17",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P004",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_10J5_17",
+   "keys": [
+    "ts10j5_17"
+   ],
+   "key": "ts10j5_17",
+   "canonical_to_key": "ts10j5_17",
+   "core_key": "ts10j5_17",
+   "compact": "cambridgecults10j5_17",
+   "prep_shelfmark": "Cambridge CUL T S 10J5 17",
+   "core_of": "Cambridge_CUL_T_S_10J5_17",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P005",
+   "input": "mark",
+   "value": "T-S NS J185",
+   "keys": [
+    "tsnsj185"
+   ],
+   "key": "tsnsj185",
+   "canonical_to_key": "t-s ns j185",
+   "core_key": "t-s ns j185",
+   "compact": "t-s ns j185",
+   "prep_shelfmark": "T-S NS J185",
+   "core_of": "T_S_NS_J185",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P006",
+   "input": "mark",
+   "value": "T-S NS 322.64",
+   "keys": [
+    "tsns322_64"
+   ],
+   "key": "tsns322_64",
+   "canonical_to_key": "t-s ns 322.64",
+   "core_key": "t-s ns 322.64",
+   "compact": "t-s ns 322.64",
+   "prep_shelfmark": "T-S NS 322.64",
+   "core_of": "T_S_NS_322_64",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P006",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_NS_322_64",
+   "keys": [
+    "tsns322_64"
+   ],
+   "key": "tsns322_64",
+   "canonical_to_key": "tsns322_64",
+   "core_key": "tsns322_64",
+   "compact": "cambridgecultsns322_64",
+   "prep_shelfmark": "Cambridge CUL T S NS 322 64",
+   "core_of": "Cambridge_CUL_T_S_NS_322_64",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P007",
+   "input": "mark",
+   "value": "T-S AS 181.163",
+   "keys": [
+    "tsas181_163"
+   ],
+   "key": "tsas181_163",
+   "canonical_to_key": "t-s as 181.163",
+   "core_key": "t-s as 181.163",
+   "compact": "t-s as 181.163",
+   "prep_shelfmark": "T-S AS 181.163",
+   "core_of": "T_S_AS_181_163",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P007",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_AS_181_163",
+   "keys": [
+    "tsas181_163"
+   ],
+   "key": "tsas181_163",
+   "canonical_to_key": "tsas181_163",
+   "core_key": "tsas181_163",
+   "compact": "cambridgecultsas181_163",
+   "prep_shelfmark": "Cambridge CUL T S AS 181 163",
+   "core_of": "Cambridge_CUL_T_S_AS_181_163",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P008",
+   "input": "mark",
+   "value": "T-S Ar.53.70",
+   "keys": [
+    "tsar53_70"
+   ],
+   "key": "tsar53_70",
+   "canonical_to_key": "t-s ar.53.70",
+   "core_key": "t-s ar.53.70",
+   "compact": "t-s ar.53.70",
+   "prep_shelfmark": "T-S Ar.53.70",
+   "core_of": "T_S_Ar_53_70",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P008",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_Ar_53_70",
+   "keys": [
+    "tsar53_70"
+   ],
+   "key": "tsar53_70",
+   "canonical_to_key": "tsar53_70",
+   "core_key": "tsar53_70",
+   "compact": "cambridgecultsar53_70",
+   "prep_shelfmark": "Cambridge CUL T S Ar 53 70",
+   "core_of": "Cambridge_CUL_T_S_Ar_53_70",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P009",
+   "input": "mark",
+   "value": "T-S Ar.38.71",
+   "keys": [
+    "tsar38_71"
+   ],
+   "key": "tsar38_71",
+   "canonical_to_key": "t-s ar.38.71",
+   "core_key": "t-s ar.38.71",
+   "compact": "t-s ar.38.71",
+   "prep_shelfmark": "T-S Ar.38.71",
+   "core_of": "T_S_Ar_38_71",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P009",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_Ar_38_71",
+   "keys": [
+    "tsar38_71"
+   ],
+   "key": "tsar38_71",
+   "canonical_to_key": "tsar38_71",
+   "core_key": "tsar38_71",
+   "compact": "cambridgecultsar38_71",
+   "prep_shelfmark": "Cambridge CUL T S Ar 38 71",
+   "core_of": "Cambridge_CUL_T_S_Ar_38_71",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P010",
+   "input": "mark",
+   "value": "T-S Misc.28.79",
+   "keys": [
+    "tsmisc28_79"
+   ],
+   "key": "tsmisc28_79",
+   "canonical_to_key": "t-s misc.28.79",
+   "core_key": "t-s misc.28.79",
+   "compact": "t-s misc.28.79",
+   "prep_shelfmark": "T-S Misc.28.79",
+   "core_of": "T_S_Misc_28_79",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P010",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_Misc_28_79",
+   "keys": [
+    "tsmisc28_79"
+   ],
+   "key": "tsmisc28_79",
+   "canonical_to_key": "tsmisc28_79",
+   "core_key": "tsmisc28_79",
+   "compact": "cambridgecultsmisc28_79",
+   "prep_shelfmark": "Cambridge CUL T S Misc 28 79",
+   "core_of": "Cambridge_CUL_T_S_Misc_28_79",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P011",
+   "input": "mark",
+   "value": "T-S K10.4",
+   "keys": [
+    "tsk10_4"
+   ],
+   "key": "tsk10_4",
+   "canonical_to_key": "t-s k10.4",
+   "core_key": "t-s k10.4",
+   "compact": "t-s k10.4",
+   "prep_shelfmark": "T-S K10.4",
+   "core_of": "T_S_K10_4",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P011",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_K10_4",
+   "keys": [
+    "tsk10_4"
+   ],
+   "key": "tsk10_4",
+   "canonical_to_key": "tsk10_4",
+   "core_key": "tsk10_4",
+   "compact": "cambridgecultsk10_4",
+   "prep_shelfmark": "Cambridge CUL T S K10 4",
+   "core_of": "Cambridge_CUL_T_S_K10_4",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P012",
+   "input": "mark",
+   "value": "T-S Misc. 27.2 c-e",
+   "keys": [
+    "tsmisc27_2ce"
+   ],
+   "key": "tsmisc27_2ce",
+   "canonical_to_key": "t-s misc. 27.2 c-e",
+   "core_key": "t-s misc. 27.2 c-e",
+   "compact": "t-s misc. 27.2 c-e",
+   "prep_shelfmark": "T-S Misc. 27.2 c-e",
+   "core_of": "T_S_Misc_27_2c_e",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P013",
+   "input": "mark",
+   "value": "T-S Misc.28.79.14",
+   "keys": [
+    "tsmisc28_79_14"
+   ],
+   "key": "tsmisc28_79_14",
+   "canonical_to_key": "t-s misc.28.79.14",
+   "core_key": "t-s misc.28.79.14",
+   "compact": "t-s misc.28.79.14",
+   "prep_shelfmark": "T-S Misc.28.79.14",
+   "core_of": "T_S_Misc_28_79_14",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P013",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_Misc_28_79_14",
+   "keys": [
+    "tsmisc28_79_14"
+   ],
+   "key": "tsmisc28_79_14",
+   "canonical_to_key": "tsmisc28_79_14",
+   "core_key": "tsmisc28_79_14",
+   "compact": "cambridgecultsmisc28_79_14",
+   "prep_shelfmark": "Cambridge CUL T S Misc 28 79 14",
+   "core_of": "Cambridge_CUL_T_S_Misc_28_79_14",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P014",
+   "input": "mark",
+   "value": "T.-S. 12.301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "t.-s. 12.301",
+   "core_key": "t.-s. 12.301",
+   "compact": "t.-s. 12.301",
+   "prep_shelfmark": "T.-S. 12.301",
+   "core_of": "T_S_12_301",
+   "token_of": null
+  },
+  {
+   "id": "P014",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P015",
+   "input": "mark",
+   "value": "TS 12 301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts 12 301",
+   "core_key": "ts 12 301",
+   "compact": "ts 12 301",
+   "prep_shelfmark": "TS 12 301",
+   "core_of": "T_S_12_301",
+   "token_of": null
+  },
+  {
+   "id": "P015",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P016",
+   "input": "mark",
+   "value": "Taylor-Schechter 12.301",
+   "keys": [
+    "taylorschechter12_301"
+   ],
+   "key": "taylorschechter12_301",
+   "canonical_to_key": "taylor-schechter 12.301",
+   "core_key": "taylor-schechter 12.301",
+   "compact": "taylor-schechter 12.301",
+   "prep_shelfmark": "Taylor-Schechter 12.301",
+   "core_of": "Taylor_Schechter_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P016",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P017",
+   "input": "mark",
+   "value": "T.S. 12.301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "t.s. 12.301",
+   "core_key": "t.s. 12.301",
+   "compact": "t.s. 12.301",
+   "prep_shelfmark": "T.S. 12.301",
+   "core_of": "T_S_12_301",
+   "token_of": null
+  },
+  {
+   "id": "P017",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P018",
+   "input": "mark",
+   "value": "TS 8 J 4",
+   "keys": [
+    "ts8j4"
+   ],
+   "key": "ts8j4",
+   "canonical_to_key": "ts 8 j 4",
+   "core_key": "ts 8 j 4",
+   "compact": "ts 8 j 4",
+   "prep_shelfmark": "TS 8 J 4",
+   "core_of": "T_S_8J4",
+   "token_of": null
+  },
+  {
+   "id": "P018",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_8J4",
+   "keys": [
+    "ts8j4"
+   ],
+   "key": "ts8j4",
+   "canonical_to_key": "ts8j4",
+   "core_key": "ts8j4",
+   "compact": "cambridgecults8j4",
+   "prep_shelfmark": "Cambridge CUL T S 8J4",
+   "core_of": "Cambridge_CUL_T_S_8J4",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P019",
+   "input": "mark",
+   "value": "T-S 8 J 4.3.1",
+   "keys": [
+    "ts8j4_3_1"
+   ],
+   "key": "ts8j4_3_1",
+   "canonical_to_key": "t-s 8 j 4.3.1",
+   "core_key": "t-s 8 j 4.3.1",
+   "compact": "t-s 8 j 4.3.1",
+   "prep_shelfmark": "T-S 8 J 4.3.1",
+   "core_of": "T_S_8J4_3_1",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P019",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_8J4_3_1",
+   "keys": [
+    "ts8j4_3_1"
+   ],
+   "key": "ts8j4_3_1",
+   "canonical_to_key": "ts8j4_3_1",
+   "core_key": "ts8j4_3_1",
+   "compact": "cambridgecults8j4_3_1",
+   "prep_shelfmark": "Cambridge CUL T S 8J4 3 1",
+   "core_of": "Cambridge_CUL_T_S_8J4_3_1",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P020",
+   "input": "mark",
+   "value": "T-S 10 J 5.17",
+   "keys": [
+    "ts10j5_17"
+   ],
+   "key": "ts10j5_17",
+   "canonical_to_key": "t-s 10 j 5.17",
+   "core_key": "t-s 10 j 5.17",
+   "compact": "t-s 10 j 5.17",
+   "prep_shelfmark": "T-S 10 J 5.17",
+   "core_of": "T_S_10J5_17",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P020",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_10J5_17",
+   "keys": [
+    "ts10j5_17"
+   ],
+   "key": "ts10j5_17",
+   "canonical_to_key": "ts10j5_17",
+   "core_key": "ts10j5_17",
+   "compact": "cambridgecults10j5_17",
+   "prep_shelfmark": "Cambridge CUL T S 10J5 17",
+   "core_of": "Cambridge_CUL_T_S_10J5_17",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P021",
+   "input": "mark",
+   "value": "TS 10J5.17",
+   "keys": [
+    "ts10j5_17"
+   ],
+   "key": "ts10j5_17",
+   "canonical_to_key": "ts 10j5.17",
+   "core_key": "ts 10j5.17",
+   "compact": "ts 10j5.17",
+   "prep_shelfmark": "TS 10J5.17",
+   "core_of": "T_S_10J5_17",
+   "token_of": null
+  },
+  {
+   "id": "P021",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_10J5_17",
+   "keys": [
+    "ts10j5_17"
+   ],
+   "key": "ts10j5_17",
+   "canonical_to_key": "ts10j5_17",
+   "core_key": "ts10j5_17",
+   "compact": "cambridgecults10j5_17",
+   "prep_shelfmark": "Cambridge CUL T S 10J5 17",
+   "core_of": "Cambridge_CUL_T_S_10J5_17",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P022",
+   "input": "mark",
+   "value": "T-S 8J4, f. 18d",
+   "keys": [
+    "ts8j4_18d"
+   ],
+   "key": "ts8j4_18d",
+   "canonical_to_key": "t-s 8j4, f. 18d",
+   "core_key": "t-s 8j4, f. 18d",
+   "compact": "t-s 8j4, f. 18d",
+   "prep_shelfmark": "T-S 8J4, f. 18d",
+   "core_of": "T_S_8J4_18d",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P022",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_8J4_18d",
+   "keys": [
+    "ts8j4_18d"
+   ],
+   "key": "ts8j4_18d",
+   "canonical_to_key": "ts8j4_18d",
+   "core_key": "ts8j4_18d",
+   "compact": "cambridgecults8j4_18d",
+   "prep_shelfmark": "Cambridge CUL T S 8J4 18d",
+   "core_of": "Cambridge_CUL_T_S_8J4_18d",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P023",
+   "input": "mark",
+   "value": "T-S 10J5, f. 17",
+   "keys": [
+    "ts10j5_17"
+   ],
+   "key": "ts10j5_17",
+   "canonical_to_key": "t-s 10j5, f. 17",
+   "core_key": "t-s 10j5, f. 17",
+   "compact": "t-s 10j5, f. 17",
+   "prep_shelfmark": "T-S 10J5, f. 17",
+   "core_of": "T_S_10J5_17",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P023",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_10J5_17",
+   "keys": [
+    "ts10j5_17"
+   ],
+   "key": "ts10j5_17",
+   "canonical_to_key": "ts10j5_17",
+   "core_key": "ts10j5_17",
+   "compact": "cambridgecults10j5_17",
+   "prep_shelfmark": "Cambridge CUL T S 10J5 17",
+   "core_of": "Cambridge_CUL_T_S_10J5_17",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P024",
+   "input": "mark",
+   "value": "TS Ar. 53.70",
+   "keys": [
+    "tsar53_70"
+   ],
+   "key": "tsar53_70",
+   "canonical_to_key": "ts ar. 53.70",
+   "core_key": "ts ar. 53.70",
+   "compact": "ts ar. 53.70",
+   "prep_shelfmark": "TS Ar. 53.70",
+   "core_of": "T_S_Ar_53_70",
+   "token_of": null
+  },
+  {
+   "id": "P024",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_Ar_53_70",
+   "keys": [
+    "tsar53_70"
+   ],
+   "key": "tsar53_70",
+   "canonical_to_key": "tsar53_70",
+   "core_key": "tsar53_70",
+   "compact": "cambridgecultsar53_70",
+   "prep_shelfmark": "Cambridge CUL T S Ar 53 70",
+   "core_of": "Cambridge_CUL_T_S_Ar_53_70",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P025",
+   "input": "mark",
+   "value": "T-S Ar. 53.70",
+   "keys": [
+    "tsar53_70"
+   ],
+   "key": "tsar53_70",
+   "canonical_to_key": "t-s ar. 53.70",
+   "core_key": "t-s ar. 53.70",
+   "compact": "t-s ar. 53.70",
+   "prep_shelfmark": "T-S Ar. 53.70",
+   "core_of": "T_S_Ar_53_70",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P025",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_Ar_53_70",
+   "keys": [
+    "tsar53_70"
+   ],
+   "key": "tsar53_70",
+   "canonical_to_key": "tsar53_70",
+   "core_key": "tsar53_70",
+   "compact": "cambridgecultsar53_70",
+   "prep_shelfmark": "Cambridge CUL T S Ar 53 70",
+   "core_of": "Cambridge_CUL_T_S_Ar_53_70",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P026",
+   "input": "mark",
+   "value": "T-S Arabic 53.70",
+   "keys": [
+    "tsarabic53_70"
+   ],
+   "key": "tsarabic53_70",
+   "canonical_to_key": "t-s arabic 53.70",
+   "core_key": "t-s arabic 53.70",
+   "compact": "t-s arabic 53.70",
+   "prep_shelfmark": "T-S Arabic 53.70",
+   "core_of": "T_S_Arabic_53_70",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P026",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_Ar_53_70",
+   "keys": [
+    "tsar53_70"
+   ],
+   "key": "tsar53_70",
+   "canonical_to_key": "tsar53_70",
+   "core_key": "tsar53_70",
+   "compact": "cambridgecultsar53_70",
+   "prep_shelfmark": "Cambridge CUL T S Ar 53 70",
+   "core_of": "Cambridge_CUL_T_S_Ar_53_70",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P027",
+   "input": "mark",
+   "value": "T-S Arabic Box 53, f. 70",
+   "keys": [
+    "tsarabic53_70"
+   ],
+   "key": "tsarabic53_70",
+   "canonical_to_key": "t-s arabic box 53, f. 70",
+   "core_key": "t-s arabic box 53, f. 70",
+   "compact": "t-s arabic box 53, f. 70",
+   "prep_shelfmark": "T-S Arabic Box 53, f. 70",
+   "core_of": "T_S_Arabic_53_70",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P027",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_Ar_53_70",
+   "keys": [
+    "tsar53_70"
+   ],
+   "key": "tsar53_70",
+   "canonical_to_key": "tsar53_70",
+   "core_key": "tsar53_70",
+   "compact": "cambridgecultsar53_70",
+   "prep_shelfmark": "Cambridge CUL T S Ar 53 70",
+   "core_of": "Cambridge_CUL_T_S_Ar_53_70",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P028",
+   "input": "mark",
+   "value": "Cambridge University Library, Cambridge, England Ms. T-S 12.301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "cambridge university library, cambridge, england ms. t-s 12.301",
+   "core_key": "cambridge university library, cambridge, england ms. t-s 12.301",
+   "compact": "cambridge university library, cambridge, england ms. t-s 12.301",
+   "prep_shelfmark": "Cambridge University Library, Cambridge, England Ms. T-S 12.301",
+   "core_of": "T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P028",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P029",
+   "input": "mark",
+   "value": "Cambridge CUL: T-S 12.301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "cambridge cul: t-s 12.301",
+   "core_key": "cambridge cul: t-s 12.301",
+   "compact": "cambridge cul: t-s 12.301",
+   "prep_shelfmark": "Cambridge CUL: T-S 12.301",
+   "core_of": "T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P029",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P030",
+   "input": "mark",
+   "value": "CUL T-S 12.301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "cul t-s 12.301",
+   "core_key": "cul t-s 12.301",
+   "compact": "cul t-s 12.301",
+   "prep_shelfmark": "CUL T-S 12.301",
+   "core_of": "T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P030",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P031",
+   "input": "mark",
+   "value": "Cambridge University Library T-S AS 181.163",
+   "keys": [
+    "librarytsas181_163"
+   ],
+   "key": "librarytsas181_163",
+   "canonical_to_key": "cambridge university library t-s as 181.163",
+   "core_key": "cambridge university library t-s as 181.163",
+   "compact": "cambridge university library t-s as 181.163",
+   "prep_shelfmark": "Cambridge University Library T-S AS 181.163",
+   "core_of": "University_Library_T_S_AS_181_163",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P031",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_AS_181_163",
+   "keys": [
+    "tsas181_163"
+   ],
+   "key": "tsas181_163",
+   "canonical_to_key": "tsas181_163",
+   "core_key": "tsas181_163",
+   "compact": "cambridgecultsas181_163",
+   "prep_shelfmark": "Cambridge CUL T S AS 181 163",
+   "core_of": "Cambridge_CUL_T_S_AS_181_163",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P032",
+   "input": "mark",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P032",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P033",
+   "input": "mark",
+   "value": "MS-TS-00012-00301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ms-ts-00012-00301",
+   "core_key": "ms-ts-00012-00301",
+   "compact": "ms-ts-00012-00301",
+   "prep_shelfmark": "MS-TS-00012-00301",
+   "core_of": "T_S_12_301",
+   "token_of": null
+  },
+  {
+   "id": "P033",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P034",
+   "input": "mark",
+   "value": "MS-TS-AR-00053-00070",
+   "keys": [
+    "tsar53_70"
+   ],
+   "key": "tsar53_70",
+   "canonical_to_key": "ms-ts-ar-00053-00070",
+   "core_key": "ms-ts-ar-00053-00070",
+   "compact": "ms-ts-ar-00053-00070",
+   "prep_shelfmark": "MS-TS-AR-00053-00070",
+   "core_of": "T_S_Ar_53_70",
+   "token_of": null
+  },
+  {
+   "id": "P034",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_Ar_53_70",
+   "keys": [
+    "tsar53_70"
+   ],
+   "key": "tsar53_70",
+   "canonical_to_key": "tsar53_70",
+   "core_key": "tsar53_70",
+   "compact": "cambridgecultsar53_70",
+   "prep_shelfmark": "Cambridge CUL T S Ar 53 70",
+   "core_of": "Cambridge_CUL_T_S_Ar_53_70",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P035",
+   "input": "mark",
+   "value": "MS-TS-AS-00181-00163",
+   "keys": [
+    "tsas181_163"
+   ],
+   "key": "tsas181_163",
+   "canonical_to_key": "ms-ts-as-00181-00163",
+   "core_key": "ms-ts-as-00181-00163",
+   "compact": "ms-ts-as-00181-00163",
+   "prep_shelfmark": "MS-TS-AS-00181-00163",
+   "core_of": "T_S_AS_181_163",
+   "token_of": null
+  },
+  {
+   "id": "P035",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_AS_181_163",
+   "keys": [
+    "tsas181_163"
+   ],
+   "key": "tsas181_163",
+   "canonical_to_key": "tsas181_163",
+   "core_key": "tsas181_163",
+   "compact": "cambridgecultsas181_163",
+   "prep_shelfmark": "Cambridge CUL T S AS 181 163",
+   "core_of": "Cambridge_CUL_T_S_AS_181_163",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P036",
+   "input": "mark",
+   "value": "MS-TS-NS-00322-00064",
+   "keys": [
+    "tsns322_64"
+   ],
+   "key": "tsns322_64",
+   "canonical_to_key": "ms-ts-ns-00322-00064",
+   "core_key": "ms-ts-ns-00322-00064",
+   "compact": "ms-ts-ns-00322-00064",
+   "prep_shelfmark": "MS-TS-NS-00322-00064",
+   "core_of": "T_S_NS_322_64",
+   "token_of": null
+  },
+  {
+   "id": "P036",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_NS_322_64",
+   "keys": [
+    "tsns322_64"
+   ],
+   "key": "tsns322_64",
+   "canonical_to_key": "tsns322_64",
+   "core_key": "tsns322_64",
+   "compact": "cambridgecultsns322_64",
+   "prep_shelfmark": "Cambridge CUL T S NS 322 64",
+   "core_of": "Cambridge_CUL_T_S_NS_322_64",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P037",
+   "input": "mark",
+   "value": "MS-TS-K-00010-00004",
+   "keys": [
+    "tsk10_4"
+   ],
+   "key": "tsk10_4",
+   "canonical_to_key": "ms-ts-k-00010-00004",
+   "core_key": "ms-ts-k-00010-00004",
+   "compact": "ms-ts-k-00010-00004",
+   "prep_shelfmark": "MS-TS-K-00010-00004",
+   "core_of": "T_S_K10_4",
+   "token_of": null
+  },
+  {
+   "id": "P037",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_K10_4",
+   "keys": [
+    "tsk10_4"
+   ],
+   "key": "tsk10_4",
+   "canonical_to_key": "tsk10_4",
+   "core_key": "tsk10_4",
+   "compact": "cambridgecultsk10_4",
+   "prep_shelfmark": "Cambridge CUL T S K10 4",
+   "core_of": "Cambridge_CUL_T_S_K10_4",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P038",
+   "input": "mark",
+   "value": "MS-OR-01080-00001-00085",
+   "keys": [
+    "or1080_1_85"
+   ],
+   "key": "or1080_1_85",
+   "canonical_to_key": "ms-or-01080-00001-00085",
+   "core_key": "ms-or-01080-00001-00085",
+   "compact": "ms-or-01080-00001-00085",
+   "prep_shelfmark": "MS-OR-01080-00001-00085",
+   "core_of": "CUL_Or_1080_1_85",
+   "token_of": null
+  },
+  {
+   "id": "P038",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_Or_1080_1_85",
+   "keys": [
+    "or1080_1_85"
+   ],
+   "key": "or1080_1_85",
+   "canonical_to_key": "or1080_1_85",
+   "core_key": "or1080_1_85",
+   "compact": "cambridgeculor1080_1_85",
+   "prep_shelfmark": "Cambridge CUL Or 1080 1 85",
+   "core_of": "Cambridge_CUL_Or_1080_1_85",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P039",
+   "input": "mark",
+   "value": "MS-ADD-03341",
+   "keys": [
+    "add3341"
+   ],
+   "key": "add3341",
+   "canonical_to_key": "ms-add-03341",
+   "core_key": "ms-add-03341",
+   "compact": "ms-add-03341",
+   "prep_shelfmark": "MS-ADD-03341",
+   "core_of": "CUL_Add_3341",
+   "token_of": null
+  },
+  {
+   "id": "P039",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_Add_3341",
+   "keys": [
+    "add3341"
+   ],
+   "key": "add3341",
+   "canonical_to_key": "add3341",
+   "core_key": "add3341",
+   "compact": "cambridgeculadd3341",
+   "prep_shelfmark": "Cambridge CUL Add 3341",
+   "core_of": "Cambridge_CUL_Add_3341",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P040",
+   "input": "mark",
+   "value": "t-s 12.301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "t-s 12.301",
+   "core_key": "t-s 12.301",
+   "compact": "t-s 12.301",
+   "prep_shelfmark": "t-s 12.301",
+   "core_of": "T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P040",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P041",
+   "input": "mark",
+   "value": "T-S12.301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "t-s12.301",
+   "core_key": "t-s12.301",
+   "compact": "t-s12.301",
+   "prep_shelfmark": "T-S12.301",
+   "core_of": "T_S12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P041",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P042",
+   "input": "mark",
+   "value": "  T-S   12.301  ",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "t-s   12.301",
+   "core_key": "t-s   12.301",
+   "compact": "  t-s   12.301  ",
+   "prep_shelfmark": "T-S 12.301",
+   "core_of": "T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P042",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P043",
+   "input": "mark",
+   "value": "t-s as 181.163",
+   "keys": [
+    "tsas181_163"
+   ],
+   "key": "tsas181_163",
+   "canonical_to_key": "t-s as 181.163",
+   "core_key": "t-s as 181.163",
+   "compact": "t-s as 181.163",
+   "prep_shelfmark": "t-s as 181.163",
+   "core_of": "T_S_AS_181_163",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P043",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_AS_181_163",
+   "keys": [
+    "tsas181_163"
+   ],
+   "key": "tsas181_163",
+   "canonical_to_key": "tsas181_163",
+   "core_key": "tsas181_163",
+   "compact": "cambridgecultsas181_163",
+   "prep_shelfmark": "Cambridge CUL T S AS 181 163",
+   "core_of": "Cambridge_CUL_T_S_AS_181_163",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P044",
+   "input": "mark",
+   "value": "T-S AS 181.16",
+   "keys": [
+    "tsas181_16"
+   ],
+   "key": "tsas181_16",
+   "canonical_to_key": "t-s as 181.16",
+   "core_key": "t-s as 181.16",
+   "compact": "t-s as 181.16",
+   "prep_shelfmark": "T-S AS 181.16",
+   "core_of": "T_S_AS_181_16",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P044",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_AS_181_16",
+   "keys": [
+    "tsas181_16"
+   ],
+   "key": "tsas181_16",
+   "canonical_to_key": "tsas181_16",
+   "core_key": "tsas181_16",
+   "compact": "cambridgecultsas181_16",
+   "prep_shelfmark": "Cambridge CUL T S AS 181 16",
+   "core_of": "Cambridge_CUL_T_S_AS_181_16",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P045",
+   "input": "mark",
+   "value": "T-S AS 18.1163",
+   "keys": [
+    "tsas18_1163"
+   ],
+   "key": "tsas18_1163",
+   "canonical_to_key": "t-s as 18.1163",
+   "core_key": "t-s as 18.1163",
+   "compact": "t-s as 18.1163",
+   "prep_shelfmark": "T-S AS 18.1163",
+   "core_of": "T_S_AS_18_1163",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P045",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_AS_18_1163",
+   "keys": [
+    "tsas18_1163"
+   ],
+   "key": "tsas18_1163",
+   "canonical_to_key": "tsas18_1163",
+   "core_key": "tsas18_1163",
+   "compact": "cambridgecultsas18_1163",
+   "prep_shelfmark": "Cambridge CUL T S AS 18 1163",
+   "core_of": "Cambridge_CUL_T_S_AS_18_1163",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P046",
+   "input": "mark",
+   "value": "T-S Misc. 31.15",
+   "keys": [
+    "tsmisc31_15"
+   ],
+   "key": "tsmisc31_15",
+   "canonical_to_key": "t-s misc. 31.15",
+   "core_key": "t-s misc. 31.15",
+   "compact": "t-s misc. 31.15",
+   "prep_shelfmark": "T-S Misc. 31.15",
+   "core_of": "T_S_Misc_31_15",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P046",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_Misc_31_15",
+   "keys": [
+    "tsmisc31_15"
+   ],
+   "key": "tsmisc31_15",
+   "canonical_to_key": "tsmisc31_15",
+   "core_key": "tsmisc31_15",
+   "compact": "cambridgecultsmisc31_15",
+   "prep_shelfmark": "Cambridge CUL T S Misc 31 15",
+   "core_of": "Cambridge_CUL_T_S_Misc_31_15",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P047",
+   "input": "mark",
+   "value": "T-S Misc. 3.115",
+   "keys": [
+    "tsmisc3_115"
+   ],
+   "key": "tsmisc3_115",
+   "canonical_to_key": "t-s misc. 3.115",
+   "core_key": "t-s misc. 3.115",
+   "compact": "t-s misc. 3.115",
+   "prep_shelfmark": "T-S Misc. 3.115",
+   "core_of": "T_S_Misc_3_115",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P047",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_Misc_3_115",
+   "keys": [
+    "tsmisc3_115"
+   ],
+   "key": "tsmisc3_115",
+   "canonical_to_key": "tsmisc3_115",
+   "core_key": "tsmisc3_115",
+   "compact": "cambridgecultsmisc3_115",
+   "prep_shelfmark": "Cambridge CUL T S Misc 3 115",
+   "core_of": "Cambridge_CUL_T_S_Misc_3_115",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P048",
+   "input": "mark",
+   "value": "T-S 12.301r",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "t-s 12.301",
+   "core_key": "t-s 12.301",
+   "compact": "t-s 12.301r",
+   "prep_shelfmark": "T-S 12.301",
+   "core_of": "T_S_12_301r",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P048",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P049",
+   "input": "mark",
+   "value": "T-S 12.301 recto",
+   "keys": [
+    "ts12_301recto"
+   ],
+   "key": "ts12_301recto",
+   "canonical_to_key": "t-s 12.301 recto",
+   "core_key": "t-s 12.301 recto",
+   "compact": "t-s 12.301 recto",
+   "prep_shelfmark": "T-S 12.301 recto",
+   "core_of": "T_S_12_301_recto",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P049",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P050",
+   "input": "mark",
+   "value": "T-S 12.301 verso",
+   "keys": [
+    "ts12_301verso"
+   ],
+   "key": "ts12_301verso",
+   "canonical_to_key": "t-s 12.301 verso",
+   "core_key": "t-s 12.301 verso",
+   "compact": "t-s 12.301 verso",
+   "prep_shelfmark": "T-S 12.301 verso",
+   "core_of": "T_S_12_301_verso",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P050",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P051",
+   "input": "mark",
+   "value": "T-S 12.301 ע\"א",
+   "keys": [
+    "ts12_301_ע\"א"
+   ],
+   "key": "ts12_301_ע\"א",
+   "canonical_to_key": "t-s 12.301 ע\"א",
+   "core_key": "t-s 12.301 ע\"א",
+   "compact": "t-s 12.301 ע\"א",
+   "prep_shelfmark": "T-S 12.301 ע\"א",
+   "core_of": "T_S_12_301_ע\"א",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P051",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P052",
+   "input": "mark",
+   "value": "T-S 12.301 ע\"ב",
+   "keys": [
+    "ts12_301_ע\"ב"
+   ],
+   "key": "ts12_301_ע\"ב",
+   "canonical_to_key": "t-s 12.301 ע\"ב",
+   "core_key": "t-s 12.301 ע\"ב",
+   "compact": "t-s 12.301 ע\"ב",
+   "prep_shelfmark": "T-S 12.301 ע\"ב",
+   "core_of": "T_S_12_301_ע\"ב",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P052",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_12_301",
+   "keys": [
+    "ts12_301"
+   ],
+   "key": "ts12_301",
+   "canonical_to_key": "ts12_301",
+   "core_key": "ts12_301",
+   "compact": "cambridgecults12_301",
+   "prep_shelfmark": "Cambridge CUL T S 12 301",
+   "core_of": "Cambridge_CUL_T_S_12_301",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P053",
+   "input": "mark",
+   "value": "T-S 10J5.17 1r",
+   "keys": [
+    "ts10j5_17_1"
+   ],
+   "key": "ts10j5_17_1",
+   "canonical_to_key": "t-s 10j5.17 1",
+   "core_key": "t-s 10j5.17 1",
+   "compact": "t-s 10j5.17 1r",
+   "prep_shelfmark": "T-S 10J5.17 1",
+   "core_of": "T_S_10J5_17_1r",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P053",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_10J5_17",
+   "keys": [
+    "ts10j5_17"
+   ],
+   "key": "ts10j5_17",
+   "canonical_to_key": "ts10j5_17",
+   "core_key": "ts10j5_17",
+   "compact": "cambridgecults10j5_17",
+   "prep_shelfmark": "Cambridge CUL T S 10J5 17",
+   "core_of": "Cambridge_CUL_T_S_10J5_17",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P054",
+   "input": "mark",
+   "value": "T-S 10J5.17, 1v",
+   "keys": [
+    "ts10j5_17_1"
+   ],
+   "key": "ts10j5_17_1",
+   "canonical_to_key": "t-s 10j5.17, 1",
+   "core_key": "t-s 10j5.17, 1",
+   "compact": "t-s 10j5.17, 1v",
+   "prep_shelfmark": "T-S 10J5.17, 1",
+   "core_of": "T_S_10J5_17_1v",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P054",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_10J5_17",
+   "keys": [
+    "ts10j5_17"
+   ],
+   "key": "ts10j5_17",
+   "canonical_to_key": "ts10j5_17",
+   "core_key": "ts10j5_17",
+   "compact": "cambridgecults10j5_17",
+   "prep_shelfmark": "Cambridge CUL T S 10J5 17",
+   "core_of": "Cambridge_CUL_T_S_10J5_17",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P055",
+   "input": "mark",
+   "value": "T-S Misc. 28.79, f. 14",
+   "keys": [
+    "tsmisc28_79_14"
+   ],
+   "key": "tsmisc28_79_14",
+   "canonical_to_key": "t-s misc. 28.79, f. 14",
+   "core_key": "t-s misc. 28.79, f. 14",
+   "compact": "t-s misc. 28.79, f. 14",
+   "prep_shelfmark": "T-S Misc. 28.79, f. 14",
+   "core_of": "T_S_Misc_28_79_14",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P056",
+   "input": "mark",
+   "value": "JTS MS 9160 fol. 7",
+   "keys": [
+    "ms9160_7"
+   ],
+   "key": "ms9160_7",
+   "canonical_to_key": "jts ms 9160 fol. 7",
+   "core_key": "jts ms 9160 fol. 7",
+   "compact": "jts ms 9160 fol. 7",
+   "prep_shelfmark": "JTS MS 9160, f. 7",
+   "core_of": "MS_9160_7",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P056",
+   "input": "expected_es_id",
+   "value": "New_York_JTS_9160_7",
+   "keys": [
+    "9160_7"
+   ],
+   "key": "9160_7",
+   "canonical_to_key": "9160_7",
+   "core_key": "9160_7",
+   "compact": "newyorkjts9160_7",
+   "prep_shelfmark": "New York JTS 9160 7",
+   "core_of": "New_York_JTS_9160_7",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P057",
+   "input": "mark",
+   "value": "The Jewish Theological Seminary of America, New York, NY, USA Ms. 9160, fol. 7",
+   "keys": [
+    "9160_7"
+   ],
+   "key": "9160_7",
+   "canonical_to_key": "the jewish theological seminary of america, new york, ny, usa ms. 9160, fol. 7",
+   "core_key": "the jewish theological seminary of america, new york, ny, usa ms. 9160, fol. 7",
+   "compact": "the jewish theological seminary of america, new york, ny, usa ms. 9160, fol. 7",
+   "prep_shelfmark": "The Jewish Theological Seminary of America, New York, NY, USA Ms. 9160, f. 7",
+   "core_of": "9160_7",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P057",
+   "input": "expected_es_id",
+   "value": "New_York_JTS_9160_7",
+   "keys": [
+    "9160_7"
+   ],
+   "key": "9160_7",
+   "canonical_to_key": "9160_7",
+   "core_key": "9160_7",
+   "compact": "newyorkjts9160_7",
+   "prep_shelfmark": "New York JTS 9160 7",
+   "core_of": "New_York_JTS_9160_7",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P058",
+   "input": "mark",
+   "value": "MS 9160.7",
+   "keys": [
+    "ms9160_7"
+   ],
+   "key": "ms9160_7",
+   "canonical_to_key": "ms 9160.7",
+   "core_key": "ms 9160.7",
+   "compact": "ms 9160.7",
+   "prep_shelfmark": "MS 9160.7",
+   "core_of": "MS_9160_7",
+   "token_of": null
+  },
+  {
+   "id": "P059",
+   "input": "mark",
+   "value": "ENA 2727.5",
+   "keys": [
+    "ena2727_5"
+   ],
+   "key": "ena2727_5",
+   "canonical_to_key": "ena 2727.5",
+   "core_key": "ena 2727.5",
+   "compact": "ena 2727.5",
+   "prep_shelfmark": "ENA 2727.5",
+   "core_of": "ENA_2727_5",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P059",
+   "input": "expected_es_id",
+   "value": "New_York_JTS_ENA_2727_5",
+   "keys": [
+    "ena2727_5"
+   ],
+   "key": "ena2727_5",
+   "canonical_to_key": "ena2727_5",
+   "core_key": "ena2727_5",
+   "compact": "newyorkjtsena2727_5",
+   "prep_shelfmark": "New York JTS ENA 2727 5",
+   "core_of": "New_York_JTS_ENA_2727_5",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P060",
+   "input": "mark",
+   "value": "ENA NS 2.26",
+   "keys": [
+    "enans2_26"
+   ],
+   "key": "enans2_26",
+   "canonical_to_key": "ena ns 2.26",
+   "core_key": "ena ns 2.26",
+   "compact": "ena ns 2.26",
+   "prep_shelfmark": "ENA NS 2.26",
+   "core_of": "ENA_NS_2_26",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P060",
+   "input": "expected_es_id",
+   "value": "New_York_JTS_ENA_NS_2_26",
+   "keys": [
+    "enans2_26"
+   ],
+   "key": "enans2_26",
+   "canonical_to_key": "enans2_26",
+   "core_key": "enans2_26",
+   "compact": "newyorkjtsenans2_26",
+   "prep_shelfmark": "New York JTS ENA NS 2 26",
+   "core_of": "New_York_JTS_ENA_NS_2_26",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P061",
+   "input": "mark",
+   "value": "ENA NS 22.6",
+   "keys": [
+    "enans22_6"
+   ],
+   "key": "enans22_6",
+   "canonical_to_key": "ena ns 22.6",
+   "core_key": "ena ns 22.6",
+   "compact": "ena ns 22.6",
+   "prep_shelfmark": "ENA NS 22.6",
+   "core_of": "ENA_NS_22_6",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P061",
+   "input": "expected_es_id",
+   "value": "New_York_JTS_ENA_NS_22_6",
+   "keys": [
+    "enans22_6"
+   ],
+   "key": "enans22_6",
+   "canonical_to_key": "enans22_6",
+   "core_key": "enans22_6",
+   "compact": "newyorkjtsenans22_6",
+   "prep_shelfmark": "New York JTS ENA NS 22 6",
+   "core_of": "New_York_JTS_ENA_NS_22_6",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P062",
+   "input": "mark",
+   "value": "ENA 4020.1",
+   "keys": [
+    "ena4020_1"
+   ],
+   "key": "ena4020_1",
+   "canonical_to_key": "ena 4020.1",
+   "core_key": "ena 4020.1",
+   "compact": "ena 4020.1",
+   "prep_shelfmark": "ENA 4020.1",
+   "core_of": "ENA_4020_1",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P062",
+   "input": "expected_es_id",
+   "value": "New_York_JTS_ENA_4020_1",
+   "keys": [
+    "ena4020_1"
+   ],
+   "key": "ena4020_1",
+   "canonical_to_key": "ena4020_1",
+   "core_key": "ena4020_1",
+   "compact": "newyorkjtsena4020_1",
+   "prep_shelfmark": "New York JTS ENA 4020 1",
+   "core_of": "New_York_JTS_ENA_4020_1",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P063",
+   "input": "mark",
+   "value": "ENA 2727, f. 5",
+   "keys": [
+    "ena2727_5"
+   ],
+   "key": "ena2727_5",
+   "canonical_to_key": "ena 2727, f. 5",
+   "core_key": "ena 2727, f. 5",
+   "compact": "ena 2727, f. 5",
+   "prep_shelfmark": "ENA 2727, f. 5",
+   "core_of": "ENA_2727_5",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P063",
+   "input": "expected_es_id",
+   "value": "New_York_JTS_ENA_2727_5",
+   "keys": [
+    "ena2727_5"
+   ],
+   "key": "ena2727_5",
+   "canonical_to_key": "ena2727_5",
+   "core_key": "ena2727_5",
+   "compact": "newyorkjtsena2727_5",
+   "prep_shelfmark": "New York JTS ENA 2727 5",
+   "core_of": "New_York_JTS_ENA_2727_5",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P064",
+   "input": "mark",
+   "value": "JTS ENA 2727.5",
+   "keys": [
+    "ena2727_5"
+   ],
+   "key": "ena2727_5",
+   "canonical_to_key": "jts ena 2727.5",
+   "core_key": "jts ena 2727.5",
+   "compact": "jts ena 2727.5",
+   "prep_shelfmark": "JTS ENA 2727.5",
+   "core_of": "ENA_2727_5",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P064",
+   "input": "expected_es_id",
+   "value": "New_York_JTS_ENA_2727_5",
+   "keys": [
+    "ena2727_5"
+   ],
+   "key": "ena2727_5",
+   "canonical_to_key": "ena2727_5",
+   "core_key": "ena2727_5",
+   "compact": "newyorkjtsena2727_5",
+   "prep_shelfmark": "New York JTS ENA 2727 5",
+   "core_of": "New_York_JTS_ENA_2727_5",
+   "token_of": "New_York_JTS"
+  },
+  {
+   "id": "P065",
+   "input": "mark",
+   "value": "BL Or. 5566c ff. 9-10",
+   "keys": [
+    "or5566c9_10"
+   ],
+   "key": "or5566c9_10",
+   "canonical_to_key": "bl or. 5566c ff. 9-10",
+   "core_key": "bl or. 5566c ff. 9-10",
+   "compact": "bl or. 5566c ff. 9-10",
+   "prep_shelfmark": "BL Or. 5566c, f. 9-10",
+   "core_of": "BL_Or_5566c_9_10",
+   "token_of": null
+  },
+  {
+   "id": "P066",
+   "input": "mark",
+   "value": "BL OR 5566C.9",
+   "keys": [
+    "or5566c9"
+   ],
+   "key": "or5566c9",
+   "canonical_to_key": "bl or 5566c.9",
+   "core_key": "bl or 5566c.9",
+   "compact": "bl or 5566c.9",
+   "prep_shelfmark": "BL OR 5566C.9",
+   "core_of": "BL_Or_5566C_9",
+   "token_of": null
+  },
+  {
+   "id": "P066",
+   "input": "expected_es_id",
+   "value": "London_BL_Or_5566C_9",
+   "keys": [
+    "or5566c9"
+   ],
+   "key": "or5566c9",
+   "canonical_to_key": "or5566c9",
+   "core_key": "or5566c9",
+   "compact": "londonblor5566c9",
+   "prep_shelfmark": "London BL Or 5566C 9",
+   "core_of": "London_BL_Or_5566C_9",
+   "token_of": null
+  },
+  {
+   "id": "P067",
+   "input": "mark",
+   "value": "BM Or. 5566 C, f. 9",
+   "keys": [
+    "or5566c9"
+   ],
+   "key": "or5566c9",
+   "canonical_to_key": "bm or. 5566 c, f. 9",
+   "core_key": "bm or. 5566 c, f. 9",
+   "compact": "bm or. 5566 c, f. 9",
+   "prep_shelfmark": "BM Or. 5566 C, f. 9",
+   "core_of": "BL_Or_5566_C_9",
+   "token_of": null
+  },
+  {
+   "id": "P067",
+   "input": "expected_es_id",
+   "value": "London_BL_Or_5566C_9",
+   "keys": [
+    "or5566c9"
+   ],
+   "key": "or5566c9",
+   "canonical_to_key": "or5566c9",
+   "core_key": "or5566c9",
+   "compact": "londonblor5566c9",
+   "prep_shelfmark": "London BL Or 5566C 9",
+   "core_of": "London_BL_Or_5566C_9",
+   "token_of": null
+  },
+  {
+   "id": "P068",
+   "input": "mark",
+   "value": "The British Library, London, England Or. 5566C.9",
+   "keys": [
+    "or5566c9"
+   ],
+   "key": "or5566c9",
+   "canonical_to_key": "the british library, london, england or. 5566c.9",
+   "core_key": "the british library, london, england or. 5566c.9",
+   "compact": "the british library, london, england or. 5566c.9",
+   "prep_shelfmark": "The British Library, London, England Or. 5566C.9",
+   "core_of": "BL_Or_5566C_9",
+   "token_of": "London_BL"
+  },
+  {
+   "id": "P068",
+   "input": "expected_es_id",
+   "value": "London_BL_Or_5566C_9",
+   "keys": [
+    "or5566c9"
+   ],
+   "key": "or5566c9",
+   "canonical_to_key": "or5566c9",
+   "core_key": "or5566c9",
+   "compact": "londonblor5566c9",
+   "prep_shelfmark": "London BL Or 5566C 9",
+   "core_of": "London_BL_Or_5566C_9",
+   "token_of": null
+  },
+  {
+   "id": "P069",
+   "input": "mark",
+   "value": "BL OR 10129.13",
+   "keys": [
+    "or10129_13"
+   ],
+   "key": "or10129_13",
+   "canonical_to_key": "bl or 10129.13",
+   "core_key": "bl or 10129.13",
+   "compact": "bl or 10129.13",
+   "prep_shelfmark": "BL OR 10129.13",
+   "core_of": "BL_Or_10129_13",
+   "token_of": null
+  },
+  {
+   "id": "P069",
+   "input": "expected_es_id",
+   "value": "London_BL_Or_10129_13",
+   "keys": [
+    "or10129_13"
+   ],
+   "key": "or10129_13",
+   "canonical_to_key": "or10129_13",
+   "core_key": "or10129_13",
+   "compact": "londonblor10129_13",
+   "prep_shelfmark": "London BL Or 10129 13",
+   "core_of": "London_BL_Or_10129_13",
+   "token_of": null
+  },
+  {
+   "id": "P070",
+   "input": "mark",
+   "value": "BL Or. 10129.13",
+   "keys": [
+    "or10129_13"
+   ],
+   "key": "or10129_13",
+   "canonical_to_key": "bl or. 10129.13",
+   "core_key": "bl or. 10129.13",
+   "compact": "bl or. 10129.13",
+   "prep_shelfmark": "BL Or. 10129.13",
+   "core_of": "BL_Or_10129_13",
+   "token_of": null
+  },
+  {
+   "id": "P070",
+   "input": "expected_es_id",
+   "value": "London_BL_Or_10129_13",
+   "keys": [
+    "or10129_13"
+   ],
+   "key": "or10129_13",
+   "canonical_to_key": "or10129_13",
+   "core_key": "or10129_13",
+   "compact": "londonblor10129_13",
+   "prep_shelfmark": "London BL Or 10129 13",
+   "core_of": "London_BL_Or_10129_13",
+   "token_of": null
+  },
+  {
+   "id": "P071",
+   "input": "mark",
+   "value": "CUL Or.1080 1.85",
+   "keys": [
+    "or1080_1_85"
+   ],
+   "key": "or1080_1_85",
+   "canonical_to_key": "cul or.1080 1.85",
+   "core_key": "cul or.1080 1.85",
+   "compact": "cul or.1080 1.85",
+   "prep_shelfmark": "CUL Or.1080 1.85",
+   "core_of": "Or_1080_1_85",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P071",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_Or_1080_1_85",
+   "keys": [
+    "or1080_1_85"
+   ],
+   "key": "or1080_1_85",
+   "canonical_to_key": "or1080_1_85",
+   "core_key": "or1080_1_85",
+   "compact": "cambridgeculor1080_1_85",
+   "prep_shelfmark": "Cambridge CUL Or 1080 1 85",
+   "core_of": "Cambridge_CUL_Or_1080_1_85",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P072",
+   "input": "mark",
+   "value": "Or. 1080 1.85",
+   "keys": [
+    "or1080_1_85"
+   ],
+   "key": "or1080_1_85",
+   "canonical_to_key": "or. 1080 1.85",
+   "core_key": "or. 1080 1.85",
+   "compact": "or. 1080 1.85",
+   "prep_shelfmark": "Or. 1080 1.85",
+   "core_of": "Or_1080_1_85",
+   "token_of": null
+  },
+  {
+   "id": "P072",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_Or_1080_1_85",
+   "keys": [
+    "or1080_1_85"
+   ],
+   "key": "or1080_1_85",
+   "canonical_to_key": "or1080_1_85",
+   "core_key": "or1080_1_85",
+   "compact": "cambridgeculor1080_1_85",
+   "prep_shelfmark": "Cambridge CUL Or 1080 1 85",
+   "core_of": "Cambridge_CUL_Or_1080_1_85",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P073",
+   "input": "mark",
+   "value": "ULC Or 1080 Box 1, f. 85",
+   "keys": [
+    "or1080_1_85"
+   ],
+   "key": "or1080_1_85",
+   "canonical_to_key": "ulc or 1080 box 1, f. 85",
+   "core_key": "ulc or 1080 box 1, f. 85",
+   "compact": "ulc or 1080 box 1, f. 85",
+   "prep_shelfmark": "ULC Or 1080 Box 1, f. 85",
+   "core_of": "ULC_Or_1080_1_85",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P073",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_Or_1080_1_85",
+   "keys": [
+    "or1080_1_85"
+   ],
+   "key": "or1080_1_85",
+   "canonical_to_key": "or1080_1_85",
+   "core_key": "or1080_1_85",
+   "compact": "cambridgeculor1080_1_85",
+   "prep_shelfmark": "Cambridge CUL Or 1080 1 85",
+   "core_of": "Cambridge_CUL_Or_1080_1_85",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P074",
+   "input": "mark",
+   "value": "Cambridge University Library, Cambridge, England Ms. Or. 1080 1.85",
+   "keys": [
+    "or1080_1_85"
+   ],
+   "key": "or1080_1_85",
+   "canonical_to_key": "cambridge university library, cambridge, england ms. or. 1080 1.85",
+   "core_key": "cambridge university library, cambridge, england ms. or. 1080 1.85",
+   "compact": "cambridge university library, cambridge, england ms. or. 1080 1.85",
+   "prep_shelfmark": "Cambridge University Library, Cambridge, England Ms. Or. 1080 1.85",
+   "core_of": "Or_1080_1_85",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P074",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_Or_1080_1_85",
+   "keys": [
+    "or1080_1_85"
+   ],
+   "key": "or1080_1_85",
+   "canonical_to_key": "or1080_1_85",
+   "core_key": "or1080_1_85",
+   "compact": "cambridgeculor1080_1_85",
+   "prep_shelfmark": "Cambridge CUL Or 1080 1 85",
+   "core_of": "Cambridge_CUL_Or_1080_1_85",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P075",
+   "input": "mark",
+   "value": "CUL Or.1081 2.75.30",
+   "keys": [
+    "or1081_2_75_30"
+   ],
+   "key": "or1081_2_75_30",
+   "canonical_to_key": "cul or.1081 2.75.30",
+   "core_key": "cul or.1081 2.75.30",
+   "compact": "cul or.1081 2.75.30",
+   "prep_shelfmark": "CUL Or.1081 2.75.30",
+   "core_of": "Or_1081_2_75_30",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P075",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_Or_1081_2_75_30",
+   "keys": [
+    "or1081_2_75_30"
+   ],
+   "key": "or1081_2_75_30",
+   "canonical_to_key": "or1081_2_75_30",
+   "core_key": "or1081_2_75_30",
+   "compact": "cambridgeculor1081_2_75_30",
+   "prep_shelfmark": "Cambridge CUL Or 1081 2 75 30",
+   "core_of": "Cambridge_CUL_Or_1081_2_75_30",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P076",
+   "input": "mark",
+   "value": "CUL Or.1081 2.75",
+   "keys": [
+    "or1081_2_75"
+   ],
+   "key": "or1081_2_75",
+   "canonical_to_key": "cul or.1081 2.75",
+   "core_key": "cul or.1081 2.75",
+   "compact": "cul or.1081 2.75",
+   "prep_shelfmark": "CUL Or.1081 2.75",
+   "core_of": "Or_1081_2_75",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P076",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_Or_1081_2_75",
+   "keys": [
+    "or1081_2_75"
+   ],
+   "key": "or1081_2_75",
+   "canonical_to_key": "or1081_2_75",
+   "core_key": "or1081_2_75",
+   "compact": "cambridgeculor1081_2_75",
+   "prep_shelfmark": "Cambridge CUL Or 1081 2 75",
+   "core_of": "Cambridge_CUL_Or_1081_2_75",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P077",
+   "input": "mark",
+   "value": "CUL Add.3341",
+   "keys": [
+    "add3341"
+   ],
+   "key": "add3341",
+   "canonical_to_key": "cul add.3341",
+   "core_key": "cul add.3341",
+   "compact": "cul add.3341",
+   "prep_shelfmark": "CUL Add.3341",
+   "core_of": "Add_3341",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P077",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_Add_3341",
+   "keys": [
+    "add3341"
+   ],
+   "key": "add3341",
+   "canonical_to_key": "add3341",
+   "core_key": "add3341",
+   "compact": "cambridgeculadd3341",
+   "prep_shelfmark": "Cambridge CUL Add 3341",
+   "core_of": "Cambridge_CUL_Add_3341",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P078",
+   "input": "mark",
+   "value": "Add. 3341",
+   "keys": [
+    "add3341"
+   ],
+   "key": "add3341",
+   "canonical_to_key": "add. 3341",
+   "core_key": "add. 3341",
+   "compact": "add. 3341",
+   "prep_shelfmark": "Add. 3341",
+   "core_of": "Add_3341",
+   "token_of": null
+  },
+  {
+   "id": "P078",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_Add_3341",
+   "keys": [
+    "add3341"
+   ],
+   "key": "add3341",
+   "canonical_to_key": "add3341",
+   "core_key": "add3341",
+   "compact": "cambridgeculadd3341",
+   "prep_shelfmark": "Cambridge CUL Add 3341",
+   "core_of": "Cambridge_CUL_Add_3341",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P079",
+   "input": "mark",
+   "value": "CUL Or.1080 J262",
+   "keys": [
+    "or1080j262"
+   ],
+   "key": "or1080j262",
+   "canonical_to_key": "cul or.1080 j262",
+   "core_key": "cul or.1080 j262",
+   "compact": "cul or.1080 j262",
+   "prep_shelfmark": "CUL Or.1080 J262",
+   "core_of": "Or_1080_J262",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P079",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_Or_1080_J262",
+   "keys": [
+    "or1080j262"
+   ],
+   "key": "or1080j262",
+   "canonical_to_key": "or1080j262",
+   "core_key": "or1080j262",
+   "compact": "cambridgeculor1080j262",
+   "prep_shelfmark": "Cambridge CUL Or 1080 J262",
+   "core_of": "Cambridge_CUL_Or_1080_J262",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P080",
+   "input": "mark",
+   "value": "CUL Or.1080 J 262",
+   "keys": [
+    "or1080j262"
+   ],
+   "key": "or1080j262",
+   "canonical_to_key": "cul or.1080 j 262",
+   "core_key": "cul or.1080 j 262",
+   "compact": "cul or.1080 j 262",
+   "prep_shelfmark": "CUL Or.1080 J 262",
+   "core_of": "Or_1080_J_262",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P080",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_Or_1080_J262",
+   "keys": [
+    "or1080j262"
+   ],
+   "key": "or1080j262",
+   "canonical_to_key": "or1080j262",
+   "core_key": "or1080j262",
+   "compact": "cambridgeculor1080j262",
+   "prep_shelfmark": "Cambridge CUL Or 1080 J262",
+   "core_of": "Cambridge_CUL_Or_1080_J262",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P081",
+   "input": "mark",
+   "value": "L-G Ar. I.49",
+   "keys": [
+    "lgari49"
+   ],
+   "key": "lgari49",
+   "canonical_to_key": "l-g ar. i.49",
+   "core_key": "l-g ar. i.49",
+   "compact": "l-g ar. i.49",
+   "prep_shelfmark": "L-G Ar. I.49",
+   "core_of": "L_G_Ar_I_49",
+   "token_of": "Cambridge_Lewis_Gibson"
+  },
+  {
+   "id": "P081",
+   "input": "expected_es_id",
+   "value": "Cambridge_Lewis_Gibson_L_G_Ar_I_49",
+   "keys": [
+    "lgari49"
+   ],
+   "key": "lgari49",
+   "canonical_to_key": "lgari49",
+   "core_key": "lgari49",
+   "compact": "cambridgelewisgibsonlgari49",
+   "prep_shelfmark": "Cambridge Lewis Gibson L G Ar I 49",
+   "core_of": "Cambridge_Lewis_Gibson_L_G_Ar_I_49",
+   "token_of": null
+  },
+  {
+   "id": "P082",
+   "input": "mark",
+   "value": "L-G Ar.I.49",
+   "keys": [
+    "lgari49"
+   ],
+   "key": "lgari49",
+   "canonical_to_key": "l-g ar.i.49",
+   "core_key": "l-g ar.i.49",
+   "compact": "l-g ar.i.49",
+   "prep_shelfmark": "L-G Ar.I.49",
+   "core_of": "L_G_Ar_I_49",
+   "token_of": "Cambridge_Lewis_Gibson"
+  },
+  {
+   "id": "P082",
+   "input": "expected_es_id",
+   "value": "Cambridge_Lewis_Gibson_L_G_Ar_I_49",
+   "keys": [
+    "lgari49"
+   ],
+   "key": "lgari49",
+   "canonical_to_key": "lgari49",
+   "core_key": "lgari49",
+   "compact": "cambridgelewisgibsonlgari49",
+   "prep_shelfmark": "Cambridge Lewis Gibson L G Ar I 49",
+   "core_of": "Cambridge_Lewis_Gibson_L_G_Ar_I_49",
+   "token_of": null
+  },
+  {
+   "id": "P083",
+   "input": "mark",
+   "value": "Lewis-Gibson Ar. I.49",
+   "keys": [
+    "ari49"
+   ],
+   "key": "ari49",
+   "canonical_to_key": "lewis-gibson ar. i.49",
+   "core_key": "lewis-gibson ar. i.49",
+   "compact": "lewis-gibson ar. i.49",
+   "prep_shelfmark": "Lewis-Gibson Ar. I.49",
+   "core_of": "Lewis_Gibson_Ar_I_49",
+   "token_of": "Cambridge_Lewis_Gibson"
+  },
+  {
+   "id": "P083",
+   "input": "expected_es_id",
+   "value": "Cambridge_Lewis_Gibson_L_G_Ar_I_49",
+   "keys": [
+    "lgari49"
+   ],
+   "key": "lgari49",
+   "canonical_to_key": "lgari49",
+   "core_key": "lgari49",
+   "compact": "cambridgelewisgibsonlgari49",
+   "prep_shelfmark": "Cambridge Lewis Gibson L G Ar I 49",
+   "core_of": "Cambridge_Lewis_Gibson_L_G_Ar_I_49",
+   "token_of": null
+  },
+  {
+   "id": "P084",
+   "input": "mark",
+   "value": "L-G Ar. I.149",
+   "keys": [
+    "lgari149"
+   ],
+   "key": "lgari149",
+   "canonical_to_key": "l-g ar. i.149",
+   "core_key": "l-g ar. i.149",
+   "compact": "l-g ar. i.149",
+   "prep_shelfmark": "L-G Ar. I.149",
+   "core_of": "L_G_Ar_I_149",
+   "token_of": "Cambridge_Lewis_Gibson"
+  },
+  {
+   "id": "P084",
+   "input": "expected_es_id",
+   "value": "Cambridge_Lewis_Gibson_L_G_Ar_I_149",
+   "keys": [
+    "lgari149"
+   ],
+   "key": "lgari149",
+   "canonical_to_key": "lgari149",
+   "core_key": "lgari149",
+   "compact": "cambridgelewisgibsonlgari149",
+   "prep_shelfmark": "Cambridge Lewis Gibson L G Ar I 149",
+   "core_of": "Cambridge_Lewis_Gibson_L_G_Ar_I_149",
+   "token_of": null
+  },
+  {
+   "id": "P085",
+   "input": "mark",
+   "value": "L-G Ar. II.49",
+   "keys": [
+    "lgarii49"
+   ],
+   "key": "lgarii49",
+   "canonical_to_key": "l-g ar. ii.49",
+   "core_key": "l-g ar. ii.49",
+   "compact": "l-g ar. ii.49",
+   "prep_shelfmark": "L-G Ar. II.49",
+   "core_of": "L_G_Ar_II_49",
+   "token_of": "Cambridge_Lewis_Gibson"
+  },
+  {
+   "id": "P085",
+   "input": "expected_es_id",
+   "value": "Cambridge_Lewis_Gibson_L_G_Ar_II_49",
+   "keys": [
+    "lgarii49"
+   ],
+   "key": "lgarii49",
+   "canonical_to_key": "lgarii49",
+   "core_key": "lgarii49",
+   "compact": "cambridgelewisgibsonlgarii49",
+   "prep_shelfmark": "Cambridge Lewis Gibson L G Ar II 49",
+   "core_of": "Cambridge_Lewis_Gibson_L_G_Ar_II_49",
+   "token_of": null
+  },
+  {
+   "id": "P086",
+   "input": "mark",
+   "value": "Westminster College Misc. 10",
+   "keys": [
+    "westminstercollegemisc10"
+   ],
+   "key": "westminstercollegemisc10",
+   "canonical_to_key": "westminster college misc. 10",
+   "core_key": "westminster college misc. 10",
+   "compact": "westminster college misc. 10",
+   "prep_shelfmark": "Westminster College Misc. 10",
+   "core_of": "Westminster_College_Misc_10",
+   "token_of": null
+  },
+  {
+   "id": "P086",
+   "input": "expected_es_id",
+   "value": "Cambridge_Lewis_Gibson_L_G_Misc_10",
+   "keys": [
+    "lgmisc10"
+   ],
+   "key": "lgmisc10",
+   "canonical_to_key": "lgmisc10",
+   "core_key": "lgmisc10",
+   "compact": "cambridgelewisgibsonlgmisc10",
+   "prep_shelfmark": "Cambridge Lewis Gibson L G Misc 10",
+   "core_of": "Cambridge_Lewis_Gibson_L_G_Misc_10",
+   "token_of": null
+  },
+  {
+   "id": "P087",
+   "input": "mark",
+   "value": "L-G Misc. 10",
+   "keys": [
+    "lgmisc10"
+   ],
+   "key": "lgmisc10",
+   "canonical_to_key": "l-g misc. 10",
+   "core_key": "l-g misc. 10",
+   "compact": "l-g misc. 10",
+   "prep_shelfmark": "L-G Misc. 10",
+   "core_of": "L_G_Misc_10",
+   "token_of": "Cambridge_Lewis_Gibson"
+  },
+  {
+   "id": "P087",
+   "input": "expected_es_id",
+   "value": "Cambridge_Lewis_Gibson_L_G_Misc_10",
+   "keys": [
+    "lgmisc10"
+   ],
+   "key": "lgmisc10",
+   "canonical_to_key": "lgmisc10",
+   "core_key": "lgmisc10",
+   "compact": "cambridgelewisgibsonlgmisc10",
+   "prep_shelfmark": "Cambridge Lewis Gibson L G Misc 10",
+   "core_of": "Cambridge_Lewis_Gibson_L_G_Misc_10",
+   "token_of": null
+  },
+  {
+   "id": "P088",
+   "input": "mark",
+   "value": "MS Heb. c. 13/25",
+   "keys": [
+    "mshebc13_25"
+   ],
+   "key": "mshebc13_25",
+   "canonical_to_key": "ms heb. c. 13/25",
+   "core_key": "ms heb. c. 13/25",
+   "compact": "ms heb. c. 13/25",
+   "prep_shelfmark": "MS Heb. c. 13/25",
+   "core_of": "Bodl_MS_heb_c_13_25",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P088",
+   "input": "expected_es_id",
+   "value": "Oxford_Bodleian_Bodl_MS_heb_c_13_25",
+   "keys": [
+    "mshebc13_25"
+   ],
+   "key": "mshebc13_25",
+   "canonical_to_key": "mshebc13_25",
+   "core_key": "mshebc13_25",
+   "compact": "oxfordbodleianbodlmshebc13_25",
+   "prep_shelfmark": "Oxford Bodleian Bodl MS heb c 13 25",
+   "core_of": "Oxford_Bodleian_Bodl_MS_heb_c_13_25",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P089",
+   "input": "mark",
+   "value": "Bodl. MS Heb. b. 12 (Cat. 2875), f. 2",
+   "keys": [
+    "mshebb12_2"
+   ],
+   "key": "mshebb12_2",
+   "canonical_to_key": "bodl. ms heb. b. 12 (cat. 2875), f. 2",
+   "core_key": "bodl. ms heb. b. 12 (cat. 2875), f. 2",
+   "compact": "bodl. ms heb. b. 12 (cat. 2875), f. 2",
+   "prep_shelfmark": "Bodl. MS Heb. b. 12 (Cat. 2875), f. 2",
+   "core_of": "Bodl_MS_heb_b_12_2",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P089",
+   "input": "expected_es_id",
+   "value": "Oxford_Bodleian_Bodl_MS_heb_b_12_2",
+   "keys": [
+    "mshebb12_2"
+   ],
+   "key": "mshebb12_2",
+   "canonical_to_key": "mshebb12_2",
+   "core_key": "mshebb12_2",
+   "compact": "oxfordbodleianbodlmshebb12_2",
+   "prep_shelfmark": "Oxford Bodleian Bodl MS heb b 12 2",
+   "core_of": "Oxford_Bodleian_Bodl_MS_heb_b_12_2",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P090",
+   "input": "mark",
+   "value": "MS heb. a. 2/9",
+   "keys": [
+    "msheba2_9"
+   ],
+   "key": "msheba2_9",
+   "canonical_to_key": "ms heb. a. 2/9",
+   "core_key": "ms heb. a. 2/9",
+   "compact": "ms heb. a. 2/9",
+   "prep_shelfmark": "MS heb. a. 2/9",
+   "core_of": "Bodl_MS_heb_a_2_9",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P090",
+   "input": "expected_es_id",
+   "value": "Oxford_Bodleian_Bodl_MS_heb_a_2_9",
+   "keys": [
+    "msheba2_9"
+   ],
+   "key": "msheba2_9",
+   "canonical_to_key": "msheba2_9",
+   "core_key": "msheba2_9",
+   "compact": "oxfordbodleianbodlmsheba2_9",
+   "prep_shelfmark": "Oxford Bodleian Bodl MS heb a 2 9",
+   "core_of": "Oxford_Bodleian_Bodl_MS_heb_a_2_9",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P091",
+   "input": "mark",
+   "value": "Heb. e. 98",
+   "keys": [
+    "mshebe98"
+   ],
+   "key": "mshebe98",
+   "canonical_to_key": "heb. e. 98",
+   "core_key": "heb. e. 98",
+   "compact": "heb. e. 98",
+   "prep_shelfmark": "Heb. e. 98",
+   "core_of": "Bodl_MS_heb_e_98",
+   "token_of": null
+  },
+  {
+   "id": "P091",
+   "input": "expected_es_id",
+   "value": "Oxford_Bodleian_Bodl_MS_heb_e_98",
+   "keys": [
+    "mshebe98"
+   ],
+   "key": "mshebe98",
+   "canonical_to_key": "mshebe98",
+   "core_key": "mshebe98",
+   "compact": "oxfordbodleianbodlmshebe98",
+   "prep_shelfmark": "Oxford Bodleian Bodl MS heb e 98",
+   "core_of": "Oxford_Bodleian_Bodl_MS_heb_e_98",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P092",
+   "input": "mark",
+   "value": "Bodl. MS heb. d 66/42",
+   "keys": [
+    "mshebd66_42"
+   ],
+   "key": "mshebd66_42",
+   "canonical_to_key": "bodl. ms heb. d 66/42",
+   "core_key": "bodl. ms heb. d 66/42",
+   "compact": "bodl. ms heb. d 66/42",
+   "prep_shelfmark": "Bodl. MS heb. d 66/42",
+   "core_of": "Bodl_MS_heb_d_66_42",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P092",
+   "input": "expected_es_id",
+   "value": "Oxford_Bodleian_Bodl_MS_heb_d_66_42",
+   "keys": [
+    "mshebd66_42"
+   ],
+   "key": "mshebd66_42",
+   "canonical_to_key": "mshebd66_42",
+   "core_key": "mshebd66_42",
+   "compact": "oxfordbodleianbodlmshebd66_42",
+   "prep_shelfmark": "Oxford Bodleian Bodl MS heb d 66 42",
+   "core_of": "Oxford_Bodleian_Bodl_MS_heb_d_66_42",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P093",
+   "input": "mark",
+   "value": "Oxford: MS heb. e.34/6",
+   "keys": [
+    "mshebe34_6"
+   ],
+   "key": "mshebe34_6",
+   "canonical_to_key": "oxford: ms heb. e.34/6",
+   "core_key": "oxford: ms heb. e.34/6",
+   "compact": "oxford: ms heb. e.34/6",
+   "prep_shelfmark": "Oxford: MS heb. e.34/6",
+   "core_of": "Bodl_MS_heb_e_34_6",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P093",
+   "input": "expected_es_id",
+   "value": "Oxford_Bodleian_Bodl_MS_heb_e_34_6",
+   "keys": [
+    "mshebe34_6"
+   ],
+   "key": "mshebe34_6",
+   "canonical_to_key": "mshebe34_6",
+   "core_key": "mshebe34_6",
+   "compact": "oxfordbodleianbodlmshebe34_6",
+   "prep_shelfmark": "Oxford Bodleian Bodl MS heb e 34 6",
+   "core_of": "Oxford_Bodleian_Bodl_MS_heb_e_34_6",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P094",
+   "input": "mark",
+   "value": "The Bodleian Libraries, University of Oxford, Oxford, England Ms. heb. c. 13.25",
+   "keys": [
+    "mshebc13_25"
+   ],
+   "key": "mshebc13_25",
+   "canonical_to_key": "the bodleian libraries, university of oxford, oxford, england ms. heb. c. 13.25",
+   "core_key": "the bodleian libraries, university of oxford, oxford, england ms. heb. c. 13.25",
+   "compact": "the bodleian libraries, university of oxford, oxford, england ms. heb. c. 13.25",
+   "prep_shelfmark": "The Bodleian Libraries, University of Oxford, Oxford, England Ms. heb. c. 13.25",
+   "core_of": "Bodl_MS_heb_c_13_25",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P094",
+   "input": "expected_es_id",
+   "value": "Oxford_Bodleian_Bodl_MS_heb_c_13_25",
+   "keys": [
+    "mshebc13_25"
+   ],
+   "key": "mshebc13_25",
+   "canonical_to_key": "mshebc13_25",
+   "core_key": "mshebc13_25",
+   "compact": "oxfordbodleianbodlmshebc13_25",
+   "prep_shelfmark": "Oxford Bodleian Bodl MS heb c 13 25",
+   "core_of": "Oxford_Bodleian_Bodl_MS_heb_c_13_25",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P095",
+   "input": "mark",
+   "value": "MS. Heb. c. 13, fol. 25",
+   "keys": [
+    "mshebc13_25"
+   ],
+   "key": "mshebc13_25",
+   "canonical_to_key": "ms. heb. c. 13, fol. 25",
+   "core_key": "ms. heb. c. 13, fol. 25",
+   "compact": "ms. heb. c. 13, fol. 25",
+   "prep_shelfmark": "MS. Heb. c. 13, f. 25",
+   "core_of": "Bodl_MS_heb_c_13_25",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P095",
+   "input": "expected_es_id",
+   "value": "Oxford_Bodleian_Bodl_MS_heb_c_13_25",
+   "keys": [
+    "mshebc13_25"
+   ],
+   "key": "mshebc13_25",
+   "canonical_to_key": "mshebc13_25",
+   "core_key": "mshebc13_25",
+   "compact": "oxfordbodleianbodlmshebc13_25",
+   "prep_shelfmark": "Oxford Bodleian Bodl MS heb c 13 25",
+   "core_of": "Oxford_Bodleian_Bodl_MS_heb_c_13_25",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P096",
+   "input": "mark",
+   "value": "Bodl. MS Arab. c 56.1",
+   "keys": [
+    "msarabc56_1"
+   ],
+   "key": "msarabc56_1",
+   "canonical_to_key": "bodl. ms arab. c 56.1",
+   "core_key": "bodl. ms arab. c 56.1",
+   "compact": "bodl. ms arab. c 56.1",
+   "prep_shelfmark": "Bodl. MS Arab. c 56.1",
+   "core_of": "Bodl_MS_Arab_c_56_1",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P096",
+   "input": "expected_es_id",
+   "value": "Oxford_Bodleian_Bodl_MS_Arab_c_56_1",
+   "keys": [
+    "msarabc56_1"
+   ],
+   "key": "msarabc56_1",
+   "canonical_to_key": "msarabc56_1",
+   "core_key": "msarabc56_1",
+   "compact": "oxfordbodleianbodlmsarabc56_1",
+   "prep_shelfmark": "Oxford Bodleian Bodl MS Arab c 56 1",
+   "core_of": "Oxford_Bodleian_Bodl_MS_Arab_c_56_1",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P097",
+   "input": "mark",
+   "value": "Oxford_Bodleian_MS_heb_c_13_25",
+   "keys": [
+    "mshebc13_25"
+   ],
+   "key": "mshebc13_25",
+   "canonical_to_key": "mshebc13_25",
+   "core_key": "mshebc13_25",
+   "compact": "oxfordbodleianmshebc13_25",
+   "prep_shelfmark": "Oxford Bodleian MS heb c 13 25",
+   "core_of": "Oxford_Bodleian_MS_heb_c_13_25",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P097",
+   "input": "expected_es_id",
+   "value": "Oxford_Bodleian_Bodl_MS_heb_c_13_25",
+   "keys": [
+    "mshebc13_25"
+   ],
+   "key": "mshebc13_25",
+   "canonical_to_key": "mshebc13_25",
+   "core_key": "mshebc13_25",
+   "compact": "oxfordbodleianbodlmshebc13_25",
+   "prep_shelfmark": "Oxford Bodleian Bodl MS heb c 13 25",
+   "core_of": "Oxford_Bodleian_Bodl_MS_heb_c_13_25",
+   "token_of": "Oxford_Bodleian"
+  },
+  {
+   "id": "P098",
+   "input": "mark",
+   "value": "Mosseri IV.A.206",
+   "keys": [
+    "iva206"
+   ],
+   "key": "iva206",
+   "canonical_to_key": "mosseri iv.a.206",
+   "core_key": "mosseri iv.a.206",
+   "compact": "mosseri iv.a.206",
+   "prep_shelfmark": "Mosseri IV.A.206",
+   "core_of": "Mosseri_IV_A_206",
+   "token_of": "Cambridge_Mosseri"
+  },
+  {
+   "id": "P099",
+   "input": "mark",
+   "value": "Mosseri VII.E.43",
+   "keys": [
+    "viie43"
+   ],
+   "key": "viie43",
+   "canonical_to_key": "mosseri vii.e.43",
+   "core_key": "mosseri vii.e.43",
+   "compact": "mosseri vii.e.43",
+   "prep_shelfmark": "Mosseri VII.E.43",
+   "core_of": "Mosseri_VII_E_43",
+   "token_of": "Cambridge_Mosseri"
+  },
+  {
+   "id": "P100",
+   "input": "mark",
+   "value": "Moss. IV,10",
+   "keys": [
+    "iv10"
+   ],
+   "key": "iv10",
+   "canonical_to_key": "moss. iv,10",
+   "core_key": "moss. iv,10",
+   "compact": "moss. iv,10",
+   "prep_shelfmark": "Moss. IV,10",
+   "core_of": "Mosseri_IV_10",
+   "token_of": "Cambridge_Mosseri"
+  },
+  {
+   "id": "P100",
+   "input": "expected_es_id",
+   "value": "Cambridge_Mosseri_IV_10",
+   "keys": [
+    "iv10"
+   ],
+   "key": "iv10",
+   "canonical_to_key": "iv10",
+   "core_key": "iv10",
+   "compact": "cambridgemosseriiv10",
+   "prep_shelfmark": "Cambridge Mosseri IV 10",
+   "core_of": "Cambridge_Mosseri_IV_10",
+   "token_of": "Cambridge_Mosseri"
+  },
+  {
+   "id": "P101",
+   "input": "mark",
+   "value": "Paris Mosseri: Moss. IV10",
+   "keys": [
+    "iv10"
+   ],
+   "key": "iv10",
+   "canonical_to_key": "paris mosseri: moss. iv10",
+   "core_key": "paris mosseri: moss. iv10",
+   "compact": "paris mosseri: moss. iv10",
+   "prep_shelfmark": "Paris Mosseri: Moss. IV10",
+   "core_of": "Mosseri_IV10",
+   "token_of": "Cambridge_Mosseri"
+  },
+  {
+   "id": "P101",
+   "input": "expected_es_id",
+   "value": "Cambridge_Mosseri_IV_10",
+   "keys": [
+    "iv10"
+   ],
+   "key": "iv10",
+   "canonical_to_key": "iv10",
+   "core_key": "iv10",
+   "compact": "cambridgemosseriiv10",
+   "prep_shelfmark": "Cambridge Mosseri IV 10",
+   "core_of": "Cambridge_Mosseri_IV_10",
+   "token_of": "Cambridge_Mosseri"
+  },
+  {
+   "id": "P102",
+   "input": "mark",
+   "value": "Mosseri IV.10",
+   "keys": [
+    "iv10"
+   ],
+   "key": "iv10",
+   "canonical_to_key": "mosseri iv.10",
+   "core_key": "mosseri iv.10",
+   "compact": "mosseri iv.10",
+   "prep_shelfmark": "Mosseri IV.10",
+   "core_of": "Mosseri_IV_10",
+   "token_of": "Cambridge_Mosseri"
+  },
+  {
+   "id": "P102",
+   "input": "expected_es_id",
+   "value": "Cambridge_Mosseri_IV_10",
+   "keys": [
+    "iv10"
+   ],
+   "key": "iv10",
+   "canonical_to_key": "iv10",
+   "core_key": "iv10",
+   "compact": "cambridgemosseriiv10",
+   "prep_shelfmark": "Cambridge Mosseri IV 10",
+   "core_of": "Cambridge_Mosseri_IV_10",
+   "token_of": "Cambridge_Mosseri"
+  },
+  {
+   "id": "P103",
+   "input": "mark",
+   "value": "Mosseri, Jacques, Paris, France",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "mosseri, jacques, paris, france",
+   "prep_shelfmark": "Mosseri, Jacques, Paris, France",
+   "core_of": "Mosseri_Jacques_Paris_France",
+   "token_of": "Cambridge_Mosseri"
+  },
+  {
+   "id": "P104",
+   "input": "mark",
+   "value": "Mosseri, Jacques, Paris, France Ms. VII 40.1",
+   "keys": [
+    "vii40_1"
+   ],
+   "key": "vii40_1",
+   "canonical_to_key": "mosseri, jacques, paris, france ms. vii 40.1",
+   "core_key": "mosseri, jacques, paris, france ms. vii 40.1",
+   "compact": "mosseri, jacques, paris, france ms. vii 40.1",
+   "prep_shelfmark": "Mosseri, Jacques, Paris, France Ms. VII 40.1",
+   "core_of": "VII_40_1",
+   "token_of": "Cambridge_Mosseri"
+  },
+  {
+   "id": "P104",
+   "input": "expected_es_id",
+   "value": "Cambridge_Mosseri_VII_40_1",
+   "keys": [
+    "vii40_1"
+   ],
+   "key": "vii40_1",
+   "canonical_to_key": "vii40_1",
+   "core_key": "vii40_1",
+   "compact": "cambridgemosserivii40_1",
+   "prep_shelfmark": "Cambridge Mosseri VII 40 1",
+   "core_of": "Cambridge_Mosseri_VII_40_1",
+   "token_of": "Cambridge_Mosseri"
+  },
+  {
+   "id": "P105",
+   "input": "mark",
+   "value": "AIU XII.87v",
+   "keys": [
+    "xii87"
+   ],
+   "key": "xii87",
+   "canonical_to_key": "aiu xii.87",
+   "core_key": "aiu xii.87",
+   "compact": "aiu xii.87v",
+   "prep_shelfmark": "AIU XII.87",
+   "core_of": "XII_87v",
+   "token_of": "Paris_AIU"
+  },
+  {
+   "id": "P105",
+   "input": "expected_es_id",
+   "value": "Paris_AIU_XII_87",
+   "keys": [
+    "xii87"
+   ],
+   "key": "xii87",
+   "canonical_to_key": "xii87",
+   "core_key": "xii87",
+   "compact": "parisaiuxii87",
+   "prep_shelfmark": "Paris AIU XII 87",
+   "core_of": "Paris_AIU_XII_87",
+   "token_of": "Paris_AIU"
+  },
+  {
+   "id": "P106",
+   "input": "mark",
+   "value": "AIU VII D 78",
+   "keys": [
+    "viid78"
+   ],
+   "key": "viid78",
+   "canonical_to_key": "aiu vii d 78",
+   "core_key": "aiu vii d 78",
+   "compact": "aiu vii d 78",
+   "prep_shelfmark": "AIU VII D 78",
+   "core_of": "VII_D_78",
+   "token_of": "Paris_AIU"
+  },
+  {
+   "id": "P106",
+   "input": "expected_es_id",
+   "value": "Paris_AIU_VII_D_78",
+   "keys": [
+    "viid78"
+   ],
+   "key": "viid78",
+   "canonical_to_key": "viid78",
+   "core_key": "viid78",
+   "compact": "parisaiuviid78",
+   "prep_shelfmark": "Paris AIU VII D 78",
+   "core_of": "Paris_AIU_VII_D_78",
+   "token_of": "Paris_AIU"
+  },
+  {
+   "id": "P107",
+   "input": "mark",
+   "value": "AIU VII.D.78",
+   "keys": [
+    "viid78"
+   ],
+   "key": "viid78",
+   "canonical_to_key": "aiu vii.d.78",
+   "core_key": "aiu vii.d.78",
+   "compact": "aiu vii.d.78",
+   "prep_shelfmark": "AIU VII.D.78",
+   "core_of": "VII_D_78",
+   "token_of": "Paris_AIU"
+  },
+  {
+   "id": "P107",
+   "input": "expected_es_id",
+   "value": "Paris_AIU_VII_D_78",
+   "keys": [
+    "viid78"
+   ],
+   "key": "viid78",
+   "canonical_to_key": "viid78",
+   "core_key": "viid78",
+   "compact": "parisaiuviid78",
+   "prep_shelfmark": "Paris AIU VII D 78",
+   "core_of": "Paris_AIU_VII_D_78",
+   "token_of": "Paris_AIU"
+  },
+  {
+   "id": "P108",
+   "input": "mark",
+   "value": "Library of the Alliance Israélite Universelle, Paris, France Ms. VII D 78",
+   "keys": [
+    "viid78"
+   ],
+   "key": "viid78",
+   "canonical_to_key": "library of the alliance israélite universelle, paris, france ms. vii d 78",
+   "core_key": "library of the alliance israélite universelle, paris, france ms. vii d 78",
+   "compact": "library of the alliance israélite universelle, paris, france ms. vii d 78",
+   "prep_shelfmark": "Library of the Alliance Israélite Universelle, Paris, France Ms. VII D 78",
+   "core_of": "VII_D_78",
+   "token_of": "Paris_AIU"
+  },
+  {
+   "id": "P108",
+   "input": "expected_es_id",
+   "value": "Paris_AIU_VII_D_78",
+   "keys": [
+    "viid78"
+   ],
+   "key": "viid78",
+   "canonical_to_key": "viid78",
+   "core_key": "viid78",
+   "compact": "parisaiuviid78",
+   "prep_shelfmark": "Paris AIU VII D 78",
+   "core_of": "Paris_AIU_VII_D_78",
+   "token_of": "Paris_AIU"
+  },
+  {
+   "id": "P109",
+   "input": "mark",
+   "value": "AIU IV.A.206",
+   "keys": [
+    "iva206"
+   ],
+   "key": "iva206",
+   "canonical_to_key": "aiu iv.a.206",
+   "core_key": "aiu iv.a.206",
+   "compact": "aiu iv.a.206",
+   "prep_shelfmark": "AIU IV.A.206",
+   "core_of": "IV_A_206",
+   "token_of": "Paris_AIU"
+  },
+  {
+   "id": "P109",
+   "input": "expected_es_id",
+   "value": "Paris_AIU_IV_A_206",
+   "keys": [
+    "iva206"
+   ],
+   "key": "iva206",
+   "canonical_to_key": "iva206",
+   "core_key": "iva206",
+   "compact": "parisaiuiva206",
+   "prep_shelfmark": "Paris AIU IV A 206",
+   "core_of": "Paris_AIU_IV_A_206",
+   "token_of": "Paris_AIU"
+  },
+  {
+   "id": "P110",
+   "input": "mark",
+   "value": "AIU VII.E.43",
+   "keys": [
+    "viie43"
+   ],
+   "key": "viie43",
+   "canonical_to_key": "aiu vii.e.43",
+   "core_key": "aiu vii.e.43",
+   "compact": "aiu vii.e.43",
+   "prep_shelfmark": "AIU VII.E.43",
+   "core_of": "VII_E_43",
+   "token_of": "Paris_AIU"
+  },
+  {
+   "id": "P110",
+   "input": "expected_es_id",
+   "value": "Paris_AIU_VII_E_43",
+   "keys": [
+    "viie43"
+   ],
+   "key": "viie43",
+   "canonical_to_key": "viie43",
+   "core_key": "viie43",
+   "compact": "parisaiuviie43",
+   "prep_shelfmark": "Paris AIU VII E 43",
+   "core_of": "Paris_AIU_VII_E_43",
+   "token_of": "Paris_AIU"
+  },
+  {
+   "id": "P111",
+   "input": "mark",
+   "value": "Halper 472",
+   "keys": [
+    "halper472"
+   ],
+   "key": "halper472",
+   "canonical_to_key": "halper 472",
+   "core_key": "halper 472",
+   "compact": "halper 472",
+   "prep_shelfmark": "Halper 472",
+   "core_of": "Halper_472",
+   "token_of": "Philadelphia_CAJS"
+  },
+  {
+   "id": "P111",
+   "input": "expected_es_id",
+   "value": "Philadelphia_CAJS_Halper_472",
+   "keys": [
+    "halper472"
+   ],
+   "key": "halper472",
+   "canonical_to_key": "halper472",
+   "core_key": "halper472",
+   "compact": "philadelphiacajshalper472",
+   "prep_shelfmark": "Philadelphia CAJS Halper 472",
+   "core_of": "Philadelphia_CAJS_Halper_472",
+   "token_of": "Philadelphia_CAJS"
+  },
+  {
+   "id": "P112",
+   "input": "mark",
+   "value": "Dropsie 472",
+   "keys": [
+    "dropsie472"
+   ],
+   "key": "dropsie472",
+   "canonical_to_key": "dropsie 472",
+   "core_key": "dropsie 472",
+   "compact": "dropsie 472",
+   "prep_shelfmark": "Dropsie 472",
+   "core_of": "Dropsie_472",
+   "token_of": "Philadelphia_CAJS"
+  },
+  {
+   "id": "P113",
+   "input": "mark",
+   "value": "Philadelphia Penn CAJS: Halper 472",
+   "keys": [
+    "halper472"
+   ],
+   "key": "halper472",
+   "canonical_to_key": "philadelphia penn cajs: halper 472",
+   "core_key": "philadelphia penn cajs: halper 472",
+   "compact": "philadelphia penn cajs: halper 472",
+   "prep_shelfmark": "Philadelphia Penn CAJS: Halper 472",
+   "core_of": "Halper_472",
+   "token_of": "Philadelphia_CAJS"
+  },
+  {
+   "id": "P113",
+   "input": "expected_es_id",
+   "value": "Philadelphia_CAJS_Halper_472",
+   "keys": [
+    "halper472"
+   ],
+   "key": "halper472",
+   "canonical_to_key": "halper472",
+   "core_key": "halper472",
+   "compact": "philadelphiacajshalper472",
+   "prep_shelfmark": "Philadelphia CAJS Halper 472",
+   "core_of": "Philadelphia_CAJS_Halper_472",
+   "token_of": "Philadelphia_CAJS"
+  },
+  {
+   "id": "P114",
+   "input": "mark",
+   "value": "CAJS Halper 472",
+   "keys": [
+    "halper472"
+   ],
+   "key": "halper472",
+   "canonical_to_key": "cajs halper 472",
+   "core_key": "cajs halper 472",
+   "compact": "cajs halper 472",
+   "prep_shelfmark": "CAJS Halper 472",
+   "core_of": "CAJS_Halper_472",
+   "token_of": "Philadelphia_CAJS"
+  },
+  {
+   "id": "P114",
+   "input": "expected_es_id",
+   "value": "Philadelphia_CAJS_Halper_472",
+   "keys": [
+    "halper472"
+   ],
+   "key": "halper472",
+   "canonical_to_key": "halper472",
+   "core_key": "halper472",
+   "compact": "philadelphiacajshalper472",
+   "prep_shelfmark": "Philadelphia CAJS Halper 472",
+   "core_of": "Philadelphia_CAJS_Halper_472",
+   "token_of": "Philadelphia_CAJS"
+  },
+  {
+   "id": "P115",
+   "input": "mark",
+   "value": "Rylands A 1024",
+   "keys": [
+    "a1024"
+   ],
+   "key": "a1024",
+   "canonical_to_key": "rylands a 1024",
+   "core_key": "rylands a 1024",
+   "compact": "rylands a 1024",
+   "prep_shelfmark": "Rylands A 1024",
+   "core_of": "JRL_A_1024",
+   "token_of": "Manchester_JRL"
+  },
+  {
+   "id": "P115",
+   "input": "expected_es_id",
+   "value": "Manchester_JRL_A_1024",
+   "keys": [
+    "a1024"
+   ],
+   "key": "a1024",
+   "canonical_to_key": "a1024",
+   "core_key": "a1024",
+   "compact": "manchesterjrla1024",
+   "prep_shelfmark": "Manchester JRL A 1024",
+   "core_of": "Manchester_JRL_A_1024",
+   "token_of": "Manchester_JRL"
+  },
+  {
+   "id": "P116",
+   "input": "mark",
+   "value": "JRL B 1924",
+   "keys": [
+    "b1924"
+   ],
+   "key": "b1924",
+   "canonical_to_key": "jrl b 1924",
+   "core_key": "jrl b 1924",
+   "compact": "jrl b 1924",
+   "prep_shelfmark": "JRL B 1924",
+   "core_of": "JRL_B_1924",
+   "token_of": "Manchester_JRL"
+  },
+  {
+   "id": "P116",
+   "input": "expected_es_id",
+   "value": "Manchester_JRL_B_1924",
+   "keys": [
+    "b1924"
+   ],
+   "key": "b1924",
+   "canonical_to_key": "b1924",
+   "core_key": "b1924",
+   "compact": "manchesterjrlb1924",
+   "prep_shelfmark": "Manchester JRL B 1924",
+   "core_of": "Manchester_JRL_B_1924",
+   "token_of": "Manchester_JRL"
+  },
+  {
+   "id": "P117",
+   "input": "mark",
+   "value": "Manchester: B 1924",
+   "keys": [
+    "b1924"
+   ],
+   "key": "b1924",
+   "canonical_to_key": "manchester: b 1924",
+   "core_key": "manchester: b 1924",
+   "compact": "manchester: b 1924",
+   "prep_shelfmark": "Manchester: B 1924",
+   "core_of": "JRL_B_1924",
+   "token_of": "Manchester_JRL"
+  },
+  {
+   "id": "P117",
+   "input": "expected_es_id",
+   "value": "Manchester_JRL_B_1924",
+   "keys": [
+    "b1924"
+   ],
+   "key": "b1924",
+   "canonical_to_key": "b1924",
+   "core_key": "b1924",
+   "compact": "manchesterjrlb1924",
+   "prep_shelfmark": "Manchester JRL B 1924",
+   "core_of": "Manchester_JRL_B_1924",
+   "token_of": "Manchester_JRL"
+  },
+  {
+   "id": "P118",
+   "input": "mark",
+   "value": "The University of Manchester Library, Manchester, England Ms. B 1924",
+   "keys": [
+    "b1924"
+   ],
+   "key": "b1924",
+   "canonical_to_key": "the university of manchester library, manchester, england ms. b 1924",
+   "core_key": "the university of manchester library, manchester, england ms. b 1924",
+   "compact": "the university of manchester library, manchester, england ms. b 1924",
+   "prep_shelfmark": "The University of Manchester Library, Manchester, England Ms. B 1924",
+   "core_of": "JRL_B_1924",
+   "token_of": "Manchester_JRL"
+  },
+  {
+   "id": "P118",
+   "input": "expected_es_id",
+   "value": "Manchester_JRL_B_1924",
+   "keys": [
+    "b1924"
+   ],
+   "key": "b1924",
+   "canonical_to_key": "b1924",
+   "core_key": "b1924",
+   "compact": "manchesterjrlb1924",
+   "prep_shelfmark": "Manchester JRL B 1924",
+   "core_of": "Manchester_JRL_B_1924",
+   "token_of": "Manchester_JRL"
+  },
+  {
+   "id": "P119",
+   "input": "mark",
+   "value": "JRL L 155",
+   "keys": [
+    "l155"
+   ],
+   "key": "l155",
+   "canonical_to_key": "jrl l 155",
+   "core_key": "jrl l 155",
+   "compact": "jrl l 155",
+   "prep_shelfmark": "JRL L 155",
+   "core_of": "JRL_L_155",
+   "token_of": "Manchester_JRL"
+  },
+  {
+   "id": "P119",
+   "input": "expected_es_id",
+   "value": "Manchester_JRL_L_155",
+   "keys": [
+    "l155"
+   ],
+   "key": "l155",
+   "canonical_to_key": "l155",
+   "core_key": "l155",
+   "compact": "manchesterjrll155",
+   "prep_shelfmark": "Manchester JRL L 155",
+   "core_of": "Manchester_JRL_L_155",
+   "token_of": "Manchester_JRL"
+  },
+  {
+   "id": "P120",
+   "input": "mark",
+   "value": "Manchester L 155",
+   "keys": [
+    "l155"
+   ],
+   "key": "l155",
+   "canonical_to_key": "manchester l 155",
+   "core_key": "manchester l 155",
+   "compact": "manchester l 155",
+   "prep_shelfmark": "Manchester L 155",
+   "core_of": "JRL_L_155",
+   "token_of": "Manchester_JRL"
+  },
+  {
+   "id": "P120",
+   "input": "expected_es_id",
+   "value": "Manchester_JRL_L_155",
+   "keys": [
+    "l155"
+   ],
+   "key": "l155",
+   "canonical_to_key": "l155",
+   "core_key": "l155",
+   "compact": "manchesterjrll155",
+   "prep_shelfmark": "Manchester JRL L 155",
+   "core_of": "Manchester_JRL_L_155",
+   "token_of": "Manchester_JRL"
+  },
+  {
+   "id": "P121",
+   "input": "mark",
+   "value": "DK 231",
+   "keys": [
+    "dk231"
+   ],
+   "key": "dk231",
+   "canonical_to_key": "dk 231",
+   "core_key": "dk 231",
+   "compact": "dk 231",
+   "prep_shelfmark": "DK 231",
+   "core_of": "DK_231",
+   "token_of": null
+  },
+  {
+   "id": "P121",
+   "input": "expected_es_id",
+   "value": "Budapest_MTA_DK_231",
+   "keys": [
+    "dk231"
+   ],
+   "key": "dk231",
+   "canonical_to_key": "dk231",
+   "core_key": "dk231",
+   "compact": "budapestmtadk231",
+   "prep_shelfmark": "Budapest MTA DK 231",
+   "core_of": "Budapest_MTA_DK_231",
+   "token_of": "Budapest_MTA"
+  },
+  {
+   "id": "P122",
+   "input": "mark",
+   "value": "DK 231.1 (alt: IX)",
+   "keys": [
+    "dk231_1"
+   ],
+   "key": "dk231_1",
+   "canonical_to_key": "dk 231.1 (alt: ix)",
+   "core_key": "dk 231.1 (alt: ix)",
+   "compact": "dk 231.1 (alt: ix)",
+   "prep_shelfmark": "DK 231.1",
+   "core_of": "DK_231_1",
+   "token_of": null
+  },
+  {
+   "id": "P122",
+   "input": "expected_es_id",
+   "value": "Budapest_MTA_DK_231_1",
+   "keys": [
+    "dk231_1"
+   ],
+   "key": "dk231_1",
+   "canonical_to_key": "dk231_1",
+   "core_key": "dk231_1",
+   "compact": "budapestmtadk231_1",
+   "prep_shelfmark": "Budapest MTA DK 231 1",
+   "core_of": "Budapest_MTA_DK_231_1",
+   "token_of": "Budapest_MTA"
+  },
+  {
+   "id": "P123",
+   "input": "mark",
+   "value": "Kaufmann DK 231.1",
+   "keys": [
+    "kaufmanndk231_1"
+   ],
+   "key": "kaufmanndk231_1",
+   "canonical_to_key": "kaufmann dk 231.1",
+   "core_key": "kaufmann dk 231.1",
+   "compact": "kaufmann dk 231.1",
+   "prep_shelfmark": "Kaufmann DK 231.1",
+   "core_of": "Kaufmann_DK_231_1",
+   "token_of": "Budapest_MTA"
+  },
+  {
+   "id": "P123",
+   "input": "expected_es_id",
+   "value": "Budapest_MTA_DK_231_1",
+   "keys": [
+    "dk231_1"
+   ],
+   "key": "dk231_1",
+   "canonical_to_key": "dk231_1",
+   "core_key": "dk231_1",
+   "compact": "budapestmtadk231_1",
+   "prep_shelfmark": "Budapest MTA DK 231 1",
+   "core_of": "Budapest_MTA_DK_231_1",
+   "token_of": "Budapest_MTA"
+  },
+  {
+   "id": "P124",
+   "input": "mark",
+   "value": "Kaufmann DK 231",
+   "keys": [
+    "kaufmanndk231"
+   ],
+   "key": "kaufmanndk231",
+   "canonical_to_key": "kaufmann dk 231",
+   "core_key": "kaufmann dk 231",
+   "compact": "kaufmann dk 231",
+   "prep_shelfmark": "Kaufmann DK 231",
+   "core_of": "Kaufmann_DK_231",
+   "token_of": "Budapest_MTA"
+  },
+  {
+   "id": "P124",
+   "input": "expected_es_id",
+   "value": "Budapest_MTA_DK_231",
+   "keys": [
+    "dk231"
+   ],
+   "key": "dk231",
+   "canonical_to_key": "dk231",
+   "core_key": "dk231",
+   "compact": "budapestmtadk231",
+   "prep_shelfmark": "Budapest MTA DK 231",
+   "core_of": "Budapest_MTA_DK_231",
+   "token_of": "Budapest_MTA"
+  },
+  {
+   "id": "P125",
+   "input": "mark",
+   "value": "BNU 4038.10",
+   "keys": [
+    "bnu4038_10"
+   ],
+   "key": "bnu4038_10",
+   "canonical_to_key": "bnu 4038.10",
+   "core_key": "bnu 4038.10",
+   "compact": "bnu 4038.10",
+   "prep_shelfmark": "BNU 4038.10",
+   "core_of": "BNU_4038_10",
+   "token_of": null
+  },
+  {
+   "id": "P125",
+   "input": "expected_es_id",
+   "value": "Strasbourg_4038_10",
+   "keys": [
+    "4038_10"
+   ],
+   "key": "4038_10",
+   "canonical_to_key": "4038_10",
+   "core_key": "4038_10",
+   "compact": "strasbourg4038_10",
+   "prep_shelfmark": "Strasbourg 4038 10",
+   "core_of": "Strasbourg_4038_10",
+   "token_of": "Strasbourg"
+  },
+  {
+   "id": "P126",
+   "input": "mark",
+   "value": "The National and University Library of Strasbourg, Strasbourg, France Ms. 4038",
+   "keys": [
+    "4038"
+   ],
+   "key": "4038",
+   "canonical_to_key": "the national and university library of strasbourg, strasbourg, france ms. 4038",
+   "core_key": "the national and university library of strasbourg, strasbourg, france ms. 4038",
+   "compact": "the national and university library of strasbourg, strasbourg, france ms. 4038",
+   "prep_shelfmark": "The National and University Library of Strasbourg, Strasbourg, France Ms. 4038",
+   "core_of": "4038",
+   "token_of": "Strasbourg"
+  },
+  {
+   "id": "P126",
+   "input": "expected_es_id",
+   "value": "Strasbourg_4038",
+   "keys": [
+    "4038"
+   ],
+   "key": "4038",
+   "canonical_to_key": "4038",
+   "core_key": "4038",
+   "compact": "strasbourg4038",
+   "prep_shelfmark": "Strasbourg 4038",
+   "core_of": "Strasbourg_4038",
+   "token_of": "Strasbourg"
+  },
+  {
+   "id": "P127",
+   "input": "mark",
+   "value": "Stras 4038.10",
+   "keys": [
+    "stras4038_10"
+   ],
+   "key": "stras4038_10",
+   "canonical_to_key": "stras 4038.10",
+   "core_key": "stras 4038.10",
+   "compact": "stras 4038.10",
+   "prep_shelfmark": "Stras 4038.10",
+   "core_of": "Stras_4038_10",
+   "token_of": null
+  },
+  {
+   "id": "P127",
+   "input": "expected_es_id",
+   "value": "Strasbourg_4038_10",
+   "keys": [
+    "4038_10"
+   ],
+   "key": "4038_10",
+   "canonical_to_key": "4038_10",
+   "core_key": "4038_10",
+   "compact": "strasbourg4038_10",
+   "prep_shelfmark": "Strasbourg 4038 10",
+   "core_of": "Strasbourg_4038_10",
+   "token_of": "Strasbourg"
+  },
+  {
+   "id": "P128",
+   "input": "mark",
+   "value": "Kaufmann 231",
+   "keys": [
+    "kaufmann231"
+   ],
+   "key": "kaufmann231",
+   "canonical_to_key": "kaufmann 231",
+   "core_key": "kaufmann 231",
+   "compact": "kaufmann 231",
+   "prep_shelfmark": "Kaufmann 231",
+   "core_of": "Kaufmann_231",
+   "token_of": "Budapest_MTA"
+  },
+  {
+   "id": "P129",
+   "input": "mark",
+   "value": "Strasbourg 4038",
+   "keys": [
+    "4038"
+   ],
+   "key": "4038",
+   "canonical_to_key": "strasbourg 4038",
+   "core_key": "strasbourg 4038",
+   "compact": "strasbourg 4038",
+   "prep_shelfmark": "Strasbourg 4038",
+   "core_of": "Strasbourg_4038",
+   "token_of": "Strasbourg"
+  },
+  {
+   "id": "P129",
+   "input": "expected_es_id",
+   "value": "Strasbourg_4038",
+   "keys": [
+    "4038"
+   ],
+   "key": "4038",
+   "canonical_to_key": "4038",
+   "core_key": "4038",
+   "compact": "strasbourg4038",
+   "prep_shelfmark": "Strasbourg 4038",
+   "core_of": "Strasbourg_4038",
+   "token_of": "Strasbourg"
+  },
+  {
+   "id": "P130",
+   "input": "mark",
+   "value": "PER H 22",
+   "keys": [
+    "perh22"
+   ],
+   "key": "perh22",
+   "canonical_to_key": "per h 22",
+   "core_key": "per h 22",
+   "compact": "per h 22",
+   "prep_shelfmark": "PER H 22",
+   "core_of": "PER_H_22",
+   "token_of": null
+  },
+  {
+   "id": "P130",
+   "input": "expected_es_id",
+   "value": "Vienna_ONB_PER_H_22",
+   "keys": [
+    "perh22"
+   ],
+   "key": "perh22",
+   "canonical_to_key": "perh22",
+   "core_key": "perh22",
+   "compact": "viennaonbperh22",
+   "prep_shelfmark": "Vienna ONB PER H 22",
+   "core_of": "Vienna_ONB_PER_H_22",
+   "token_of": "Vienna_ONB"
+  },
+  {
+   "id": "P131",
+   "input": "mark",
+   "value": "PER H 92",
+   "keys": [
+    "perh92"
+   ],
+   "key": "perh92",
+   "canonical_to_key": "per h 92",
+   "core_key": "per h 92",
+   "compact": "per h 92",
+   "prep_shelfmark": "PER H 92",
+   "core_of": "PER_H_92",
+   "token_of": null
+  },
+  {
+   "id": "P131",
+   "input": "expected_es_id",
+   "value": "Vienna_ONB_PER_H_92",
+   "keys": [
+    "perh92"
+   ],
+   "key": "perh92",
+   "canonical_to_key": "perh92",
+   "core_key": "perh92",
+   "compact": "viennaonbperh92",
+   "prep_shelfmark": "Vienna ONB PER H 92",
+   "core_of": "Vienna_ONB_PER_H_92",
+   "token_of": "Vienna_ONB"
+  },
+  {
+   "id": "P132",
+   "input": "mark",
+   "value": "Austrian National Library, Vienna, Austria Cod. hebr. 65",
+   "keys": [
+    "austriannationallibraryviennaaustriacodhebr65"
+   ],
+   "key": "austriannationallibraryviennaaustriacodhebr65",
+   "canonical_to_key": "austrian national library, vienna, austria cod. hebr. 65",
+   "core_key": "austrian national library, vienna, austria cod. hebr. 65",
+   "compact": "austrian national library, vienna, austria cod. hebr. 65",
+   "prep_shelfmark": "Austrian National Library, Vienna, Austria Cod. hebr. 65",
+   "core_of": "Austrian_National_Library_Vienna_Austria_Cod_hebr_65",
+   "token_of": "Vienna_ONB"
+  },
+  {
+   "id": "P132",
+   "input": "expected_es_id",
+   "value": "Vienna_ONB_Cod_hebr_65",
+   "keys": [
+    "codhebr65"
+   ],
+   "key": "codhebr65",
+   "canonical_to_key": "codhebr65",
+   "core_key": "codhebr65",
+   "compact": "viennaonbcodhebr65",
+   "prep_shelfmark": "Vienna ONB Cod hebr 65",
+   "core_of": "Vienna_ONB_Cod_hebr_65",
+   "token_of": "Vienna_ONB"
+  },
+  {
+   "id": "P133",
+   "input": "mark",
+   "value": "Freer Genizah XVI",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "freer genizah xvi",
+   "prep_shelfmark": "Freer Genizah XVI",
+   "core_of": "Freer_Genizah_XVI",
+   "token_of": "Washington_Freer"
+  },
+  {
+   "id": "P134",
+   "input": "mark",
+   "value": "F 1908.44",
+   "keys": [
+    "f1908_44"
+   ],
+   "key": "f1908_44",
+   "canonical_to_key": "f 1908.44",
+   "core_key": "f 1908.44",
+   "compact": "f 1908.44",
+   "prep_shelfmark": "F 1908.44",
+   "core_of": "F_1908_44",
+   "token_of": null
+  },
+  {
+   "id": "P134",
+   "input": "expected_es_id",
+   "value": "Washington_Freer_F_1908_44",
+   "keys": [
+    "f1908_44"
+   ],
+   "key": "f1908_44",
+   "canonical_to_key": "f1908_44",
+   "core_key": "f1908_44",
+   "compact": "washingtonfreerf1908_44",
+   "prep_shelfmark": "Washington Freer F 1908 44",
+   "core_of": "Washington_Freer_F_1908_44",
+   "token_of": "Washington_Freer"
+  },
+  {
+   "id": "P135",
+   "input": "mark",
+   "value": "F 1908.44A",
+   "keys": [
+    "f1908_44a"
+   ],
+   "key": "f1908_44a",
+   "canonical_to_key": "f 1908.44a",
+   "core_key": "f 1908.44a",
+   "compact": "f 1908.44a",
+   "prep_shelfmark": "F 1908.44A",
+   "core_of": "F_1908_44A",
+   "token_of": null
+  },
+  {
+   "id": "P135",
+   "input": "expected_es_id",
+   "value": "Washington_Freer_F_1908_44A",
+   "keys": [
+    "f1908_44a"
+   ],
+   "key": "f1908_44a",
+   "canonical_to_key": "f1908_44a",
+   "core_key": "f1908_44a",
+   "compact": "washingtonfreerf1908_44a",
+   "prep_shelfmark": "Washington Freer F 1908 44A",
+   "core_of": "Washington_Freer_F_1908_44A",
+   "token_of": "Washington_Freer"
+  },
+  {
+   "id": "P136",
+   "input": "mark",
+   "value": "Washington D.C. Freer: F 10",
+   "keys": [
+    "f10"
+   ],
+   "key": "f10",
+   "canonical_to_key": "washington d.c. freer: f 10",
+   "core_key": "washington d.c. freer: f 10",
+   "compact": "washington d.c. freer: f 10",
+   "prep_shelfmark": "Washington D.C. Freer: F 10",
+   "core_of": "F_10",
+   "token_of": "Washington_Freer"
+  },
+  {
+   "id": "P136",
+   "input": "expected_es_id",
+   "value": "Washington_Freer_F_10",
+   "keys": [
+    "f10"
+   ],
+   "key": "f10",
+   "canonical_to_key": "f10",
+   "core_key": "f10",
+   "compact": "washingtonfreerf10",
+   "prep_shelfmark": "Washington Freer F 10",
+   "core_of": "Washington_Freer_F_10",
+   "token_of": "Washington_Freer"
+  },
+  {
+   "id": "P137",
+   "input": "mark",
+   "value": "Geneva 119",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "geneva 119",
+   "core_key": "geneva 119",
+   "compact": "geneva 119",
+   "prep_shelfmark": "Geneva 119",
+   "core_of": "Geneva_119",
+   "token_of": "Geneva"
+  },
+  {
+   "id": "P137",
+   "input": "expected_es_id",
+   "value": "Geneva_119",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "geneva119",
+   "prep_shelfmark": "Geneva 119",
+   "core_of": "Geneva_119",
+   "token_of": "Geneva"
+  },
+  {
+   "id": "P138",
+   "input": "mark",
+   "value": "Geneva: 119",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "geneva: 119",
+   "core_key": "geneva: 119",
+   "compact": "geneva: 119",
+   "prep_shelfmark": "Geneva: 119",
+   "core_of": "119",
+   "token_of": "Geneva"
+  },
+  {
+   "id": "P138",
+   "input": "expected_es_id",
+   "value": "Geneva_119",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "geneva119",
+   "prep_shelfmark": "Geneva 119",
+   "core_of": "Geneva_119",
+   "token_of": "Geneva"
+  },
+  {
+   "id": "P139",
+   "input": "mark",
+   "value": "Strasbourg BNU 4038",
+   "keys": [
+    "bnu4038"
+   ],
+   "key": "bnu4038",
+   "canonical_to_key": "strasbourg bnu 4038",
+   "core_key": "strasbourg bnu 4038",
+   "compact": "strasbourg bnu 4038",
+   "prep_shelfmark": "Strasbourg BNU 4038",
+   "core_of": "Strasbourg_BNU_4038",
+   "token_of": "Strasbourg"
+  },
+  {
+   "id": "P139",
+   "input": "expected_es_id",
+   "value": "Strasbourg_4038",
+   "keys": [
+    "4038"
+   ],
+   "key": "4038",
+   "canonical_to_key": "4038",
+   "core_key": "4038",
+   "compact": "strasbourg4038",
+   "prep_shelfmark": "Strasbourg 4038",
+   "core_of": "Strasbourg_4038",
+   "token_of": "Strasbourg"
+  },
+  {
+   "id": "P140",
+   "input": "mark",
+   "value": "Stras. 4038.10",
+   "keys": [
+    "stras4038_10"
+   ],
+   "key": "stras4038_10",
+   "canonical_to_key": "stras. 4038.10",
+   "core_key": "stras. 4038.10",
+   "compact": "stras. 4038.10",
+   "prep_shelfmark": "Stras. 4038.10",
+   "core_of": "Stras_4038_10",
+   "token_of": "Strasbourg"
+  },
+  {
+   "id": "P140",
+   "input": "expected_es_id",
+   "value": "Strasbourg_4038_10",
+   "keys": [
+    "4038_10"
+   ],
+   "key": "4038_10",
+   "canonical_to_key": "4038_10",
+   "core_key": "4038_10",
+   "compact": "strasbourg4038_10",
+   "prep_shelfmark": "Strasbourg 4038 10",
+   "core_of": "Strasbourg_4038_10",
+   "token_of": "Strasbourg"
+  },
+  {
+   "id": "P141",
+   "input": "mark",
+   "value": "The National and University Library of Strasbourg, Strasbourg, France Ms. 4038.10",
+   "keys": [
+    "4038_10"
+   ],
+   "key": "4038_10",
+   "canonical_to_key": "the national and university library of strasbourg, strasbourg, france ms. 4038.10",
+   "core_key": "the national and university library of strasbourg, strasbourg, france ms. 4038.10",
+   "compact": "the national and university library of strasbourg, strasbourg, france ms. 4038.10",
+   "prep_shelfmark": "The National and University Library of Strasbourg, Strasbourg, France Ms. 4038.10",
+   "core_of": "4038_10",
+   "token_of": "Strasbourg"
+  },
+  {
+   "id": "P141",
+   "input": "expected_es_id",
+   "value": "Strasbourg_4038_10",
+   "keys": [
+    "4038_10"
+   ],
+   "key": "4038_10",
+   "canonical_to_key": "4038_10",
+   "core_key": "4038_10",
+   "compact": "strasbourg4038_10",
+   "prep_shelfmark": "Strasbourg 4038 10",
+   "core_of": "Strasbourg_4038_10",
+   "token_of": "Strasbourg"
+  },
+  {
+   "id": "P142",
+   "input": "mark",
+   "value": "Paris BnF Hebr. 1234",
+   "keys": [
+    "hebr1234"
+   ],
+   "key": "hebr1234",
+   "canonical_to_key": "paris bnf hebr. 1234",
+   "core_key": "paris bnf hebr. 1234",
+   "compact": "paris bnf hebr. 1234",
+   "prep_shelfmark": "Paris BnF Hebr. 1234",
+   "core_of": "BnF_Hebr_1234",
+   "token_of": "Paris_BNF"
+  },
+  {
+   "id": "P142",
+   "input": "expected_es_id",
+   "value": "Paris_BNF_hebr_1234",
+   "keys": [
+    "hebr1234"
+   ],
+   "key": "hebr1234",
+   "canonical_to_key": "hebr1234",
+   "core_key": "hebr1234",
+   "compact": "parisbnfhebr1234",
+   "prep_shelfmark": "Paris BNF hebr 1234",
+   "core_of": "Paris_BNF_hebr_1234",
+   "token_of": "Paris_BNF"
+  },
+  {
+   "id": "P143",
+   "input": "mark",
+   "value": "The National Library of France, Paris, France Ms. hebr. 1211",
+   "keys": [
+    "hebr1211"
+   ],
+   "key": "hebr1211",
+   "canonical_to_key": "the national library of france, paris, france ms. hebr. 1211",
+   "core_key": "the national library of france, paris, france ms. hebr. 1211",
+   "compact": "the national library of france, paris, france ms. hebr. 1211",
+   "prep_shelfmark": "The National Library of France, Paris, France Ms. hebr. 1211",
+   "core_of": "hebr_1211",
+   "token_of": "Paris_BNF"
+  },
+  {
+   "id": "P143",
+   "input": "expected_es_id",
+   "value": "Paris_BNF_hebr_1211",
+   "keys": [
+    "hebr1211"
+   ],
+   "key": "hebr1211",
+   "canonical_to_key": "hebr1211",
+   "core_key": "hebr1211",
+   "compact": "parisbnfhebr1211",
+   "prep_shelfmark": "Paris BNF hebr 1211",
+   "core_of": "Paris_BNF_hebr_1211",
+   "token_of": "Paris_BNF"
+  },
+  {
+   "id": "P144",
+   "input": "mark",
+   "value": "Birmingham: Mingana 10",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "birmingham: mingana 10",
+   "core_key": "birmingham: mingana 10",
+   "compact": "birmingham: mingana 10",
+   "prep_shelfmark": "Birmingham: Mingana 10",
+   "core_of": "Mingana_10",
+   "token_of": "Birmingham_Mingana"
+  },
+  {
+   "id": "P144",
+   "input": "expected_es_id",
+   "value": "Birmingham_Mingana_10",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "birminghammingana10",
+   "prep_shelfmark": "Birmingham Mingana 10",
+   "core_of": "Birmingham_Mingana_10",
+   "token_of": "Birmingham_Mingana"
+  },
+  {
+   "id": "P145",
+   "input": "mark",
+   "value": "University of Birmingham Library, Birmingham, England Ms. Mingana 10",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "university of birmingham library, birmingham, england ms. mingana 10",
+   "core_key": "university of birmingham library, birmingham, england ms. mingana 10",
+   "compact": "university of birmingham library, birmingham, england ms. mingana 10",
+   "prep_shelfmark": "University of Birmingham Library, Birmingham, England Ms. Mingana 10",
+   "core_of": "Mingana_10",
+   "token_of": "Birmingham_Mingana"
+  },
+  {
+   "id": "P145",
+   "input": "expected_es_id",
+   "value": "Birmingham_Mingana_10",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "birminghammingana10",
+   "prep_shelfmark": "Birmingham Mingana 10",
+   "core_of": "Birmingham_Mingana_10",
+   "token_of": "Birmingham_Mingana"
+  },
+  {
+   "id": "P146",
+   "input": "mark",
+   "value": "The Russian State Library, Moscow, Russia Ms. Guenzburg 1181",
+   "keys": [
+    "guenzburg1181"
+   ],
+   "key": "guenzburg1181",
+   "canonical_to_key": "the russian state library, moscow, russia ms. guenzburg 1181",
+   "core_key": "the russian state library, moscow, russia ms. guenzburg 1181",
+   "compact": "the russian state library, moscow, russia ms. guenzburg 1181",
+   "prep_shelfmark": "The Russian State Library, Moscow, Russia Ms. Guenzburg 1181",
+   "core_of": "Guenzburg_1181",
+   "token_of": null
+  },
+  {
+   "id": "P147",
+   "input": "mark",
+   "value": "RSL Guenzburg 1181",
+   "keys": [
+    "rslguenzburg1181"
+   ],
+   "key": "rslguenzburg1181",
+   "canonical_to_key": "rsl guenzburg 1181",
+   "core_key": "rsl guenzburg 1181",
+   "compact": "rsl guenzburg 1181",
+   "prep_shelfmark": "RSL Guenzburg 1181",
+   "core_of": "RSL_Guenzburg_1181",
+   "token_of": null
+  },
+  {
+   "id": "P148",
+   "input": "mark",
+   "value": "University Library Heidelberg, Heidelberg, Germany Ms. P. Heid. Hebr. 14",
+   "keys": [
+    "pheidhebr14"
+   ],
+   "key": "pheidhebr14",
+   "canonical_to_key": "university library heidelberg, heidelberg, germany ms. p. heid. hebr. 14",
+   "core_key": "university library heidelberg, heidelberg, germany ms. p. heid. hebr. 14",
+   "compact": "university library heidelberg, heidelberg, germany ms. p. heid. hebr. 14",
+   "prep_shelfmark": "University Library Heidelberg, Heidelberg, Germany Ms. P. Heid. Hebr. 14",
+   "core_of": "P_Heid_Hebr_14",
+   "token_of": "Heidelberg"
+  },
+  {
+   "id": "P148",
+   "input": "expected_es_id",
+   "value": "Heidelberg_P_Heid_Hebr_14",
+   "keys": [
+    "pheidhebr14"
+   ],
+   "key": "pheidhebr14",
+   "canonical_to_key": "pheidhebr14",
+   "core_key": "pheidhebr14",
+   "compact": "heidelbergpheidhebr14",
+   "prep_shelfmark": "Heidelberg P Heid Hebr 14",
+   "core_of": "Heidelberg_P_Heid_Hebr_14",
+   "token_of": "Heidelberg"
+  },
+  {
+   "id": "P149",
+   "input": "mark",
+   "value": "p. Heid. Arab. 2",
+   "keys": [
+    "pheidarab2"
+   ],
+   "key": "pheidarab2",
+   "canonical_to_key": "p. heid. arab. 2",
+   "core_key": "p. heid. arab. 2",
+   "compact": "p. heid. arab. 2",
+   "prep_shelfmark": "p. Heid. Arab. 2",
+   "core_of": "p_Heid_Arab_2",
+   "token_of": null
+  },
+  {
+   "id": "P149",
+   "input": "expected_es_id",
+   "value": "Heidelberg_P_Heid_Arab_2",
+   "keys": [
+    "pheidarab2"
+   ],
+   "key": "pheidarab2",
+   "canonical_to_key": "pheidarab2",
+   "core_key": "pheidarab2",
+   "compact": "heidelbergpheidarab2",
+   "prep_shelfmark": "Heidelberg P Heid Arab 2",
+   "core_of": "Heidelberg_P_Heid_Arab_2",
+   "token_of": "Heidelberg"
+  },
+  {
+   "id": "P150",
+   "input": "mark",
+   "value": "987007606066605171",
+   "keys": [
+    "987007606066605171"
+   ],
+   "key": "987007606066605171",
+   "canonical_to_key": "987007606066605171",
+   "core_key": "987007606066605171",
+   "compact": "987007606066605171",
+   "prep_shelfmark": "987007606066605171",
+   "core_of": "987007606066605171",
+   "token_of": null
+  },
+  {
+   "id": "P151",
+   "input": "mark",
+   "value": "990000412230205171",
+   "keys": [
+    "990000412230205171"
+   ],
+   "key": "990000412230205171",
+   "canonical_to_key": "990000412230205171",
+   "core_key": "990000412230205171",
+   "compact": "990000412230205171",
+   "prep_shelfmark": "990000412230205171",
+   "core_of": "990000412230205171",
+   "token_of": null
+  },
+  {
+   "id": "P152",
+   "input": "mark",
+   "value": "The National Library of Israel, Jerusalem, Israel Ms. Heb. 38°10176",
+   "keys": [
+    "heb38°10176"
+   ],
+   "key": "heb38°10176",
+   "canonical_to_key": "the national library of israel, jerusalem, israel ms. heb. 38°10176",
+   "core_key": "the national library of israel, jerusalem, israel ms. heb. 38°10176",
+   "compact": "the national library of israel, jerusalem, israel ms. heb. 38°10176",
+   "prep_shelfmark": "The National Library of Israel, Jerusalem, Israel Ms. Heb. 38°10176",
+   "core_of": "Heb_38°10176",
+   "token_of": "Jerusalem_NLI"
+  },
+  {
+   "id": "P152",
+   "input": "expected_es_id",
+   "value": "Jerusalem_NLI_Heb_38°10176",
+   "keys": [
+    "heb38°10176"
+   ],
+   "key": "heb38°10176",
+   "canonical_to_key": "heb38°10176",
+   "core_key": "heb38°10176",
+   "compact": "jerusalemnliheb38°10176",
+   "prep_shelfmark": "Jerusalem NLI Heb 38°10176",
+   "core_of": "Jerusalem_NLI_Heb_38°10176",
+   "token_of": "Jerusalem_NLI"
+  },
+  {
+   "id": "P153",
+   "input": "mark",
+   "value": "NLI 4°9463.10",
+   "keys": [
+    "4°9463_10"
+   ],
+   "key": "4°9463_10",
+   "canonical_to_key": "nli 4°9463.10",
+   "core_key": "nli 4°9463.10",
+   "compact": "nli 4°9463.10",
+   "prep_shelfmark": "NLI 4°9463.10",
+   "core_of": "NLI_4°9463_10",
+   "token_of": "Jerusalem_NLI"
+  },
+  {
+   "id": "P153",
+   "input": "expected_es_id",
+   "value": "Jerusalem_NLI_4°9463_10",
+   "keys": [
+    "4°9463_10"
+   ],
+   "key": "4°9463_10",
+   "canonical_to_key": "4°9463_10",
+   "core_key": "4°9463_10",
+   "compact": "jerusalemnli4°9463_10",
+   "prep_shelfmark": "Jerusalem NLI 4°9463 10",
+   "core_of": "Jerusalem_NLI_4°9463_10",
+   "token_of": "Jerusalem_NLI"
+  },
+  {
+   "id": "P154",
+   "input": "mark",
+   "value": "T-S 16.22 + T-S 10J5.17",
+   "keys": [
+    "ts16_22",
+    "ts10j5_17"
+   ],
+   "key": "ts16_22",
+   "canonical_to_key": "t-s 16.22 + t-s 10j5.17",
+   "core_key": "t-s 16.22 + t-s 10j5.17",
+   "compact": "t-s 16.22 + t-s 10j5.17",
+   "prep_shelfmark": "T-S 16.22 + T-S 10J5.17",
+   "core_of": "T_S_16_22_+_T_S_10J5_17",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P155",
+   "input": "mark",
+   "value": "TS 16.44 and TS 12.613",
+   "keys": [
+    "ts16_44andts12_613"
+   ],
+   "key": "ts16_44andts12_613",
+   "canonical_to_key": "ts 16.44 and ts 12.613",
+   "core_key": "ts 16.44 and ts 12.613",
+   "compact": "ts 16.44 and ts 12.613",
+   "prep_shelfmark": "TS 16.44 and TS 12.613",
+   "core_of": "T_S_16_44_and_TS_12_613",
+   "token_of": null
+  },
+  {
+   "id": "P156",
+   "input": "mark",
+   "value": "T-S 8J5.2 a, b, c",
+   "keys": [
+    "ts8j5_2abc"
+   ],
+   "key": "ts8j5_2abc",
+   "canonical_to_key": "t-s 8j5.2 a, b, c",
+   "core_key": "t-s 8j5.2 a, b, c",
+   "compact": "t-s 8j5.2 a, b, c",
+   "prep_shelfmark": "T-S 8J5.2 a, b, c",
+   "core_of": "T_S_8J5_2a_b_c",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P157",
+   "input": "mark",
+   "value": "Cambridge CUL: T-S 16.44 - Cambridge CUL: T-S 12.613",
+   "keys": [
+    "ts12_613"
+   ],
+   "key": "ts12_613",
+   "canonical_to_key": "cambridge cul: t-s 16.44 - cambridge cul: t-s 12.613",
+   "core_key": "cambridge cul: t-s 16.44 - cambridge cul: t-s 12.613",
+   "compact": "cambridge cul: t-s 16.44 - cambridge cul: t-s 12.613",
+   "prep_shelfmark": "Cambridge CUL: T-S 16.44 - Cambridge CUL: T-S 12.613",
+   "core_of": "T_S_12_613",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P158",
+   "input": "mark",
+   "value": "T-S 12.613; T-S 16.44",
+   "keys": [
+    "ts12_613;_ts16_44"
+   ],
+   "key": "ts12_613;_ts16_44",
+   "canonical_to_key": "t-s 12.613; t-s 16.44",
+   "core_key": "t-s 12.613; t-s 16.44",
+   "compact": "t-s 12.613; t-s 16.44",
+   "prep_shelfmark": "T-S 12.613; T-S 16.44",
+   "core_of": "T_S_12_613;_T_S16_44",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P159",
+   "input": "mark",
+   "value": "Cambridge University Library, Cambridge, England Ms. T-S F 3.74B",
+   "keys": [
+    "tsf3_74b"
+   ],
+   "key": "tsf3_74b",
+   "canonical_to_key": "cambridge university library, cambridge, england ms. t-s f 3.74b",
+   "core_key": "cambridge university library, cambridge, england ms. t-s f 3.74b",
+   "compact": "cambridge university library, cambridge, england ms. t-s f 3.74b",
+   "prep_shelfmark": "Cambridge University Library, Cambridge, England Ms. T-S F 3.74B",
+   "core_of": "T_S_F3_74B",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P159",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_F3_74b",
+   "keys": [
+    "tsf3_74b"
+   ],
+   "key": "tsf3_74b",
+   "canonical_to_key": "tsf3_74b",
+   "core_key": "tsf3_74b",
+   "compact": "cambridgecultsf3_74b",
+   "prep_shelfmark": "Cambridge CUL T S F3 74b",
+   "core_of": "Cambridge_CUL_T_S_F3_74b",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P160",
+   "input": "mark",
+   "value": "Cambridge CUL: T-S F3.74b",
+   "keys": [
+    "tsf3_74b"
+   ],
+   "key": "tsf3_74b",
+   "canonical_to_key": "cambridge cul: t-s f3.74b",
+   "core_key": "cambridge cul: t-s f3.74b",
+   "compact": "cambridge cul: t-s f3.74b",
+   "prep_shelfmark": "Cambridge CUL: T-S F3.74b",
+   "core_of": "T_S_F3_74b",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P160",
+   "input": "expected_es_id",
+   "value": "Cambridge_CUL_T_S_F3_74b",
+   "keys": [
+    "tsf3_74b"
+   ],
+   "key": "tsf3_74b",
+   "canonical_to_key": "tsf3_74b",
+   "core_key": "tsf3_74b",
+   "compact": "cambridgecultsf3_74b",
+   "prep_shelfmark": "Cambridge CUL T S F3 74b",
+   "core_of": "Cambridge_CUL_T_S_F3_74b",
+   "token_of": "Cambridge_CUL"
+  },
+  {
+   "id": "P162",
+   "input": "mark",
+   "value": "   ",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "   ",
+   "prep_shelfmark": "",
+   "core_of": "",
+   "token_of": null
+  },
+  {
+   "id": "P163",
+   "input": "mark",
+   "value": "N/A",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "n/a",
+   "prep_shelfmark": "N/A",
+   "core_of": "N_A",
+   "token_of": null
+  },
+  {
+   "id": "P164",
+   "input": "mark",
+   "value": "unknown",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "unknown",
+   "prep_shelfmark": "unknown",
+   "core_of": "",
+   "token_of": null
+  },
+  {
+   "id": "P165",
+   "input": "mark",
+   "value": "(shelfmark unknown)",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "(shelfmark unknown)",
+   "prep_shelfmark": "",
+   "core_of": "",
+   "token_of": null
+  },
+  {
+   "id": "P166",
+   "input": "mark",
+   "value": "see above",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "see above",
+   "prep_shelfmark": "see above",
+   "core_of": "see_above",
+   "token_of": null
+  },
+  {
+   "id": "P167",
+   "input": "mark",
+   "value": "Plate IV",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "plate iv",
+   "prep_shelfmark": "Plate IV",
+   "core_of": "Plate_IV",
+   "token_of": null
+  },
+  {
+   "id": "P168",
+   "input": "mark",
+   "value": "———",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "———",
+   "prep_shelfmark": "———",
+   "core_of": "",
+   "token_of": null
+  },
+  {
+   "id": "P169",
+   "input": "mark",
+   "value": "כתב יד",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "כתב יד",
+   "prep_shelfmark": "כתב יד",
+   "core_of": "כתב_יד",
+   "token_of": null
+  },
+  {
+   "id": "P170",
+   "input": "mark",
+   "value": "None",
+   "keys": [],
+   "key": "",
+   "canonical_to_key": "",
+   "core_key": "",
+   "compact": "none",
+   "prep_shelfmark": "None",
+   "core_of": "None",
+   "token_of": null
+  }
+ ]
+}

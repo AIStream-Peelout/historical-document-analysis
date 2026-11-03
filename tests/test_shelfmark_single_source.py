@@ -71,7 +71,9 @@ _KEY_NAMES = ("*shelf*key*", "loose_key", "canonical_id", "shelfmark_core_id")
 #: Git-tracked path -> the violations it may keep (PR-1: every tracked caller found today). Shrinks in PRs 3, 4, 6
 #: and 7 (PR-4 removed decontam_gate, build_documentary_grounding, build_script_tags,
 #: screen_training_misalignment, verify_decontamination, es_image_gap_report, enrich_fragment_people,
-#: normalizer_report and oxford_id_map). Untracked files go in :data:`LOCAL_ALLOWLIST_FILE`, never here.
+#: normalizer_report and oxford_id_map; PR-6 removed none: ``lit_segment`` and ``contamination`` never tripped the
+#: scan, and ``text27b/shelfmarks.py`` stays as a FROZEN key grammar). Untracked files go in
+#: :data:`LOCAL_ALLOWLIST_FILE`, never here.
 ALLOWLIST: Dict[str, FrozenSet[str]] = {
     # Group C key wrappers still to migrate (arabic_scrape_queue: deferred while it carries unrelated work;
     # the legacy-store trio)
