@@ -54,3 +54,8 @@ logs
 
 # the conversion kit must travel with its pinned requirements (the root *.txt rule would drop it)
 !src/finetuning/text27b/mlx_convert_kit/requirements.txt
+
+# shelf-mark lint: local allowlist supplement for files kept outside git (tests/test_shelfmark_single_source.py)
+tests/fixtures/shelfmark_allowlist.local.json
+# shelf-mark golden fixtures must travel with the tests (the root *.txt rule would drop the ES-id sample)
+!tests/fixtures/es_id_sample.txt
