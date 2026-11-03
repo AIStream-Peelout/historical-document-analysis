@@ -34,7 +34,7 @@ import os
 import re
 from typing import Dict, List, NamedTuple, Optional, Set, Tuple
 
-from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
+from src.datasets.shelfmarks import parse_oxford
 from src.datasets.merging.ktiv_images import GCS_BUCKET, gcs_url  # noqa: F401
 
 BODLEIAN_PREFIX = "BODLEIAN"
@@ -105,7 +105,7 @@ def leaf_folios(record: dict) -> Set[int]:
     :param record: One Bodleian scrape record.
     :returns: The folio numbers (empty when none can be derived).
     """
-    parsed = ShelfmarkNormalizer.parse_oxford(record.get("shelf_mark") or "")
+    parsed = parse_oxford(record.get("shelf_mark") or "")
     folios = parsed.folios if parsed else set()
     if folios:
         return folios

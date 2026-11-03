@@ -12,7 +12,7 @@ import json
 import random
 from collections import Counter
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pytest
@@ -20,8 +20,8 @@ from datasets import load_from_disk
 from PIL import Image
 
 from src.datasets.evaluations.helper_eval_scripts.decontam_gate import DecontamGate
+from src.datasets.shelfmarks import ShelfmarkIndex
 from src.finetuning.qwen_hebrew import build_legacy_store_rows as bl
-from src.finetuning.qwen_hebrew.colab import derive_v25a as d25
 
 LETTERS = "אבגדהוזחטיכלמנסעפצקרשת"
 SIDE_TEXT = LETTERS * 3            # 66 letters, 63 4-grams: enough matched grams for every recall used below
@@ -102,6 +102,24 @@ def fake_gate(clean: Sequence[str] = (), bench: Sequence[str] = ()) -> DecontamG
     gate.clean_keys = {DecontamGate.loose_key(s) for s in clean}
     gate.bench_keys = {DecontamGate.loose_key(s) for s in bench}
     return gate
+
+
+def fake_index(records: Iterable[Dict[str, Any]] = ()) -> ShelfmarkIndex:
+    """A shelf-mark index over synthetic merged-corpus records (no file read).
+
+    :param records: ``{canonical_id, shelfmark_display, pgpids}`` records.
+    :return: Index.
+    """
+    return ShelfmarkIndex(list(records))
+
+
+def fixture_index(cids: Iterable[str]) -> ShelfmarkIndex:
+    """An index whose ES ids are the given documents, each displayed as its id with spaces.
+
+    :param cids: Canonical ids.
+    :return: Index.
+    """
+    return fake_index({"canonical_id": c, "shelfmark_display": c.replace("_", " ")} for c in cids)
 
 
 # ----------------------------------------------------------------------------------------------------------- text
@@ -341,17 +359,55 @@ def test_row_stem_names_the_image_token() -> None:
 
 # ------------------------------------------------------------------------------------------------------- leakage
 
+LEAK_INDEX_RECORDS = [
+    {"canonical_id": "Cambridge_CUL_T_S_8_4", "shelfmark_display": "T-S 8.4"},
+    {"canonical_id": "Cambridge_CUL_T_S_10J12_4", "shelfmark_display": "T-S 10J12.4", "pgpids": ["555"]},
+    {"canonical_id": "Cambridge_CUL_T_S_99_1", "shelfmark_display": "T-S 99.1"},
+    {"canonical_id": "Cambridge_CUL_T_S_2_2", "shelfmark_display": "T-S 2.2"},
+    {"canonical_id": "Cambridge_CUL_T_S_1_1", "shelfmark_display": "T-S 1.1"},
+    {"canonical_id": "New_York_JTS_ENA_2_26", "shelfmark_display": "ENA 2.26"},
+    {"canonical_id": "New_York_JTS_ENA_22_6", "shelfmark_display": "ENA 22.6"},
+]
+
+
 def test_identity_leakage_rules() -> None:
-    """Registered canonical id, registered shelf mark, clean v2 key and benchmark key each hold a document out."""
-    held = d25.HeldOut(ids=frozenset({"Cambridge_CUL_T_S_8_4"}), keys=frozenset({d25.shelfmark_key("T-S 10J12.4")}))
+    """Registered ES id, registered shelf mark (resolved to its ES id), clean v2 key, benchmark key and registered PGP id
+    each hold a document out."""
+    index = fake_index(LEAK_INDEX_RECORDS)
+    held = bl.held_out_ids(["Cambridge_CUL_T_S_8_4", "Cambridge_CUL_T_S_10J12_4"], [], [], {}, index)
     gate = fake_gate(clean=["T-S 13J1.1"], bench=["T-S 16.100"])
-    assert bl.identity_leakage("Cambridge_CUL_T_S_8_4", "T-S 8.4", [], held, {}, gate)["derive"]
-    assert "registered benchmark shelf mark" in bl.identity_leakage("X", "T-S 10J12.4 + T-S 99.1", [], held, {}, gate)["derive"]
-    assert bl.identity_leakage("Y", "T-S 13J1.1", [], held, {}, gate)["clean_v2_keys"]
-    assert bl.identity_leakage("Z", "T-S 16.100", [], held, {}, gate)["benchmark_keys"]
-    pgp_held = d25.HeldOut(pgpids=frozenset({"123"}))
-    assert bl.identity_leakage("W", "T-S 1.1", ["123"], pgp_held, {}, gate)["reasons"]
-    assert bl.identity_leakage("V", "T-S 2.2", [], held, {}, gate)["reasons"] == []
+    assert bl.identity_leakage("Cambridge_CUL_T_S_8_4", "T-S 8.4", [], held, index, gate)["holdout"]
+    joined = bl.identity_leakage("X", "T-S 10J12.4 + T-S 99.1", [], held, index, gate)
+    assert "registered benchmark id ['Cambridge_CUL_T_S_10J12_4']" in joined["holdout"]
+    assert joined["reasons"][0].startswith("identity:canonical_id:")
+    assert bl.identity_leakage("Y", "T-S 13J1.1", [], held, index, gate)["clean_v2_keys"]
+    assert bl.identity_leakage("Z", "T-S 16.100", [], held, index, gate)["benchmark_keys"]
+    pgp_held = bl.HeldOut(pgpids=frozenset({"123"}))
+    assert bl.identity_leakage("W", "T-S 1.1", ["123"], pgp_held, index, gate)["reasons"]
+    assert bl.identity_leakage("V", "T-S 2.2", [], held, index, gate)["reasons"] == []
+    # a PGP id the index links to the document's ES id holds it out (the old pgp_index route)
+    assert "PGP id ['555']" in bl.identity_leakage("U", "T-S 10J12.4", [], bl.HeldOut(pgpids=frozenset({"555"})),
+                                                   index, gate)["holdout"]
+    # no letter/digit squash: ENA 2.26 is not ENA 22.6
+    ena = bl.held_out_ids(["New_York_JTS_ENA_22_6"], [], [], {}, index)
+    assert bl.identity_leakage("New_York_JTS_ENA_2_26", "ENA 2.26", [], ena, index, gate)["reasons"] == []
+
+
+def test_held_out_ids_are_es_ids() -> None:
+    """Registry ids, registered PGP documents (by ``pgpid:<n>`` and by their export shelf mark) and the frozen
+    benchmark all become ES canonical ids; the document side carries ES ids only."""
+    index = fake_index(LEAK_INDEX_RECORDS)
+    held = bl.held_out_ids(["Cambridge_CUL_T_S_8_4"], ["555", "777"], ["Cambridge_CUL_T_S_2_2"],
+                           {"777": "T-S 99.1 + T-S 1.1"}, index)
+    assert held.ids == {"Cambridge_CUL_T_S_8_4", "Cambridge_CUL_T_S_10J12_4", "Cambridge_CUL_T_S_99_1",
+                        "Cambridge_CUL_T_S_1_1"}
+    assert held.frozen_ids == {"Cambridge_CUL_T_S_2_2"} and held.pgpids == {"555", "777"}
+    assert held.ids <= index.ids and held.frozen_ids <= index.ids
+    gate = fake_gate()
+    frozen = bl.identity_leakage("Doc_F", "T-S 2.2", [], held, index, gate)
+    assert frozen["holdout"].startswith("frozen 131-fragment benchmark id")
+    assert frozen["ids"] == ["Cambridge_CUL_T_S_2_2", "Doc_F"]
+    assert set(frozen["ids"]) - {"Doc_F"} <= index.ids and not any("|" in i or ":" in i for i in frozen["ids"])
 
 
 def test_text_leakage_hebrew_and_arabic() -> None:
@@ -476,7 +532,8 @@ def test_build_end_to_end(tmp_path: Path) -> None:
     src = tmp_path / "legacy_store_diplomatic"
     write_inputs(src, records, images, reads)
     out = tmp_path / "legacy_store_diplomatic_v9"
-    leakage = bl.LeakageResources(held=d25.HeldOut(ids=frozenset({"Cambridge_CUL_T_S_8_4"})), pgp_index={},
+    index = fixture_index({im["cid"] for im in images})
+    leakage = bl.LeakageResources(held=bl.HeldOut(ids=frozenset({"Cambridge_CUL_T_S_8_4"})), index=index,
                                   gate=fake_gate(), gt_sets={"genizah_test_v1": [("gt_m", texts["M"])]}, pgpids={})
     report, queue_path = tmp_path / "logs" / "ROWS_REPORT.md", tmp_path / "logs" / "eye_queue_rows.jsonl"
     stats = bl.build(src, out, None, report, queue_path, True, 50, 1, leakage)
@@ -497,7 +554,8 @@ def test_build_end_to_end(tmp_path: Path) -> None:
     assert outcome["Doc_U#0"] == "unassigned" and decisions["Doc_U#0"]["reasons"] == ["not_found"]
     assert outcome["Doc_Z#0"] == "unassigned" and decisions["Doc_Z#0"]["reasons"] == ["no_usable_read"]
     assert decisions["Doc_E#0"]["row"] == "excluded:edition_apparatus"
-    assert decisions["Cambridge_CUL_T_S_8_4#0"]["row"].startswith("held_out:identity:derive_v25a")
+    assert decisions["Cambridge_CUL_T_S_8_4#0"]["row"] == \
+        "held_out:identity:canonical_id:registered benchmark id ['Cambridge_CUL_T_S_8_4']"
     assert decisions["Doc_M#0"]["row"].startswith("held_out:text:genizah_test_v1")
     assert decisions["Doc_R#0"]["row"] == "excluded:read_exceeds_target_2x"
     assert decisions["Doc_R#0"]["coverage"]["letter_ratio"] > 2.0
@@ -512,6 +570,9 @@ def test_build_end_to_end(tmp_path: Path) -> None:
     assert all(m["matched_n4"] >= bl.MIN_MATCHED_GRAMS for m in manifest)
     assert next(m for m in manifest if m["stem"] == "legacy_Doc_A_1v_c1_page")["side_label"] == "2r"
     assert all(m["legacy_store"] and m["prompt"] == bl.PROMPT and m["leakage"] == "clean" for m in manifest)
+    # rows carry ES canonical ids: the document id and the ids the hold-out checked are ids of the index
+    assert all(m["canonical_id"] in index.ids and m["canonical_id"] in m["es_ids"] and set(m["es_ids"]) <= index.ids
+               for m in manifest)
     dsd = load_from_disk(str(out))
     rows = [r for split in dsd for r in dsd[split]]
     assert len(rows) == len(manifest) == sum(stats["rows"].values())
@@ -619,7 +680,7 @@ def test_build_with_a_corrected_images_manifest(tmp_path: Path) -> None:
         reads[f"Noise_{i}#0"] = (hebrew_text(rng), 8)
     src = tmp_path / "legacy_store_diplomatic"
     write_inputs(src, records, images, reads)
-    leakage = bl.LeakageResources(held=d25.HeldOut(), pgp_index={}, gate=fake_gate(), gt_sets={}, pgpids={})
+    leakage = bl.LeakageResources(held=bl.HeldOut(), index=fake_index(), gate=fake_gate(), gt_sets={}, pgpids={})
 
     before = bl.build(src, tmp_path / "legacy_store_diplomatic_v1", None, None, None, False, 50, 1, leakage)
     assert before["rows"] == {"train_page": 0, "val": 0} or sum(before["rows"].values()) == 0

@@ -386,6 +386,8 @@ def normalise_shelfmark(text: str) -> str:
 def series_key_for(shelfmark: Optional[str]) -> Optional[Tuple[str, str]]:
     """Image file-name series of a shelf mark (``Evr. IIA 223.2`` -> ``("Yevr_II_A", "223")``).
 
+    FROZEN 2026-11: key format of image file names on disk; new code must use src.datasets.shelfmarks
+
     The sub-number after the dot is not part of image names, so different sub-shelf-marks of one
     number share a series key.
 
@@ -404,6 +406,8 @@ def series_key_for(shelfmark: Optional[str]) -> Optional[Tuple[str, str]]:
 
 def shelfmark_from_filename(name: str) -> Optional[str]:
     """Shelf mark written in a ``transcription_manual_<shelf mark>.pdf`` file name.
+
+    FROZEN 2026-11: key format of image file names on disk; new code must use src.datasets.shelfmarks
 
     :param name: File name (or path).
     :return: The shelf mark with underscores as spaces and the city prefix removed

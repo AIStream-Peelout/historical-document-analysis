@@ -96,7 +96,6 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from src.datasets.merging.institution_tokens import resolve_token  # noqa: E402
 from src.datasets.merging.merge_shelfmarks import (  # noqa: E402
     DEFAULT_OUT_DIR,
     KTIV_DIR,
@@ -104,6 +103,7 @@ from src.datasets.merging.merge_shelfmarks import (  # noqa: E402
     _ktiv_manifest_url,
     index_ktiv_zips,
 )
+from src.datasets.shelfmarks import registry_token  # noqa: E402
 
 FTS_PATTERN = "ktiv_fts_transcribed_*.json"
 MERGED_PATH = os.path.join(DEFAULT_OUT_DIR, MERGED_JSONL)
@@ -482,7 +482,7 @@ def library_of(shelfmark: Optional[str]) -> str:
     """
     if not shelfmark:
         return "unknown"
-    token = resolve_token(shelfmark)
+    token = registry_token(shelfmark)
     if token:
         return token
     head = shelfmark.split(",")[0].strip()
