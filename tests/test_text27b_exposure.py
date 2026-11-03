@@ -177,13 +177,16 @@ def world(tmp_path: Path) -> Dict[str, Any]:
 
 
 # ------------------------------------------------------------------------------------- helpers
-def test_id_key_and_page_key() -> None:
-    """Canonical-id keys drop case and punctuation; page keys join id and index.
+def test_fragment_key_and_page_key() -> None:
+    """Fragment keys are the facade's loose keys (digit boundaries kept); page keys join id and index.
 
     :returns: None.
     """
-    assert ex.id_key("Cambridge_CUL_T_S_13J2_5") == "cambridgecults13j25"
-    assert ex.id_key("") == ""
+    assert ex.fragment_key("Cambridge_CUL_T_S_13J2_5") == "cambridgecults13j2|5"
+    assert ex.fragment_key("T-S 13J2.5", "Cambridge University Library") == ex.fragment_key("Cambridge_CUL_T_S_13J2_5")
+    assert ex.fragment_key("") == ""
+    assert ex.fragment_key("Mittwoch_8") == "=Mittwoch_8"           # an id the facade cannot key matches itself
+    assert ex.id_key("Cambridge_CUL_T_S_13J2_5") == ex.fragment_key("Cambridge_CUL_T_S_13J2_5")  # deprecated alias
     assert ex.page_key("Lib_A_1", 2) == "Lib_A_1:2"
 
 
@@ -260,12 +263,12 @@ def test_build_training_index(world: Dict[str, Any]) -> None:
     assert idx.hits("sha256", "shaA1r", ["v22a_pilot"])
     assert idx.hits("url", "http://img/b2v.jpg", ["v22a_pilot"])
     assert idx.hits("url", "http://img/x1r.jpg", ["v22a_pilot"])
-    assert idx.hits("fragment", ex.id_key("Lib_B_2"), ["v22a_pilot"])      # pgp_qa row's fragment
-    assert idx.hits("fragment", ex.id_key("Lib_X_1"), ["v22a_pilot"])      # dg row
+    assert idx.hits("fragment", ex.fragment_key("Lib_B_2"), ["v22a_pilot"])      # pgp_qa row's fragment
+    assert idx.hits("fragment", ex.fragment_key("Lib_X_1"), ["v22a_pilot"])      # dg row
     assert idx.hits("ktiv_page", f"{SYS_PILOT}/FL111", ["v22a_pilot"])
     assert idx.hits("ktiv_sys", SYS_PILOT, ["v22a_pilot"])
-    assert idx.hits("fragment", ex.id_key("Lib_C_3"), ["clean_v2"]) and idx.hits("sha256", _sha(IMG_C), ["clean_v2"])
-    assert idx.hits("fragment", ex.id_key("Lib_D_4"), ["clean_v1"]) and idx.hits("sha256", _sha(IMG_D), ["clean_v1"])
+    assert idx.hits("fragment", ex.fragment_key("Lib_C_3"), ["clean_v2"]) and idx.hits("sha256", _sha(IMG_C), ["clean_v2"])
+    assert idx.hits("fragment", ex.fragment_key("Lib_D_4"), ["clean_v1"]) and idx.hits("sha256", _sha(IMG_D), ["clean_v1"])
     assert idx.hits("ktiv_sys", SYS_V3, ["ktiv_v3"]) == {"ktiv_v3"}
     assert idx.hits("ktiv_page", f"{SYS_V3}/FL555", ex.KTIV_MIXTURES) == {"ktiv_v3", "ktiv_v4"}
     assert idx.hits("ktiv_sys", SYS_V4, ["ktiv_v4"]) and not idx.hits("ktiv_page", f"{SYS_V4}/FL666", ["ktiv_v4"])

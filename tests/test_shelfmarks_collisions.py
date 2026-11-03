@@ -5,6 +5,8 @@
 * Cross-institution pairs (the institution-free ``core_key`` maps each pair to one key: 175 key groups / 402 ES ids
   on 2026-11-02): ``Berlin_JCB_A2`` / ``Manchester_JRL_A_2``, ``Budapest_MTA_12`` / ``Birmingham_Mingana_12``.
 * Piece letters stay distinct (``F 1908.44`` / ``F 1908.44A``; a ``base_key``-style key merges them).
+* The text27b exposure index (fragment level) keys on the facade, so a read of one item of a digit-boundary pair is
+  not marked as exposed by training on the other (the squash ``exposure.id_key`` merged all three pairs).
 """
 
 from __future__ import annotations
@@ -14,6 +16,7 @@ from typing import Optional, Tuple
 import pytest
 
 from src.datasets import shelfmarks
+from src.finetuning.text27b import exposure
 
 #: (mark, institution) pairs naming two different items.
 Pair = Tuple[Tuple[str, Optional[str]], Tuple[str, Optional[str]]]
@@ -122,3 +125,58 @@ def test_slug_and_unknown_ids_keep_keys_of_their_own(pair: Tuple[str, str]) -> N
     """
     key_a, key_b = shelfmarks.loose_key(pair[0]), shelfmarks.loose_key(pair[1])
     assert key_a and key_b and key_a != key_b
+
+
+#: The three digit-boundary pairs as ES ids (what the exposure index sees: dataset stems, manifest and read ids).
+DIGIT_BOUNDARY_IDS: Tuple[Tuple[str, str], ...] = (
+    ("New_York_JTS_ENA_NS_2_26", "New_York_JTS_ENA_NS_22_6"),
+    ("Cambridge_CUL_T_S_AS_181_163", "Cambridge_CUL_T_S_AS_18_1163"),
+    ("Cambridge_CUL_T_S_Misc_31_15", "Cambridge_CUL_T_S_Misc_3_115"),
+)
+
+
+@pytest.mark.parametrize("pair", DIGIT_BOUNDARY_IDS, ids=[f"{a} vs {b}" for a, b in DIGIT_BOUNDARY_IDS])
+def test_exposure_index_keeps_digit_boundary_pairs_apart(pair: Tuple[str, str]) -> None:
+    """Training on one item of a pair gives fragment exposure to a read of that item only, never of the other.
+
+    :param pair: Two ES ids that the old alphanumeric squash mapped to one key.
+    :type pair: Tuple[str, str]
+    :return: None.
+    :rtype: None
+    """
+    trained, other = pair
+    assert exposure.fragment_key(trained) != exposure.fragment_key(other)
+    assert exposure.fragment_key(trained) == shelfmarks.loose_key(trained)
+    index = exposure.TrainingIndex()
+    index.add("fragment", exposure.fragment_key(trained), "clean_v2")
+    mixtures = ("clean_v2",)
+
+    def level(cid: str) -> str:
+        """Exposure level of a page-less read of ``cid``.
+
+        :param cid: ES id the read is of.
+        :type cid: str
+        :return: The read's level.
+        :rtype: str
+        """
+        read = exposure.Read(pgpid="1", model="v21b", pages=[], cids=[cid])
+        return exposure.classify_read(read, index, {}, mixtures)[0]["read_level"]
+
+    assert level(trained) == "fragment"
+    assert level(other) == "none"
+
+
+@pytest.mark.parametrize("pair", DIGIT_BOUNDARY[:3], ids=[_pair_id(p) for p in DIGIT_BOUNDARY[:3]])
+def test_exposure_key_of_a_raw_mark_matches_its_id(pair: Pair) -> None:
+    """A raw mark queried with its institution reaches the key of its own ES id, not its pair's.
+
+    :param pair: Two (mark, institution) items of a digit-boundary pair.
+    :type pair: Pair
+    :return: None.
+    :rtype: None
+    """
+    (mark_a, inst_a), (mark_b, inst_b) = pair
+    id_a, id_b = shelfmarks.canonical_id(mark_a, inst_a), shelfmarks.canonical_id(mark_b, inst_b)
+    assert id_a and id_b
+    assert exposure.fragment_key(mark_a, inst_a) == exposure.fragment_key(id_a)
+    assert exposure.fragment_key(mark_a, inst_a) != exposure.fragment_key(id_b)
