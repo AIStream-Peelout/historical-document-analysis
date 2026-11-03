@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Shelfmark normalization coverage report.
 
-Measures how well :class:`ShelfmarkNormalizer.to_canonical_id` unifies
-shelfmarks across the three Cairo Genizah sources. Three metrics:
+Measures how well the institution-free core (:func:`src.datasets.shelfmarks.core_id`,
+the normaliser's ``to_canonical_id`` behind the facade) unifies shelfmarks across the
+three Cairo Genizah sources. Three metrics:
 
 1. **Ground-truth self-consistency** — every ``shelfmarks_historic`` variant in
    PGP ``fragments.csv`` should normalize to the same canonical id as its
@@ -39,7 +40,7 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+from src.datasets import shelfmarks  # noqa: E402
 
 RAW_DIR = os.path.join(_REPO_ROOT, "src", "datasets", "raw_data", "cairo_genizah")
 PGP_FRAGMENTS = os.path.join(RAW_DIR, "pgp_raw", "data", "fragments.csv")
@@ -50,7 +51,10 @@ KTIV_GLOB = os.path.join(RAW_DIR, "ktiv", "*.json")
 
 
 def load_pgp_canonical_ids(path: str = PGP_FRAGMENTS) -> Set[str]:
-    """Return the set of canonical ids for every PGP fragment primary shelfmark.
+    """Return the set of ES canonical ids for every PGP fragment primary shelfmark.
+
+    :func:`src.datasets.shelfmarks.canonical_id` with the row's library (``library_abbrev`` and ``library``, the
+    institution text the merge keys PGP rows on), e.g. ``Cambridge_CUL_T_S_12_301``.
 
     :param path: Path to PGP ``fragments.csv`` (BOM-encoded ``utf-8-sig``).
     :returns: Set of non-empty canonical ids.
@@ -58,7 +62,8 @@ def load_pgp_canonical_ids(path: str = PGP_FRAGMENTS) -> Set[str]:
     ids: Set[str] = set()
     with open(path, encoding="utf-8-sig", newline="") as fh:
         for row in csv.DictReader(fh):
-            cid = ShelfmarkNormalizer.to_canonical_id(row["shelfmark"])
+            institution = f"{row.get('library_abbrev') or ''} {row.get('library') or ''}"
+            cid = shelfmarks.canonical_id(row["shelfmark"], institution)
             if cid:
                 ids.add(cid)
     return ids
@@ -76,13 +81,13 @@ def load_pgp_alias_index(path: str = PGP_FRAGMENTS) -> Dict[str, str]:
     alias: Dict[str, str] = {}
     with open(path, encoding="utf-8-sig", newline="") as fh:
         for row in csv.DictReader(fh):
-            primary = ShelfmarkNormalizer.to_canonical_id(row["shelfmark"])
+            primary = shelfmarks.core_id(row["shelfmark"])
             if not primary:
                 continue
             alias[primary] = primary
             historic = row.get("shelfmarks_historic") or ""
             for variant in (v.strip() for v in historic.split(";") if v.strip()):
-                cid = ShelfmarkNormalizer.to_canonical_id(variant)
+                cid = shelfmarks.core_id(variant)
                 if cid:
                     alias.setdefault(cid, primary)
     return alias
@@ -106,13 +111,13 @@ def ground_truth_consistency(
     samples: List[Tuple[str, str, str, str]] = []
     with open(path, encoding="utf-8-sig", newline="") as fh:
         for row in csv.DictReader(fh):
-            primary = ShelfmarkNormalizer.to_canonical_id(row["shelfmark"])
+            primary = shelfmarks.core_id(row["shelfmark"])
             if not primary:
                 continue
             historic = row.get("shelfmarks_historic") or ""
             for variant in (v.strip() for v in historic.split(";") if v.strip()):
                 total += 1
-                cid = ShelfmarkNormalizer.to_canonical_id(variant)
+                cid = shelfmarks.core_id(variant)
                 if cid == primary:
                     agree += 1
                 elif len(samples) < limit_misses:
@@ -138,7 +143,7 @@ def fjp_match_rate(
     samples: List[Tuple[str, str]] = []
     for rec in fjp.values():
         sm = rec.get("shelf_mark") or ""
-        cid = ShelfmarkNormalizer.to_canonical_id(sm)
+        cid = shelfmarks.core_id(sm)
         if not cid:
             continue
         total += 1
@@ -166,7 +171,7 @@ def ktiv_match_rate(
         with open(fpath, encoding="utf-8") as fh:
             doc = json.load(fh)
         sm = doc.get("shelf_mark") or ""
-        cid = ShelfmarkNormalizer.to_canonical_id(sm)
+        cid = shelfmarks.core_id(sm)
         if cid:
             seen.setdefault(cid, sm)
     matched = sum(1 for cid in seen if cid in alias)

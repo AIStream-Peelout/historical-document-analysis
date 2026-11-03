@@ -50,13 +50,12 @@ _REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..",
 if _REPO_ROOT not in sys.path:
     sys.path.insert(0, _REPO_ROOT)
 
-from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+from src.datasets import shelfmarks  # noqa: E402
 from src.datasets.merging.bodleian_images import (  # noqa: E402
     bodleian_folio_verified,
     bodleian_images_verified,
     tei_description,
 )
-from src.datasets.merging.institution_tokens import OXFORD_TOKEN, _REGISTRY  # noqa: E402
 from src.datasets.merging.merge_shelfmarks import (  # noqa: E402
     DEFAULT_OUT_DIR,
     KTIV_DIR,
@@ -76,7 +75,6 @@ CSV_FIELDS = [
 ]
 # KTIV Bodleian item files are named after the holding library.
 KTIV_BODLEIAN_GLOB = os.path.join(KTIV_DIR, "ktiv_The_Bodleian_Libraries*.json")
-_KNOWN_TOKENS = sorted({token for token, _ in _REGISTRY}, key=len, reverse=True)
 
 
 def iter_merged(path: str) -> Iterator[Tuple[int, dict]]:
@@ -95,12 +93,10 @@ def institution_of(cid: str) -> str:
     """Return the institution token a canonical id starts with.
 
     :param cid: A canonical id (``Jerusalem_NLI_Heb_38°11343``).
-    :returns: The longest registry token prefixing *cid*, else its first token.
+    :returns: The longest registry token prefixing *cid* (:func:`src.datasets.shelfmarks.split_id`), else its
+        first ``_`` segment.
     """
-    for token in _KNOWN_TOKENS + ["Harvard"]:
-        if cid == token or cid.startswith(token + "_"):
-            return token
-    return cid.split("_", 1)[0]
+    return shelfmarks.split_id(cid)[0] or cid.split("_", 1)[0]
 
 
 def _pick(candidates: List[str], old: str) -> str:
@@ -163,7 +159,7 @@ def _is_oxford(cid: str) -> bool:
     :param cid: Canonical id.
     :returns: Whether *cid* is ``Oxford_Bodleian`` or starts with it.
     """
-    return cid == OXFORD_TOKEN or cid.startswith(OXFORD_TOKEN + "_")
+    return cid == shelfmarks.OXFORD_TOKEN or cid.startswith(shelfmarks.OXFORD_TOKEN + "_")
 
 
 def _lost_f_letter(old: str, new: str, display: str) -> bool:
@@ -174,7 +170,7 @@ def _lost_f_letter(old: str, new: str, display: str) -> bool:
     :param display: The line's display shelfmark.
     :returns: Whether the new id restores an ``f`` the old id lacked.
     """
-    parsed = ShelfmarkNormalizer.parse_oxford(display)
+    parsed = shelfmarks.parse_oxford(display)
     return (
         parsed is not None and parsed.letter == "f"
         and f"_{parsed.letter}_{parsed.volume}" in new
@@ -197,7 +193,7 @@ def ktiv_volume_only_records(ktiv_glob: str = KTIV_BODLEIAN_GLOB) -> List[dict]:
         with open(path, encoding="utf-8") as fh:
             doc = json.load(fh)
         sm = doc.get("shelf_mark") or ""
-        parsed = ShelfmarkNormalizer.parse_oxford(sm)
+        parsed = shelfmarks.parse_oxford(sm)
         if parsed is None or parsed.leaf:
             continue
         (_, cid, resolution), = ktiv_record_ids(doc, [sm])

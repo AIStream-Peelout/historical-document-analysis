@@ -25,11 +25,11 @@ Two matching strategies (both write to the same relationship type):
 Shelf mark normalisation
 ------------------------
 Academic citations vary: "Cambridge, T-S 12.732", "T-S 12.575",
-"T-S N.S. 325.7".  We strip common prefixes ("Cambridge, ",
-"Cambridge ", "ENA ") and try to match against Fragment.shelfmark in
-the DB.  If no match is found we still MERGE a Fragment node so the
-edge isn't lost — it will auto-merge with the Princeton node when that
-fragment is later imported.
+"T-S N.S. 325.7".  Every mark is keyed on its institution-free core
+(:func:`src.datasets.shelfmarks.core_id`, ``T_S_12_732``), the Fragment
+``canonical_shelfmark`` the rest of the KG pipeline uses.  If no Fragment
+holds that core we still MERGE one so the edge isn't lost — it will
+auto-merge with the Princeton node when that fragment is later imported.
 
 Usage
 -----
@@ -41,7 +41,6 @@ python enrich_fragment_people.py --dir malkhhut_ish
 import json
 import logging
 import os
-import re
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -57,7 +56,7 @@ data_root    = project_root / "src" / "datasets" / "raw_data" / "cairo_genizah" 
 sys.path.append(str(project_root))
 dotenv.load_dotenv(project_root / ".env")
 
-from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+from src.datasets import shelfmarks  # noqa: E402
 
 logging.basicConfig(
     level=logging.INFO,
@@ -73,16 +72,18 @@ logger = logging.getLogger(__name__)
 # Shelf-mark normalisation
 # ---------------------------------------------------------------------------
 
-_STRIP_PREFIXES = re.compile(
-    r'^(Cambridge,?\s+|Cambridge University Library,?\s+|'
-    r'Bodleian\s+|Oxford,?\s+|JTS,?\s+|Jewish Theological Seminary,?\s+)',
-    re.IGNORECASE,
-)
-
 def _normalise_shelfmark(raw: str) -> str:
-    """Strip institution prefixes; return cleaned shelf mark string."""
-    cleaned = _STRIP_PREFIXES.sub("", raw.strip())
-    return cleaned.strip().strip(".")
+    """The KG key of a cited shelf mark: its institution-free core.
+
+    :func:`src.datasets.shelfmarks.core_id` (institution heads such as ``Cambridge,`` / ``Bodleian`` /
+    ``JTS`` stripped by the normaliser: ``Cambridge, T-S 12.732`` -> ``T_S_12_732``).
+
+    :param raw: Shelf mark as cited.
+    :type raw: str
+    :return: The core, or ``""`` for a join, a catalogue number or garbage.
+    :rtype: str
+    """
+    return shelfmarks.core_id(raw.strip())
 
 
 # ---------------------------------------------------------------------------
@@ -204,7 +205,7 @@ def _extract_edges_from_resolved(data: Dict, source_book: str) -> List[Dict]:
     better input: both people and shelf-marks carry explicit ``pages`` lists
     (page attribution the deprecated ``SecondaryLLMProcessor`` never produced),
     people are already deduplicated and carry ``person_class``, and shelf-marks
-    have already been validated by ``ShelfmarkNormalizer.classify_shelfmark``
+    have already been validated by ``classify_shelfmark`` (:mod:`src.datasets.shelfmarks`)
     in Pass 3.
 
     Same two strategies as the legacy pass:
@@ -242,9 +243,9 @@ def _extract_edges_from_resolved(data: Dict, source_book: str) -> List[Dict]:
         mark = (sm.get("mark") or "").strip()
         # Pass 3 already filtered, but re-check: only genuine marks become
         # Fragment nodes, so junk never reaches the graph through this path.
-        if not mark or ShelfmarkNormalizer.classify_shelfmark(mark) != "standard":
+        if not mark or shelfmarks.classify_shelfmark(mark) != "standard":
             continue
-        canonical = ShelfmarkNormalizer.to_canonical_id(mark)
+        canonical = shelfmarks.core_id(mark)
         if not canonical:
             continue
         desc = sm.get("description") or ""

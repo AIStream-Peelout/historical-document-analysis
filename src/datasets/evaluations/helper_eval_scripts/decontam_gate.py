@@ -11,10 +11,14 @@ Three independent layers, each sufficient to reject:
 1. **sys_num** in the v1.9a KTIV training set (906 manuscripts) — exact.
    KTIV is the only source that entered training keyed by sys_num
    (via ``genizah_ktiv_v1``); this is the decisive check for KTIV re-scrapes.
-2. **loose shelfmark key** (``ShelfmarkNormalizer.loose_key``, digit-boundary
-   safe) in ``genizah_clean_v2`` (the FJP/PGP documentary training lineage
-   used since v1.7) or in the frozen 131-fragment benchmark — catches a doc
-   that reached training/eval under a different source's shelfmark.
+2. **loose shelfmark key** (the institution-qualified, digit-boundary safe
+   :func:`src.datasets.shelfmarks.loose_key`, the format of the inventories)
+   in ``genizah_clean_v2`` (the legacy-store/PGP documentary training lineage used
+   since v1.7) or in the frozen 131-fragment benchmark — catches a doc that
+   reached training/eval under a different source's shelfmark. Until
+   2026-11 the gate keyed a raw mark with its institution stripped, so this
+   check never fired on a raw mark against the institution-qualified
+   ``clean_v2_keys`` (audit finding F4).
 3. **content shingle** overlap with training GT (optional, applied at build
    time when the candidate's transcription is in hand): >= 2 shared 25-letter
    letter-shingles ⇒ reject (same rule ``build_ktiv_dataset`` used).
@@ -33,9 +37,9 @@ and is fair eval, but verify the GT is the manuscript's reading, not Vilna's.
 import json
 import re
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Tuple
 
-from src.datasets.merging.merge_shelfmarks import ShelfmarkNormalizer
+from src.datasets import shelfmarks
 
 _DECONTAM = (Path(__file__).resolve().parents[4]
              / "src/datasets/raw_data/cairo_genizah/decontam")
@@ -57,7 +61,15 @@ def _load(name: str) -> set:
 
 
 class DecontamGate:
-    """Reject candidates that overlap any prior training or eval corpus."""
+    """Reject candidates that overlap any prior training or eval corpus.
+
+    :cvar loose_key: The gate's shelf-mark key, :func:`src.datasets.shelfmarks.loose_key` itself
+        (institution-qualified: ``T-S 12.301``, its KTIV form and ``Cambridge_CUL_T_S_12_301`` all give
+        ``cambridgecults12|301``; ``""`` when the mark cannot be keyed, e.g. its institution cannot be
+        determined).
+    """
+
+    loose_key = staticmethod(shelfmarks.loose_key)
 
     def __init__(self) -> None:
         """Load the three id/key inventories."""
@@ -67,24 +79,6 @@ class DecontamGate:
         if not self.ktiv_train_sys:
             raise FileNotFoundError(
                 "decontam inventory missing — regenerate it (see module docstring)")
-
-    @staticmethod
-    def loose_key(shelfmark: str) -> Optional[str]:
-        """Digit-boundary-safe fuzzy shelfmark key, institution stripped.
-
-        :param shelfmark: Any shelfmark string (KTIV's verbose form is fine;
-            the institution prefix is stripped before keying).
-        :type shelfmark: str
-        :return: Loose key, or None when unkeyable.
-        :rtype: Optional[str]
-        """
-        if not shelfmark:
-            return None
-        core = ShelfmarkNormalizer._strip_institution(shelfmark)
-        try:
-            return ShelfmarkNormalizer.loose_key(core or shelfmark)
-        except Exception:
-            return None
 
     def check(self, sys_num: str, shelfmark: str = "") -> Tuple[bool, str]:
         """Return (is_clean, reason) for a candidate KTIV manuscript.

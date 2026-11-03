@@ -46,7 +46,7 @@ import requests
 _REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(_REPO))
 
-from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer  # noqa: E402
+from src.datasets import shelfmarks  # noqa: E402
 from src.datasets.evaluations.helper_eval_scripts.audit_genizah_benchmark import (  # noqa: E402
     letters_only,
     overlap_with_gt,
@@ -78,27 +78,28 @@ WEAK_SUPERSET_RATIO = 4.0
 MANUAL_DROPS = _CLEANUP_DIR / "misalignment_manual_drops.json"
 
 
-def _norm(s: str) -> str:
-    """Digit-boundary-safe shelfmark join key.
+def _join_hit(shelf_mark: str, frag_idx: Dict[str, List[Any]], core_idx: Dict[str, List[Any]]) -> Optional[List[Any]]:
+    """The PGP fragments a training shelfmark joins to.
 
-    :param s: Shelfmark string.
-    :returns: Normalized key (see :meth:`ShelfmarkNormalizer.loose_key`).
-    """
-    return ShelfmarkNormalizer.loose_key(s)
-
-
-def _variants(shelf_mark: str) -> Set[str]:
-    """Generate join-key variants for a training shelfmark.
+    By :func:`src.datasets.shelfmarks.loose_key` (institution-qualified, the institution read from a KTIV /
+    legacy-store head or inferred from the series). Only when the mark's institution cannot be determined (its loose
+    key is ``""``, e.g. ``PER H 92``) the institution-free :func:`src.datasets.shelfmarks.core_key` is used, and
+    only when it names a single PGP fragment shelfmark (the core key collides across institutions).
 
     :param shelf_mark: Manifest ``shelf_mark`` value.
-    :returns: Set of normalized candidate keys.
+    :type shelf_mark: str
+    :param frag_idx: ``loose key -> fragment rows``.
+    :type frag_idx: Dict[str, List[Any]]
+    :param core_idx: ``core key -> fragment rows``.
+    :type core_idx: Dict[str, List[Any]]
+    :returns: The fragment rows, or None when the mark joins none.
+    :rtype: Optional[List[Any]]
     """
-    n = _norm(shelf_mark)
-    out = {n}
-    for pref in ("oxford", "bodl", "cambridgecul", "cambridge"):
-        if n.startswith(pref):
-            out.add(n[len(pref):])
-    return out
+    key = shelfmarks.loose_key(shelf_mark)
+    if key:
+        return frag_idx.get(key)
+    hit = core_idx.get(shelfmarks.core_key(shelf_mark))
+    return hit if hit and len({f["shelfmark"] for f in hit}) == 1 else None
 
 
 def metadata_flags(manifest_path: Path, flags_path: Path) -> Dict[str, Dict[str, Any]]:
@@ -116,20 +117,17 @@ def metadata_flags(manifest_path: Path, flags_path: Path) -> Dict[str, Dict[str,
     doc_by_id = {r["pgpid"].strip(): r for _, r in docs.iterrows()}
 
     frag_idx: Dict[str, List[Any]] = {}
+    core_idx: Dict[str, List[Any]] = {}
     for _, f in frags.iterrows():
-        for key in _variants(f["shelfmark"]):
-            frag_idx.setdefault(key, []).append(f)
-        if f["shelfmarks_historic"]:
-            for h in f["shelfmarks_historic"].split(";"):
-                frag_idx.setdefault(_norm(h), []).append(f)
+        marks = [f["shelfmark"]] + (f["shelfmarks_historic"].split(";") if f["shelfmarks_historic"] else [])
+        # a historic spelling often keys to the current mark: index each fragment once per key
+        for idx, key_fn in ((frag_idx, shelfmarks.loose_key), (core_idx, shelfmarks.core_key)):
+            for key in {key_fn(m) for m in marks} - {""}:
+                idx.setdefault(key, []).append(f)
 
     flags: Dict[str, Dict[str, Any]] = {}
     for r in recs:
-        hit = None
-        for key in _variants(r["shelf_mark"]):
-            if key in frag_idx:
-                hit = frag_idx[key]
-                break
+        hit = _join_hit(r["shelf_mark"], frag_idx, core_idx)
         if hit is None:
             flags[r["doc_id"]] = {"matched": False}
             continue
