@@ -3,11 +3,11 @@
 
 Every merged canonical id must carry a normalized institution/collection token
 so it is never a bare number (``101``) that collides across collections
-(Budapest / Geneva / Frankfurt all number from 1). PGP, FJP and KTIV each spell
+(Budapest / Geneva / Frankfurt all number from 1). PGP, the legacy store and KTIV each spell
 the same institution differently:
 
 * PGP gives a clean ``library_abbrev`` (``CUL``, ``JTS``, ``JRL``, ``AIU`` …).
-* FJP gives ``collection`` / ``institution`` (``Cambridge CUL``, ``Manchester`` …).
+* the legacy store gives ``collection`` / ``institution`` (``Cambridge CUL``, ``Manchester`` …).
 * KTIV embeds the holding library in the shelfmark head.
 
 :func:`resolve_token` maps any of those spellings to one descriptive token
@@ -25,7 +25,7 @@ Needles match whole words only (see :func:`_needle_pattern`): the JTS needle
 from __future__ import annotations
 
 import re
-from typing import List, Optional, Pattern, Tuple
+from typing import Dict, List, Optional, Pattern, Tuple
 
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
 
@@ -153,12 +153,56 @@ _COMPILED_FALLBACK: List[Tuple[str, Pattern[str]]] = _compile_registry(
     _FALLBACK_REGISTRY
 )
 
+#: Every registry token (main and fallback registry), longest first, so
+#: :func:`split_id` takes the longest token that prefixes an id.
+_REGISTRY_TOKENS: Tuple[str, ...] = tuple(sorted(
+    {token for token, _ in _REGISTRY + _FALLBACK_REGISTRY},
+    key=lambda token: (-len(token), token),
+))
+
+#: Series words written inside shelf marks -> the registry token of the holding
+#: institution. This is the one copy of the spellings that callers re-typed in
+#: their own prefix lists (catalogue finding F7). A value of ``None`` marks a
+#: series word that is ambiguous on its own: a bare ``Or. <n>`` is a Cambridge
+#: (``CUL Or.``) or a British Library (``BL Or.``) mark, so it names no
+#: institution until ``CUL`` / ``BL`` is written next to it.
+SERIES_TOKENS: Dict[str, Optional[str]] = {
+    "T-S": "Cambridge_CUL",
+    "TS": "Cambridge_CUL",
+    "Taylor-Schechter": "Cambridge_CUL",
+    "Or. 1080": "Cambridge_CUL",
+    "Add.": "Cambridge_CUL",
+    "CUL": "Cambridge_CUL",
+    "ENA": "New_York_JTS",
+    "JTS MS": "New_York_JTS",
+    "Bodl": "Oxford_Bodleian",
+    "MS heb": "Oxford_Bodleian",
+    "Mosseri": "Cambridge_Mosseri",
+    "Moss.": "Cambridge_Mosseri",
+    "L-G": "Cambridge_Lewis_Gibson",
+    "Westminster College": "Cambridge_Lewis_Gibson",
+    "AIU": "Paris_AIU",
+    "Halper": "Philadelphia_CAJS",
+    "Yevr": "StPetersburg_NLR",
+    "Evr": "StPetersburg_NLR",
+    "EVR": "StPetersburg_NLR",
+    "RNL": "StPetersburg_NLR",
+    "DK": "Budapest_MTA",
+    "Kaufmann": "Budapest_MTA",
+    "BL": BL_TOKEN,
+    "BM": BL_TOKEN,
+    "JRL": "Manchester_JRL",
+    "Gaster": "Manchester_JRL",
+    "Rylands": "Manchester_JRL",
+    "Or.": None,
+}
+
 
 def resolve_token(text: Optional[str]) -> Optional[str]:
     """Map an institution / collection string to its descriptive token.
 
     :param text: Any institution spelling — a PGP ``library_abbrev``/``library``,
-        an FJP ``collection``/``institution``, or a KTIV holding-library head.
+        a legacy-store ``collection``/``institution``, or a KTIV holding-library head.
     :returns: The descriptive token (e.g. ``Cambridge_CUL``), or ``None`` if no
         registry entry's needle occurs in *text* as a whole word.
     """
@@ -225,3 +269,31 @@ def combine(token: str, core: str) -> str:
     while core_parts and core_parts[0] in token_parts:
         core_parts.pop(0)
     return token + ("_" + "_".join(core_parts) if core_parts else "")
+
+
+def split_id(cid: str) -> Tuple[Optional[str], str]:
+    """Split a canonical (ES) id into its registry token and its core.
+
+    The token is the longest registry token (:data:`_REGISTRY` or
+    :data:`_FALLBACK_REGISTRY`) that is the whole id or is followed by ``_``
+    in it. Ids whose prefix is a slug of an unregistered institution
+    (``Russian_State_Library_…``, ``Unknown_…``) or that carry no prefix
+    (``987007606066605171``) give ``(None, cid)``.
+
+    The core is what follows the token, verbatim. It can differ from the
+    :meth:`ShelfmarkNormalizer.to_canonical_id` core of the original mark,
+    because :func:`combine` drops leading core words already in the token
+    (``Manchester_JRL_B_1924`` -> ``("Manchester_JRL", "B_1924")``).
+
+    :param cid: Canonical id, e.g. ``Cambridge_CUL_T_S_12_301``.
+    :type cid: str
+    :returns: ``(token, core)``, e.g. ``("Cambridge_CUL", "T_S_12_301")``;
+        ``(None, cid)`` when no registry token prefixes the id.
+    :rtype: Tuple[Optional[str], str]
+    """
+    for token in _REGISTRY_TOKENS:
+        if cid == token:
+            return token, ""
+        if cid.startswith(token + "_"):
+            return token, cid[len(token) + 1:]
+    return None, cid

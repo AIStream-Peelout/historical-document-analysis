@@ -64,7 +64,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
+from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 from src.finetuning.text27b import pages as _pg
 from src.finetuning.text27b import paths as _paths
@@ -2245,7 +2245,7 @@ def _render_row(item: Dict[str, Any], sources: List[Tuple[str, str, bool]], inpu
                 stats: collections.Counter) -> Optional[Dict[str, Any]]:
     """Render one rag row, trimming own sources until it fits ``max_tokens``.
 
-    :param item: Pending row (base row, chosen pages, rng).
+    :param item: Pending row (base row, chosen pages, rng; ``split``, default ``train``, is the row's split).
     :param sources: ``[(page_key, evidence, is_distractor)]`` in display order.
     :param inputs: Inputs (pages, manifest).
     :param ptext: Page key → display text.
@@ -2273,7 +2273,7 @@ def _render_row(item: Dict[str, Any], sources: List[Tuple[str, str, bool]], inpu
         meta = dict(bm)
         meta.update({
             "family": "rag_context", "task": bm["task"], "condition": "literature",
-            "input_condition": bm["condition"], "split": "train", "build": _rows.BUILD,
+            "input_condition": bm["condition"], "split": item.get("split", "train"), "build": _rows.BUILD,
             "row_id": _rows.row_id("rag_context", item["pid"], "literature", bm.get("read_model"), bm["task"]),
             "twin_row_id": bm.get("row_id"),
             "lit_sources": [{"work": inputs.pages[k].book, "page": getattr(inputs.pages[k], "printed_page_num", None),
@@ -2291,6 +2291,231 @@ def _render_row(item: Dict[str, Any], sources: List[Tuple[str, str, bool]], inpu
         stats["sources_trimmed_length"] += 1
         own = [j for j, (_, _, d) in enumerate(srcs) if not d]
         srcs.pop(own[-1])
+
+
+# ===================================================================================== dev + eval rows (prep pass)
+#: Excluded-page reason tiers a dev-monitor rag row may ignore (prep pass 2026-10-26): mentions of dev documents (the
+#: row's own document is one), their ±1 windows and treatments, the L1-only train-target dedupe, and n-gram hits on the
+#: row's own document (the 5 % leak rule then applies to it). Benchmark / test / probe / vision / extra hold-out
+#: reasons still bind.
+DEV_OK_REASON_TIERS: Tuple[str, ...] = ("dev",)
+#: Output of the E6 eval rows (test documents with their leak-safe pages; never a family file, never trained).
+E6_ROWS_FILE = "rag_e6_rows.jsonl"
+
+
+def dev_page_ok(reasons: Sequence[str], pid: str) -> bool:
+    """Whether a page's ``excluded_pages.json`` reasons allow it as context of a DEV-monitor row of ``pid``.
+
+    :param reasons: The page's exclusion reasons (empty = not excluded).
+    :param pid: The dev document's pgpid.
+    :returns: True when every reason is one :data:`DEV_OK_REASON_TIERS` (or the train-target dedupe, or an n-gram hit
+        on the document itself) explains.
+    """
+    for r in reasons:
+        base = r[len("window:"):] if r.startswith("window:") else r
+        if base.startswith("train_target_dup"):
+            continue
+        if base.startswith(("mention:", "treatment:")) and base.rsplit(":", 1)[-1] in DEV_OK_REASON_TIERS:
+            continue
+        if base.startswith("ngram:") and re.search(r"[:]" + re.escape(pid) + r"#", base):
+            continue
+        return False
+    return True
+
+
+def _choose_pages(cands: Sequence[Tuple[str, str]], tg: Set[Tuple[str, ...]], pgrams: Callable[[str], Set[Tuple[str, ...]]],
+                  k_max: int, leak_max: float, stats: collections.Counter, prefix: str = ""
+                  ) -> Tuple[List[Tuple[str, str]], Set[Tuple[str, ...]]]:
+    """Up to ``k_max`` pages under the leak rule (each page and their union hold < ``leak_max`` of the target's 8-grams).
+
+    :param cands: ``(page_key, evidence)`` in preference order.
+    :param tg: Target 8-grams.
+    :param pgrams: Page key → page 8-grams.
+    :param k_max: Page cap.
+    :param leak_max: Leak threshold.
+    :param stats: Counters (``<prefix>leak_drop_page`` / ``<prefix>leak_drop_union``).
+    :param prefix: Counter prefix.
+    :returns: ``(chosen pages, union of shared 8-grams)``.
+    """
+    chosen: List[Tuple[str, str]] = []
+    union: Set[Tuple[str, ...]] = set()
+    for k, ev in cands:
+        if len(chosen) >= k_max:
+            break
+        if share(tg, pgrams(k)) >= leak_max:
+            stats[f"{prefix}leak_drop_page"] += 1
+            continue
+        u2 = union | (tg & pgrams(k))
+        if tg and len(u2) / len(tg) >= leak_max:
+            stats[f"{prefix}leak_drop_union"] += 1
+            continue
+        chosen.append((k, ev))
+        union = u2
+    return chosen, union
+
+
+def build_dev_rows(inputs: RagInputs, dev_rows: Iterable[Dict[str, Any]], train_page_keys: Set[str],
+                   excluded_all: Mapping[str, Sequence[str]], dev_pids: Set[str], seed: int = 3407, k_max: int = 4,
+                   leak_max: float = 0.05, max_tokens: int = 6144, families: Sequence[str] = RAG_FAMILIES,
+                   token_fn: Optional[Callable[[Dict[str, Any]], int]] = None
+                   ) -> Tuple[List[Dict[str, Any]], collections.Counter]:
+    """``rag_context`` rows of the DEV documents, for the in-run dev monitor (prep pass 2026-10-26; never trained).
+
+    Per dev document and family group: one base row (edition or an unexposed real read), up to ``k_max`` of the
+    document's strong-evidence discuss pages that (a) no train row of any family uses (``train_page_keys``: L1 /
+    L2 / L5 page keys and this build's train rag sources), (b) pass the L1 quality filter, (c) carry only
+    :func:`dev_page_ok` exclusion reasons and (d) mention no non-train document other than dev documents and no
+    benchmark document; the same leak rule as train rows; no distractor.
+
+    :param inputs: Inputs (pages, index, quality filter, hold-outs).
+    :param dev_rows: Dev rows of the PGP families.
+    :param train_page_keys: Page keys used by train rows.
+    :param excluded_all: The full ``excluded_pages.json`` mapping.
+    :param dev_pids: pgpids of every dev document.
+    :param seed: Seed.
+    :param k_max: Page cap.
+    :param leak_max: Leak threshold.
+    :param max_tokens: Length cap.
+    :param families: Families joined.
+    :param token_fn: Row → rendered tokens.
+    :returns: ``(rows with split dev, counters)``.
+    """
+    token_fn = token_fn or _rows.tokens_of_row
+    strong = strong_pages(inputs.index_rows)
+    page_index: Dict[str, List[Dict[str, Any]]] = collections.defaultdict(list)
+    for r in inputs.index_rows:
+        page_index[r["page_key"]].append(r)
+    groups: Dict[Tuple[str, str], List[Dict[str, Any]]] = collections.defaultdict(list)
+    for r in dev_rows:
+        m = r.get("meta") or {}
+        pid = str(m.get("pgpid") or "")
+        if m.get("split") != "dev" or m.get("task") not in families or not pid:
+            continue
+        if m.get("condition") in INPUT_CONDITIONS and m.get("reader_exposed") is not True:
+            groups[(pid, GROUPS.get(m["task"], m["task"]))].append(r)
+    stats: collections.Counter = collections.Counter()
+    gram_cache: Dict[str, Set[Tuple[str, ...]]] = {}
+
+    def pgrams(k: str) -> Set[Tuple[str, ...]]:
+        """8-grams of a page (cached).
+
+        :param k: Page key.
+        :returns: n-grams.
+        """
+        if k not in gram_cache:
+            gram_cache[k] = grams8(inputs.pages[k].text)
+        return gram_cache[k]
+
+    def drop_reason(k: str, pid: str) -> Optional[str]:
+        """Why a page may not serve a dev row of ``pid`` (None = usable).
+
+        :param k: Page key.
+        :param pid: Dev document.
+        :returns: Reason or None.
+        """
+        if k in train_page_keys:
+            return "train_page"
+        page = inputs.pages.get(k)
+        if page is None:
+            return "missing_page"
+        if not _quality_pass(inputs.quality_fn, page):
+            return "quality"
+        if not dev_page_ok(excluded_all.get(k, ()), pid):
+            return "excluded_pages"
+        h = inputs.nontrain.holdouts
+        for ir in page_index.get(k, ()):
+            others = [str(x) for x in ir["pgpids"] if str(x) != pid and str(x) not in dev_pids]
+            if others and inputs.nontrain.reason(others, []):
+                return "mentions_nontrain"
+            if h is not None and hasattr(h, "is_benchmark"):
+                if any(h.is_benchmark(x, None, None) for x in others):
+                    return "mentions_benchmark"
+                for c in ir.get("merged_doc_ids") or []:
+                    if h.is_benchmark(None, inputs.nontrain.displays.get(c), c):
+                        return "mentions_benchmark"
+        return None
+
+    out: List[Dict[str, Any]] = []
+    for (pid, group) in sorted(groups, key=lambda x: (_int_key(x[0]), x[1])):
+        if pid not in strong:
+            stats["dev_groups_no_strong_page"] += 1
+            continue
+        rng = random.Random(f"{seed}|dev|{pid}|{group}")
+        base = _choose_base(groups[(pid, group)], rng)
+        tg = grams8(base["messages"][-1]["content"])
+        cands = []
+        for k, ev in sorted(strong[pid].items()):
+            why = drop_reason(k, pid)
+            if why:
+                stats[f"dev_page_drop:{why}"] += 1
+                continue
+            cands.append((k, ev))
+        cands.sort(key=lambda x: (EVIDENCE.index(x[1]), rng.random()))
+        chosen, union = _choose_pages(cands, tg, pgrams, k_max, leak_max, stats, "dev_")
+        if not chosen:
+            stats["dev_groups_no_safe_page"] += 1
+            continue
+        item = {"pid": pid, "group": group, "base": base, "chosen": chosen, "union": union, "tg": tg, "rng": rng,
+                "split": "dev"}
+        row = _render_row(item, [(k, ev, False) for k, ev in chosen], inputs,
+                          lambda k: _page_display_text(inputs.pages[k]), token_fn, max_tokens, stats)
+        if row is not None:
+            out.append(row)
+            stats["dev_rows"] += 1
+    return out, stats
+
+
+def build_eval_rows(inputs: RagInputs, test_docs: Mapping[str, Any], eval_rows: Iterable[Dict[str, Any]],
+                    k_max: int = 4, max_tokens: int = 6144, families: Sequence[str] = E6_FAMILIES,
+                    token_fn: Optional[Callable[[Dict[str, Any]], int]] = None
+                    ) -> Tuple[List[Dict[str, Any]], collections.Counter]:
+    """The E6 "with literature" prompts materialised: per test document of ``rag_test_docs.json`` and family, the
+    document's edition row with up to ``k_max`` of its leak-safe strong pages in the site format (an eval file, never a
+    family file; E9 draws its RAG items from it).
+
+    :param inputs: Inputs (pages, manifest).
+    :param test_docs: Parsed ``rag_test_docs.json``.
+    :param eval_rows: Rows of the eval splits of the E6 families.
+    :param k_max: Page cap.
+    :param max_tokens: Length cap.
+    :param families: E6 families.
+    :param token_fn: Row → rendered tokens.
+    :returns: ``(rows, counters)``; rows keep the base row's split and carry ``meta.e6 = True``.
+    """
+    token_fn = token_fn or _rows.tokens_of_row
+    base: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    for r in eval_rows:
+        m = r.get("meta") or {}
+        if m.get("condition") != "edition" or m.get("task") not in families or m.get("split") == "train":
+            continue
+        key = (str(m.get("pgpid") or ""), str(m.get("task")))
+        if key not in base or str(m.get("row_id")) < str(base[key]["meta"].get("row_id")):
+            base[key] = r
+    stats: collections.Counter = collections.Counter()
+    out: List[Dict[str, Any]] = []
+    for d in test_docs.get("docs") or []:
+        pid = str(d.get("pgpid"))
+        ev_of = {x["page_key"]: x["evidence"] for x in d.get("discuss_pages") or []}
+        for fam in families:
+            safe = [k for k in (d.get("leak_safe_pages") or {}).get(fam) or [] if k in inputs.pages]
+            if not safe or (pid, fam) not in base:
+                stats[f"e6_skipped:{fam}"] += 1
+                continue
+            b = base[(pid, fam)]
+            tg = grams8(b["messages"][-1]["content"])
+            chosen = sorted(safe, key=lambda k: (EVIDENCE.index(ev_of.get(k, "key_only")), k))[:k_max]
+            union: Set[Tuple[str, ...]] = set()
+            for k in chosen:
+                union |= tg & grams8(inputs.pages[k].text)
+            item = {"pid": pid, "group": fam, "base": b, "chosen": [(k, ev_of.get(k, "")) for k in chosen],
+                    "union": union, "tg": tg, "split": b["meta"]["split"]}
+            row = _render_row(item, [(k, ev_of.get(k, ""), False) for k in chosen], inputs,
+                              lambda k: _page_display_text(inputs.pages[k]), token_fn, max_tokens, stats)
+            if row is not None:
+                row["meta"]["e6"] = True
+                out.append(row)
+                stats[f"e6_rows:{fam}"] += 1
+    return out, stats
 
 
 def _rows_manifest(rows: Sequence[Dict[str, Any]], stats: collections.Counter, drops: Dict[str, List[str]], seed: int,
@@ -2391,10 +2616,44 @@ def load_excluded_rows(path: Path) -> Set[str]:
     return {str(k) for k in raw}
 
 
+def train_page_keys(families_dir: Path, rag_train_rows: Iterable[Dict[str, Any]] = (),
+                    stems: Sequence[str] = ("domain_reading", "book_pairs", "analyse_document_v2", "analyse_document")
+                    ) -> Set[str]:
+    """Literature page keys that train rows use (``meta.page_keys``, ``provenance.page_keys``, ``lit_sources``).
+
+    :param families_dir: ``out_dir/families``.
+    :param rag_train_rows: This build's train rag rows (their sources count too).
+    :param stems: Family files carrying page keys.
+    :returns: Page keys.
+    """
+    keys: Set[str] = set()
+
+    def add(m: Mapping[str, Any]) -> None:
+        """Collect the page keys of one meta block.
+
+        :param m: Row meta.
+        :returns: None.
+        """
+        keys.update(str(k) for k in m.get("page_keys") or [])
+        keys.update(str(k) for k in (m.get("provenance") or {}).get("page_keys") or [] if isinstance(m.get("provenance"), dict))
+        keys.update(str(s.get("page_key")) for s in m.get("lit_sources") or [] if s.get("page_key"))
+
+    for stem in stems:
+        f = Path(families_dir) / f"{stem}.jsonl"
+        if f.exists():
+            for r in _rows.read_jsonl(f):
+                if (r.get("meta") or {}).get("split") == "train":
+                    add(r["meta"])
+    for r in rag_train_rows:
+        if (r.get("meta") or {}).get("split") == "train":
+            add(r["meta"])
+    return keys
+
+
 def run_build_rows(p: Optional[_paths.Paths] = None, seed: int = 3407, families: Sequence[str] = RAG_FAMILIES,
                    k_max: int = 4, distractor_rate: float = 0.25, leak_max: float = 0.05, max_tokens: int = 6144,
                    excluded_pages: Optional[Path] = None, literature_manifest: Optional[Path] = None,
-                   excluded_rows: Optional[Path] = None) -> Dict[str, Any]:
+                   excluded_rows: Optional[Path] = None, dev_rows: bool = True, e6_rows: bool = True) -> Dict[str, Any]:
     """Phase-2 CLI: read the index, pages, v0_2 family files, hold-outs and exclusions; write ``families/rag_context.jsonl``.
 
     Base rows are the ``train`` rows of ``families/<family>.jsonl`` minus the rows listed in
@@ -2412,6 +2671,9 @@ def run_build_rows(p: Optional[_paths.Paths] = None, seed: int = 3407, families:
     :param excluded_pages: ``excluded_pages.json`` (default ``out_dir/excluded_pages.json``).
     :param literature_manifest: Literature manifest (default: next to ``paths.json``).
     :param excluded_rows: ``excluded_rows.json`` (default ``out_dir/excluded_rows.json``; missing → none excluded).
+    :param dev_rows: Also build the dev-monitor rows of the dev documents (:func:`build_dev_rows`; prep pass
+        2026-10-26), written to the same family file with ``split = dev``.
+    :param e6_rows: Also write the E6 eval rows (:func:`build_eval_rows`) to ``out_dir/rag_e6_rows.jsonl``.
     :returns: The manifest.
     :raises FileNotFoundError: When ``rag_index.jsonl`` or no family file exists.
     """
@@ -2422,7 +2684,10 @@ def run_build_rows(p: Optional[_paths.Paths] = None, seed: int = 3407, families:
     if not fam_files:
         raise FileNotFoundError(f"no family files under {p.out('families')}: run the builder first")
     base_rows: List[Dict[str, Any]] = []
+    dev_base: List[Dict[str, Any]] = []
+    eval_base: List[Dict[str, Any]] = []
     nontrain_pg: Set[str] = set()
+    dev_pids: Set[str] = set()
     ex_rows = load_excluded_rows(Path(excluded_rows) if excluded_rows else p.out("excluded_rows.json"))
     n_ex_rows = 0
     for f in fam_files:
@@ -2431,6 +2696,12 @@ def run_build_rows(p: Optional[_paths.Paths] = None, seed: int = 3407, families:
             if m.get("split") != "train":
                 if m.get("pgpid"):
                     nontrain_pg.add(str(m["pgpid"]))
+                if m.get("split") == "dev" and m.get("pgpid"):
+                    dev_pids.add(str(m["pgpid"]))
+                    if dev_rows and m.get("task") in families and str(m.get("row_id")) not in ex_rows:
+                        dev_base.append(r)
+                elif e6_rows and m.get("task") in E6_FAMILIES and m.get("condition") == "edition":
+                    eval_base.append(r)
                 continue
             if m.get("task") in families:
                 if str(m.get("row_id")) in ex_rows:
@@ -2447,10 +2718,10 @@ def run_build_rows(p: Optional[_paths.Paths] = None, seed: int = 3407, families:
             span_pages[pid].update(s.get("page_keys") or [])
     nontrain = NonTrain(pgpids=nontrain_pg, holdouts=_load_holdouts(p),
                         displays={c: v.get("disp", "") for c, v in corpus.merged.items()})
+    excluded_all = load_excluded_pages(Path(excluded_pages) if excluded_pages else p.out("excluded_pages.json"))
     inputs = RagInputs(index_rows=index_rows, pages=pages, base_rows=base_rows, nontrain=nontrain,
                        manifest=load_literature_manifest(p, literature_manifest),
-                       excluded=rag_excluded_pages(load_excluded_pages(
-                           Path(excluded_pages) if excluded_pages else p.out("excluded_pages.json"))),
+                       excluded=rag_excluded_pages(excluded_all),
                        quality_fn=_load_quality_fn(page_list), span_pages=span_pages)
     out_rows, manifest = build_rows(inputs, seed=seed, k_max=k_max, distractor_rate=distractor_rate, leak_max=leak_max,
                                     max_tokens=max_tokens, families=families)
@@ -2459,6 +2730,22 @@ def run_build_rows(p: Optional[_paths.Paths] = None, seed: int = 3407, families:
         LOG.warning("%d rows failed contamination.block_ok and were dropped", n_block)
         manifest = _rows_manifest(out_rows, collections.Counter({**manifest["stats"], "block_check_dropped": n_block}),
                                   page_drop_reasons(inputs), seed, k_max, distractor_rate, leak_max, max_tokens, families)
+    dev_out: List[Dict[str, Any]] = []
+    if dev_rows:
+        train_keys = train_page_keys(p.out("families"), out_rows)
+        dev_out, dev_stats = build_dev_rows(inputs, dev_base, train_keys, excluded_all, dev_pids, seed=seed, k_max=k_max,
+                                            leak_max=leak_max, max_tokens=max_tokens, families=families)
+        dev_out, n_dev_block = _block_check(dev_out)
+        manifest["dev"] = {"rows": len(dev_out), "docs": len({r["meta"]["pgpid"] for r in dev_out}),
+                           "base_rows": len(dev_base), "train_page_keys": len(train_keys),
+                           "block_check_dropped": n_dev_block, "stats": dict(sorted(dev_stats.items())),
+                           "by_task": dict(collections.Counter(r["meta"]["task"] for r in dev_out))}
+    if e6_rows and p.out("rag_test_docs.json").exists():
+        e6, e6_stats = build_eval_rows(inputs, json.loads(p.out("rag_test_docs.json").read_text(encoding="utf-8")),
+                                       eval_base, k_max=k_max, max_tokens=max_tokens)
+        _rows.write_jsonl(p.out(E6_ROWS_FILE), e6)
+        manifest["e6_rows"] = {"file": E6_ROWS_FILE, "rows": len(e6), "stats": dict(sorted(e6_stats.items()))}
+    out_rows = out_rows + dev_out
     for r in out_rows:
         problems = _rows.validate_row(r)
         if problems:

@@ -21,10 +21,22 @@ This pass is **metadata only** — image references are recorded as pointers
 (FJP GCP filenames, KTIV PNX/zip ids, Bodleian GCS object paths) with a
 ``preferred_source`` flag, but no archives are unzipped and no files are moved.
 
+Image corrections: after the records are built, the recorded corrections in
+``merged/image_corrections.jsonl`` (see :mod:`src.datasets.merging.image_corrections`)
+move legacy-store image files (``images.fjp`` entries) that were filed under the
+wrong record to the record the photograph shows, detach them, or note their side
+(:func:`apply_image_corrections`); the counts land in the report under
+``image_corrections``. Transcription corrections in the same file (``kind:
+"transcription"``) move legacy-store transcription sections (``sources.fjp[*].transcriptions``)
+to the record they belong to, or detach them (:func:`apply_transcription_corrections`;
+report block ``transcription_corrections``). ``--no-image-corrections`` skips both steps;
+an explicit ``--image-corrections PATH`` that does not exist stops the merge.
+
 Run::
 
     python -m src.datasets.merging.merge_shelfmarks
-    python -m src.datasets.merging.merge_shelfmarks --out /tmp/merged.jsonl
+    python -m src.datasets.merging.merge_shelfmarks --out-dir /tmp/merged_dry
+    python -m src.datasets.merging.merge_shelfmarks --no-image-corrections
 
 Outputs ``merged_shelfmarks.jsonl`` and ``merge_report.json`` under
 ``src/datasets/raw_data/cairo_genizah/merged/`` by default.
@@ -40,7 +52,7 @@ import json
 import os
 import re
 import sys
-from typing import Sequence, Dict, FrozenSet, Iterable, List, Optional, Tuple
+from typing import Any, Sequence, Dict, FrozenSet, Iterable, List, Mapping, Optional, Set, Tuple
 
 # Anchor everything to the repo root (three levels up from this file) so the
 # script works regardless of the current working directory, and add it to
@@ -80,6 +92,15 @@ from src.datasets.merging.ktiv_images import (  # noqa: E402
     ktiv_image_sources,
     ZIP_CACHE_FILE,
     ZipMemberCache,
+)
+from src.datasets.merging.image_corrections import (  # noqa: E402
+    DEFAULT_IMAGE_CORRECTIONS,
+    correction_kind,
+    image_name,
+    load_image_corrections,
+    load_transcription_corrections,
+    section_digest,
+    transcription_sections,
 )
 
 RAW_DIR = os.path.join(_REPO_ROOT, "src", "datasets", "raw_data", "cairo_genizah")
@@ -1296,16 +1317,11 @@ def build_merged_record(
             "populated": bool(bod_image_paths),
             "unverified_images": [] if images_verified else bod_all_paths,
         } if bodleian else None,
-        # Route to KTIV imagery once populated, then the Bodleian full-resolution
-        # masters (only published when verified to show this leaf), then FJP's
-        # existing (down-sampled) GCS copies.
-        "preferred_source": (
-            "ktiv" if ktiv_image_paths
-            else "bodleian" if bod_image_paths
-            else "fjp" if fjp_images
-            else None
-        ),
     }
+    # Route to KTIV imagery once populated, then the Bodleian full-resolution
+    # masters (only published when verified to show this leaf), then the
+    # legacy-store (down-sampled) copies.
+    images["preferred_source"] = preferred_image_source(images)
 
     # Institution: prefer the normalizer's prefix mapping, else the source's own
     # institution label (e.g. FJP "Baltimore", KTIV holding library — the
@@ -1340,6 +1356,339 @@ def build_merged_record(
             "bodleian": bodleian or None,
         },
     }
+
+
+def preferred_image_source(images: Mapping[str, Any]) -> Optional[str]:
+    """Pick the image source served first for a record's ``images`` block.
+
+    Populated KTIV scans, then Bodleian masters verified to show the leaf (only
+    those are in ``bodleian.images``), then the legacy-store files in ``fjp``.
+
+    :param images: A merged record's ``images`` block.
+    :returns: ``"ktiv"``, ``"bodleian"``, ``"fjp"`` or ``None`` when there is no image.
+    """
+    if (images.get("ktiv") or {}).get("images"):
+        return "ktiv"
+    if (images.get("bodleian") or {}).get("images"):
+        return "bodleian"
+    if images.get("fjp"):
+        return "fjp"
+    return None
+
+
+# ─────────────────────────── image corrections ───────────────────────────
+
+IMAGE_CORRECTION_COUNTERS = (
+    "loaded", "applied", "moved", "detached", "side_only", "revoked",
+    "unknown_source_record", "unknown_target_record", "image_not_in_source",
+)
+
+
+def correction_record_ids(corrections: Mapping[Any, Mapping[str, Any]]) -> Set[str]:
+    """Return every canonical id a set of corrections touches (sources and targets).
+
+    :param corrections: ``{image: correction}`` from :func:`image_corrections.load_image_corrections`, or
+        ``{(from, fjp_doc_id, section): correction}`` from :func:`image_corrections.load_transcription_corrections`.
+    :returns: The ids whose records must be built before the corrections are applied.
+    """
+    ids: Set[str] = set()
+    for correction in corrections.values():
+        ids.add(correction["from_canonical_id"])
+        if correction.get("to_canonical_id"):
+            ids.add(correction["to_canonical_id"])
+    return ids
+
+
+def _fjp_entry_index(entries: Sequence[str], image: str) -> Optional[int]:
+    """Position of the ``images.fjp`` entry (bare name or absolute URL) that names file *image*.
+
+    :param entries: A record's ``images.fjp`` list.
+    :param image: The file name.
+    :returns: The index, or ``None`` when the record does not hold the file.
+    """
+    for index, entry in enumerate(entries):
+        if image_name(entry) == image:
+            return index
+    return None
+
+
+def apply_image_corrections(
+    records: Dict[str, dict],
+    corrections: Mapping[str, Mapping[str, Any]],
+) -> dict:
+    """Apply recorded image corrections to built merged records, in place.
+
+    For each correction (in image-name order):
+
+    * **move** -- the ``images.fjp`` entry leaves ``from_canonical_id`` and is
+      appended to ``to_canonical_id`` (other entries keep their order; an entry
+      the target already holds is not duplicated). The target gains
+      ``images.fjp_corrections`` = ``[{image, from, basis, source}]``, the source
+      ``images.fjp_removed`` = ``[{image, to, to_shelfmark_text, basis, source}]``;
+      a slip side goes to the target's ``images.fjp_sides`` = ``{image: side}``.
+    * **detach** (``to_canonical_id`` null) -- the entry leaves the source and is
+      listed in its ``images.fjp_removed`` with ``to_shelfmark_text``.
+    * **side only** (target = source, side set) -- ``images.fjp_sides[image] = side``.
+    * **revoke** (target = source, no side) -- nothing; counted as ``revoked``.
+
+    ``preferred_source`` is recomputed on every changed record. A correction whose
+    source record is absent (``unknown_source_record``), whose source no longer
+    holds the file (``image_not_in_source``) or whose target record is absent
+    (``unknown_target_record``) changes nothing.
+
+    :param records: ``canonical_id -> merged record`` holding at least every id the
+        corrections name that exists in this merge.
+    :param corrections: ``{image: correction}`` from :func:`image_corrections.load_image_corrections`.
+    :returns: Counts (:data:`IMAGE_CORRECTION_COUNTERS`; ``applied`` = moved +
+        detached + side_only) plus ``changed_records`` and ``changed_ids``.
+    """
+    stats = {key: 0 for key in IMAGE_CORRECTION_COUNTERS}
+    stats["loaded"] = len(corrections)
+    changed: Set[str] = set()
+    for image in sorted(corrections):
+        correction = corrections[image]
+        kind = correction_kind(correction)
+        if kind == "revoke":
+            stats["revoked"] += 1
+            continue
+        src_id, dst_id = correction["from_canonical_id"], correction["to_canonical_id"]
+        source = records.get(src_id)
+        if source is None:
+            stats["unknown_source_record"] += 1
+            continue
+        src_images = source["images"]
+        index = _fjp_entry_index(src_images.get("fjp") or [], image)
+        if index is None:
+            stats["image_not_in_source"] += 1
+            continue
+        if kind == "side_only":
+            src_images.setdefault("fjp_sides", {})[image] = correction["side"]
+            stats["side_only"] += 1
+            changed.add(src_id)
+            continue
+        target = records.get(dst_id) if dst_id is not None else None
+        if dst_id is not None and target is None:
+            stats["unknown_target_record"] += 1
+            continue
+
+        entry = src_images["fjp"].pop(index)
+        (src_images.get("fjp_sides") or {}).pop(image, None)
+        removed = {"image": image, "to": dst_id}
+        if correction.get("to_shelfmark_text"):
+            removed["to_shelfmark_text"] = correction["to_shelfmark_text"]
+        removed.update(basis=correction["basis"], source=correction["source"])
+        src_images.setdefault("fjp_removed", []).append(removed)
+        src_images["preferred_source"] = preferred_image_source(src_images)
+        changed.add(src_id)
+        if target is None:
+            stats["detached"] += 1
+            continue
+
+        dst_images = target["images"]
+        dst_fjp = dst_images.get("fjp") or []
+        if _fjp_entry_index(dst_fjp, image) is None:
+            dst_fjp.append(entry)
+        dst_images["fjp"] = dst_fjp
+        if correction.get("side") is not None:
+            dst_images.setdefault("fjp_sides", {})[image] = correction["side"]
+        dst_images.setdefault("fjp_corrections", []).append({
+            "image": image, "from": src_id, "basis": correction["basis"], "source": correction["source"],
+        })
+        dst_images["preferred_source"] = preferred_image_source(dst_images)
+        changed.add(dst_id)
+        stats["moved"] += 1
+    stats["applied"] = stats["moved"] + stats["detached"] + stats["side_only"]
+    stats["changed_records"] = len(changed)
+    stats["changed_ids"] = sorted(changed)
+    return stats
+
+
+# ──────────────────────── transcription corrections ────────────────────────
+
+TRANSCRIPTION_CORRECTION_COUNTERS = (
+    "loaded", "applied", "moved", "detached", "revoked", "unknown_source_record", "unknown_target_record",
+    "fjp_record_not_in_source", "section_not_in_source", "section_changed",
+)
+#: Top-level merged-record lists a transcription correction writes: provenance of moved sections on the source
+#: (``direction: "out"``) and the target (``direction: "in"``), and the detached sections (with their value).
+TRANSCRIPTION_CORRECTIONS_FIELD = "transcriptions_corrections"
+TRANSCRIPTIONS_REMOVED_FIELD = "transcriptions_removed"
+#: Key of a ``sources.fjp`` entry created on a target record to hold sections moved from ``from_canonical_id``.
+MOVED_FROM_KEY = "transcriptions_moved_from"
+
+
+def _fjp_record_position(entries: Sequence[Mapping[str, Any]], doc_id: str) -> Optional[int]:
+    """Position of the ``sources.fjp`` entry with this ``doc_id`` (compared as text).
+
+    :param entries: A merged record's ``sources.fjp`` list.
+    :param doc_id: The legacy-store record id.
+    :returns: The index of the first match, or ``None``.
+    """
+    for index, entry in enumerate(entries):
+        if str(entry.get("doc_id")) == doc_id:
+            return index
+    return None
+
+
+def _without_sections(transcriptions: Any, keys: Set[str]) -> Any:
+    """A copy of a ``transcriptions`` value (dict or list) without the sections named by *keys*.
+
+    :param transcriptions: Dict keyed by section, or list (keys are 1-based positions).
+    :param keys: Section keys to drop (:func:`image_corrections.transcription_sections`).
+    :returns: The new dict or list (the input is not changed).
+    """
+    if isinstance(transcriptions, dict):
+        return {key: value for key, value in transcriptions.items() if str(key) not in keys}
+    return [value for position, value in enumerate(transcriptions, 1) if str(position) not in keys]
+
+
+def _moved_container(target: dict, from_id: str, doc_id: str, keyed: bool) -> dict:
+    """The ``sources.fjp`` entry on *target* that holds sections moved from *from_id*'s record *doc_id*.
+
+    Created on first use as ``{"doc_id", "transcriptions": {} or [], "transcriptions_moved_from"}``, so
+    ``GenizahDocument.from_merged_format`` (which reads every ``sources.fjp[*].transcriptions``) serves the moved
+    sections on the target. It carries no other legacy-store field, so the target's date, language and joins
+    still come from its own sources.
+
+    :param target: The target merged record (changed in place).
+    :param from_id: The source canonical id.
+    :param doc_id: The source legacy-store record id.
+    :param keyed: Whether the source's ``transcriptions`` is a dict (else a list).
+    :returns: The container (already in ``target["sources"]["fjp"]``).
+    """
+    sources = target.get("sources")
+    if not isinstance(sources, dict):
+        sources = target["sources"] = {}
+    entries = list(sources.get("fjp") or [])
+    sources["fjp"] = entries
+    for entry in entries:
+        if entry.get(MOVED_FROM_KEY) == from_id and str(entry.get("doc_id")) == doc_id:
+            return entry
+    container = {"doc_id": doc_id, "transcriptions": {} if keyed else [], MOVED_FROM_KEY: from_id}
+    entries.append(container)
+    return container
+
+
+def apply_transcription_corrections(
+    records: Dict[str, dict],
+    corrections: Mapping[Tuple[str, str, str], Mapping[str, Any]],
+) -> dict:
+    """Apply recorded transcription corrections to built merged records, in place.
+
+    Each effective correction names one section of one legacy-store record (``sources.fjp`` entry with
+    ``doc_id == fjp_doc_id``) of ``from_canonical_id``. Every section is looked up on the records as built (a
+    section moved by this pass is not looked up again), then:
+
+    * **move** -- the section leaves the source's entry and goes into a ``sources.fjp`` container on
+      ``to_canonical_id`` (:func:`_moved_container`, one per source record and legacy-store record, same shape as
+      the source: dict keys kept, list entries appended). Both records get a ``transcriptions_corrections`` entry
+      ``{fjp_doc_id, section, sha256, basis, source, direction, to | from}``.
+    * **detach** (``to_canonical_id`` null) -- the section leaves the source and is kept, with its value, in the
+      source's ``transcriptions_removed`` list ``{fjp_doc_id, section, sha256, basis, source, to_shelfmark_text,
+      value}``.
+    * **revoke** (target = source) -- nothing; counted as ``revoked``.
+
+    The source entry is copied before it changes: the raw legacy-store record is shared by every merged record a
+    multi-shelfmark record was exploded into, which keep the section. A correction whose source record is absent
+    (``unknown_source_record``), whose target record is absent (``unknown_target_record``), whose source lacks the
+    legacy-store record (``fjp_record_not_in_source``) or the section (``section_not_in_source``), or whose
+    recorded digest no longer matches the section (``section_changed``) changes nothing.
+
+    :param records: ``canonical_id -> merged record`` holding at least every id the corrections name that exists
+        in this merge.
+    :param corrections: ``{(from_canonical_id, fjp_doc_id, section key): correction}`` from
+        :func:`image_corrections.load_transcription_corrections`.
+    :returns: Counts (:data:`TRANSCRIPTION_CORRECTION_COUNTERS`; ``applied`` = moved + detached) plus
+        ``changed_records`` and ``changed_ids``.
+    """
+    stats = {key: 0 for key in TRANSCRIPTION_CORRECTION_COUNTERS}
+    stats["loaded"] = len(corrections)
+    planned: Dict[Tuple[str, int], List[Tuple[str, Any, Mapping[str, Any]]]] = collections.defaultdict(list)
+    for key in sorted(corrections):
+        from_id, doc_id, section_key = key
+        correction = corrections[key]
+        if correction_kind(correction) == "revoke":
+            stats["revoked"] += 1
+            continue
+        source = records.get(from_id)
+        if source is None:
+            stats["unknown_source_record"] += 1
+            continue
+        dst_id = correction["to_canonical_id"]
+        if dst_id is not None and dst_id not in records:
+            stats["unknown_target_record"] += 1
+            continue
+        entries = (source.get("sources") or {}).get("fjp") or []
+        position = _fjp_record_position(entries, doc_id)
+        if position is None:
+            stats["fjp_record_not_in_source"] += 1
+            continue
+        sections = dict(transcription_sections(entries[position].get("transcriptions")))
+        if section_key not in sections:
+            stats["section_not_in_source"] += 1
+            continue
+        expected = next(s["sha256"] for s in correction["sections"] if s["key"] == section_key)
+        if expected is not None and section_digest(sections[section_key]) != expected:
+            stats["section_changed"] += 1
+            continue
+        planned[(from_id, position)].append((section_key, sections[section_key], correction))
+
+    changed: Set[str] = set()
+    for (from_id, position), items in sorted(planned.items()):
+        source = records[from_id]
+        entries = list(source["sources"]["fjp"])
+        original = entries[position]
+        doc_id = str(original.get("doc_id"))
+        transcriptions = original.get("transcriptions")
+        entries[position] = {**original,
+                             "transcriptions": _without_sections(transcriptions, {k for k, _, _ in items})}
+        source["sources"]["fjp"] = entries
+        changed.add(from_id)
+        for section_key, value, correction in items:
+            dst_id = correction["to_canonical_id"]
+            provenance = {"fjp_doc_id": doc_id, "section": section_key, "sha256": section_digest(value),
+                          "basis": correction["basis"], "source": correction["source"]}
+            if dst_id is None:
+                removed = dict(provenance)
+                if correction.get("to_shelfmark_text"):
+                    removed["to_shelfmark_text"] = correction["to_shelfmark_text"]
+                removed["value"] = value
+                source.setdefault(TRANSCRIPTIONS_REMOVED_FIELD, []).append(removed)
+                stats["detached"] += 1
+                continue
+            target = records[dst_id]
+            container = _moved_container(target, from_id, doc_id, isinstance(transcriptions, dict))
+            if isinstance(container["transcriptions"], dict):
+                container["transcriptions"][section_key] = value
+            else:
+                container["transcriptions"].append(value)
+            source.setdefault(TRANSCRIPTION_CORRECTIONS_FIELD, []).append(
+                {**provenance, "direction": "out", "to": dst_id})
+            target.setdefault(TRANSCRIPTION_CORRECTIONS_FIELD, []).append(
+                {**provenance, "direction": "in", "from": from_id})
+            changed.add(dst_id)
+            stats["moved"] += 1
+    stats["applied"] = stats["moved"] + stats["detached"]
+    stats["changed_records"] = len(changed)
+    stats["changed_ids"] = sorted(changed)
+    return stats
+
+
+def resolve_corrections_path(path: Optional[str]) -> Optional[str]:
+    """The corrections file a merge applies: ``None`` when skipped or when the default file is absent.
+
+    :param path: ``--image-corrections`` (``None`` for ``--no-image-corrections``).
+    :returns: The path to load, or ``None``.
+    :raises FileNotFoundError: When an explicit path other than :data:`DEFAULT_IMAGE_CORRECTIONS` does not exist
+        (a mistyped path must not merge silently without the corrections).
+    """
+    if not path:
+        return None
+    if os.path.exists(path):
+        return path
+    if os.path.abspath(path) == os.path.abspath(DEFAULT_IMAGE_CORRECTIONS):
+        return None
+    raise FileNotFoundError(f"corrections file not found: {path}")
 
 
 _KTIV_UNKNOWN_DATES = {"unknown", "לא ידוע", "unknown/לא ידוע"}
@@ -1520,7 +1869,11 @@ def diff_against_snapshot(state: dict, prev: Optional[dict]) -> dict:
     }
 
 
-def merge(out_dir: str = DEFAULT_OUT_DIR, zip_cache: bool = True) -> dict:
+def merge(
+    out_dir: str = DEFAULT_OUT_DIR,
+    zip_cache: bool = True,
+    image_corrections_path: Optional[str] = DEFAULT_IMAGE_CORRECTIONS,
+) -> dict:
     """Run the full merge and write the JSONL, report, image-gap worklist and diff.
 
     Outputs in *out_dir*: ``merged_shelfmarks.jsonl`` (the corpus),
@@ -1534,8 +1887,14 @@ def merge(out_dir: str = DEFAULT_OUT_DIR, zip_cache: bool = True) -> dict:
     :param out_dir: Output directory.
     :param zip_cache: Reuse / fill ``<out_dir>/ktiv_zip_members_cache.json`` so only archives never listed before
         are opened (``False``: open every archive, as before 2026-10-10).
+    :param image_corrections_path: Corrections file applied after the records are built
+        (:func:`apply_image_corrections`, :func:`apply_transcription_corrections`); skipped when ``None`` or when
+        the default file does not exist.
     :returns: The report dict.
+    :raises FileNotFoundError: When an explicit *image_corrections_path* does not exist (checked before any
+        source is loaded).
     """
+    corrections_path = resolve_corrections_path(image_corrections_path)
     os.makedirs(out_dir, exist_ok=True)
     pgp_records, alias, alias_skipped = load_pgp()
     fjp_by_cid, fjp_stats = load_fjp(alias)
@@ -1583,16 +1942,35 @@ def merge(out_dir: str = DEFAULT_OUT_DIR, zip_cache: bool = True) -> dict:
     gap_rows: List[dict] = []
     backlog_rows: List[dict] = []
 
+    def build(cid: str) -> dict:
+        """Build the merged record for *cid* from the loaded sources.
+
+        :param cid: Canonical id.
+        :returns: The merged record.
+        """
+        return build_merged_record(
+            cid, pgp_records.get(cid), fjp_by_cid.get(cid, []), ktiv_by_cid.get(cid),
+            ktiv_zips, ktiv_images, ktiv_transcriptions,
+            bodleian=bodleian_by_cid.get(cid), bodleian_images=bodleian_images,
+        )
+
+    # Records the corrections touch are built first so an image or a transcription
+    # section can move between them; the main loop then writes the corrected
+    # versions in id order.
+    corrections = load_image_corrections(corrections_path) if corrections_path else {}
+    text_corrections = load_transcription_corrections(corrections_path) if corrections_path else {}
+    touched = correction_record_ids(corrections) | correction_record_ids(text_corrections)
+    corrected = {cid: build(cid) for cid in sorted(touched & all_ids)}
+    correction_stats = {"path": corrections_path, **apply_image_corrections(corrected, corrections)}
+    transcription_stats = {"path": corrections_path, **apply_transcription_corrections(corrected, text_corrections)}
+
     out_path = os.path.join(out_dir, MERGED_JSONL)
     with open(out_path, "w", encoding="utf-8") as out:
         for cid in sorted(all_ids):
             pgp = pgp_records.get(cid)
             fjp = fjp_by_cid.get(cid, [])
             ktiv = ktiv_by_cid.get(cid)
-            record = build_merged_record(
-                cid, pgp, fjp, ktiv, ktiv_zips, ktiv_images, ktiv_transcriptions,
-                bodleian=bodleian_by_cid.get(cid), bodleian_images=bodleian_images,
-            )
+            record = corrected[cid] if cid in corrected else build(cid)
             out.write(json.dumps(record, ensure_ascii=False) + "\n")
             counts[",".join(record["sources_present"])] += 1
 
@@ -1659,6 +2037,8 @@ def merge(out_dir: str = DEFAULT_OUT_DIR, zip_cache: bool = True) -> dict:
         ),
         "image_gap": image_gap,
         "ktiv_image_backlog": ktiv_image_backlog,
+        "image_corrections": correction_stats,
+        "transcription_corrections": transcription_stats,
         "diff_summary": diff.get("counts", {"baseline": True}),
         "output": out_path,
     }
@@ -1797,12 +2177,22 @@ def _write_json(path: str, data: dict) -> None:
         json.dump(data, fh, ensure_ascii=False, indent=2)
 
 
-def main() -> None:
-    """CLI entry point: run the merge and print the report (or a top-collections rollup)."""
-    parser = argparse.ArgumentParser(description=__doc__)
+def build_parser() -> argparse.ArgumentParser:
+    """Build the command-line parser.
+
+    :returns: The parser, so tests can check the defaults without running a merge.
+    """
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--out-dir", default=DEFAULT_OUT_DIR, help="Output directory.")
     parser.add_argument("--no-zip-cache", dest="zip_cache", action="store_false",
                         help="Open every KTIV image archive instead of reusing <out-dir>/ktiv_zip_members_cache.json.")
+    corrections = parser.add_mutually_exclusive_group()
+    corrections.add_argument("--image-corrections", dest="image_corrections", default=DEFAULT_IMAGE_CORRECTIONS,
+                             metavar="PATH",
+                             help="Image and transcription corrections applied after the records are built "
+                                  "(default: %(default)s, skipped when absent; another path must exist).")
+    corrections.add_argument("--no-image-corrections", dest="image_corrections", action="store_const", const=None,
+                             help="Do not apply the image or transcription corrections.")
     parser.add_argument(
         "--top",
         type=int,
@@ -1810,8 +2200,13 @@ def main() -> None:
         metavar="N",
         help="Print the top N collections by rich-but-imageless count and exit.",
     )
-    args = parser.parse_args()
-    report = merge(args.out_dir, zip_cache=args.zip_cache)
+    return parser
+
+
+def main() -> None:
+    """CLI entry point: run the merge and print the report (or a top-collections rollup)."""
+    args = build_parser().parse_args()
+    report = merge(args.out_dir, zip_cache=args.zip_cache, image_corrections_path=args.image_corrections)
 
     if args.top:
         ig = report["image_gap"]

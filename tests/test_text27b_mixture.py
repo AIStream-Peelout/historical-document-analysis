@@ -10,6 +10,7 @@ through the real local Qwen3.8 template / tokenizer named in ``paths.json`` and 
 import codecs
 import ast
 import json
+from dataclasses import replace
 import logging
 import random
 from collections import Counter, defaultdict
@@ -206,6 +207,27 @@ def test_doc_key_and_cond_class() -> None:
     assert M.cond_class("literature") is None
 
 
+def test_t27b_drops_read_partial_by_default(tmp_path: Path) -> None:
+    """Prep pass 2026-10-26: t27b never draws read_partial rows (condition default or ``meta.mixture_excluded`` tag);
+    the document falls back to its own edition / read / noised rows; read_hard slice rows still swap in."""
+    files = base_t27b_files()
+    files["noise_slice"] = [mk("describe_pgp", 12, "read_partial", read_model="a50", mixture_excluded="read_partial"),
+                            mk("catalogue_json", 14, "read_partial", read_model="a50"),
+                            mk("catalogue_json", 13, "read_hard", read_model="v21b")]
+    assert M.default_config("t27b").exclude_conditions == ("read_partial",)
+    assert M.default_config("t27a").exclude_conditions == ()
+    res = build(tmp_path, "t27b", files)
+    rows, sec = res["rows"], res["section"]
+    assert not any(r["meta"]["condition"] == "read_partial" for r in rows)
+    chosen = {r["meta"]["pgpid"]: r["meta"]["condition"] for r in rows if r["meta"]["family"] in M.ONE_PER_DOC_FAMILIES}
+    assert chosen["13"] == "read_hard" and chosen["12"] in ("edition", "read", "noised_edition")
+    assert sec["load"]["dropped"]["condition_excluded:read_partial"] == 2
+    kept = build(tmp_path / "keep", "t27b", files, exclude_conditions=())
+    assert not any(r["meta"]["pgpid"] == "12" and r["meta"]["condition"] == "read_partial"
+                   for r in kept["rows"])  # the tagged row stays out even without the condition default
+    assert any(r["meta"]["pgpid"] == "14" and r["meta"]["condition"] == "read_partial" for r in kept["rows"])
+
+
 def test_default_config_values_and_validation() -> None:
     """Plan defaults: t27a translate ×2 without slice; t27b weights 0.4/0.4/0.2, relations 0.4; bad input rejected."""
     a = M.default_config("t27a")
@@ -337,7 +359,7 @@ def test_one_row_per_document_across_catalogue_and_describe(tmp_path: Path) -> N
     files = base_t27b_files()
     files["noise_slice"] = [mk("describe_pgp", 12, "read_partial", read_model="a50"),
                             mk("catalogue_json", 13, "read_hard", read_model="v21b")]
-    res = build(tmp_path, "t27b", files)
+    res = build(tmp_path, "t27b", files, exclude_conditions=())  # the policy itself; the prep-pass default drops partials
     rows, sec = res["rows"], res["section"]
     cd = [r for r in rows if r["meta"]["family"] in M.ONE_PER_DOC_FAMILIES]
     per_doc = Counter(r["meta"]["pgpid"] for r in cd)
@@ -495,13 +517,16 @@ def test_token_cap_subsamples_domain_reading_seeded(tmp_path: Path) -> None:
 
 
 def test_literature_floor_gate() -> None:
-    """F13: the t27b floor passes when the literature components hold ≥ 17.5 % of the tokens and L1 sits within ±1 %
-    of its budget; either miss fails it; per-component yields are reported.
+    """F13 restated (2026-10-26): the t27b floor passes when the literature components hold ≥ 17.5 % of the core tokens
+    and L1 is the whole offered pool (≤ its budget); a pool larger than the budget only needs L1 ≤ budget; the legacy
+    ±1 % rule still works when configured; web pairs count as a literature component.
 
     :returns: None.
     """
     cfg = M.default_config("t27b", token_caps={"domain_reading": 1000})
-    assert cfg.literature_floor == M.T27B_LITERATURE_FLOOR == {"min_share": 0.175, "l1_tolerance": 0.01}
+    assert cfg.literature_floor == M.T27B_LITERATURE_FLOOR == {"min_share": 0.175, "l1_whole_pool": 1.0}
+    assert cfg.repeats["web_pairs"] == 2 and M.WEB_PAIRS_FILE in cfg.files
+    assert M.WEB_PAIRS_FILE not in M.default_config("t27a").files
 
     def inst(family: str, tokens: int, src: Optional[str] = None) -> M.Instance:
         """One instance with a token count.
@@ -517,12 +542,21 @@ def test_literature_floor_gate() -> None:
 
     base = [inst("domain_reading", 995), inst("rag_context", 100), inst("analyse_document", 50),
             inst("translate_en", 80, src="book_pairs"), inst("catalogue_json", 4000)]
-    chk = M.literature_floor_check(base, cfg)
+    pool = {"domain_reading": {"tokens_offered": 995}}
+    chk = M.literature_floor_check(base, cfg, pool)
     assert chk["pass"] and chk["share"] == round(1225 / 5225, 5) and chk["tokens_by_component"]["book_pairs"] == 80
-    assert not M.literature_floor_check(base[1:] + [inst("domain_reading", 980)], cfg)["pass"]       # L1 off by 2 %
-    low = M.literature_floor_check(base + [inst("catalogue_json", 2000)], cfg)
+    assert chk["l1_rule"] == "whole_pool_le_budget" and chk["l1_pool_tokens"] == 995
+    short = base[1:] + [inst("domain_reading", 980)]
+    assert not M.literature_floor_check(short, cfg, pool)["pass"]                              # pool not all in
+    assert M.literature_floor_check(short, cfg, {"domain_reading": {"tokens_offered": 1500}})["pass"]  # pool > budget
+    assert not M.literature_floor_check(base[1:] + [inst("domain_reading", 1005)], cfg, None)["pass"]  # over budget
+    legacy = replace(cfg, literature_floor={"min_share": 0.175, "l1_tolerance": 0.01})
+    assert not M.literature_floor_check(short, legacy)["pass"] and M.literature_floor_check(base, legacy)["pass"]
+    low = M.literature_floor_check(base + [inst("catalogue_json", 2000)], cfg, pool)
     assert not low["pass"] and low["violations"] == 1
     assert M.literature_floor_check(base, M.default_config("t27b", token_caps={"domain_reading": 0}))["pass"]
+    web = M.literature_floor_check(base + [inst("translate_en", 40, src="web_pairs")], cfg, pool)
+    assert web["tokens_by_component"]["web_pairs"] == 40 and web["pass"]
 
 
 def canon_rows(n_per_title: int = 12) -> List[Dict[str, Any]]:

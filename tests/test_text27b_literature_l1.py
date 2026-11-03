@@ -684,3 +684,123 @@ def test_real_template_and_tokenizer(lib: Path) -> None:
         rendered = R.render_chat(r["messages"])
         assert rendered.count(R.EMPTY_THINK) == 1 and R.EFFORT_MARKER not in rendered
         assert r["meta"]["tokens"] == R.count_tokens(rendered)
+
+
+# ------------------------------------------------------------------------------------ prep-pass hygiene (2026-10-26)
+BIB_PAGE = "\n".join([
+    "Abbot, Ann. 1999. 'A Study of Trade'. Journal of Things 12: 33-45.",
+    "Baker, Ben. 2001. Merchants of the Sea. Leiden: Brill.",
+    "———. 2004. 'Ports and Partners'. In Essays on Trade, edited by C. Cole, 10-20.",
+    "Cole, Carl, and Dan Dee. 2010. Letters and Ledgers. Oxford: Oxford University Press.",
+    "Dee, Dan. 1987. The Silk Road Again. London: Routledge.",
+    "Eve, Emma. 2015. 'Widows in Court'. Speculum 90: 1-30.",
+    "Fox, Fay. 1990. Caravans. New York: Harper."])
+#: Wrapped bibliography entries (fewer than 45 % of the lines carry a year, so the ported year rule lets it through).
+BIB_WRAPPED = "\n".join([
+    "Abbot, Ann. 1999. 'A Study of Trade in the Ports of the", "Western Sea and the Merchants Who Sailed There'.",
+    "Journal of Things 12: 33-45.",
+    "Baker, Ben. 2001. Merchants of the Sea and Their", "Partners in the East: Letters, Ledgers and",
+    "Lawsuits. Leiden: Brill.",
+    "Cole, Carl, and Dan Dee. 2010. Letters and Ledgers of", "the Geniza Merchants and Their Families in",
+    "the Long Twelfth Century. Oxford: Oxford University Press.",
+    "Dee, Dan. 1987. The Silk Road Again: A Survey of", "Trade Routes Between the Mediterranean and",
+    "the Indian Ocean. London: Routledge."])
+PROSE_WITH_NOTES = ("The merchant wrote to his partner about the cargo of flax and pepper that had reached the western\n"
+                    "ports during the sailing season, and he asked for news of the market price.12 The partner\n"
+                    "answered that the ships were late and that the judge had sealed the house of the debtor.13\n"
+                    "This shows how the partnership worked in practice and why the letters were kept together.\n"
+                    "12 See Goitein, Med. Soc., I, p. 33.\n"
+                    "13 Cf. ibid., p. 45; the same court is discussed in Baker (2001), 12.")
+
+
+def test_reference_density_and_page_kinds() -> None:
+    """Bibliography / endnotes / index / contents / front matter are recognised; argumentative prose is body text."""
+    assert L.reference_density(BIB_PAGE) > L.REFERENCE_DENSITY_MAX
+    assert L.reference_density(prose(1)) == 0.0 and L.reference_density("") == 0.0
+    assert L.page_kind(BIB_PAGE, 300) == "bibliography" and L.page_kind(BIB_WRAPPED, 300) == "bibliography"
+    assert not L.quality_reasons(BIB_WRAPPED)  # the earlier rules alone kept such pages
+    assert L.page_kind("Bibliography\n" + prose(2, 8), 300) == "bibliography"
+    notes = "\n".join(f"{n}. See Goitein, Med. Soc., I, p. {n + 3}; ibid., p. {n + 9}." for n in range(40, 52))
+    assert L.page_kind(notes, 200) == "endnotes"
+    index = "Index\n" + "\n".join(f"topic {c}, {n}, {n + 4}-{n + 6}, {n + 30}" for n, c in zip(range(10, 30), "abcdefghijklmnopqrst"))
+    assert L.page_kind(index, 400) == "index"
+    toc = "Contents\nIntroduction ........ 1\nThe Letters ........ 15\nThe Courts ........ 40"
+    assert L.page_kind(toc, 5) == "toc"
+    front = "First published 2001\nAll rights reserved\nISBN 978-0-00-000000-0\nPrinted and bound in somewhere"
+    assert L.page_kind(front, 4) == "front_matter" and L.page_kind(front, 200) is None  # front matter only early
+    assert L.page_kind(prose(3), 50) is None
+    # a line-numbered translation is not an endnote page
+    trans = "\n".join(f"{n}. and he sent the money to his brother with the caravan" for n in range(1, 15))
+    assert L.page_kind(trans, 60) is None
+
+
+def test_footnote_cut_structured_and_fallback() -> None:
+    """The footnote region goes: located from the page's footnote strings, else by the note-number fallback, which
+    needs a matching note reference in the body (line-numbered edition text is never cut)."""
+    body, how = L.cut_footnotes(PROSE_WITH_NOTES)
+    assert how == "fallback" and body.endswith("kept together.") and "Goitein" not in body
+    rec = page_rec(PROSE_WITH_NOTES)
+    rec.data = {"footnotes": {"12": "See Goitein, Med. Soc., I, p. 33."}}
+    body2, how2 = L.cut_footnotes(PROSE_WITH_NOTES, rec)
+    assert how2 == "structured" and body2 == body
+    edition = "\n".join(f"{n} and he wrote to his brother about the flax and the pepper and the price" for n in range(1, 25))
+    assert L.cut_footnotes(edition) == (edition, None)
+    assert L.footnote_block_start("no notes here at all") is None
+
+
+def test_join_broken_lines() -> None:
+    """Hyphenated and mid-sentence line breaks join; sentence ends, numbered lines and Judaeo-Arabic lines stay."""
+    text = ("The merchants of the western ports wrote long histor-\nical letters to their partners in the east about\n"
+            "the cargo and the season.\nA new paragraph starts here with a capital letter.\n"
+            "The Judaeo-\nArabic letters were written in Hebrew script by the writer himself.")
+    out, n = L.join_broken_lines(text)
+    assert "historical letters" in out and "east about the cargo" in out and "Judaeo-Arabic" in out
+    assert "season.\nA new paragraph" in out and n["hyphen"] == 2 and n["latin"] >= 1
+    numbered = "1 and he sent the money to his brother with\n2 the caravan of the merchants of the west"
+    assert L.join_broken_lines(numbered)[0] == numbered
+    he = ("והסוחרים שבנמלי המערב כתבו מכתבים ארוכים אל שותפיהם שבמזרח והם מספרים לנו את\n"
+          "סיפור המסחר של התקופה בפירוט רב")
+    out_he, n_he = L.join_broken_lines(he)
+    assert n_he["rtl"] == 1 and "\n" not in out_he
+    ja = ("ואעלמך אן אלכתאב וצל אליה מן אכיה פי אלשהר אלמאצי ואנא אשכר אללה עלי דלך כתירא ואלסלאם עליך\n"
+          "ואלסלאם עליך ורחמה אללה")
+    assert L.join_broken_lines(ja)[0] == ja  # quoted Judaeo-Arabic keeps its lines
+
+
+def test_text_kind_labels() -> None:
+    """argument / narrative / edition_apparatus / other."""
+    arg = ("However, the evidence suggests that the reading is probably wrong, because the scribe seems to have "
+           "confused two letters; therefore we must conclude that the date is uncertain, as argued above. ") * 3
+    nar = ("The merchant was born in Fustat and became a judge; he married the daughter of a trader, went to Aden, "
+           "returned in 1140 and died there. His son was a scribe and wrote many letters. ") * 3
+    ed = "\n".join(f"{n}. ואעלמך אן אלכתאב וצל אליה מן אכיה פי אלשהר אלמאצי" for n in range(1, 12))
+    assert L.text_kind(arg) == "argument" and L.text_kind(nar) == "narrative"
+    assert L.text_kind(ed) == "edition_apparatus" and L.text_kind("") == "other"
+    assert L.text_kind("cargo flax pepper ships ports judge sale house " * 6) == "other"
+    assert set(L.TEXT_KINDS) == {"argument", "edition_apparatus", "narrative", "other"}
+
+
+def test_build_hygiene_drops_apparatus_cuts_notes_and_labels(tmp_path: Path) -> None:
+    """build(): a bibliography page is dropped as page_kind, a reference-dense page as reference_density, the notes of
+    a body page are cut (counted per work) and every row carries a text_kind; hygiene=False keeps the earlier path."""
+    pages = [page_rec(prose(9, 6) + "\n" + PROSE_WITH_NOTES, work="w", page_no=1),
+             page_rec(BIB_WRAPPED, work="w", page_no=2),
+             page_rec(prose(4), work="w", page_no=3)]
+    tok, tpl = make_tokenizer(tmp_path), make_template(tmp_path)
+    rows, rep = L.build(pages, {}, token_cap=None, probe_frac=0.0, max_tokens=400, tokenizer_path=tok, template_path=tpl)
+    w = rep["works"]["w"]
+    assert w["dropped"]["page_kind:bibliography"]["pages"] == 1
+    assert w["cuts"]["footnotes"]["pages"] == 1 and w["cuts"]["footnotes"]["tokens"] > 0
+    assert rep["totals"]["footnote_cut_pages"] == 1 and rep["hygiene"] is True
+    text = " ".join(m["content"] for r in rows for m in r["messages"])
+    assert "ibid." not in text and "Goitein" not in text
+    assert all(r["meta"]["text_kind"] in L.TEXT_KINDS for r in rows)
+    assert any("footnote_cut:fallback" in r["meta"]["strip_ops"] for r in rows)
+    assert sum(c["rows"] for c in rep["text_kinds"]["train"].values()) == len(rows)
+    raw, rep_raw = L.build(pages, {}, token_cap=None, probe_frac=0.0, max_tokens=400, tokenizer_path=tok,
+                           template_path=tpl, hygiene=False)
+    assert "page_kind:bibliography" not in rep_raw["works"]["w"]["dropped"] and rep_raw["hygiene"] is False
+    dense = [page_rec("\n".join(f"the merchant {i} see p. {i}; ibid., pp. 3-4." for i in range(10)) + "\n" + prose(5, 6),
+                      work="v", page_no=40)]
+    _, rep_d = L.build(dense, {}, token_cap=None, probe_frac=0.0, max_tokens=400, tokenizer_path=tok, template_path=tpl)
+    assert rep_d["works"]["v"]["dropped"]["reference_density"]["pages"] == 1

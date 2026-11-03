@@ -237,10 +237,15 @@ def test_select_hard_lowest_cer_and_model_allowlist() -> None:
 
 
 def test_select_translate_cap() -> None:
-    """Translate families take a hard read only up to CER 0.75 and never a partial read."""
+    """Translate families take a hard read only up to CER 0.60 (prep pass) and never a partial read."""
     reads = _evals(("a50", 0.8, 1.0, "x"))
     assert NS.select_read("translate_en", reads, "t", (), CFG) == (None, "hard_over_translate_cap")
     assert NS.select_read("catalogue_json", reads, CAT, (), CFG)[1] == "read_hard"
+    assert CFG.translate_cer_max == 0.60
+    mid = _evals(("a50", 0.65, 1.0, "x"))
+    assert NS.select_read("translate_he", mid, "t", (), CFG) == (None, "hard_over_translate_cap")
+    assert NS.select_read("extract_relations", mid, "{}", (), CFG)[1] == "read_hard"  # other families unchanged
+    assert NS.select_read("translate_en", _evals(("a50", 0.58, 1.0, "x")), "t", (), CFG)[1] == "read_hard"
     partial = _evals(("a50", 0.5, 0.5, "אברהם"))
     assert NS.select_read("translate_he", partial, "t", (), CFG) == (None, "partial_family_not_allowed")
     assert NS.select_read("extract_relations", partial, "{}", (), CFG) == (None, "partial_family_not_allowed")
@@ -393,6 +398,9 @@ def test_build_slice_end_to_end() -> None:
     assert got == {("100", "describe_pgp"): "read_hard", ("100", "translate_en"): "read_hard",
                    ("100", "extract_relations"): "read_hard", ("101", "describe_pgp"): "read_partial"}
     assert all(r["meta"]["read_model"] == "v21b" for r in out if r["meta"]["pgpid"] == "100")
+    # prep pass: read_partial rows stay in the file, tagged out of the mixture; read_hard rows are not tagged
+    assert {r["meta"]["condition"]: r["meta"]["mixture_excluded"] for r in out} == {"read_hard": None,
+                                                                                    "read_partial": "read_partial"}
     assert st.holdout_reasons == {"benchmark:shelfmark_key": 1} and st.docs["split_dev"] == 1 and st.docs["no_reads"] == 1
     assert st.read_classes[("describe_pgp", "a50", "cer_gt_limit")] == 1
     assert st.rows_without_noised_twin == 1 and st.replaced_noised_tokens == 150
@@ -578,7 +586,8 @@ def test_main_cli(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     man = json.loads(p.out("families", "noise_slice_manifest.json").read_text(encoding="utf-8"))
     assert man["n_rows"] == len(out) and not any(man["checks"].values())
     assert man["holdout_reasons"] == {"benchmark:pgpid": 1} and man["target_source"] == "v0_1_fallback_stripped"
-    assert man["build_args"]["config"]["translate_cer_max"] == 0.75 and man["exposure"].startswith("not applied")
+    assert man["build_args"]["config"]["translate_cer_max"] == 0.60 and man["exposure"].startswith("not applied")
+    assert man["build_args"]["config"]["mixture_excluded_conditions"] == ["read_partial"]
 
 
 def test_real_template_render_if_available() -> None:
