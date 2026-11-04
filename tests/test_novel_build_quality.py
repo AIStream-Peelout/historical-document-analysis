@@ -187,14 +187,43 @@ def test_arabic_density_uses_the_chosen_photograph() -> None:
     assert unknown.ok and q.SIZE_UNKNOWN in unknown.reasons
 
 
-def test_coverage_signals() -> None:
-    """A read with twice the target's letters fails; extra Kraken lines are only flagged."""
+@pytest.mark.parametrize("ratio, kraken_factor, ok, reasons", [
+    (1.0, 1.0, True, []),
+    (1.49, 1.0, True, []),
+    (1.5, 1.0, False, [q.READ_OVER]),
+    (2.3, 1.0, False, [q.READ_OVER]),
+    (0.41, 1.0, True, []),
+    (0.39, 1.0, False, [q.READ_UNDER]),
+    (1.0, 1.4, True, [q.KRAKEN_LINES]),
+    (1.0, 1.5, False, [q.KRAKEN_LINES_OVER]),
+    (1.0, 2.0, False, [q.KRAKEN_LINES_OVER])])
+def test_coverage_signals(ratio: float, kraken_factor: float, ok: bool, reasons: List[str]) -> None:
+    """Read letters at 1.5 times the target's or more, or under 0.4 times, fail; Kraken lines at 1.5 times the target's
+    fail and between 1.3 and 1.5 times are flagged.
+
+    :param ratio: Read letters over target letters.
+    :param kraken_factor: Kraken lines over target lines.
+    :param ok: Expected pass.
+    :param reasons: Expected reasons.
+    """
     text = words(HEBREW, 200)
     lines = len(text.splitlines())
-    over = check(text, coverage={"letters_ratio": 2.3, "kraken_lines": lines, "target_lines": lines})
-    assert not over.ok and q.READ_OVER in over.reasons
-    many = check(text, coverage={"letters_ratio": 1.0, "kraken_lines": 2 * lines, "target_lines": lines})
-    assert many.ok and many.reasons == [q.KRAKEN_LINES]
+    result = check(text, coverage={"letters_ratio": ratio, "kraken_lines": round(kraken_factor * lines),
+                                   "target_lines": lines})
+    assert result.ok is ok and result.reasons == reasons
+
+
+def test_a_dead_first_or_last_third_is_a_partial_image() -> None:
+    """A first or last third of at least 100 letters without one matched n-gram fails; shorter thirds do not."""
+    text = words(HEBREW, 400)
+    lines = len(text.splitlines())
+    base = {"letters_ratio": 1.0, "kraken_lines": lines, "target_lines": lines}
+    dead = check(text, coverage={**base, "thirds": {"letters": [130, 130, 130], "matched": [40, 35, 0]}})
+    assert not dead.ok and dead.reasons == [q.PARTIAL_IMAGE]
+    alive = check(text, coverage={**base, "thirds": {"letters": [130, 130, 130], "matched": [40, 0, 2]}})
+    assert alive.ok
+    short = check(text, coverage={**base, "thirds": {"letters": [90, 90, 90], "matched": [0, 30, 0]}})
+    assert short.ok
 
 
 def test_token_budget_with_a_fake_tokenizer() -> None:
@@ -241,3 +270,122 @@ def test_missing_coverage_is_recomputed_from_reads() -> None:
     results = q.run_quality({cand.row_id: cand}, [decision], tokenizer=FakeTokenizer(), reads=reads)
     assert q.READ_OVER in results[0].reasons
     assert q.COVERAGE_UNKNOWN in q.run_quality({cand.row_id: cand}, [decision], tokenizer=FakeTokenizer())[0].reasons
+
+
+# --- target flags ----------------------------------------------------------------------------------------------------
+
+def test_target_flags_gate_and_record() -> None:
+    """Legacy-store ``unresolved_finals`` and PGP ``complex_side_labels`` fail; ``not_body_text`` (spans kept as ink)
+    and the notation flags are recorded only; a failing flag of another source's kind does not apply."""
+    text = words(HEBREW, 200)
+    for source, flags, expected in (("fjp", ["unresolved_finals", "wrap_reversed"], ["unresolved_finals"]),
+                                    ("fjp_scrape", ["not_body_text"], ["not_body_text"]),
+                                    ("fjp", ["not_body_text", "unresolved_finals"], ["unresolved_finals",
+                                                                                     "not_body_text"]),
+                                    ("pgp", ["complex_side_labels", "notation_latin"], ["complex_side_labels",
+                                                                                        "notation_latin"]),
+                                    ("pgp", ["notation_glued_digits", "unrendered_lines"], ["notation_glued_digits"]),
+                                    ("pgp", ["unresolved_finals"], [])):
+        result = check(text, source=source, notes={"target_flags": {"recto": flags, "verso": ["not_body_text"]}})
+        assert result.reasons == expected
+        assert result.ok is all(r in q.FLAG_ONLY for r in expected)
+
+
+def test_gap_density_over_30_percent_fails_legacy_store_sides() -> None:
+    """More than 30 gap tokens per 100 letters fails a legacy-store side (the October build's rule), not a PGP one."""
+    gappy = "\n".join(f"{line} [...] [...]" for line in words(HEBREW, 60, per_line=1).splitlines())
+    assert q.gap_density(gappy) > q.MAX_GAP_DENSITY
+    assert q.GAP_DENSITY in check(gappy, source="fjp").reasons
+    assert q.GAP_DENSITY not in check(gappy, source="pgp").reasons
+
+
+# --- sign normalisations and allowed characters ----------------------------------------------------------------------
+
+def test_backtick_becomes_a_geresh_with_a_flag() -> None:
+    """An ASCII backtick is a geresh: replaced and flagged, not failed."""
+    result = check(words(HEBREW, 200) + "\nאב` גד")
+    assert result.ok and result.reasons == [q.BACKTICK_GERESH] and "אב' גד" in result.text
+
+
+def test_reversed_supplied_span_is_dropped_for_pgp_only() -> None:
+    """A reversed ``>x<`` in a PGP target is dropped like ``<x>`` (letters supplied by the editor); elsewhere it
+    fails."""
+    text = words(HEBREW, 200) + "\nכל אשר >לו< אך"
+    pgp = check(text)
+    assert pgp.ok and pgp.reasons == [q.REVERSED_SUPPLIED_DROPPED] and "כל אשר  אך" in pgp.text
+    other = check(text, source="literature")
+    assert not other.ok and q.HYGIENE in other.reasons
+
+
+def test_lone_fraction_signs_after_a_numeral_or_at_a_line_end_are_dropped() -> None:
+    """A lone ``>`` / ``<`` after a digit, ending a token after a Hebrew letter numeral, or ending a line is dropped
+    and flagged; one inside a token stays and fails."""
+    dropped = check(words(HEBREW, 200) + "\nאב 5> גד\nבן יז> ז< דאר\nהו זח <")
+    assert dropped.ok and dropped.reasons == [q.FRACTION_SIGN_DROPPED]
+    assert "אב 5 גד" in dropped.text and "בן יז ז דאר" in dropped.text and "<" not in dropped.text
+    kept = check(words(HEBREW, 200) + "\nאב ז>גד הו")
+    assert not kept.ok and kept.reasons == [q.HYGIENE]
+
+
+def test_combining_marks_and_fractions_are_text() -> None:
+    """Combining marks (a dotted letter of Judaeo-Arabic) and the fractions are allowed characters."""
+    result = check(words(HEBREW, 200) + "\nג̇ צ̇ 5½ 3¼ ¾ ⅛ 1⁄2")
+    assert result.ok, result.reasons
+
+
+def test_papyrus_numerals_are_allowed_on_arabic_sides_only() -> None:
+    """An asterisk, Greek letters and the modifier prime pass on an Arabic-script side and fail on a Hebrew one."""
+    numerals = " * ιβʹ χ"
+    assert check(words(ARABIC, 200) + numerals).ok
+    hebrew = check(words(HEBREW, 200) + numerals)
+    assert not hebrew.ok and hebrew.reasons == [q.NON_TEXT]
+
+
+# --- coverage on the read that covers most of the target -------------------------------------------------------------
+
+def test_a_low_coverage_on_kraken_reads_only_asks_for_a_second_read() -> None:
+    """A low coverage computed on Kraken reads only fails with ``coverage_second_read_wanted``; when a page-reader
+    read of the photograph exists and coverage still fails, no second read is asked for."""
+    text = words(HEBREW, 300)
+    alone = check(text, coverage={"letters_ratio": 0.3, "coverage_reader": "kraken:test", "usable_readers": ["kraken"]})
+    assert not alone.ok and alone.reasons == [q.READ_UNDER, q.SECOND_READ_WANTED]
+    both = check(text, coverage={"letters_ratio": 0.3, "coverage_reader": "vlm:test",
+                                 "usable_readers": ["kraken", "vlm"]})
+    assert not both.ok and both.reasons == [q.READ_UNDER]
+    legacy = check(text, coverage={"letters_ratio": 0.3, "reader": "kraken:test"})
+    assert legacy.reasons == [q.READ_UNDER, q.SECOND_READ_WANTED]
+
+
+def test_a_page_reader_read_clears_a_kraken_under_read() -> None:
+    """End to end: a Kraken read of 30 % of the target places the side but its coverage fails (second read wanted);
+    once a page-reader read of 80 % exists, the coverage is computed on it and the side passes."""
+    from src.finetuning.qwen_hebrew.novel_build import side_assign as sa
+    from src.finetuning.qwen_hebrew.novel_build.schema import ReadRecord
+
+    def read_of(sha: str, text: str, reader: str) -> ReadRecord:
+        """A read record.
+
+        :param sha: Photograph hash.
+        :param text: Read text.
+        :param reader: Reader id.
+        :return: The record.
+        """
+        lines = [line for line in text.splitlines() if line.strip()]
+        return ReadRecord(sha, reader, text, lines, len(lines), sum(ch in HEBREW for ch in text), 0, "ok", 1.0,
+                          "2026-11-03T00:00:00Z")
+
+    page = words(HEBREW, 300, per_line=4, seed=9)
+    lines = page.splitlines()
+    cand, target, _ = make(page)
+    nulls = [read_of(f"null_{reader}_{i}", words(HEBREW, 200, seed=100 + i), f"{reader}:test")
+             for reader in ("kraken", "vlm") for i in range(60)]
+    kraken = read_of("sha_q", "\n".join(lines[: int(len(lines) * 0.3)]), "kraken:test")
+    vlm = read_of("sha_q", "\n".join(lines[: int(len(lines) * 0.8)]), "vlm:test")
+    first = sa.assign_sides([cand], nulls + [kraken], n_boot=20, seed=3)[0]
+    assert first.outcome == "accepted" and first.reader == "kraken:test"
+    under = q.run_quality({cand.row_id: cand}, [first], tokenizer=FakeTokenizer())[0]
+    assert not under.ok and q.READ_UNDER in under.reasons and q.SECOND_READ_WANTED in under.reasons
+    second = sa.assign_sides([cand], nulls + [kraken, vlm], n_boot=20, seed=3)[0]
+    assert second.outcome == "accepted" and second.competitors[0]["coverage"]["coverage_reader"] == "vlm:test"
+    cleared = q.run_quality({cand.row_id: cand}, [second], tokenizer=FakeTokenizer())[0]
+    assert cleared.ok, cleared.reasons

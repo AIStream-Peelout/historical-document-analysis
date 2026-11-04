@@ -20,10 +20,12 @@ Finish of a page-reader read (:func:`vlm_finish`): ``looping`` only when the rea
 a generation the 1,200-token budget cut without one (a long page) is ``length``. A ``length`` read is usable evidence
 (:func:`is_usable`): a truncated read still places a side. ``looping``, ``blank`` and ``error`` reads are not.
 
-Fallback selections (a second reader for what the first left unplaced): ``--only-missing-usable`` reads photographs
-without a usable read from any reader; ``--only-unplaced SIDES`` reads the photographs of candidates with at least one
-side that stage 2 sides did not accept, whatever reads they already have (a usable read that placed nothing does not
-block a second read). Given together, the queue is the union of both.
+Fallback selections (a second reader for what the first left unplaced or doubtful): ``--only-missing-usable`` reads
+photographs without a usable read from any reader; ``--only-unplaced SIDES`` reads the photographs of candidates with
+at least one side that stage 2 sides did not accept, whatever reads they already have (a usable read that placed
+nothing does not block a second read); ``--only-coverage-review QUALITY`` reads, for each side whose stage 3 quality
+reasons ask for it (:data:`COVERAGE_REVIEW_REASONS`), the side's accepted photograph, or every present photograph of
+its candidate when the sides file has none for it. Given together, the queue is the union of all of them.
 
 Near-duplicates (opt-in, ``--skip-near-duplicates N``; :data:`NEAR_DUPLICATE_BITS` is 0, off): a photograph whose
 64-bit perceptual hash is at most N bits from an earlier photograph of the same candidate is not read once that earlier
@@ -48,6 +50,8 @@ Usage::
     python -m src.finetuning.qwen_hebrew.novel_build.reads --work-dir WORK --reader vlm --model KEY \\
         --script arabic --only-missing-usable [--only-unplaced SIDES] [--skip-near-duplicates N] \\
         [--claim-file CLAIMS [--job-id NAME] [--ignore-claims]]
+    python -m src.finetuning.qwen_hebrew.novel_build.reads --work-dir WORK --reader vlm --model KEY \\
+        --only-coverage-review QUALITY (--only-unplaced SIDES | --sides SIDES)
 """
 from __future__ import annotations
 
@@ -96,6 +100,9 @@ READER_CHOICES = ("kraken", "vlm")
 #: Finishes that make a read unusable; ``length`` (a read the token budget cut, no loop found) is usable evidence.
 UNUSABLE_FINISH = frozenset({"looping", "error", "blank"})
 ACCEPTED = "accepted"                           # the ``SideDecision.outcome`` of a placed side
+#: Stage 3 quality reasons (coverage gates and the flag) that ask for a second read of a side's photograph.
+COVERAGE_REVIEW_REASONS = frozenset({"target_exceeds_read_2_5x", "partial_image_for_target", "read_exceeds_target_1_5x",
+                                     "kraken_lines_over_1_5x", "coverage_second_read_wanted"})
 NO_TEXT = re.compile(r"^\W*NO\s+TEXT\W*$", re.IGNORECASE)      # a Gemini read that says the page has no text
 GEMINI_FINISH = {"STOP": "ok", "MAX_TOKENS": "length"}          # every other Gemini finish reason is an error
 #: Fields of a ``page_reader.read_page`` result kept in ``ReadRecord.meta``.
@@ -658,20 +665,57 @@ def unplaced_candidates(sides_path: Path) -> Set[str]:
             if decision.outcome != ACCEPTED}
 
 
+def coverage_review_sides(quality_path: Path, sides_path: Path) -> Dict[str, List[Optional[str]]]:
+    """Sides whose stage 3 quality reasons ask for a second read, with the photograph each was accepted on.
+
+    :param quality_path: A stage 3 quality file (:class:`~.schema.QualityResult` JSON lines).
+    :param sides_path: The stage 2 sides file the quality stage judged (:class:`~.schema.SideDecision` JSON lines).
+    :return: ``{row_id: [accepted photograph of each such side]}``: one entry per side whose ``reasons`` hold any of
+        :data:`COVERAGE_REVIEW_REASONS`, the sha256 of its ``accepted`` decision in ``sides_path``, or None when that
+        file has no accepted decision with a photograph for the side.
+    :raises FileNotFoundError: When either file does not exist.
+    """
+    accepted = {(decision.row_id, decision.side_key): decision.image_sha256
+                for decision in schema.read_jsonl(sides_path, schema.SideDecision)
+                if decision.outcome == ACCEPTED and decision.image_sha256}
+    wanted: Dict[str, List[Optional[str]]] = defaultdict(list)
+    for result in schema.read_jsonl(quality_path, schema.QualityResult):
+        if COVERAGE_REVIEW_REASONS.intersection(result.reasons):
+            wanted[result.row_id].append(accepted.get((result.row_id, result.side_key)))
+    return dict(wanted)
+
+
+def _coverage_photographs(sides: Sequence[Optional[str]], present: Set[str]) -> Set[str]:
+    """The photographs of one candidate that its coverage-review sides ask to be read again.
+
+    :param sides: The accepted photograph of each of its coverage-review sides, None when a side has none
+        (:func:`coverage_review_sides`).
+    :param present: sha256 of the candidate's readable photographs.
+    :return: Each side's accepted photograph; every readable photograph for a side without one, or whose accepted
+        photograph is not among the candidate's readable photographs.
+    """
+    wanted: Set[str] = set()
+    for accepted in sides:
+        wanted |= {accepted} if accepted in present else present
+    return wanted
+
+
 def select_images(cands: Iterable[Candidate], reads: Iterable[ReadRecord], *, script: str = "all",
                   only_missing_usable: bool = False, reader_id: Optional[str] = None,
                   skip_near_duplicates: Optional[int] = NEAR_DUPLICATE_BITS,
-                  counts: Optional[Counter] = None, unplaced: Optional[Set[str]] = None) -> List[ImageRef]:
+                  counts: Optional[Counter] = None, unplaced: Optional[Set[str]] = None,
+                  coverage: Optional[Mapping[str, Sequence[Optional[str]]]] = None) -> List[ImageRef]:
     """The photographs a reader still has to read, in candidate order.
 
     Images count when their status is ``present`` or ``fetched`` (never ``too_small``, ``listed``, ``missing``, ...)
     and they have a path; an image without a sha256 is hashed here (the returned copy carries it); an image that
     several candidates list is returned once, by its first selected occurrence.
 
-    Without a selection (``only_missing_usable`` false, ``unplaced`` None) every such image this reader has not read is
-    returned. With ``only_missing_usable``, ``unplaced`` or both, an image is returned when it satisfies at least one of
-    them (the union): it has no usable read, or a candidate in ``unplaced`` lists it. The second is decided per listing,
-    so a photograph listed by a placed candidate and by an unplaced one is selected through the unplaced one.
+    Without a selection (``only_missing_usable`` false, ``unplaced`` and ``coverage`` None) every such image this reader
+    has not read is returned. With any of them, an image is returned when it satisfies at least one (the union): it has
+    no usable read, or a candidate in ``unplaced`` lists it, or a coverage-review side of the candidate listing it asks
+    for it (:func:`_coverage_photographs`). The last two are decided per listing, so a photograph listed by a placed
+    candidate and by an unplaced one is selected through the unplaced one.
 
     The near-duplicate rule is applied last, one candidate at a time and in candidate order: a photograph is dropped
     when an earlier photograph of the same candidate is within ``skip_near_duplicates`` bits of it and already has a
@@ -693,10 +737,13 @@ def select_images(cands: Iterable[Candidate], reads: Iterable[ReadRecord], *, sc
     :param counts: Counter that receives (added to what it holds) ``skipped_near_duplicate``, the number of distinct
         photographs the near-duplicate rule kept out of the result; with ``only_missing_usable``,
         ``selected_missing_usable``, the returned images without a usable read; with ``unplaced``,
-        ``selected_unplaced``, the returned images that a candidate of ``unplaced`` lists (an image satisfying both is
-        counted in both). None: nothing is reported.
+        ``selected_unplaced``, the returned images that a candidate of ``unplaced`` lists; with ``coverage``,
+        ``selected_coverage_review``, the returned images a coverage-review side asks for (an image satisfying several
+        selections is counted in each). None: nothing is reported.
     :param unplaced: Row ids of candidates with a side not placed (:func:`unplaced_candidates`): select their
         photographs whatever reads they have. None: no such selection.
+    :param coverage: ``{row_id: [accepted photograph or None per coverage-review side]}``
+        (:func:`coverage_review_sides`): select those photographs whatever reads they have. None: no such selection.
     :return: The images to read.
     :raises ValueError: For an unknown ``script``, a negative ``skip_near_duplicates``, or a ``phash`` that is not hex
         (only compared when the rule is on).
@@ -708,18 +755,22 @@ def select_images(cands: Iterable[Candidate], reads: Iterable[ReadRecord], *, sc
     by_sha: Dict[str, List[ReadRecord]] = defaultdict(list)
     for read in reads:
         by_sha[read.sha256].append(read)
-    filtered = only_missing_usable or unplaced is not None
+    filtered = only_missing_usable or unplaced is not None or coverage is not None
     selected: List[ImageRef] = []
     chosen: Set[str] = set()                # sha256 of the images selected so far
     without_usable: Set[str] = set()        # sha256 of the photographs looked at that have no usable read
     of_unplaced: Set[str] = set()           # sha256 of the photographs that an unplaced candidate lists
+    of_coverage: Set[str] = set()           # sha256 of the photographs a coverage-review side asks for
     near_duplicates: Set[str] = set()       # sha256 the near-duplicate rule dropped and no other listing selected
     for cand in cands:
         if not _script_selected(cand.script, script):
             continue
+        photos = list(_readable_photographs(cand))
         cand_unplaced = unplaced is not None and cand.row_id in unplaced
+        cand_coverage = (_coverage_photographs(coverage[cand.row_id], {sha256 for _, sha256 in photos})
+                         if coverage is not None and cand.row_id in coverage else set())
         covered: List[str] = []     # hashes of this candidate's earlier photographs that already have a usable read
-        for image, sha256 in _readable_photographs(cand):
+        for image, sha256 in photos:
             existing = by_sha.get(sha256, [])
             usable = any(is_usable(read) for read in existing)
             near_duplicate = _is_near_duplicate(image.phash, covered, skip_near_duplicates)
@@ -729,11 +780,13 @@ def select_images(cands: Iterable[Candidate], reads: Iterable[ReadRecord], *, sc
                 without_usable.add(sha256)
             if cand_unplaced:
                 of_unplaced.add(sha256)
+            if sha256 in cand_coverage:
+                of_coverage.add(sha256)
             if sha256 in chosen:
                 continue
             if reader_id is not None and any(read.reader == reader_id for read in existing):
                 continue
-            if filtered and not ((only_missing_usable and not usable) or cand_unplaced):
+            if filtered and not ((only_missing_usable and not usable) or cand_unplaced or sha256 in cand_coverage):
                 continue                    # another candidate that lists it may still select it
             if near_duplicate:
                 near_duplicates.add(sha256)     # only this candidate has a read twin: another one may still need it
@@ -747,6 +800,8 @@ def select_images(cands: Iterable[Candidate], reads: Iterable[ReadRecord], *, sc
             counts["selected_missing_usable"] += len(chosen & without_usable)
         if unplaced is not None:
             counts["selected_unplaced"] += len(chosen & of_unplaced)
+        if coverage is not None:
+            counts["selected_coverage_review"] += len(chosen & of_coverage)
     return selected
 
 
@@ -952,28 +1007,32 @@ def _attempt(image: ImageRef, read_fn: ReadFn) -> Tuple[Optional[ReadRecord], Op
     return record, None
 
 
-def _selection_note(counts: Mapping[str, int], only_missing_usable: bool, n_unplaced: Optional[int]) -> str:
+def _selection_note(counts: Mapping[str, int], only_missing_usable: bool, n_unplaced: Optional[int],
+                    n_coverage_sides: Optional[int] = None) -> str:
     """The selection part of the launch line of :func:`run_reads`.
 
     :param counts: The counter :func:`select_images` filled.
     :param only_missing_usable: Whether that selection is on.
     :param n_unplaced: Number of candidates with an unplaced side; None when that selection is off.
-    :return: E.g. ``"selected: 12 without a usable read, 30 of 9 candidates with an unplaced side"`` or
-        ``"selected: every image not read by this reader"``.
+    :param n_coverage_sides: Number of sides asking for a coverage review; None when that selection is off.
+    :return: E.g. ``"selected: 12 without a usable read, 30 of 9 candidates with an unplaced side, 4 for coverage
+        review of 3 sides"`` or ``"selected: every image not read by this reader"``.
     """
     parts = []
     if only_missing_usable:
         parts.append(f"{counts['selected_missing_usable']} without a usable read")
     if n_unplaced is not None:
         parts.append(f"{counts['selected_unplaced']} of {n_unplaced} candidates with an unplaced side")
+    if n_coverage_sides is not None:
+        parts.append(f"{counts['selected_coverage_review']} for coverage review of {n_coverage_sides} sides")
     return "selected: " + (", ".join(parts) if parts else "every image not read by this reader")
 
 
 def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, script: str = "all",
               limit: Optional[int] = None, stop_file: Optional[Path] = None, only_missing_usable: bool = False,
               skip_near_duplicates: Optional[int] = NEAR_DUPLICATE_BITS, only_unplaced: Optional[Path] = None,
-              claim_file: Optional[Path] = None, ignore_claims: bool = False,
-              job_id: Optional[str] = None) -> Dict[str, int]:
+              claim_file: Optional[Path] = None, ignore_claims: bool = False, job_id: Optional[str] = None,
+              only_coverage_review: Optional[Path] = None, sides: Optional[Path] = None) -> Dict[str, int]:
     """Read the photographs of the stage 1 file that this reader has not read yet.
 
     Records are appended to ``reads/reads.jsonl`` one at a time (flushed), so an interrupted run loses nothing. A
@@ -1011,14 +1070,23 @@ def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, scrip
     :param claim_file: Claim log shared with other jobs; None: no claims.
     :param ignore_claims: Read photographs other jobs hold (claims are still written).
     :param job_id: This job's id in the claim log; None: :func:`default_job_id` of ``work_dir``.
+    :param only_coverage_review: A stage 3 quality file: also select the photographs its coverage-review sides ask for
+        (:func:`coverage_review_sides`; the union with the other selections). None: no such selection.
+    :param sides: The stage 2 sides file that names each side's accepted photograph for ``only_coverage_review``, used
+        when ``only_unplaced`` (which names it otherwise) is None.
     :return: Counts: ``queued``, ``skipped_near_duplicate`` (photographs the near-duplicate rule kept out of the queue
         plus those it skipped at read time), ``skipped_claimed`` (photographs another job held, at launch or at read
         time), ``claims_written``, ``read``, ``failed``, ``finish_<finish>`` per finish seen, ``stopped_by_stop_file``
         and ``stopped_by_failures`` (1 when that ended the run, else 0); with ``only_missing_usable``,
-        ``selected_missing_usable``; with ``only_unplaced``, ``candidates_unplaced`` and ``selected_unplaced`` (see
+        ``selected_missing_usable``; with ``only_unplaced``, ``candidates_unplaced`` and ``selected_unplaced``; with
+        ``only_coverage_review``, ``coverage_review_sides`` and ``selected_coverage_review`` (see
         :func:`select_images`; counted before claims and ``limit``).
-    :raises FileNotFoundError: When the stage 1 file or the ``only_unplaced`` file does not exist.
+    :raises FileNotFoundError: When the stage 1 file or a given sides or quality file does not exist.
+    :raises ValueError: When ``only_coverage_review`` is given without a sides file (``sides`` or ``only_unplaced``).
     """
+    sides_file = only_unplaced if only_unplaced is not None else sides
+    if only_coverage_review is not None and sides_file is None:
+        raise ValueError("only_coverage_review needs the stage 2 sides file (sides or only_unplaced)")
     stage1 = paths.stage_path(work_dir, "images")
     if not stage1.exists():
         raise FileNotFoundError(f"stage 1 file not found: {stage1} (run the images stage first)")
@@ -1028,10 +1096,13 @@ def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, scrip
     repair_tail(failures_file)
     existing = load_reads(work_dir)
     unplaced = unplaced_candidates(only_unplaced) if only_unplaced is not None else None
+    coverage = (coverage_review_sides(only_coverage_review, sides_file)
+                if only_coverage_review is not None and sides_file is not None else None)
     selection: Counter = Counter()
     queue = select_images(schema.read_jsonl(stage1, Candidate), existing, script=script,
                           only_missing_usable=only_missing_usable, reader_id=reader_id,
-                          skip_near_duplicates=skip_near_duplicates, counts=selection, unplaced=unplaced)
+                          skip_near_duplicates=skip_near_duplicates, counts=selection, unplaced=unplaced,
+                          coverage=coverage)
     counts: Counter = Counter({"queued": 0, "skipped_near_duplicate": selection["skipped_near_duplicate"],
                                "skipped_claimed": 0, "claims_written": 0, "read": 0, "failed": 0,
                                "stopped_by_stop_file": 0, "stopped_by_failures": 0})
@@ -1040,6 +1111,10 @@ def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, scrip
     if unplaced is not None:
         counts["candidates_unplaced"] = len(unplaced)
         counts["selected_unplaced"] = selection["selected_unplaced"]
+    n_coverage_sides = None if coverage is None else sum(len(entries) for entries in coverage.values())
+    if coverage is not None:
+        counts["coverage_review_sides"] = n_coverage_sides or 0
+        counts["selected_coverage_review"] = selection["selected_coverage_review"]
     claims = ClaimLog(claim_file, job_id or default_job_id(work_dir)) if claim_file is not None else None
     if claims is not None:
         claims.refresh()
@@ -1055,8 +1130,8 @@ def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, scrip
     claim_note = "no claim file" if claims is None else (
         f"claim file {claims.path} as job {claims.job}: "
         + ("claims ignored" if ignore_claims else f"{counts['skipped_claimed']} held by other jobs"))
-    print(f"{now_utc()} {reader_id}: {len(queue)} images queued ({script}; "
-          f"{_selection_note(selection, only_missing_usable, None if unplaced is None else len(unplaced))}; "
+    note = _selection_note(selection, only_missing_usable, None if unplaced is None else len(unplaced), n_coverage_sides)
+    print(f"{now_utc()} {reader_id}: {len(queue)} images queued ({script}; {note}; "
           f"skip_near_duplicates={skip_near_duplicates}: {counts['skipped_near_duplicate']} skipped as "
           f"near-duplicates at launch; {claim_note})", flush=True)
     consecutive, seconds = 0, 0.0
@@ -1114,7 +1189,8 @@ def build_parser() -> argparse.ArgumentParser:
     """The command-line parser.
 
     :return: Parser with ``--work-dir --reader --model --script --limit --stop-file --only-missing-usable
-        --only-unplaced --skip-near-duplicates --claim-file --job-id --ignore-claims --import-legacy --gemini-index``.
+        --only-unplaced --only-coverage-review --sides --skip-near-duplicates --claim-file --job-id --ignore-claims
+        --import-legacy --gemini-index``.
     """
     parser = argparse.ArgumentParser(description="Stage 2 of the novel-rows build: OCR reads of the candidate photographs "
                                                  "(evidence for side placement only).")
@@ -1134,7 +1210,13 @@ def build_parser() -> argparse.ArgumentParser:
                         help="read only images without a usable read from any reader (with --only-unplaced: the union)")
     parser.add_argument("--only-unplaced", type=Path, default=None, metavar="SIDES_FILE",
                         help="read the photographs of candidates that this stage 2 sides file leaves with a side not "
-                             "accepted, whatever reads they have (with --only-missing-usable: the union)")
+                             "accepted, whatever reads they have (with the other selections: the union)")
+    parser.add_argument("--only-coverage-review", type=Path, default=None, metavar="QUALITY_FILE",
+                        help="read the accepted photograph of each side whose stage 3 quality reasons ask for a second "
+                             "read (every present photograph of its candidate when it has none); needs the sides file "
+                             "from --only-unplaced or --sides (with the other selections: the union)")
+    parser.add_argument("--sides", type=Path, default=None, metavar="SIDES_FILE",
+                        help="with --only-coverage-review and without --only-unplaced: the stage 2 sides file")
     parser.add_argument("--skip-near-duplicates", type=int, default=NEAR_DUPLICATE_BITS, metavar="N",
                         help="opt-in: do not read a photograph whose 64-bit phash is within N bits of an earlier "
                              "photograph of the same candidate that already has a usable read (default: %(default)s, "
@@ -1170,8 +1252,17 @@ def main(argv: Optional[List[str]] = None) -> None:
         parser.error("--skip-near-duplicates takes a number of bits: 0 (off) or more")
     if args.claim_file is None and (args.ignore_claims or args.job_id is not None):
         parser.error("--ignore-claims and --job-id need --claim-file")
-    if args.reader is not None and args.only_unplaced is not None and not args.only_unplaced.is_file():
-        parser.error(f"--only-unplaced: no sides file at {args.only_unplaced}")
+    if args.sides is not None and args.only_coverage_review is None:
+        parser.error("--sides is read only by --only-coverage-review")
+    if args.only_coverage_review is not None and args.only_unplaced is None and args.sides is None:
+        parser.error("--only-coverage-review needs the stage 2 sides file: give --only-unplaced or --sides")
+    if (args.sides is not None and args.only_unplaced is not None
+            and args.sides.resolve() != args.only_unplaced.resolve()):
+        parser.error("--sides and --only-unplaced name different sides files; give the sides file once")
+    for flag, given in (("--only-unplaced", args.only_unplaced), ("--only-coverage-review", args.only_coverage_review),
+                        ("--sides", args.sides)):
+        if args.reader is not None and given is not None and not given.is_file():
+            parser.error(f"{flag}: no file at {given}")
     if args.import_legacy is not None:
         imported = import_legacy_reads(args.work_dir, args.import_legacy, args.gemini_index)
         print(f"{now_utc()} imported {imported} legacy reads into {reads_path(args.work_dir)}", flush=True)
@@ -1186,7 +1277,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                        limit=args.limit, stop_file=args.stop_file or default_stop_file(args.work_dir),
                        only_missing_usable=args.only_missing_usable, skip_near_duplicates=args.skip_near_duplicates,
                        only_unplaced=args.only_unplaced, claim_file=args.claim_file, ignore_claims=args.ignore_claims,
-                       job_id=args.job_id)
+                       job_id=args.job_id, only_coverage_review=args.only_coverage_review, sides=args.sides)
     print(json.dumps(counts, indent=1), flush=True)
 
 

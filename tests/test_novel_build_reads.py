@@ -1141,15 +1141,16 @@ def test_has_usable_peer_needs_every_listing_covered() -> None:
 
 # --- select_images: candidates with an unplaced side ------------------------------------------------------------------
 
-def side_decision(row_id: str, side_key: str, outcome: str) -> schema.SideDecision:
+def side_decision(row_id: str, side_key: str, outcome: str, image_sha256: Optional[str] = None) -> schema.SideDecision:
     """A synthetic stage 2 side decision.
 
     :param row_id: Candidate id.
     :param side_key: Side.
     :param outcome: One of ``schema.OUTCOMES``.
+    :param image_sha256: The photograph it was accepted on, if any.
     :return: The decision (one synthetic reason unless accepted).
     """
-    return schema.SideDecision(row_id=row_id, side_key=side_key, outcome=outcome,
+    return schema.SideDecision(row_id=row_id, side_key=side_key, outcome=outcome, image_sha256=image_sha256,
                                reasons=[] if outcome == "accepted" else ["synthetic_reason"])
 
 
@@ -1231,6 +1232,127 @@ def test_a_photograph_a_placed_candidate_lists_first_is_selected_for_an_unplaced
     selected = reads.select_images(unplaced_stage.cands + [sharing], unplaced_stage.existing, reader_id="vlm:model-x",
                                    unplaced={"r_sharing"})
     assert [(Path(i.path).name, i.image_id) for i in selected] == [("done.jpg", "iiif_pgp:done")]
+
+
+# --- select_images: sides whose quality asks for a coverage review ----------------------------------------------------
+
+def quality_result(row_id: str, side_key: str, reasons: Sequence[str]) -> schema.QualityResult:
+    """A synthetic stage 3 quality result.
+
+    :param row_id: Candidate id.
+    :param side_key: Side.
+    :param reasons: Its reason codes.
+    :return: The result (``ok`` when there is no reason).
+    """
+    return schema.QualityResult(row_id=row_id, side_key=side_key, ok=not reasons, reasons=list(reasons), script="hebrew",
+                                letters_hebrew=60, letters_arabic=0, tokens=None, text=HEBREW)
+
+
+@pytest.fixture
+def coverage_stage(tmp_path: Path) -> SimpleNamespace:
+    """A work dir whose quality file flags sides for a coverage review, with its sides file and reads.
+
+    ``r_cov``: recto accepted on ``cov1`` and flagged ``target_exceeds_read_2_5x``, verso accepted on ``cov0`` and
+    failing only ``under_40_letters``; ``cov2`` is too small. ``r_noacc``: its side flagged
+    ``coverage_second_read_wanted`` has no accepted photograph (needs_review); ``na2`` is too small. ``r_ok``: accepted,
+    no reason. ``r_read``: flagged ``partial_image_for_target`` on ``rd0``, which ``vlm:model-x`` has read.
+    ``cov0``, ``cov1`` and ``na0`` have usable Kraken reads.
+
+    :param tmp_path: Pytest temp dir.
+    :return: Namespace with ``work``, ``cands``, ``sha`` by name, the ``existing`` reads, ``sides`` and ``quality``.
+    """
+    work = tmp_path / "work_coverage"
+    names = ["cov0", "cov1", "cov2", "na0", "na1", "na2", "ok0", "rd0"]
+    files = {name: make_jpeg(work / "images" / f"{name}.jpg", color=(25 * i + 5, 120, 230 - 25 * i))
+             for i, name in enumerate(names)}
+    refs = {name: image_ref(f"iiif_pgp:{name}", path, status="too_small" if name in ("cov2", "na2") else "present")
+            for name, path in files.items()}
+    cands = [candidate("r_cov", "hebrew", [refs["cov0"], refs["cov1"], refs["cov2"]]),
+             candidate("r_noacc", "hebrew", [refs["na0"], refs["na1"], refs["na2"]]),
+             candidate("r_ok", "hebrew", [refs["ok0"]]),
+             candidate("r_read", "hebrew", [refs["rd0"]])]
+    write_stage1(work, cands)
+    sha = {name: sha_of(path) for name, path in files.items()}
+    existing = [read_record(sha["cov0"]), read_record(sha["cov1"]), read_record(sha["na0"]),
+                read_record(sha["rd0"], "vlm:model-x")]
+    for record in existing:
+        reads.append_jsonl(reads.reads_path(work), record)
+    sides = paths.stage_path(work, "sides")
+    schema.write_jsonl(sides, [side_decision("r_cov", "recto", "accepted", sha["cov1"]),
+                               side_decision("r_cov", "verso", "accepted", sha["cov0"]),
+                               side_decision("r_noacc", "page", "needs_review"),
+                               side_decision("r_ok", "page", "accepted", sha["ok0"]),
+                               side_decision("r_read", "recto", "accepted", sha["rd0"])])
+    quality = paths.stage_path(work, "quality")
+    schema.write_jsonl(quality, [quality_result("r_cov", "recto", ["target_exceeds_read_2_5x"]),
+                                 quality_result("r_cov", "verso", ["under_40_letters"]),
+                                 quality_result("r_noacc", "page", ["coverage_second_read_wanted"]),
+                                 quality_result("r_ok", "page", []),
+                                 quality_result("r_read", "recto", ["partial_image_for_target"])])
+    return SimpleNamespace(work=work, cands=cands, sha=sha, existing=existing, sides=sides, quality=quality)
+
+
+def test_coverage_review_sides_maps_each_flagged_side_to_its_accepted_photograph(
+        coverage_stage: SimpleNamespace) -> None:
+    """Only sides with a coverage reason are listed, each with its accepted photograph or None."""
+    assert reads.coverage_review_sides(coverage_stage.quality, coverage_stage.sides) == {
+        "r_cov": [coverage_stage.sha["cov1"]], "r_noacc": [None], "r_read": [coverage_stage.sha["rd0"]]}
+
+
+@pytest.mark.parametrize("reason", sorted(reads.COVERAGE_REVIEW_REASONS))
+def test_every_coverage_reason_asks_for_a_second_read(tmp_path: Path, reason: str) -> None:
+    """Each of the four coverage gates and the flag selects the side, next to any other reason."""
+    quality, sides = tmp_path / "quality.jsonl", tmp_path / "sides.jsonl"
+    schema.write_jsonl(quality, [quality_result("r_x", "recto", ["under_40_letters", reason])])
+    schema.write_jsonl(sides, [side_decision("r_x", "recto", "accepted", "a" * 64)])
+    assert reads.coverage_review_sides(quality, sides) == {"r_x": ["a" * 64]}
+    assert reads.COVERAGE_REVIEW_REASONS == {"target_exceeds_read_2_5x", "partial_image_for_target",
+                                             "read_exceeds_target_1_5x", "kraken_lines_over_1_5x",
+                                             "coverage_second_read_wanted"}
+
+
+def test_coverage_photographs_per_side() -> None:
+    """A side asks for its accepted photograph; a side without one (or with one not present) for every photograph."""
+    present = {"a", "b", "c"}
+    assert reads._coverage_photographs(["b"], present) == {"b"}
+    assert reads._coverage_photographs(["a", "c"], present) == {"a", "c"}
+    assert reads._coverage_photographs(["b", None], present) == present
+    assert reads._coverage_photographs(["z"], present) == present
+    assert reads._coverage_photographs([], present) == set()
+
+
+def test_a_coverage_review_side_selects_its_accepted_photograph_only(coverage_stage: SimpleNamespace) -> None:
+    """The accepted photograph is selected although it has a usable read; the candidate's other photograph is not."""
+    counts: Counter = Counter()
+    coverage = reads.coverage_review_sides(coverage_stage.quality, coverage_stage.sides)
+    selected = reads.select_images(coverage_stage.cands[:1], coverage_stage.existing, reader_id="vlm:model-x",
+                                   coverage=coverage, counts=counts)
+    assert ids(selected) == ["cov1.jpg"] and counts["selected_coverage_review"] == 1
+
+
+def test_a_side_without_an_accepted_photograph_selects_every_present_photograph(coverage_stage: SimpleNamespace) -> None:
+    """No accepted photograph: every readable photograph of the candidate (never a too-small one); photographs this
+    reader read and candidates without a coverage reason are left out."""
+    coverage = reads.coverage_review_sides(coverage_stage.quality, coverage_stage.sides)
+    selected = reads.select_images(coverage_stage.cands, coverage_stage.existing, reader_id="vlm:model-x",
+                                   coverage=coverage)
+    assert ids(selected) == ["cov1.jpg", "na0.jpg", "na1.jpg"]
+    # an accepted photograph the candidate does not list as readable falls back the same way
+    stale = {"r_cov": ["f" * 64]}
+    assert ids(reads.select_images(coverage_stage.cands, coverage_stage.existing, coverage=stale)) == [
+        "cov0.jpg", "cov1.jpg"]
+
+
+def test_coverage_review_unions_with_the_other_selections_and_counts_each(coverage_stage: SimpleNamespace) -> None:
+    """All three selections together: the union, each selection counted (overlaps in each)."""
+    counts: Counter = Counter()
+    selected = reads.select_images(coverage_stage.cands, coverage_stage.existing, reader_id="vlm:model-x",
+                                   only_missing_usable=True, unplaced=reads.unplaced_candidates(coverage_stage.sides),
+                                   coverage=reads.coverage_review_sides(coverage_stage.quality, coverage_stage.sides),
+                                   counts=counts)
+    assert ids(selected) == ["cov1.jpg", "na0.jpg", "na1.jpg", "ok0.jpg"]
+    assert counts["selected_coverage_review"] == 3                          # cov1, na0, na1
+    assert counts["selected_unplaced"] == 2 and counts["selected_missing_usable"] == 2      # na0, na1; na1, ok0
 
 
 # --- run_reads ---------------------------------------------------------------------------------------------------------
@@ -1604,6 +1726,27 @@ def test_run_reads_only_missing_usable_honours_a_looping_record_on_disk(stage1: 
     assert [p.name for p in reader.calls] == ["he.jpg"] and counts["selected_missing_usable"] == 1
 
 
+def test_run_reads_only_coverage_review_takes_the_sides_file_from_either_option(coverage_stage: SimpleNamespace,
+                                                                                capsys: pytest.CaptureFixture) -> None:
+    """``sides`` names the sides file, or ``only_unplaced`` does (its selection then joins the union); without either
+    the run refuses to start."""
+    reader = ScriptedReader(reader="vlm:model-x")
+    counts = run(coverage_stage.work, reader, reader="vlm", model="model-x",
+                 only_coverage_review=coverage_stage.quality, sides=coverage_stage.sides)
+    assert [p.name for p in reader.calls] == ["cov1.jpg", "na0.jpg", "na1.jpg"]
+    assert counts["queued"] == 3 and counts["coverage_review_sides"] == 3 and counts["selected_coverage_review"] == 3
+    assert "selected: 3 for coverage review of 3 sides" in capsys.readouterr().out
+
+    other = ScriptedReader(reader="vlm:model-y")                # rd0 is unread for this reader
+    counts = run(coverage_stage.work, other, reader="vlm", model="model-y",
+                 only_coverage_review=coverage_stage.quality, only_unplaced=coverage_stage.sides)
+    assert [p.name for p in other.calls] == ["cov1.jpg", "na0.jpg", "na1.jpg", "rd0.jpg"]
+    assert counts["selected_coverage_review"] == 4 and counts["selected_unplaced"] == 2
+    assert "2 of 1 candidates with an unplaced side, 4 for coverage review of 3 sides" in capsys.readouterr().out
+    with pytest.raises(ValueError):
+        run(coverage_stage.work, ScriptedReader(), only_coverage_review=coverage_stage.quality)
+
+
 # --- claims shared by concurrent jobs ----------------------------------------------------------------------------------
 
 def two_jobs(tmp_path: Path, n: int) -> SimpleNamespace:
@@ -1924,6 +2067,27 @@ def test_main_passes_the_selection_and_claim_options(stage1: SimpleNamespace, mo
     assert captured["claim_file"] == claims and captured["job_id"] == "gpu" and captured["ignore_claims"] is True
 
 
+def test_main_passes_the_coverage_review_options(coverage_stage: SimpleNamespace,
+                                                 monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--only-coverage-review`` and ``--sides`` reach ``run_reads``; the same file under ``--sides`` and
+    ``--only-unplaced`` is accepted."""
+    captured: Dict[str, Any] = {}
+
+    def fake_run_reads(work_dir: Path, **kwargs: Any) -> Dict[str, int]:
+        """Capture the call instead of reading."""
+        captured.update(kwargs)
+        return {"read": 0}
+
+    monkeypatch.setattr(reads, "run_reads", fake_run_reads)
+    base = ["--work-dir", str(coverage_stage.work), "--reader", "vlm", "--model", "model-x",
+            "--only-coverage-review", str(coverage_stage.quality), "--sides", str(coverage_stage.sides)]
+    reads.main(base)
+    assert captured["only_coverage_review"] == coverage_stage.quality and captured["sides"] == coverage_stage.sides
+    assert captured["only_unplaced"] is None
+    reads.main(base + ["--only-unplaced", str(coverage_stage.sides)])
+    assert captured["only_unplaced"] == coverage_stage.sides
+
+
 def test_main_reads_with_a_claim_file_end_to_end(stage1: SimpleNamespace, monkeypatch: pytest.MonkeyPatch,
                                                  capsys: pytest.CaptureFixture) -> None:
     """Through the command line the claims are written under the job id, and the summary carries their count."""
@@ -1946,10 +2110,16 @@ def test_main_reads_with_a_claim_file_end_to_end(stage1: SimpleNamespace, monkey
     ["--reader", "kraken", "--ignore-claims"],
     ["--reader", "kraken", "--job-id", "gpu"],
     ["--reader", "kraken", "--only-unplaced", "no_such_dir/stage2_sides.jsonl"],
+    ["--reader", "kraken", "--only-coverage-review", "no_such_dir/stage3_quality.jsonl"],
+    ["--reader", "kraken", "--sides", "no_such_dir/stage2_sides.jsonl"],
+    ["--reader", "kraken", "--only-coverage-review", "no_such_dir/q.jsonl", "--sides", "no_such_dir/a.jsonl",
+     "--only-unplaced", "no_such_dir/b.jsonl"],
+    ["--reader", "kraken", "--only-coverage-review", "no_such_dir/q.jsonl", "--sides", "no_such_dir/a.jsonl"],
 ])
 def test_main_rejects_bad_arguments(tmp_path: Path, argv: List[str]) -> None:
     """Missing reader, vlm without a model, Gemini index without import, unknown choices, bad bit distance, claim
-    options without a claim file, a missing sides file: exit 2."""
+    options without a claim file, coverage review without a sides file, ``--sides`` alone, two different sides files,
+    a missing input file: exit 2."""
     with pytest.raises(SystemExit) as raised:
         reads.main(["--work-dir", str(tmp_path / "work")] + argv)
     assert raised.value.code == 2

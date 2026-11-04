@@ -12,19 +12,37 @@ Repairs (in this order):
   Arabic presentation forms to their NFKC letters, Persian yeh / keheh to the Arabic letters, tatweel, U+064B-U+0652
   and U+0670 removed, NFC, a hamza above / below that NFC could not join dropped (flag ``harakat_stripped`` when the
   text changed).
+* Signs (:func:`normalise_signs`, each a flag when it changed the text): an ASCII backtick becomes ``'``
+  (``backtick_to_geresh``); for PGP targets a right-to-left reversed supplied span ``>x<`` is dropped as the PGP cleaner
+  drops ``<x>`` (letters supplied by the editor are not ink; ``reversed_supplied_dropped``); a lone ``<`` / ``>`` after
+  a digit, at the end of a token after a Hebrew letter numeral (``ז>``), or at a line end (a merchant's half-fraction
+  sign, a flourish) is dropped (``fraction_sign_dropped``).
 
 Gates (reason codes; each fails the side unless it is listed in :data:`FLAG_ONLY`):
 
 ``under_40_letters``; ``under_3_lines`` (when the lines are known, :func:`lines_known`); ``hygiene_chars`` (any of
 :data:`HYGIENE_CHARS`); ``non_text_char`` (a character outside Hebrew / Arabic letters and marks, Latin letters, digits,
-common punctuation, ``[]()``, space and newline, after NFC); ``mojibake_final``; ``editorial_terms`` and
-``edition_apparatus`` (the legacy-store cleaner's detectors, ``legacy_store_sigla.EDITORIAL_TERMS_RE`` and
-``classify_family``, on the final text, plus the family or flags an upstream cleaner recorded); for Arabic-script
-sides ``arabic_under_40`` and ``arabic_ratio_below_9x`` (Arabic letters at least 9 times the Hebrew ones);
-``arabic_too_dense`` (more than 1,000 Arabic letters per megapixel of the chosen photograph); ``read_exceeds_target_2x``
-(the read holds at least twice the target's letters: the target is likely partial); ``kraken_lines_over_1_3x`` (flag);
-``token_over_budget`` (question + answer over :data:`TOKEN_BUDGET` tokens of the Qwen3-VL tokenizer; ``--no-tokens``
-skips it with the flag ``tokens_unmeasured``). ``script`` is measured from the final text.
+common punctuation, ``[]()``, space and newline, combining marks U+0300-U+036F, the fractions of :data:`FRACTIONS`, and
+for Arabic-script sides an asterisk, Greek letters and the modifier prime of papyrus numerals, after NFC);
+``mojibake_final``; ``editorial_terms`` and ``edition_apparatus`` (the legacy-store cleaner's detectors,
+``legacy_store_sigla.EDITORIAL_TERMS_RE`` and ``classify_family``, on the final text, plus the family or flags an
+upstream cleaner recorded); the target extraction's flags (``Candidate.notes["target_flags"]``): legacy-store
+``unresolved_finals`` (unmapped glyphs) and PGP ``complex_side_labels`` fail, ``not_body_text`` (spans the sigla keep
+as ink), ``flattened_line_breaks``, ``notation_latin``, ``notation_parentheses`` and ``notation_glued_digits`` are
+recorded as flags;
+``gap_density_over_30pct`` (legacy-store sides with more than 30 gap tokens per 100 letters, the October build's
+rule); for Arabic-script sides ``arabic_under_40`` and ``arabic_ratio_below_9x`` (Arabic letters at least 9 times the
+Hebrew ones); ``arabic_too_dense`` (more than 1,000 Arabic letters per megapixel of the chosen photograph); coverage
+signals of the decision: ``read_exceeds_target_1_5x`` (the read holds at least 1.5 times the target's letters: the
+target is likely partial and would teach early stopping), ``target_exceeds_read_2_5x`` (the read holds under 40 % of
+the target's letters: the target holds text the photograph does not show), ``partial_image_for_target`` (the first or
+last third of the target, at least 100 letters, has no n-gram in the read; both are computed on the usable read of the
+photograph that covers most of the target, and when that photograph has Kraken reads only the flag
+``coverage_second_read_wanted`` asks for a page-reader read, which clears them on the next run if it covers more),
+``kraken_lines_over_1_5x`` (the Kraken read has at least 1.5 times the target's lines, when the lines are known)
+and ``kraken_lines_over_1_3x`` (flag, over 1.3 times and under 1.5 times); ``token_over_budget`` (question +
+answer over :data:`TOKEN_BUDGET` tokens of the Qwen3-VL tokenizer; ``--no-tokens`` skips it with the flag
+``tokens_unmeasured``). ``script`` is measured from the final text.
 
 Usage::
 
@@ -64,9 +82,28 @@ MIN_LINES = 3
 MIN_ARABIC_LETTERS = 40
 ARABIC_OVER_HEBREW = 9
 MAX_ARABIC_PER_MEGAPIXEL = bab.MAX_LETTERS_PER_MEGAPIXEL
-MAX_READ_OVER_TARGET = lsr.MAX_READ_OVER_TARGET
-MAX_KRAKEN_LINES_OVER_TARGET = 1.3
+MAX_READ_OVER_TARGET = 1.5                     # read letters / target letters at or above: the target is partial
+MIN_READ_OVER_TARGET = 0.40                    # under: the target holds text the photograph does not show
+KRAKEN_LINES_REVIEW = 1.5                      # Kraken lines / target lines at or above: review
+MAX_KRAKEN_LINES_OVER_TARGET = 1.3             # above (and under the review ratio): flag only
+DEAD_THIRD_LETTERS = 100                       # a first or last third this long without one matched n-gram: partial
+GAP = "[...]"                                  # the cleaners' gap token
+MAX_GAP_DENSITY = lsr.MAX_GAP_DENSITY / 100.0  # gaps per letter (the legacy-store cleaner's 30 per 100 letters)
+LEGACY_STORE_SOURCES = ("fjp", "fjp_scrape")
+#: target flags (``Candidate.notes["target_flags"][side_key]``) that fail a side, with the sources they apply to
+FAILING_TARGET_FLAGS: Dict[str, Tuple[str, ...]] = {"unresolved_finals": LEGACY_STORE_SOURCES,
+                                                    "complex_side_labels": ("pgp",)}
+#: target flags recorded on the result without failing it (``not_body_text``: the legacy store's sigla keep those
+#: spans, a later hand or a pen trial, as ink on the page)
+RECORDED_TARGET_FLAGS = ("not_body_text", "flattened_line_breaks", "notation_latin", "notation_parentheses",
+                         "notation_glued_digits")
+#: sources whose ``<x>`` marks letters supplied by the editor (the PGP cleaner drops such spans); a reversed ``>x<`` of
+#: theirs is dropped the same way
+SUPPLIED_ANGLE_SOURCES = ("pgp",)
 HYGIENE_CHARS = "\u2423&#$_{}<>\\"
+FRACTIONS = "\u00bd\u00bc\u00be\u215b\u2044"   # one half, one quarter, three quarters, one eighth, fraction slash
+#: characters allowed only in Arabic-script sides (papyrus numerals): asterisk and modifier prime, with Greek letters
+ARABIC_SIDE_EXTRA = "*\u02b9"
 #: sources whose targets keep the manuscript's line breaks; others are flat unless the text has a newline
 LINE_STRUCTURED_SOURCES = ("pgp", "ktiv", "literature", "lit_run2", "apd_v3", "aodeh_v2_1")
 #: a single "line" longer than this many letters is a flat text, not a manuscript line
@@ -82,6 +119,13 @@ PERSIAN_LETTERS = str.maketrans({"\u06cc": "\u064a", "\u06a9": "\u0643"})
 HARAKAT = re.compile(r"[\u0640\u064b-\u0652\u0670]")
 STRAY_HAMZA = re.compile(r"[\u0654\u0655]")
 COMMON_PUNCTUATION = set(".,;:!?'\"-–—/…·“”‘’«»׳״־׀׃،؛؟۔٪٫٬")
+#: the inside of an angle pair: 1-20 characters, no angle, no line break, no space at either edge (a supplied span
+#: hugs its letters; ``ז> ... ז<`` is two half-fraction signs, not a pair)
+ANGLE_INSIDE = r"(?:[^<>\s]|[^<>\s][^<>\n]{0,18}[^<>\s])"
+#: a reversed supplied span ``>x<`` (RTL text typed in visual order), not part of a doubled ``>>x<<``
+REVERSED_SUPPLIED = re.compile(r"(?<![<>])>(" + ANGLE_INSIDE + r")<(?![<>])")
+#: an angle pair on one line, either orientation (its signs are not lone)
+ANGLE_PAIR = re.compile("<" + ANGLE_INSIDE + ">|>" + ANGLE_INSIDE + "<")
 
 # reason codes
 UNDER_LETTERS = f"under_{MIN_LETTERS}_letters"
@@ -95,15 +139,25 @@ ARABIC_UNDER = f"arabic_under_{MIN_ARABIC_LETTERS}"
 ARABIC_RATIO = f"arabic_ratio_below_{ARABIC_OVER_HEBREW}x"
 ARABIC_DENSE = "arabic_too_dense"
 HARAKAT_STRIPPED = "harakat_stripped"
-READ_OVER = f"read_exceeds_target_{MAX_READ_OVER_TARGET:g}x"
+READ_OVER = "read_exceeds_target_1_5x"
+READ_UNDER = "target_exceeds_read_2_5x"
+PARTIAL_IMAGE = "partial_image_for_target"
+KRAKEN_LINES_OVER = "kraken_lines_over_1_5x"
 KRAKEN_LINES = "kraken_lines_over_1_3x"
+GAP_DENSITY = "gap_density_over_30pct"
 TOKENS_OVER = "token_over_budget"
 TOKENS_UNMEASURED = "tokens_unmeasured"
 SIZE_UNKNOWN = "image_size_unknown"
 COVERAGE_UNKNOWN = "coverage_unknown"
 TARGET_MISSING = "target_missing"
+BACKTICK_GERESH = "backtick_to_geresh"
+REVERSED_SUPPLIED_DROPPED = "reversed_supplied_dropped"
+FRACTION_SIGN_DROPPED = "fraction_sign_dropped"
+SECOND_READ_WANTED = "coverage_second_read_wanted"
 #: codes that never fail a side (``mojibake_final`` fails only when a presentation form is left)
-FLAG_ONLY = frozenset({HARAKAT_STRIPPED, KRAKEN_LINES, TOKENS_UNMEASURED, SIZE_UNKNOWN, COVERAGE_UNKNOWN})
+FLAG_ONLY = frozenset({HARAKAT_STRIPPED, KRAKEN_LINES, TOKENS_UNMEASURED, SIZE_UNKNOWN, COVERAGE_UNKNOWN,
+                       BACKTICK_GERESH, REVERSED_SUPPLIED_DROPPED, FRACTION_SIGN_DROPPED, SECOND_READ_WANTED,
+                       *RECORDED_TARGET_FLAGS})
 
 _HEBREW_LETTER = re.compile("[א-ת]")
 _ARABIC_LETTER = re.compile("[ء-يٱ-ۓ]")
@@ -191,11 +245,72 @@ def strip_harakat(text: str) -> str:
     return STRAY_HAMZA.sub("", unicodedata.normalize("NFC", HARAKAT.sub("", unicodedata.normalize("NFC", text))))
 
 
-def final_text(text: str) -> Tuple[str, List[str], List[str]]:
-    """The target after the repairs, with the flags and failures they raise.
+def drop_fraction_signs(text: str) -> Tuple[str, int]:
+    """Drop a lone ``<`` or ``>`` that follows a digit, ends a token right after a Hebrew letter (a letter numeral:
+    ``ז>``, ``יז>``) or ends a line: a merchant's half-fraction sign or a flourish.
+
+    A sign is lone when it is not part of an angle pair on its line (:data:`ANGLE_PAIR`).
+
+    :param text: Text.
+    :type text: str
+    :return: ``(text without those signs, signs dropped)``.
+    :rtype: Tuple[str, int]
+    """
+    dropped = 0
+    lines = []
+    for line in text.split("\n"):
+        paired = {i for m in ANGLE_PAIR.finditer(line) for i in (m.start(), m.end() - 1)}
+        kept = []
+        for i, ch in enumerate(line):
+            after_numeral = i > 0 and (line[i - 1].isdigit()
+                                       or (_HEBREW_LETTER.match(line[i - 1]) is not None
+                                           and (i + 1 == len(line) or line[i + 1].isspace())))
+            if ch in "<>" and i not in paired and (after_numeral or not line[i + 1:].strip()):
+                dropped += 1
+                continue
+            kept.append(ch)
+        lines.append("".join(kept))
+    return "\n".join(lines), dropped
+
+
+def normalise_signs(text: str, source: str = "") -> Tuple[str, List[str]]:
+    """Sign normalisations applied before the character gates, each recorded as a flag when it changed the text.
+
+    An ASCII backtick becomes ``'`` (a geresh; ``backtick_to_geresh``); for a source whose ``<x>`` marks letters
+    supplied by the editor (:data:`SUPPLIED_ANGLE_SOURCES`), a right-to-left reversed ``>x<`` is dropped as the PGP
+    cleaner drops ``<x>`` (``reversed_supplied_dropped``); a lone ``<`` / ``>`` after a digit, at the end of a token
+    after a Hebrew letter numeral, or at a line end is dropped (:func:`drop_fraction_signs`,
+    ``fraction_sign_dropped``). Any other ``<`` / ``>`` stays and fails ``hygiene_chars``.
+
+    :param text: Text after the repairs.
+    :type text: str
+    :param source: Candidate source.
+    :type source: str
+    :return: ``(text, flags)``.
+    :rtype: Tuple[str, List[str]]
+    """
+    flags: List[str] = []
+    if "`" in text:
+        text = text.replace("`", "'")
+        flags.append(BACKTICK_GERESH)
+    if source in SUPPLIED_ANGLE_SOURCES:
+        unreversed = REVERSED_SUPPLIED.sub("", text)
+        if unreversed != text:
+            text = unreversed
+            flags.append(REVERSED_SUPPLIED_DROPPED)
+    text, dropped = drop_fraction_signs(text)
+    if dropped:
+        flags.append(FRACTION_SIGN_DROPPED)
+    return text, flags
+
+
+def final_text(text: str, source: str = "") -> Tuple[str, List[str], List[str]]:
+    """The target after the repairs and sign normalisations, with the flags and failures they raise.
 
     :param text: Target text.
     :type text: str
+    :param source: Candidate source (for :func:`normalise_signs`).
+    :type source: str
     :return: ``(final text, flags, failures)``.
     :rtype: Tuple[str, List[str], List[str]]
     """
@@ -209,24 +324,32 @@ def final_text(text: str) -> Tuple[str, List[str], List[str]]:
     stripped = strip_harakat(repaired)
     if stripped != unicodedata.normalize("NFC", repaired):
         flags.append(HARAKAT_STRIPPED)
-    return stripped, flags, fails
+    normalised, sign_flags = normalise_signs(stripped, source)
+    return normalised, flags + sign_flags, fails
 
 
 # ===================================================================================================================
 # Gates
 # ===================================================================================================================
 
-def _allowed(ch: str) -> bool:
+def _allowed(ch: str, script: str = "") -> bool:
     """Whether a character may stand in a target.
 
     :param ch: One character.
     :type ch: str
+    :param script: Measured script of the side; ``arabic`` also allows :data:`ARABIC_SIDE_EXTRA` and Greek letters
+        (papyrus numerals).
+    :type script: str
     :return: True for Hebrew letters and marks, Arabic letters and marks, Latin letters, digits, common punctuation,
-        ``[]()``, space and newline.
+        ``[]()``, space and newline, combining marks U+0300-U+036F (diacritical points such as a dotted gimel), and
+        the fractions of :data:`FRACTIONS`.
     :rtype: bool
     """
     code = ord(ch)
-    if ch in " \n[]()" or ch in COMMON_PUNCTUATION:
+    if ch in " \n[]()" or ch in COMMON_PUNCTUATION or ch in FRACTIONS or 0x0300 <= code <= 0x036F:
+        return True
+    if script == "arabic" and (ch in ARABIC_SIDE_EXTRA or (0x0370 <= code <= 0x03FF
+                                                           and unicodedata.category(ch).startswith("L"))):
         return True
     if 0x0591 <= code <= 0x05C7 or 0x05D0 <= code <= 0x05EA or 0x05F0 <= code <= 0x05F2:
         return True
@@ -251,15 +374,18 @@ def hygiene_hits(text: str) -> List[str]:
     return sorted({ch for ch in text if ch in HYGIENE_CHARS})
 
 
-def non_text_chars(text: str) -> List[str]:
+def non_text_chars(text: str, script: str = "") -> List[str]:
     """Characters a target may not hold, after NFC (hygiene characters are reported by :func:`hygiene_hits`).
 
     :param text: Text.
     :type text: str
+    :param script: Measured script of the side (:func:`_allowed`).
+    :type script: str
     :return: The distinct offending characters, sorted.
     :rtype: List[str]
     """
-    return sorted({ch for ch in unicodedata.normalize("NFC", text) if ch not in HYGIENE_CHARS and not _allowed(ch)})
+    return sorted({ch for ch in unicodedata.normalize("NFC", text)
+                   if ch not in HYGIENE_CHARS and not _allowed(ch, script)})
 
 
 def text_lines(text: str) -> List[str]:
@@ -310,6 +436,70 @@ def upstream_marks(cand: Candidate, target: TargetSide) -> Tuple[bool, bool]:
     editorial = any(isinstance(h.get("flags"), dict) and any(h["flags"].get(f) for f in EXCLUDED_FLAGS)
                     for h in holders)
     return apparatus, editorial
+
+
+def gap_density(text: str) -> float:
+    """Gap tokens per letter, as the legacy-store cleaner measures it (its ``gap_density`` is per 100 letters).
+
+    :param text: Final target text.
+    :type text: str
+    :return: ``[...]`` tokens divided by Hebrew plus Arabic letters; 0.0 without letters.
+    :rtype: float
+    """
+    letters = sum(count_letters(text))
+    return text.count(GAP) / letters if letters else 0.0
+
+
+def target_flag_names(cand: Candidate, side_key: str) -> List[str]:
+    """The flags the target extraction recorded for one side (``Candidate.notes["target_flags"][side_key]``).
+
+    :param cand: Candidate.
+    :type cand: Candidate
+    :param side_key: Side key.
+    :type side_key: str
+    :return: Flag names (a list as recorded, or the keys of a count mapping with a non-zero count).
+    :rtype: List[str]
+    """
+    recorded = (cand.notes.get("target_flags") or {}).get(side_key) or []
+    if isinstance(recorded, dict):
+        return [name for name, count in recorded.items() if count]
+    return [str(name) for name in recorded]
+
+
+def target_flag_reasons(cand: Candidate, side_key: str, text: str) -> Tuple[List[str], List[str]]:
+    """Failures and flags from the target extraction's flags and the legacy store's gap density.
+
+    :param cand: Candidate.
+    :type cand: Candidate
+    :param side_key: Side key.
+    :type side_key: str
+    :param text: Final target text.
+    :type text: str
+    :return: ``(failures, flags)``: :data:`FAILING_TARGET_FLAGS` recorded for the side (each for its sources) and
+        ``gap_density_over_30pct`` for a legacy-store side over :data:`MAX_GAP_DENSITY`; :data:`RECORDED_TARGET_FLAGS`
+        recorded for the side as flags.
+    :rtype: Tuple[List[str], List[str]]
+    """
+    names = set(target_flag_names(cand, side_key))
+    fails = [name for name, sources in FAILING_TARGET_FLAGS.items() if name in names and cand.source in sources]
+    if cand.source in LEGACY_STORE_SOURCES and gap_density(text) > MAX_GAP_DENSITY:
+        fails.append(GAP_DENSITY)
+    return fails, [name for name in RECORDED_TARGET_FLAGS if name in names]
+
+
+def partial_third(thirds: Optional[Mapping[str, Any]]) -> bool:
+    """Whether the first or the last third of a target is absent from the chosen photograph's read.
+
+    :param thirds: ``coverage["thirds"]`` (``side_assign.third_matches``), or None.
+    :type thirds: Optional[Mapping[str, Any]]
+    :return: True when the first or the last third holds at least :data:`DEAD_THIRD_LETTERS` skeleton letters and
+        none of its primary n-grams is found in the read.
+    :rtype: bool
+    """
+    letters, matched = list((thirds or {}).get("letters") or []), list((thirds or {}).get("matched") or [])
+    if len(letters) != 3 or len(matched) != 3:
+        return False
+    return any(letters[i] >= DEAD_THIRD_LETTERS and matched[i] == 0 for i in (0, 2))
 
 
 def image_size(path: Optional[str]) -> Optional[Tuple[int, int]]:
@@ -390,11 +580,27 @@ def coverage_from_reads(cand: Candidate, target: TargetSide, decision: SideDecis
     :rtype: Optional[Dict[str, Any]]
     """
     views = [sa.make_view(r) for r in reads.get(decision.image_sha256 or "", [])]
-    used = [v for v in views if v.record.reader == decision.reader]
+    used = [i for i, v in enumerate(views) if v.record.reader == decision.reader]
     if not used:
         return None
     side = sa.make_side(cand, cand.targets.index(target), target)
-    return sa.coverage_of(side, used[0], sa.kraken_view(views))
+    return sa.best_coverage(side, views, used[0])
+
+
+def second_read_wanted(cover: Mapping[str, Any]) -> bool:
+    """Whether a low coverage rests on line-reader reads alone, so a page-reader read of the photograph may clear it.
+
+    :param cover: Coverage signals of the decision.
+    :type cover: Mapping[str, Any]
+    :return: True when every usable read of the photograph is a Kraken read (``usable_readers``; for signals written
+        without it, when the read they were computed on is a Kraken read).
+    :rtype: bool
+    """
+    families = cover.get("usable_readers")
+    if families is not None:
+        return set(families) == {"kraken"}
+    reader = cover.get("coverage_reader") or cover.get("reader") or ""
+    return sa.family_of(reader) == "kraken"
 
 
 def check_side(cand: Candidate, target: TargetSide, decision: SideDecision, *, tokenizer: Any = None,
@@ -420,7 +626,7 @@ def check_side(cand: Candidate, target: TargetSide, decision: SideDecision, *, t
         ``mojibake_final``) is present.
     :rtype: QualityResult
     """
-    text, flags, fails = final_text(target.text)
+    text, flags, fails = final_text(target.text, cand.source)
     hebrew, arabic = count_letters(text)
     script = measure_script(text)
     reasons: List[str] = []
@@ -432,9 +638,12 @@ def check_side(cand: Candidate, target: TargetSide, decision: SideDecision, *, t
         reasons.append(UNDER_LINES)
     if hygiene_hits(text):
         reasons.append(HYGIENE)
-    if non_text_chars(text):
+    if non_text_chars(text, script):
         reasons.append(NON_TEXT)
     reasons.extend(fails)
+    flag_fails, recorded = target_flag_reasons(cand, target.side_key, text)
+    reasons.extend(flag_fails)
+    flags.extend(recorded)
     apparatus, editorial = upstream_marks(cand, target)
     if editorial or EDITORIAL_TERMS_RE.search(text):
         reasons.append(EDITORIAL)
@@ -461,9 +670,20 @@ def check_side(cand: Candidate, target: TargetSide, decision: SideDecision, *, t
         ratio = cover.get("letters_ratio")
         if ratio is not None and ratio >= MAX_READ_OVER_TARGET:
             reasons.append(READ_OVER)
+        low = ratio is not None and ratio < MIN_READ_OVER_TARGET
+        if low:
+            reasons.append(READ_UNDER)
+        partial = partial_third(cover.get("thirds"))
+        if partial:
+            reasons.append(PARTIAL_IMAGE)
+        if (low or partial) and second_read_wanted(cover):
+            flags.append(SECOND_READ_WANTED)
         kraken_lines = cover.get("kraken_lines")
-        if known and lines and kraken_lines is not None and kraken_lines / len(lines) > MAX_KRAKEN_LINES_OVER_TARGET:
-            flags.append(KRAKEN_LINES)
+        if known and lines and kraken_lines is not None:
+            if kraken_lines / len(lines) >= KRAKEN_LINES_REVIEW:
+                reasons.append(KRAKEN_LINES_OVER)
+            elif kraken_lines / len(lines) > MAX_KRAKEN_LINES_OVER_TARGET:
+                flags.append(KRAKEN_LINES)
     tokens: Optional[int] = None
     if tokenizer is None:
         flags.append(TOKENS_UNMEASURED)

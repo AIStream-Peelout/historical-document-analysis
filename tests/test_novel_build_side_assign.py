@@ -52,19 +52,21 @@ def noisy(rng: random.Random, text: str, alphabet: str, rate: float = 0.04) -> s
     return "".join(rng.choice(alphabet) if ch in alphabet and rng.random() < rate else ch for ch in text)
 
 
-def read(sha: str, text: str, reader: str = KRAKEN, finish: str = "ok") -> ReadRecord:
+def read(sha: str, text: str, reader: str = KRAKEN, finish: str = "ok",
+         meta: Optional[Dict[str, object]] = None) -> ReadRecord:
     """A read record.
 
     :param sha: Photograph hash.
     :param text: Read text.
     :param reader: Reader id.
     :param finish: Finish code.
+    :param meta: Reader extras (the page reader's finish fields).
     :return: The record.
     """
     lines = [line for line in text.splitlines() if line.strip()]
     return ReadRecord(sha256=sha, reader=reader, text=text, lines=lines, n_lines=len(lines),
                       letters_hebrew=sum(ch in HEBREW for ch in text), letters_arabic=sum(ch in ARABIC for ch in text),
-                      finish=finish, seconds=1.0, read_at="2026-11-03T00:00:00Z")
+                      finish=finish, seconds=1.0, read_at="2026-11-03T00:00:00Z", meta=dict(meta or {}))
 
 
 def null_reads(seed: int, alphabet: str = HEBREW, reader: str = KRAKEN, n: int = 60) -> List[ReadRecord]:
@@ -93,17 +95,20 @@ def target(side_key: str, text: str, marker: Optional[str] = None) -> TargetSide
                       side_marker=marker)
 
 
-def image(sha: str, origin: str = "iiif_cudl", label: Optional[str] = None, status: str = "present") -> ImageRef:
+def image(sha: str, origin: str = "iiif_cudl", label: Optional[str] = None, status: str = "present",
+          width: int = 2000, height: int = 3000) -> ImageRef:
     """A photograph.
 
     :param sha: Its hash.
     :param origin: Origin.
     :param label: Canvas label.
     :param status: Status.
+    :param width: Pixel width.
+    :param height: Pixel height.
     :return: The reference.
     """
     return ImageRef(image_id=f"{origin}:{sha}", origin=origin, path=f"/tmp/none/{sha}.jpg", sha256=sha, label=label,
-                    status=status, width=2000, height=3000)
+                    status=status, width=width, height=height)
 
 
 def cand(row_id: str, targets: Sequence[TargetSide], images: Sequence[ImageRef], group: Optional[str] = None,
@@ -266,10 +271,11 @@ def test_no_read_and_no_image_are_unassigned() -> None:
 
 
 def test_shorter_duplicate_version_is_dropped() -> None:
-    """Of two versions of one text in a document group the shorter is dropped, naming the kept one."""
+    """Of two versions of one text in a document group, one more than 5 % shorter than the other is dropped before
+    placement, naming the kept one."""
     rng = random.Random(8)
     recto, _ = two_sides(18, letters=300)
-    shorter = " ".join(recto.split()[:-2])
+    shorter = " ".join(recto.split()[:-6])
     long_c = cand("pgp:10", [target("recto", recto)], [image("dup_img")], group="group:shared")
     short_c = cand("fjp:10", [target("", shorter)], [image("dup_img2", origin="fjp_local")], group="group:shared",
                    source="fjp")
@@ -476,7 +482,8 @@ def test_gate_sources_check_the_given_photograph() -> None:
     assert ok.outcome == "accepted" and ok.basis == "gate_p95" and ok.image_sha256 == "ktiv_ok"
     assert ok.competitors[0]["coverage"]["target_letters"] > 0
     refused = by_side(out, "990000000000000002:FL2")["page"]
-    assert refused.outcome == "needs_review" and refused.reasons == [sa.GATE_BELOW_P95]
+    assert refused.outcome == "needs_review"
+    assert refused.reasons == [sa.GATE_BELOW_P95, sa.N3_BELOW_P95, sa.under_matched_reason(4)]
     given = by_side(out, "apd_v3:stem_1")["recto"]
     assert given.outcome == "accepted" and given.image_sha256 == "apd_img"
     assert [e["sha256"] for e in given.competitors] == ["apd_img"]
@@ -570,10 +577,14 @@ def test_spill_ratio_rule(spill: float, holder_recall: float, outcome: str) -> N
 
 
 def test_spill_onto_an_unassigned_photograph_and_p95_choices() -> None:
-    """An unassigned spill photograph is excused at twice the recall; a side resting on p95 is never excused."""
+    """An unassigned spill photograph is excused at twice the recall only for a target that names its side (an
+    unlabelled target may hold both faces); a side resting on p95 is never excused."""
     one, _ = faces(31)
     images = sa.distinct_images(one.cand.images)
     pairs = {one.key: {"img_1": crafted(0.40, True, True), "img_2": crafted(0.20, True, False)}}
+    decision = sa.decide_candidate([one], images, pairs, {})[one.key]
+    assert decision["outcome"] == "needs_review" and decision["reasons"] == [sa.ON_ANOTHER_IMAGE]
+    one.target.side_key = "recto"
     decision = sa.decide_candidate([one], images, pairs, {})[one.key]
     assert decision["outcome"] == "accepted" and decision["basis"] == sa.RATIO_BASIS
     one.target.side_marker, one.cand.images[0].label = "r", "1r"
@@ -609,3 +620,339 @@ def test_main_reads_and_writes_the_stage_files(tmp_path: Path) -> None:
     out = list(read_jsonl(paths.stage_path(tmp_path, "sides"), SideDecision))
     assert [(d.row_id, d.side_key, d.outcome) for d in out] == [("pgp:30", "recto", "accepted"),
                                                                ("pgp:30", "verso", "accepted")]
+
+
+# --- photographs of one face ------------------------------------------------------------------------------------------
+
+def test_same_face_copies_fold_onto_the_larger_photograph() -> None:
+    """Two photographs of one face (a store copy and a bucket copy) whose reads agree fold onto the larger one: the side
+    is accepted there instead of going to review for a spill, and the fold is recorded with its containments."""
+    rng = random.Random(80)
+    recto, verso = two_sides(40)
+    images = [image("bucket_r", origin="fjp_bucket", width=1500, height=2000),
+              image("store_r", origin="fjp_local", width=4000, height=6000), image("store_v", origin="fjp_local")]
+    c = cand("store:40", [target("r", recto), target("v", verso)], images, source="fjp")
+    reads = null_reads(120) + [read("bucket_r", noisy(rng, recto, HEBREW, 0.01)),
+                               read("store_r", noisy(rng, recto, HEBREW, 0.01)),
+                               read("store_v", noisy(rng, verso, HEBREW, 0.01))]
+    out = by_side(sa.assign_sides([c], reads, n_boot=N_BOOT, seed=3), "store:40")
+    assert out["r"].outcome == "accepted" and out["r"].image_sha256 == "store_r" and out["r"].reasons == []
+    fold = next(e for e in out["r"].competitors if e.get("role") == "same_face")
+    assert fold["link"] == "same_face_of:store_r" and fold["sha256"] == "bucket_r"
+    assert min(fold["containment_in_kept"], fold["containment_of_kept"]) >= sa.SAME_FACE_CONTAINMENT
+    assert fold["shared_grams"] >= sa.SAME_FACE_MIN_SHARED
+    assert "bucket_r" not in {e.get("sha256") for e in out["r"].competitors if e.get("role") != "same_face"}
+    assert out["v"].outcome == "accepted" and out["v"].image_sha256 == "store_v"
+
+
+def test_fold_needs_agreeing_usable_reads_and_keeps_the_larger_photograph() -> None:
+    """Photographs fold onto the largest agreeing one (equal areas: the preferred origin); a photograph whose read
+    disagrees or that has no usable read is never folded."""
+    rng = random.Random(81)
+    recto, verso = two_sides(41)
+    page = noisy(rng, recto, HEBREW, 0.01)
+    small = image("small", origin="iiif_cudl", width=1000, height=1500)
+    big = image("big", origin="fjp_bucket", width=3000, height=4000)
+    twin = image("twin", origin="iiif_nli", width=1000, height=1500)
+    other = image("other")
+    unread = image("unread", origin="cudl_local", width=5000, height=5000)
+    views = sa.views_by_sha([read("small", page), read("big", noisy(rng, recto, HEBREW, 0.01)), read("twin", page),
+                             read("other", noisy(rng, verso, HEBREW, 0.01)), read("unread", "", finish="blank")])
+    kept, folds = sa.fold_same_faces([small, big, twin, other, unread], views, sa.HEBREW)
+    assert [im.sha256 for im in kept] == ["big", "other", "unread"]
+    assert {f["sha256"]: f["kept_sha256"] for f in folds} == {"small": "big", "twin": "big"}
+    kept, folds = sa.fold_same_faces([small, twin], views, sa.HEBREW)
+    assert [im.sha256 for im in kept] == ["twin"] and [f["link"] for f in folds] == ["same_face_of:twin"]
+
+
+def test_same_face_compares_reads_of_one_reader_family() -> None:
+    """When both photographs have usable reads of one family those are compared, not the best read of each."""
+    rng = random.Random(82)
+    recto, verso = two_sides(42)
+    a, b = image("fa"), image("fb", origin="cudl_local")
+    views = sa.views_by_sha([read("fa", noisy(rng, recto, HEBREW, 0.01)), read("fa", noisy(rng, verso, HEBREW), VLM),
+                             read("fb", noisy(rng, recto, HEBREW, 0.01), VLM)])
+    assert sa.same_face(b, a, views, sa.HEBREW) is None
+    views["fb"].append(sa.make_view(read("fb", noisy(rng, recto, HEBREW, 0.01))))
+    record = sa.same_face(b, a, views, sa.HEBREW)
+    assert record is not None and (record["reader"], record["kept_reader"]) == (KRAKEN, KRAKEN)
+
+
+def test_the_bucket_mirror_is_its_own_campaign() -> None:
+    """The PGP bucket mirror is never a sibling of the library photographs: a mirror whose read is too noisy to fold
+    is another campaign's photograph, not a spill, and the side is accepted on the library photograph."""
+    assert sa.campaign_of("pgpid_mirror") == "pgpid_mirror" and sa.campaign_of("iiif_pgp") == "pgp"
+    rng = random.Random(90)
+    recto, verso = two_sides(50)
+    images = [image("lib_r", origin="iiif_pgp", width=6000, height=8000), image("lib_v", origin="iiif_pgp"),
+              image("mirror", origin="pgpid_mirror", width=1200, height=1600)]
+    c = cand("pgp:50", [target("recto", recto), target("verso", verso)], images)
+    reads = null_reads(130) + [read("lib_r", noisy(rng, recto, HEBREW, 0.02)), read("lib_v", noisy(rng, verso, HEBREW)),
+                               read("mirror", noisy(rng, recto, HEBREW, 0.12))]
+    out = by_side(sa.assign_sides([c], reads, n_boot=N_BOOT, seed=3), "pgp:50")
+    assert out["recto"].outcome == "accepted" and out["recto"].image_sha256 == "lib_r" and out["recto"].reasons == []
+    assert not [e for e in out["recto"].competitors if e.get("role") == "same_face"]
+    roles = {e["sha256"]: e["role"] for e in out["recto"].competitors if e.get("sha256")}
+    assert roles["mirror"] == "alternative"
+
+
+# --- the read that places a side --------------------------------------------------------------------------------------
+
+def test_the_read_clearing_the_highest_threshold_wins() -> None:
+    """A short Kraken read that does not hold the side loses to a page-reader read clearing p99 against its own null:
+    the decision names the page reader and lists both reads."""
+    rng = random.Random(83)
+    recto, _ = two_sides(43)
+    c = cand("pgp:43", [target("recto", recto)], [image("two_reads")])
+    reads = (null_reads(121) + null_reads(122, reader=VLM)
+             + [read("two_reads", words(rng, HEBREW, 40)), read("two_reads", noisy(rng, recto, HEBREW), VLM)])
+    out = by_side(sa.assign_sides([c], reads, n_boot=N_BOOT, seed=3), "pgp:43")["recto"]
+    assert out.outcome == "accepted" and out.reader == VLM and out.basis == "single_image_p99"
+    first = out.competitors[0]
+    assert [r["reader"] for r in first["reads_scored"]] == [KRAKEN, VLM]
+    assert first["reads_scored"][1]["level"] == "p99" and first["reads_scored"][0]["level"] == "below"
+    assert first["coverage"]["reader"] == VLM
+
+
+def test_a_read_whose_family_null_is_too_small_cannot_win() -> None:
+    """A perfect page-reader read whose family's null has 5 reads cannot win; the Kraken read places the side."""
+    rng = random.Random(84)
+    recto, _ = two_sides(44)
+    c = cand("pgp:44", [target("recto", recto)], [image("thin_family")])
+    reads = (null_reads(123) + null_reads(124, reader=VLM, n=5)
+             + [read("thin_family", noisy(rng, recto, HEBREW, 0.08)), read("thin_family", recto, VLM)])
+    out = by_side(sa.assign_sides([c], reads, n_boot=N_BOOT, seed=3), "pgp:44")["recto"]
+    assert out.outcome == "accepted" and out.reader == KRAKEN
+    assert out.competitors[0]["reads_scored"][1] == {"reader": VLM, "why": sa.NULL_TOO_SMALL}
+
+
+@pytest.mark.parametrize("finish, meta, outcome", [
+    ("length", {}, "accepted"),
+    ("looping", {"finish_reason": "length", "looped": True, "cut_at": None, "repeat_share": 0.05}, "accepted"),
+    ("looping", {"finish_reason": "length", "looped": True, "cut_at": 120, "repeat_share": 0.05}, "needs_review")])
+def test_a_capped_read_places_a_side(finish: str, meta: Dict[str, object], outcome: str) -> None:
+    """A read the token budget cut without a loop (``length``, or a stored ``looping`` whose meta shows only the cut)
+    is evidence and places a side; a read whose loop the detector found does not.
+
+    :param finish: Stored finish code.
+    :param meta: The page reader's fields stored with the read.
+    :param outcome: Expected outcome.
+    """
+    rng = random.Random(85)
+    recto, _ = two_sides(45)
+    c = cand("pgp:45", [target("recto", recto)], [image("capped")])
+    reads = null_reads(125, reader=VLM) + [read("capped", noisy(rng, recto, HEBREW), VLM, finish=finish, meta=meta)]
+    out = by_side(sa.assign_sides([c], reads, n_boot=N_BOOT, seed=3), "pgp:45")["recto"]
+    assert out.outcome == outcome
+    if outcome == "accepted":
+        assert out.reader == VLM and out.basis == "single_image_p99"
+    else:
+        assert out.reasons == [sa.NO_USABLE_READ, sa.READ_LOOPING]
+
+
+# --- versions and editions --------------------------------------------------------------------------------------------
+
+def test_versions_with_different_side_labels_go_to_review() -> None:
+    """Two versions of one text labelled recto and verso are a label conflict: both go to review, none is dropped."""
+    rng = random.Random(86)
+    recto, _ = two_sides(46, letters=300)
+    c = cand("pgp:46", [target("recto", recto), target("verso", " ".join(recto.split()[:-1]))],
+             [image("vc_a"), image("vc_b")])
+    reads = null_reads(126) + [read("vc_a", noisy(rng, recto, HEBREW)), read("vc_b", words(rng, HEBREW, 200))]
+    out = by_side(sa.assign_sides([c], reads, n_boot=N_BOOT, seed=3), "pgp:46")
+    for key, other in (("recto", "verso"), ("verso", "recto")):
+        assert out[key].outcome == "needs_review" and out[key].reasons == [sa.VERSION_CONFLICT]
+        record = next(e for e in out[key].competitors if e.get("role") == "version_conflict")
+        assert record["side_key"] == other and record["share"] >= sa.DUPLICATE_SHARE
+    assert sa.labels_differ(target("1r", "אב"), target("2r", "אב"))
+    assert not sa.labels_differ(target("recto", "אב"), target("r", "אב"))
+    assert not sa.labels_differ(target("recto", "אב"), target("", "אב"))
+
+
+def test_the_version_with_fewer_marks_within_five_percent_is_kept() -> None:
+    """Of two versions within 5 % of each other's length that placement cannot tell apart (neither is read), the one
+    with fewer apparatus marks is kept, even when shorter; the other is dropped with ``duplicate_version_more_marks``
+    and a ``version_of`` record holding both versions' recall and marks."""
+    recto, _ = two_sides(47, letters=400)
+    tokens = recto.split()
+    marked = " ".join(w + "?" if i % 5 == 0 else w for i, w in enumerate(tokens)) + " [...]"
+    clean = " ".join(tokens[:-1])
+    a = cand("pgp:47", [target("recto", marked)], [image("mk_a")], group="group:47")
+    b = cand("fjp:47", [target("", clean)], [image("mk_b", origin="fjp_local")], group="group:47", source="fjp")
+    out = sa.assign_sides([a, b], null_reads(127), n_boot=N_BOOT, seed=3)
+    dropped = by_side(out, "pgp:47")["recto"]
+    assert dropped.outcome == "dropped" and dropped.reasons == [sa.DUPLICATE_MORE_MARKS]
+    record = next(e for e in dropped.competitors if e.get("role") == "kept_version")
+    assert record["link"] == "version_of:fjp:47:" and record["decided_by"] == "marks"
+    assert record["recall"] == [None, None] and record["marks"][0] > record["marks"][1]
+    assert by_side(out, "fjp:47")[""].outcome != "dropped"
+
+
+def test_editions_of_one_side_from_two_sources_do_not_compete() -> None:
+    """A literature edition of a PGP side (Dice under the version threshold) is decided apart from it; both land on
+    the same photograph, the PGP edition is kept and the other dropped as ``duplicate_edition_on_image``."""
+    rng = random.Random(88)
+    recto, verso = two_sides(48, letters=300)
+    excerpt = " ".join(recto.split()[: int(len(recto.split()) * 0.7)]) + "\n" + words(rng, HEBREW, 90)
+    images = [image("ed_r"), image("ed_v")]
+    pgp = cand("pgp:48", [target("recto", recto), target("verso", verso)], images, group="group:48")
+    lit = cand("lit:48", [target("", excerpt)], images, group="group:48", source="literature")
+    reads = null_reads(128) + [read("ed_r", noisy(rng, recto, HEBREW)), read("ed_v", noisy(rng, verso, HEBREW))]
+    out = sa.assign_sides([pgp, lit], reads, n_boot=N_BOOT, seed=3)
+    assert [d.outcome for d in by_side(out, "pgp:48").values()] == ["accepted", "accepted"]
+    edition = by_side(out, "lit:48")[""]
+    assert edition.outcome == "dropped" and edition.reasons == [sa.DUPLICATE_EDITION]
+    record = next(e for e in edition.competitors if e.get("role") == "kept_edition")
+    assert record["link"] == "edition_of:pgp:48" and record["sha256"] == "ed_r"
+    assert record["containment"] >= sa.EDITION_CONTAINMENT
+    assert [len(u) for u in sa.decision_units([pgp, lit])] == [1, 1]
+
+
+def test_complementary_candidates_of_one_source_stay_joint_and_editions_apart() -> None:
+    """Two candidates of one source with different texts are one decision unit; an excerpt of the other's text is
+    an edition and is decided apart."""
+    recto, _ = two_sides(53, letters=300)
+    excerpt = " ".join(recto.split()[: len(recto.split()) // 2])
+    images = [image("lx_a"), image("lx_b")]
+    full = cand("lit:53a", [target("", recto)], images, group="group:53", source="literature")
+    part = cand("lit:53b", [target("", excerpt)], images, group="group:53", source="literature")
+    other = cand("lit:53c", [target("", two_sides(54)[0])], images, group="group:53", source="literature")
+    assert [len(u) for u in sa.decision_units([full, part])] == [1, 1]
+    assert [len(u) for u in sa.decision_units([full, other])] == [2]
+    assert [len(u) for u in sa.decision_units([full, other, part])] == [2, 1]
+
+
+def test_two_texts_accepted_on_one_photograph_are_not_editions() -> None:
+    """Different texts of two units accepted on one photograph stay a conflict for review, not an edition drop."""
+    first, second = two_sides(49)
+    shared = [image("both")]
+    a = cand("pgp:49", [target("recto", first)], shared, group="group:49")
+    b = cand("lit:49", [target("", second)], shared, group="group:49", source="literature")
+    sides = {s.key: s for s in (sa.make_side(a, 0, a.targets[0]), sa.make_side(b, 0, b.targets[0]))}
+    decisions = {key: sa._decision("accepted", [], image=shared[0], assigned=shared[0]) for key in sides}
+    pairs = {key: {"both": crafted(0.5, True, True)} for key in sides}
+    assert sa.resolve_editions(decisions, sides, {key: i for i, key in enumerate(sides)}, pairs) == []
+    assert sorted(sa.image_conflicts(decisions, sides)) == sorted(sides)
+
+
+# --- targets spanning two photographs, the gate -----------------------------------------------------------------------
+
+@pytest.mark.parametrize("side_key, reasons", [("r", [sa.SPANS_TWO_IMAGES]),
+                                               ("", [sa.ON_ANOTHER_IMAGE, sa.SPANS_TWO_IMAGES])])
+def test_a_target_spanning_two_photographs_goes_to_review(side_key: str, reasons: List[str]) -> None:
+    """A target holding a recto's text (68 %) and its verso's (32 %) clears p99 on the recto photograph and spills
+    onto the verso one at under half its recall. Labelled, the ratio rule excuses the spill but the second half
+    recalls better on the verso photograph (``target_spans_two_images``, half recalls recorded); unlabelled, the spill
+    onto a photograph no side holds is not excused either.
+
+    :param side_key: The target's side key.
+    :param reasons: Expected blocking reasons.
+    """
+    front, back = two_sides(51, letters=420)
+    front_words, back_words = front.split(), back.split()
+    text = (" ".join(front_words[: int(len(front_words) * 0.68)]) + "\n"
+            + " ".join(back_words[: int(len(back_words) * 0.32)]))
+    images = [image("span_r", origin="fjp_local"), image("span_v", origin="fjp_local")]
+    c = cand("store:51", [target(side_key, text)], images, source="fjp")
+    reads = null_reads(131) + [read("span_r", front), read("span_v", back)]
+    out = by_side(sa.assign_sides([c], reads, n_boot=N_BOOT, seed=3), "store:51")[side_key]
+    assert out.outcome == "needs_review"
+    assert [r for r in out.reasons if r not in sa.FLAG_ONLY] == reasons
+    halves = next(e for e in out.competitors if e.get("role") == "halves")
+    assert halves["spans"] == ["span_v"] and halves["spill"]["span_v"][1] > halves["chosen"][1]
+
+
+def test_the_gate_also_needs_the_3gram_recall_and_matched_grams() -> None:
+    """A gate source's read must also clear the 3-gram p95 and match at least 5 primary n-grams."""
+    c = cand("apd_v3:stem_2", [target("recto", words(random.Random(18), HEBREW, 120))],
+             [image("gate_img", origin="apd_local")], source="apd_v3")
+    side = sa.make_side(c, 0, c.targets[0])
+    given = c.images[0]
+    assert sa.decide_gate(side, given, crafted(0.5, True, True))["outcome"] == "accepted"
+    weak = sa.decide_gate(side, given, crafted(0.5, True, True, n3=False, matched=3))
+    assert weak["outcome"] == "needs_review" and weak["reasons"] == [sa.N3_BELOW_P95, sa.under_matched_reason(4)]
+
+
+def test_third_matches_count_the_target_thirds_found_in_the_read() -> None:
+    """The coverage signals carry the letters of the target's thirds and their n-grams found in the read."""
+    recto, _ = two_sides(52, letters=330)
+    c = cand("pgp:52", [target("recto", recto)], [image("thirds")])
+    side = sa.make_side(c, 0, c.targets[0])
+    thirds = sa.third_matches(side, sa.make_view(read("thirds", recto[: len(recto) * 2 // 3])))
+    assert sum(thirds["letters"]) == len(side.skeleton)
+    assert thirds["matched"][0] > 0 and thirds["matched"][2] == 0
+
+
+# --- version by placement, Arabic 3-grams, coverage read --------------------------------------------------------------
+
+def test_the_version_placed_with_the_higher_recall_is_kept() -> None:
+    """Of two versions within 5 % of each other, the one accepted with the higher recall on its photograph is kept even
+    with more apparatus marks; the other is dropped with ``duplicate_version_lower_recall`` and both values recorded."""
+    rng = random.Random(94)
+    recto, _ = two_sides(56, letters=400)
+    tokens = recto.split()
+    marked = " ".join(w + "?" if i % 6 == 0 else w for i, w in enumerate(tokens))
+    clean = " ".join(tokens[:-1])
+    sharp = cand("pgp:56", [target("recto", marked)], [image("sharp")], group="group:56")
+    blurry = cand("fjp:56", [target("", clean)], [image("blurry", origin="fjp_local")], group="group:56", source="fjp")
+    reads = null_reads(134) + [read("sharp", noisy(rng, recto, HEBREW, 0.01)),
+                               read("blurry", noisy(rng, recto, HEBREW, 0.12))]
+    out = sa.assign_sides([sharp, blurry], reads, n_boot=N_BOOT, seed=3)
+    kept, lost = by_side(out, "pgp:56")["recto"], by_side(out, "fjp:56")[""]
+    assert kept.outcome == "accepted" and lost.outcome == "dropped"
+    assert lost.reasons == [sa.DUPLICATE_LOWER_RECALL]
+    record = next(e for e in lost.competitors if e.get("role") == "kept_version")
+    assert record["decided_by"] == "recall" and record["recall"][0] < record["recall"][1]
+    assert record["marks"][0] < record["marks"][1]
+    compared = next(e for e in kept.competitors if e.get("role") == "versions_compared")
+    assert [v["kept"] for v in compared["versions"]] == [True, False]
+
+
+def test_the_3gram_check_is_a_flag_on_arabic_sides() -> None:
+    """On an Arabic-script side a 3-gram recall under its p95 is recorded but does not block the side, in a decision
+    unit and at the gate; a Hebrew-script side still goes to review."""
+    arabic = cand("pgp:57", [target("recto", words(random.Random(19), ARABIC, 120))], [image("ar_1"), image("ar_2")])
+    side = sa.make_side(arabic, 0, arabic.targets[0])
+    pairs = {side.key: {"ar_1": crafted(0.5, True, True, n3=False), "ar_2": crafted(0.01, False, False)}}
+    decision = sa.decide_candidate([side], sa.distinct_images(arabic.images), pairs, {})[side.key]
+    assert decision["outcome"] == "accepted" and decision["reasons"] == [sa.N3_BELOW_P95]
+    gate = cand("apd_v3:stem_3", [target("recto", words(random.Random(20), ARABIC, 120))],
+                [image("apd_g", origin="apd_local")], source="apd_v3")
+    gate_side = sa.make_side(gate, 0, gate.targets[0])
+    rasm_pair = {**crafted(0.5, True, True, n3=False), "null_n5": {"p95": 0.1, "p99": 0.2, "n": 60}}
+    accepted = sa.decide_gate(gate_side, gate.images[0], rasm_pair)
+    assert accepted["outcome"] == "accepted" and accepted["reasons"] == [sa.N3_BELOW_P95]
+    assert sa.blocks(sa.N3_BELOW_P95, sa.make_side(cand("pgp:58", [target("recto", "אבגדה" * 30)], []), 0,
+                                                    target("recto", "אבגדה" * 30)))
+
+
+def test_coverage_is_computed_on_the_read_that_covers_most_of_the_target() -> None:
+    """A Kraken read of 30 % of the target places the side (the page reader's null is too small to win), and the
+    coverage signals use the page-reader read that covers the whole target, naming both readers."""
+    recto, _ = two_sides(55, letters=300)
+    lines = recto.splitlines()
+    partial = "\n".join(lines[: max(1, len(lines) * 3 // 10)])
+    c = cand("pgp:55", [target("recto", recto)], [image("cov")])
+    reads = null_reads(132) + null_reads(133, reader=VLM, n=5) + [read("cov", partial), read("cov", recto, VLM)]
+    out = by_side(sa.assign_sides([c], reads, n_boot=N_BOOT, seed=3), "pgp:55")["recto"]
+    assert out.outcome == "accepted" and out.reader == KRAKEN
+    coverage = out.competitors[0]["coverage"]
+    assert (coverage["coverage_reader"], coverage["placement_reader"]) == (VLM, KRAKEN)
+    assert coverage["usable_readers"] == ["kraken", "vlm"] and coverage["letters_ratio"] > 0.9
+
+
+def test_versions_of_one_group_are_one_copy_of_a_shared_text() -> None:
+    """Two versions of a text in one document group that another group also holds act as one copy: their group owns
+    the text, the other group's copy is dropped, and the version placed with the higher recall is kept."""
+    rng = random.Random(95)
+    text, _ = two_sides(57, letters=300)
+    a = cand("pgp:57", [target("recto", text)], [image("own_a")], group="group:57")
+    b = cand("fjp:57", [target("", text + " ?")], [image("own_b", origin="fjp_local")], group="group:57", source="fjp")
+    c = cand("lit:57", [target("", text)], [image("far")], group="group:58", source="literature")
+    reads = null_reads(135) + [read("own_a", noisy(rng, text, HEBREW, 0.01)),
+                               read("own_b", noisy(rng, text, HEBREW, 0.1)), read("far", words(rng, HEBREW, 200))]
+    out = sa.assign_sides([a, b, c], reads, n_boot=N_BOOT, seed=3)
+    lost = by_side(out, "lit:57")[""]
+    assert lost.outcome == "dropped" and lost.reasons == [sa.NOT_OWNER]
+    assert by_side(out, "pgp:57")["recto"].outcome == "accepted"
+    assert by_side(out, "fjp:57")[""].reasons == [sa.DUPLICATE_LOWER_RECALL]
