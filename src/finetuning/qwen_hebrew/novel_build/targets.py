@@ -7,18 +7,25 @@ otherwise. Per source:
   ``ע"א`` / ``ע"ב`` / margin / address labels; blocks before the first side label belong to the recto). One side per
   side label in edition order, assembled as that builder assembles a page (:func:`build_pgp_editions.assemble_answer`:
   the side's main blocks, then its margin, address and other blocks, each in edition order); an edition without side
-  labels is one side ``""``. That builder cleans every line while it parses (:func:`build_pgp_editions.clean_line`:
-  notation normalisation, then ``clean_diplomatic``, lost text as ``[...]``), so ``raw_text`` is the side's block
-  lines joined and ``text`` is the same after the builder's row normalisation (NFC, stripped). Arabic-script
-  editions (ledger script ``arabic``, or ``mixed`` with at least as many Arabic as Hebrew letters) are cut by the
-  Arabic-script builder instead (:func:`build_pgp_arabic_editions.best_sections`, which runs
-  ``arabic_script.split_sections`` with the ``[...]`` gap token, and :func:`build_pgp_arabic_editions.sides_of`).
+  labels is one side ``""``. An edition with complex side labels (the parser's ``complex_sides``: page, folio or
+  fragment labels such as ``Fol. 2r``, ``Recto (page 3)`` or ``page b``, or a side opened twice by a bare label) is
+  cut by its sections instead (:func:`section_groups`): one side per section label, keyed by that label, so the text
+  of two folios that share a side name is never joined; blocks before the first section label form the side ``""``.
+  That builder cleans every line while it parses (:func:`build_pgp_editions.clean_line`: notation normalisation,
+  then ``clean_diplomatic``, lost text as ``[...]``), so ``raw_text`` is the side's block lines joined and ``text``
+  is the same after the builder's row normalisation (NFC, stripped). Letters supplied by the editor but stored with
+  reversed brackets (``>ה<``) are first rewritten as the builders expect them (``<ה>``), so they are dropped like
+  every supplied span (:func:`unreverse_supplied`). Arabic-script editions (ledger script ``arabic``, or ``mixed``
+  with at least as many Arabic as Hebrew letters) are cut by the Arabic-script builder instead
+  (:func:`build_pgp_arabic_editions.best_sections`, which runs ``arabic_script.split_sections`` with the ``[...]``
+  gap token, and :func:`build_pgp_arabic_editions.sides_of`).
 * ``fjp``: the legacy-store cleaner's side record (``cleaned_sections.jsonl``), joined on ``(canonical_id,
   section_index)``; a ``#r<k>`` row id names the record whose ``record_index`` (its position among the document's
   records, file order) is ``k``. The text is already cleaned.
 * ``fjp_scrape``: the raw site-scrape text through the legacy-store sigla rules
   (:func:`legacy_store_sigla.clean_section`; one side per side the rules find, the record's own side when there is
-  one).
+  one), with a lexicon of known words for the rules' word-order repairs (by default the words of the cleaned
+  legacy-store sections, :func:`load_lexicon`).
 * ``ktiv``: the library's page reconstruction as one side ``page``.
 * ``literature``: the scanned-edition blocks (``lit_blocks.jsonl``) of the candidate's work, part, pages and raw shelf
   keys, in page order, checked against the candidate's text block by block.
@@ -39,7 +46,7 @@ import unicodedata
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence, Set, Tuple, Union
+from typing import Any, Dict, FrozenSet, List, Optional, Sequence, Set, Tuple, Union
 
 from src.datasets.cleaning import legacy_store_sigla as sigla
 from src.finetuning.qwen_hebrew import build_pgp_arabic_editions as pae
@@ -48,6 +55,7 @@ from src.finetuning.qwen_hebrew.novel_build import paths
 from src.finetuning.qwen_hebrew.novel_build.schema import Candidate, ImageRef, TargetSide, read_jsonl, write_jsonl
 
 HEBREW_LETTER_RE = re.compile("[א-ת]")
+HEBREW_RUN_RE = re.compile("[א-ת]+")
 ARABIC_LETTER_RE = re.compile("[ء-يٱ-ۓ]")
 #: A text is ``mixed`` when both scripts have at least this many letters ...
 MIXED_MIN_LETTERS = 20
@@ -57,6 +65,10 @@ MIXED_MIN_SHARE = 0.10
 #: The legacy-store cleaner's side records.
 DEFAULT_SECTIONS = Path(os.environ.get(
     "NOVEL_BUILD_SECTIONS", str(paths.DATASETS_ROOT / "legacy_store_diplomatic" / "cleaned_sections.jsonl")))
+#: ``lexicon_path`` value of :func:`attach_targets`: the lexicon is built from its ``sections_path``.
+LEXICON_FROM_SECTIONS = "sections"
+#: Shortest Hebrew letter run that goes into a lexicon (the legacy-store build's rule).
+LEXICON_MIN_LETTERS = 2
 #: The scanned-literature transcription blocks of the ledger.
 DEFAULT_LIT_BLOCKS = Path(os.environ.get(
     "NOVEL_BUILD_LIT_BLOCKS", str(paths.REPO_ROOT / "logs" / "next_round" / "unseen_v1" / "lit_blocks.jsonl")))
@@ -78,6 +90,14 @@ _PAGE_FILE_RE = re.compile(r"page_(\d+)_structured")
 _KEY_LINE_RE = re.compile(r"[\s_](?:line|l)(\d+)$")
 _KTIV_SOURCE_PREFIX = "nli_ktiv_transcription_"
 _UNLABELLED_RUN2_SIDES = ("", "unknown")
+#: Letters supplied by the editor stored with reversed brackets (``>ה<`` for ``<ה>``), within the length the builder's
+#: ``<x>`` rule takes; doubled brackets (``>>x<<``) are struck text, not supplied letters.
+REVERSED_SUPPLIED_RE = re.compile(r"(?<![<>])>([^<>\n]{1,20})<(?![<>])")
+#: ``page``/``sheet`` used for a place on the current page (``top of the page``, ``halfway down the page``).
+_ON_PAGE_RE = re.compile(r"\b(?:top|bottom|middle|foot|head|edge|corner|side|back|backe)\s+of\s+(?:the\s+)?"
+                         r"(?:page|sheet)\b|\bdown\s+the\s+(?:page|sheet)\b", re.I)
+#: A label that only enumerates (``II``, ``b``): parts of a side when a section that names the side is in force.
+_ENUMERATOR_RE = re.compile(r"\W*(?:[a-f]|[ivx]{1,4})\W*", re.I)
 
 
 @dataclass
@@ -227,36 +247,258 @@ def use_arabic_splitter(text: str, ledger_script: str) -> bool:
     return ledger_script == "arabic" or (ledger_script == "mixed" and arabic >= hebrew)
 
 
+def unreverse_supplied(line: str) -> Tuple[str, int]:
+    """Rewrite supplied-letter spans stored with reversed brackets (``>ה<``) the way editions write them (``<ה>``).
+
+    Both edition builders drop ``<x>`` (letters the editor supplied are not ink) but not a reversed span: the
+    Hebrew-script cleaner keeps it, brackets and letters, as unresolved notation, and the Arabic-script cleaner cuts
+    the line at the stray brackets. A ``>`` that closes an earlier ``<`` of the line opens no span, so the ink between
+    two supplied spans (``א<ל>גאני אב<ו>``) stays.
+
+    :param line: One edition line.
+    :return: ``(line, spans rewritten)``.
+    """
+    out: List[str] = []
+    pos = n = 0
+    for match in REVERSED_SUPPLIED_RE.finditer(line):
+        before = line[:match.start()]
+        if before.count("<") != before.count(">"):
+            continue
+        out += [line[pos:match.start()], f"<{match.group(1)}>"]
+        pos, n = match.end(), n + 1
+    return "".join(out) + line[pos:], n
+
+
+def edition_lines(text: str) -> Tuple[List[str], List[int]]:
+    """An edition's lines as :func:`build_pgp_editions.parse_edition` splits them, reversed supplied spans rewritten.
+
+    :param text: Edition text.
+    :return: ``(lines, reversed spans rewritten per line)``.
+    """
+    norm = unicodedata.normalize("NFC", text).replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
+    pairs = [unreverse_supplied(line) for line in norm.split("\n")]
+    return [line for line, _ in pairs], [n for _, n in pairs]
+
+
+@dataclass
+class WalkBlock:
+    """One edition block as :func:`walk_edition` sees it.
+
+    :param section: Index of the section label in force (None before the first one).
+    :param lines: Rendered lines.
+    :param n_dropped: Ink lines the edition does not render.
+    :param reversed_spans: Reversed supplied spans rewritten on its rendered lines.
+    """
+
+    section: Optional[int]
+    lines: List[str] = field(default_factory=list)
+    n_dropped: int = 0
+    reversed_spans: int = 0
+
+
+@dataclass
+class EditionWalk:
+    """The section labels of an edition and its blocks (the parser's blocks, in the same order).
+
+    :param labels: Section label lines (stripped), in edition order.
+    :param blocks: Blocks that hold rendered or unrendered lines.
+    """
+
+    labels: List[str]
+    blocks: List[WalkBlock]
+
+
+def names_page(label: bpe.Label, line: str) -> bool:
+    """Whether a label names a page, folio or fragment (``Fol. 2r``, ``page b``, ``II``, ``Second fragment``).
+
+    The parser's paging test, except that a place on the current page (``top of the page``) names no other page.
+
+    :param label: The parsed label line.
+    :param line: The label line.
+    :return: True for a page label.
+    """
+    if not label.paging:
+        return False
+    if not _ON_PAGE_RE.search(line):
+        return True
+    rest = bpe.parse_label(_ON_PAGE_RE.sub(" ", line))
+    return bool(rest and rest.paging)
+
+
+def opens_section(label: bpe.Label, line: str, in_force: bool, side_in_force: Optional[str]) -> bool:
+    """Whether a label line opens a new section of an edition with complex side labels.
+
+    A main label opens one when it names a side or a page (a bare side repeated, ``Folio 2, recto``, ``page b``),
+    except an enumerator (``II``, ``b``) under a section that names a side, which numbers parts of that side. A
+    region label (margin, address, other) stays in the section in force unless it names another side, and so does a
+    main label that names neither (``bottom corner``, ``column 2``, ``top of the page``).
+
+    :param label: The parsed label line.
+    :param line: The label line.
+    :param in_force: A section is in force.
+    :param side_in_force: The side the section in force names, if any.
+    :return: True when the label opens a section.
+    """
+    if label.kind != "main":
+        return label.side is not None and not (in_force and label.side == side_in_force)
+    if label.side is not None:
+        return True
+    if not names_page(label, line):
+        return False
+    return not (side_in_force is not None and _ENUMERATOR_RE.fullmatch(line.strip()))
+
+
+def walk_edition(lines: Sequence[str], reversed_spans: Sequence[int]) -> EditionWalk:
+    """Walk an edition the way :func:`build_pgp_editions.parse_edition` does, recording the section of each block.
+
+    The walk uses the parser's own steps (line-number detection, rule lines, label test, apparatus stop, line
+    cleaner), so its blocks are the parser's blocks; it also keeps the label of a block the parser drops because the
+    label line is followed by a blank line, which is how most editions write a label.
+
+    :param lines: Edition lines (:func:`edition_lines`).
+    :param reversed_spans: Reversed supplied spans rewritten per line.
+    :return: Section labels and blocks.
+    """
+    numbered = bpe.detect_line_numbering(lines)
+    labels: List[str] = []
+    label_sides: List[Optional[str]] = []
+    blocks: List[WalkBlock] = []
+    cur: Optional[WalkBlock] = None
+    section: Optional[int] = None
+    for raw, n_reversed in zip(lines, reversed_spans):
+        stripped = raw.strip()
+        if not stripped or bpe._RULE_RE.fullmatch(stripped):
+            cur = None
+            continue
+        label = bpe.parse_label(raw)
+        if label is not None:
+            if label.kind == "stop":
+                break
+            if opens_section(label, raw, section is not None, None if section is None else label_sides[section]):
+                labels.append(stripped)
+                label_sides.append(label.side)
+                section = len(labels) - 1
+            cur = WalkBlock(section)
+            blocks.append(cur)
+            continue
+        cleaned = bpe.clean_line(raw, numbered)
+        if cleaned.kind == "commentary":
+            continue
+        if cur is None:
+            cur = WalkBlock(section)
+            blocks.append(cur)
+        if cleaned.kind == "dropped":
+            cur.n_dropped += 1
+            continue
+        cur.lines.append(cleaned.text)
+        cur.reversed_spans += n_reversed
+    return EditionWalk(labels, [b for b in blocks if b.lines or b.n_dropped])
+
+
+def walk_matches(walk: EditionWalk, edition: bpe.ParsedEdition) -> bool:
+    """Whether a walk found the parser's blocks (same count, lines and unrendered lines, in order).
+
+    :param walk: :func:`walk_edition` result.
+    :param edition: :func:`build_pgp_editions.parse_edition` result of the same lines.
+    :return: True when they agree.
+    """
+    return len(walk.blocks) == len(edition.blocks) and all(
+        w.lines == b.lines and w.n_dropped == b.n_dropped for w, b in zip(walk.blocks, edition.blocks))
+
+
+@dataclass
+class BlockGroup:
+    """Edition blocks that make one target side.
+
+    :param key: Side key.
+    :param marker: The edition's label that named the side, if any.
+    :param blocks: Block indices in edition order.
+    :param flags: Flags the grouping adds.
+    """
+
+    key: str
+    marker: Optional[str]
+    blocks: List[int]
+    flags: List[str] = field(default_factory=list)
+
+
+def side_groups(edition: bpe.ParsedEdition) -> List[BlockGroup]:
+    """Blocks by side label (``recto`` / ``verso``) in edition order; one group ``""`` without side labels.
+
+    :param edition: Parsed edition.
+    :return: The groups, each marked by the first label line of a block that named its side.
+    """
+    if not edition.labelled:
+        return [BlockGroup("", None, list(range(len(edition.blocks))))]
+    groups: List[BlockGroup] = []
+    for side in unique([b.side for b in edition.blocks]):
+        marker = next((b.label for b in edition.blocks if b.side == side and b.explicit_side), None)
+        groups.append(BlockGroup(side or "", marker, [i for i, b in enumerate(edition.blocks) if b.side == side]))
+    return groups
+
+
+def section_groups(walk: EditionWalk) -> List[BlockGroup]:
+    """Blocks by section of an edition with complex side labels (:func:`opens_section`).
+
+    :param walk: :func:`walk_edition` result.
+    :return: One group per section label in edition order, keyed and marked by the label (whitespace collapsed), the
+        blocks before the first section label first as the group ``""`` (flag
+        ``unlabelled_block_in_complex_edition``). A label that repeats keeps its own group.
+    """
+    members: Dict[Optional[int], List[int]] = {}
+    for i, block in enumerate(walk.blocks):
+        members.setdefault(block.section, []).append(i)
+    groups: List[BlockGroup] = []
+    for section, blocks in members.items():
+        if section is None:
+            groups.append(BlockGroup("", None, blocks, ["unlabelled_block_in_complex_edition"]))
+        else:
+            label = " ".join(walk.labels[section].split())
+            groups.append(BlockGroup(label, label, blocks))
+    return groups
+
+
 def pgp_hebrew_sides(text: str, pgpid: str) -> Built:
     """Sides of a PGP edition by its side labels (:func:`build_pgp_editions.parse_edition`).
 
+    Reversed supplied spans are rewritten first (:func:`unreverse_supplied`). An edition with complex side labels is
+    cut by its sections (:func:`section_groups`), any other by its side labels (:func:`side_groups`); each side is
+    assembled as the builder assembles a page (main blocks, then margin, address and other blocks).
+
     :param text: Edition text.
     :param pgpid: PGP id (pointer).
-    :return: One side per side label (``""`` for an edition without side labels), its marker the label line that
-        named the side (``Recto``, ``ע"א``); flags: ``complex_side_labels``, ``flattened_line_breaks``,
-        ``unrendered_lines`` and ``notation_<flag>`` for notation the cleaner left (the builder drops such pages).
+    :return: One side per group with text, keys made unique (:func:`unique_keys`); its marker the label line that
+        named the side (``Recto``, ``ע"א``, ``Fol. 2r``); flags: ``complex_side_labels`` (every side of such an
+        edition), ``unlabelled_block_in_complex_edition``, ``flattened_line_breaks``, ``notation_<flag>`` for
+        notation the cleaner left (the builder drops such pages), ``unrendered_lines`` and ``supplied_reversed``.
+        Reason ``edition_walk_mismatch`` when the section walk does not find the parser's blocks.
     """
-    edition = bpe.parse_edition(text)
+    lines, reversed_spans = edition_lines(text)
+    edition = bpe.parse_edition("\n".join(lines))
+    walk = walk_edition(lines, reversed_spans)
+    if not walk_matches(walk, edition):
+        return Built(reasons=["edition_walk_mismatch"])
     edition_flags = (["complex_side_labels"] if edition.complex_sides else []) + (
         ["flattened_line_breaks"] if edition.flattened else [])
-    kept = [True] * len(edition.blocks)
-    order: List[Optional[str]] = unique([b.side for b in edition.blocks]) if edition.labelled else [None]
+    groups = section_groups(walk) if edition.complex_sides else side_groups(edition)
+    made: List[Tuple[BlockGroup, bpe.Answer, str]] = []
+    for group in groups:
+        members = set(group.blocks)
+        answer = bpe.assemble_answer(edition, [i in members for i in range(len(edition.blocks))], None)
+        clean = unicodedata.normalize("NFC", answer.text).strip()
+        if clean:
+            made.append((group, answer, clean))
     built = Built()
-    for side in order:
-        answer = bpe.assemble_answer(edition, kept, side)
-        raw = answer.text
-        clean = unicodedata.normalize("NFC", raw).strip()
-        if not clean:
-            continue
-        key = side or ""
-        marker = next((b.label for b in edition.blocks
-                       if side is not None and b.side == side and b.explicit_side), None)
+    for key, (group, answer, clean) in zip(unique_keys([g.key for g, _, _ in made]), made):
         pointer = {"source": "pgp_export_footnotes", "pgpid": pgpid, "parser": "parse_edition",
                    "block_indices": list(answer.blocks), "kinds": [edition.blocks[i].kind for i in answer.blocks]}
-        built.sides.append(make_side(key, clean, raw, pointer, marker))
-        flags = edition_flags + [f"notation_{f}" for f in sorted({f for line in answer.flags for f in line})]
+        built.sides.append(make_side(key, clean, answer.text, pointer, group.marker))
+        notation = sorted({f for line in answer.flags for f in line})
+        flags = edition_flags + group.flags + [f"notation_{f}" for f in notation]
         if any(edition.blocks[i].n_dropped for i in answer.blocks):
             flags.append("unrendered_lines")
+        if any(walk.blocks[i].reversed_spans for i in answer.blocks):
+            flags.append("supplied_reversed")
         if flags:
             built.flags[key] = flags
     if not built.sides:
@@ -267,13 +509,19 @@ def pgp_hebrew_sides(text: str, pgpid: str) -> Built:
 def pgp_arabic_sides(text: str, pgpid: str) -> Built:
     """Sides of an Arabic-script PGP edition (:func:`build_pgp_arabic_editions.best_sections`, ``sides_of``).
 
+    Reversed supplied spans are rewritten first (:func:`unreverse_supplied`); a side whose lines the rewrite changes
+    is flagged ``supplied_reversed``.
+
     :param text: Edition text.
     :param pgpid: PGP id (pointer).
     :return: One side per side label (``""`` for text outside the labels, flagged ``text_outside_side_labels`` when
         labelled sides exist too); the marker is the side the label named (the splitter keeps no label line).
     """
-    sections = pae.best_sections([text])
+    pairs = [unreverse_supplied(line) for line in text.splitlines()]
+    rewritten = any(n for _, n in pairs)
+    sections = pae.best_sections(["\n".join(line for line, _ in pairs) if rewritten else text])
     by_side = pae.sides_of(sections)
+    unrewritten = pae.sides_of(pae.best_sections([text])) if rewritten else by_side
     labelled = any(by_side)
     built = Built()
     for side, lines in by_side.items():
@@ -285,8 +533,11 @@ def pgp_arabic_sides(text: str, pgpid: str) -> Built:
         pointer = {"source": "pgp_export_footnotes", "pgpid": pgpid, "parser": "split_sections",
                    "block_indices": indices, "kinds": ["section"] * len(indices)}
         built.sides.append(make_side(side, clean, raw, pointer, side or None))
-        if not side and labelled:
-            built.flags[side] = ["text_outside_side_labels"]
+        flags = ["text_outside_side_labels"] if not side and labelled else []
+        if unrewritten.get(side) != lines:
+            flags.append("supplied_reversed")
+        if flags:
+            built.flags[side] = flags
     if not built.sides:
         built.reasons.append("edition_no_lines")
     return built
@@ -364,18 +615,39 @@ def legacy_section_sides(row_id: str, sections: Dict[Tuple[str, int], List[Dict[
     return Built(sides=[make_side(key, text, raw, pointer, marker)], flags={key: flags} if flags else {})
 
 
-def scrape_sides(raw: str, side: Optional[str], canonical_id: Optional[str], notes: str) -> Built:
+def load_lexicon(path: Path, min_letters: int = LEXICON_MIN_LETTERS) -> FrozenSet[str]:
+    """Known words for the sigla rules' word-order repairs, from a file of cleaned texts.
+
+    The legacy-store build gave :func:`legacy_store_sigla.clean_section` the Hebrew letter runs of at least two
+    letters of clean target texts and of library word annotations; the same rule over the cleaned legacy-store
+    sections (their ``text``) gives a word list of the same kind from the data at hand.
+
+    :param path: JSON lines with a ``text`` field (the cleaner's side records).
+    :param min_letters: Shortest word kept.
+    :return: The words.
+    """
+    words: Set[str] = set()
+    for record in read_jsonl(path):
+        words.update(w for w in HEBREW_RUN_RE.findall(str(record.get("text") or "")) if len(w) >= min_letters)
+    return frozenset(words)
+
+
+def scrape_sides(raw: str, side: Optional[str], canonical_id: Optional[str], notes: str,
+                 lexicon: Optional[FrozenSet[str]] = None) -> Built:
     """Sides of a legacy-store site-scrape part through the sigla rules (:func:`legacy_store_sigla.clean_section`).
 
-    The rules run without a lexicon (fragment-order and uncertain-wrap repairs then change nothing).
+    Without a lexicon the rules' word-order repairs (a lone final letter stored before its word, ``ן שאי``; uncertain
+    wraps stored in visual order, ``ש?ול?ם``) change nothing.
 
     :param raw: Raw scrape text.
     :param side: The record's side, if any (used when the rules find one side).
     :param canonical_id: Document id (pointer).
     :param notes: The record's notes (``entry=``, ``block=``, ``part=`` for the pointer).
+    :param lexicon: Known words for the word-order repairs (:func:`load_lexicon`), or None.
     :return: One side per side the rules find; flags = the rules' flags.
     """
-    cleaned = sigla.clean_section(raw, sigla.finals_mapping_for(raw), family=sigla.classify_family(raw))
+    cleaned = sigla.clean_section(raw, sigla.finals_mapping_for(raw), family=sigla.classify_family(raw),
+                                  lexicon=lexicon)
     if not cleaned:
         return Built(reasons=["no_text_after_sigla"])
     single = len(cleaned) == 1
@@ -622,6 +894,7 @@ class TargetInputs:
     :param run2: :func:`load_run2` result.
     :param datasets_root: Datasets root (pass-through sources).
     :param manifests: Manifest cache of the pass-through sources.
+    :param lexicon: Known words for the legacy-store scrape's word-order repairs, or None.
     """
 
     sections: Dict[Tuple[str, int], List[Dict[str, Any]]]
@@ -630,6 +903,7 @@ class TargetInputs:
     run2: Dict[str, Tuple[Dict[str, Any], str]]
     datasets_root: Path
     manifests: Dict[str, Dict[str, Dict[str, Any]]] = field(default_factory=dict)
+    lexicon: Optional[FrozenSet[str]] = None
 
 
 def build_sides(cand: Candidate, record: Optional[Dict[str, Any]], inputs: TargetInputs) -> Built:
@@ -661,7 +935,8 @@ def build_sides(cand: Candidate, record: Optional[Dict[str, Any]], inputs: Targe
         return pgp_hebrew_sides(text, pgpid)
     if source == "fjp_scrape":
         canonical_id = record.get("canonical_id") or (cand.canonical_ids[0] if cand.canonical_ids else None)
-        return scrape_sides(text, record.get("side") or None, canonical_id, str(record.get("notes") or ""))
+        return scrape_sides(text, record.get("side") or None, canonical_id, str(record.get("notes") or ""),
+                            inputs.lexicon)
     if source == "ktiv":
         return ktiv_sides(text, cand.ktiv_id, cand.row_id, str(record.get("notes") or ""),
                           str(record.get("edition_source") or ""))
@@ -673,7 +948,8 @@ def build_sides(cand: Candidate, record: Optional[Dict[str, Any]], inputs: Targe
 
 
 def attach_targets(cands: List[Candidate], *, candidates_dir: Path, sections_path: Path, lit_blocks_path: Path,
-                   run2_path: Union[Path, Sequence[Path]], datasets_root: Path) -> None:
+                   run2_path: Union[Path, Sequence[Path]], datasets_root: Path,
+                   lexicon_path: Union[Path, str, None] = LEXICON_FROM_SECTIONS) -> None:
     """Fill ``cand.targets`` of every candidate (in place; earlier targets and target notes are replaced).
 
     Inputs are read only for the sources present. Pass-through sources also get their manifest image as
@@ -685,15 +961,22 @@ def attach_targets(cands: List[Candidate], *, candidates_dir: Path, sections_pat
     :param lit_blocks_path: The literature blocks.
     :param run2_path: The run-2 edition file, or several.
     :param datasets_root: Datasets root (pass-through sources).
+    :param lexicon_path: Source of the legacy-store scrape's lexicon (:func:`load_lexicon`):
+        :data:`LEXICON_FROM_SECTIONS` (default) for ``sections_path``, another file of cleaned texts, or None for no
+        lexicon.
     """
     wanted: Dict[str, Set[str]] = defaultdict(set)
     for cand in cands:
         wanted[cand.source].add(cand.row_id)
     records = {source: source_records(candidates_dir, source, ids) for source, ids in wanted.items()}
+    lexicon = None
+    if "fjp_scrape" in wanted and lexicon_path is not None:
+        lexicon = load_lexicon(sections_path if lexicon_path == LEXICON_FROM_SECTIONS else Path(lexicon_path))
     inputs = TargetInputs(sections=load_sections(sections_path) if "fjp" in wanted else {},
                           sections_name=sections_path.name,
                           blocks=load_lit_blocks(lit_blocks_path) if "literature" in wanted else {},
-                          run2=load_run2(run2_path) if "lit_run2" in wanted else {}, datasets_root=datasets_root)
+                          run2=load_run2(run2_path) if "lit_run2" in wanted else {}, datasets_root=datasets_root,
+                          lexicon=lexicon)
     for cand in cands:
         built = build_sides(cand, records[cand.source].get(cand.row_id), inputs)
         cand.targets = built.sides
@@ -721,6 +1004,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="Directory of the per-source candidate files.")
     ap.add_argument("--sections", type=Path, default=DEFAULT_SECTIONS,
                     help="Legacy-store cleaned side records (env NOVEL_BUILD_SECTIONS).")
+    ap.add_argument("--lexicon", type=Path, default=None,
+                    help="Cleaned texts (JSON lines with `text`) whose words drive the legacy-store scrape's "
+                         "word-order repairs (default: the --sections file).")
+    ap.add_argument("--no-lexicon", action="store_true", help="Clean the legacy-store scrape without a lexicon.")
     ap.add_argument("--lit-blocks", type=Path, default=DEFAULT_LIT_BLOCKS,
                     help="Literature blocks (env NOVEL_BUILD_LIT_BLOCKS).")
     ap.add_argument("--run2", type=Path, nargs="+", default=list(DEFAULT_RUN2),
@@ -751,8 +1038,10 @@ def main(argv: Optional[List[str]] = None) -> None:
             continue
         taken[cand.source] += 1
         selected.append(cand)
+    lexicon_path = None if args.no_lexicon else (args.lexicon or LEXICON_FROM_SECTIONS)
     attach_targets(selected, candidates_dir=args.candidates_dir, sections_path=args.sections,
-                   lit_blocks_path=args.lit_blocks, run2_path=args.run2, datasets_root=args.datasets_root)
+                   lit_blocks_path=args.lit_blocks, run2_path=args.run2, datasets_root=args.datasets_root,
+                   lexicon_path=lexicon_path)
     write_jsonl(stage, cands)
     counts = {source: {"candidates": n, "with_targets": sum(1 for c in selected if c.source == source and c.targets)}
               for source, n in sorted(taken.items())}

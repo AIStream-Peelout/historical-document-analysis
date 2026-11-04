@@ -4,12 +4,15 @@ Every I/O boundary is stubbed: ``post`` for the Kraken service, ``read_page`` fo
 run. An autouse fixture makes any accidental real request fail loudly (it raises a ``BaseException``, which the
 readers' error handling does not swallow). Images are tiny JPEGs made with PIL; texts are synthetic alphabets.
 """
+import functools
 import hashlib
 import importlib
 import io
 import json
+import random
 import re
 from collections import Counter
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -28,6 +31,8 @@ ARABIC = "ابتثجحخدذرزسشصضطظعغفقكلمنهوي"             
 KRAKEN_MODEL_PATH = "/models/test_model.mlmodel"
 KRAKEN_READER = "kraken:test_model"
 TIMESTAMP = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
+TWIN_BITS = 6                       # the near-duplicate distance the tests opt in to (the module's default is 0: off)
+REAL_READ_PAGE = page_reader.read_page      # taken before the autouse guard replaces it; only run with a stub transcribe
 
 
 class ForbiddenIO(BaseException):
@@ -331,16 +336,43 @@ def test_letter_ranges_skip_marks_and_punctuation() -> None:
     ({"letters_hebrew": 19, "letters_arabic": 0}, False),
     ({"letters_hebrew": 10, "letters_arabic": 10}, True),
     ({"finish": "looping"}, False),
-    ({"finish": "length"}, False),
+    ({"finish": "length"}, True),                       # a truncated read is still placement evidence
     ({"finish": "error"}, False),
     ({"finish": "blank"}, False),
+    ({"finish": "length", "letters_hebrew": 19}, False),
 ])
 def test_is_usable(kwargs: Dict[str, Any], usable: bool) -> None:
-    """A read needs lines, 20 script letters and a clean finish."""
+    """A read needs lines, 20 script letters and a finish of ok or length (looping, blank and error are unusable)."""
     base = dict(sha256="a" * 64, reader="kraken:m", text="t", lines=["t"], n_lines=1, letters_hebrew=30, letters_arabic=0,
                 finish="ok", seconds=1.0, read_at="2026-11-03T00:00:00Z")
     base.update(kwargs)
     assert reads.is_usable(ReadRecord(**base)) is usable
+
+
+@pytest.mark.parametrize("meta, finish, usable", [
+    ({"finish_reason": "length", "looped": False, "retried": True}, "length", True),
+    ({"finish_reason": "length", "looped": True, "cut_at": None, "repeat_share": 0.03, "retried": True}, "length", True),
+    ({"finish_reason": "length", "looped": True, "cut_at": 120, "repeat_share": 0.7, "retried": True}, "looping", False),
+    ({"finish_reason": "length", "looped": True, "cut_at": None, "repeat_share": 0.6}, "looping", False),
+    ({"finish_reason": "length", "looped": True}, "looping", False),
+    ({"finish_reason": "stop", "looped": True, "cut_at": 80, "repeat_share": 0.8}, "looping", False),
+    ({}, "looping", False),
+    ({"source": "legacy_import"}, "looping", False),
+], ids=["length_not_looped", "length_flagged_by_the_cut_only", "length_loop_cut", "length_repeat_over_gate",
+        "length_without_evidence", "stop_loop", "no_meta", "not_a_page_reader_read"])
+def test_a_looping_record_on_disk_is_rejudged_from_its_meta(meta: Dict[str, Any], finish: str, usable: bool) -> None:
+    """Records stored as looping by the old mapping count as length when the reader's fields show a cut, no loop."""
+    record = reads.make_record("a" * 64, "vlm:model-x", f"{ARABIC}\n{ARABIC}", finish="looping", seconds=1.0, meta=meta)
+    assert record.finish == "looping"                       # the stored record itself is never rewritten
+    assert reads.effective_finish(record) == finish and reads.is_usable(record) is usable
+
+
+def test_effective_finish_leaves_other_finishes_alone() -> None:
+    """Only a looping record is re-judged: an ok read with looped meta stays ok, a blank one stays blank."""
+    meta = {"finish_reason": "length", "looped": True, "cut_at": 30, "repeat_share": 0.9}
+    for finish in ("ok", "length", "blank", "error"):
+        assert reads.effective_finish(reads.make_record("a" * 64, "vlm:m", HEBREW, finish=finish, seconds=1.0,
+                                                        meta=meta)) == finish
 
 
 def test_reader_ids() -> None:
@@ -450,7 +482,9 @@ def test_import_legacy_reads_maps_both_cache_shapes(tmp_path: Path) -> None:
 
     none = records[legacy.sha["g_none"]]
     assert none.finish == "blank" and none.text == "" and none.lines == [] and none.meta["no_text_marker"] is True
-    assert records[legacy.sha["g_max"]].finish == "length" and not reads.is_usable(records[legacy.sha["g_max"]])
+    g_max = records[legacy.sha["g_max"]]
+    assert g_max.finish == "length" and g_max.letters_arabic == 15
+    assert not reads.is_usable(g_max)                       # a length finish is usable; 15 letters are not
     assert records[legacy.sha["g_safety"]].finish == "error"
 
 
@@ -596,18 +630,50 @@ def test_endpoint_constants_honour_the_environment() -> None:
 
 # --- vlm_read ----------------------------------------------------------------------------------------------------------
 
+CAPPED_TWICE = {"finish_reason": "length", "first_finish_reason": "length", "retried": True, "attempts": 2,
+                "completion_tokens": 1200}
+
+
 @pytest.mark.parametrize("overrides, finish", [
     ({}, "ok"),
-    ({"finish_reason": "length", "looped": True, "retried": True, "attempts": 2}, "looping"),
+    (dict(CAPPED_TWICE, looped=False), "length"),
+    (dict(CAPPED_TWICE, looped=True, cut_at=None, repeat_share=0.02), "length"),
     ({"finish_reason": "length", "looped": True, "retried": False}, "length"),
+    (dict(CAPPED_TWICE, looped=True, cut_at=40, repeat_share=0.7), "looping"),
+    (dict(CAPPED_TWICE, looped=True, cut_at=None, repeat_share=0.8), "looping"),
+    (dict(CAPPED_TWICE, looped=True, cut_at=None, unit_repeat_share=0.7), "looping"),
     ({"looped": True, "repeat_share": 0.8, "cut_at": 40}, "looping"),
+    ({"looped": True, "repeat_share": 0.6, "retried": False}, "looping"),
     ({"text": "", "reason": "blank", "blank": True, "finish_reason": None}, "blank"),
     ({"text": "", "reason": "empty"}, "blank"),
     ({"text": None, "reason": "failed", "finish_reason": None}, "error"),
-], ids=["ok", "length_after_retry", "length_no_retry", "loop_flag", "blank_gate", "empty", "failed"])
+], ids=["ok", "capped_twice_no_loop_flag", "capped_twice_flagged_by_the_cut_only", "capped_no_retry",
+        "capped_twice_loop_cut", "capped_twice_repeat_over_gate", "capped_twice_unit_repeat_over_gate",
+        "stop_loop_cut", "stop_loop_flag", "blank_gate", "empty", "failed"])
 def test_vlm_finish_mapping(overrides: Dict[str, Any], finish: str) -> None:
-    """The page reader's reason/finish fields map to ok | looping | length | blank | error."""
+    """``looping`` only when the loop detector found a loop; a read the budget cut without one is ``length``.
+
+    The page reader marks every budget cut ``looped``; for a cut read the detector's own evidence (a loop cut,
+    ``cut_at``, or a repeat share over the gate) decides. For a read that stopped, the flag is the detector's.
+    """
     assert reads.vlm_finish(vlm_result(**overrides)) == finish
+
+
+def test_vlm_finish_keeps_the_loop_flag_of_a_cut_read_without_evidence_fields() -> None:
+    """A cut, flagged read whose ``cut_at`` and ``repeat_share`` are absent cannot be cleared: it stays looping."""
+    result = vlm_result(**CAPPED_TWICE, looped=True)
+    del result["cut_at"], result["repeat_share"]
+    assert reads.vlm_finish(result) == "looping"
+
+
+def test_loop_detected_uses_the_production_gate_strictly() -> None:
+    """A repeat share at the gate is not a loop (the reader's own ``>``), just above it is."""
+    gate = page_reader.DEFAULT_SETTINGS.loop_gate
+    assert gate == 0.5
+    capped = dict(CAPPED_TWICE, looped=True, cut_at=None)
+    assert reads.loop_detected(dict(capped, repeat_share=gate)) is False
+    assert reads.loop_detected(dict(capped, repeat_share=gate + 0.01)) is True
+    assert reads.loop_detected({"looped": False, "finish_reason": "stop", "repeat_share": 0.9}) is False
 
 
 def test_vlm_read_maps_the_result_dict(tmp_path: Path) -> None:
@@ -628,21 +694,90 @@ def test_vlm_read_maps_the_result_dict(tmp_path: Path) -> None:
     json.dumps(schema.to_dict(record))                  # numpy scalars in the reader's ink measures are made plain
 
 
-@pytest.mark.parametrize("overrides, finish, text", [
-    ({"finish_reason": "length", "looped": True, "retried": True, "attempts": 2, "cut_at": 12, "text": ARABIC[:12]},
-     "looping", ARABIC[:12]),
-    ({"finish_reason": "length", "looped": True, "retried": False}, "length", f"{ARABIC}\n\n{ARABIC[:12]}"),
-    ({"text": "", "reason": "blank", "blank": True, "finish_reason": None}, "blank", ""),
-    ({"text": "", "reason": "empty"}, "blank", ""),
-])
-def test_vlm_read_records_looping_length_and_blank(tmp_path: Path, overrides: Dict[str, Any], finish: str, text: str) -> None:
-    """Length with a retry is looping, without a retry length; gated and empty pages are blank reads with no lines."""
+@pytest.mark.parametrize("overrides, finish, text, usable", [
+    (dict(CAPPED_TWICE, looped=True, cut_at=12, repeat_share=0.9, text=f"{ARABIC}\n{ARABIC[:12]}"), "looping",
+     f"{ARABIC}\n{ARABIC[:12]}", False),
+    (dict(CAPPED_TWICE, looped=False), "length", f"{ARABIC}\n\n{ARABIC[:12]}", True),
+    (dict(CAPPED_TWICE, looped=True, cut_at=None, repeat_share=0.01), "length", f"{ARABIC}\n\n{ARABIC[:12]}", True),
+    ({"finish_reason": "length", "looped": True, "retried": False}, "length", f"{ARABIC}\n\n{ARABIC[:12]}", True),
+    ({"text": "", "reason": "blank", "blank": True, "finish_reason": None}, "blank", "", False),
+    ({"text": "", "reason": "empty"}, "blank", "", False),
+], ids=["capped_twice_loop", "capped_twice_no_loop_flag", "capped_twice_flagged_by_the_cut_only", "capped_no_retry",
+        "blank_gate", "empty"])
+def test_vlm_read_records_looping_length_and_blank(tmp_path: Path, overrides: Dict[str, Any], finish: str, text: str,
+                                                   usable: bool) -> None:
+    """A loop is looping (unusable); a page capped twice without a loop is length (usable); gated and empty pages are
+    blank reads with no lines."""
     photo = make_jpeg(tmp_path / "photo.jpg")
     record = reads.vlm_read(photo, model_key="model-x", read_page=fake_read_page(vlm_result(**overrides)))
     assert record.finish == finish and record.text == text
     assert record.n_lines == (0 if not text else len([ln for ln in text.splitlines() if ln.strip()]))
     assert record.meta["reason"] == overrides.get("reason")
-    assert not reads.is_usable(record)
+    assert reads.is_usable(record) is usable
+
+
+def synthetic_page(n_lines: int, seed: int) -> str:
+    """Pseudo-random Hebrew-letter lines without repeats (a long page that is not a loop; not a real text).
+
+    :param n_lines: Number of lines.
+    :param seed: Random seed.
+    :return: Lines of eight words of two to six letters.
+    """
+    rng = random.Random(seed)
+    return "\n".join(" ".join("".join(rng.choice(HEBREW) for _ in range(rng.randint(2, 6))) for _ in range(8))
+                     for _ in range(n_lines))
+
+
+def stub_transcribe(text: str, finish_reason: str) -> Any:
+    """An async stand-in for the LM Studio call of ``page_reader.read_page``: every request returns ``text``.
+
+    :param text: The generation.
+    :param finish_reason: Its finish reason.
+    :return: The coroutine function; its ``calls`` attribute counts the requests.
+    """
+    calls: List[float] = []
+
+    async def transcribe(model_id: str, image_path: str, prompt: str, temperature: float = 0.1,
+                         max_tokens: int = 1200, **kwargs: Any) -> Dict[str, Any]:
+        """Stub request.
+
+        :param model_id: Model key.
+        :param image_path: Image file.
+        :param prompt: Prompt.
+        :param temperature: Temperature.
+        :param max_tokens: Budget.
+        :param kwargs: Ignored.
+        :return: A completion's metadata.
+        """
+        calls.append(temperature)
+        return {"text": text, "finish_reason": finish_reason, "prompt_tokens": 6500, "completion_tokens": max_tokens,
+                "total_tokens": 6500 + max_tokens}
+
+    transcribe.calls = calls  # type: ignore[attr-defined]
+    return transcribe
+
+
+@pytest.mark.parametrize("kind", ["long_page", "loop", "stop"])
+def test_vlm_read_with_the_page_readers_own_loop_handling(tmp_path: Path, kind: str) -> None:
+    """Through the real ``read_page`` logic (LM Studio call stubbed, no ink gate): a long page cut by the budget on both
+    requests is flagged ``looped`` by the reader yet stored as a usable ``length`` read; a loop is ``looping``."""
+    page = synthetic_page(40, seed=7)
+    text, finish_reason = {"long_page": (page, "length"),
+                           "loop": (page[:200] + "\n" + "אבגד הוזח טיכל מנסע פצקר " * 40, "length"),
+                           "stop": (page[:400], "stop")}[kind]
+    transcribe = stub_transcribe(text, finish_reason)
+    read_page = functools.partial(REAL_READ_PAGE, settings=page_reader.ReaderSettings(blank_gate=False),
+                                  transcribe=transcribe)
+    record = reads.vlm_read(make_jpeg(tmp_path / "photo.jpg"), model_key="model-x", read_page=read_page)
+    if kind == "long_page":
+        assert len(transcribe.calls) == 2 and record.meta["retried"] is True       # capped, retried, capped again
+        assert record.meta["looped"] is True and record.meta["cut_at"] is None       # flagged by the cut, no loop found
+        assert record.finish == "length" and record.text == page and reads.is_usable(record)
+    elif kind == "loop":
+        assert record.meta["looped"] is True and record.meta["cut_at"] is not None
+        assert record.finish == "looping" and not reads.is_usable(record)
+    else:
+        assert len(transcribe.calls) == 1 and record.finish == "ok" and reads.is_usable(record)
 
 
 def test_vlm_read_failed_request_is_an_error_record(tmp_path: Path) -> None:
@@ -730,15 +865,33 @@ def test_select_images_only_missing_usable(stage1: SimpleNamespace) -> None:
     assert reads.select_images(stage1.cands, both, only_missing_usable=True, reader_id="vlm:old") == []
 
 
-@pytest.mark.parametrize("finish, text, lines", [("blank", "", 0), ("error", "", 0), ("length", HEBREW, 1),
-                                                 ("looping", HEBREW, 1), ("ok", HEBREW[:19], 1)])
+@pytest.mark.parametrize("finish, text, lines", [("blank", "", 0), ("error", "", 0), ("looping", HEBREW, 1),
+                                                 ("ok", HEBREW[:19], 1), ("length", HEBREW[:19], 1)])
 def test_unusable_reads_do_not_hide_an_image_from_only_missing_usable(stage1: SimpleNamespace, finish: str, text: str,
                                                                        lines: int) -> None:
-    """Each unusable kind (no lines, error, length, looping, under 20 letters) leaves the image selectable."""
+    """Each unusable kind (no lines, error, looping, under 20 letters) leaves the image selectable."""
     record = reads.make_record(stage1.sha_he, "kraken:test_model", text, finish=finish, seconds=1.0,
                                lines=[text] * lines)
     selected = reads.select_images(stage1.cands, [record], script="hebrew", only_missing_usable=True)
     assert "he.jpg" in ids(selected)
+
+
+def test_a_length_read_is_a_usable_read_for_only_missing_usable(stage1: SimpleNamespace) -> None:
+    """A read the token budget cut (no loop) counts as usable: the image is not read again for lack of one."""
+    capped = read_record(stage1.sha_he, "vlm:model-x", finish="length")
+    assert "he.jpg" not in ids(reads.select_images(stage1.cands, [capped], script="hebrew", only_missing_usable=True))
+
+
+def test_only_missing_usable_reads_a_looping_record_on_disk_as_its_meta_says(stage1: SimpleNamespace) -> None:
+    """A record stored as looping whose meta shows a budget cut without a loop is usable and hides the image; one whose
+    meta shows a loop does not."""
+    no_loop = reads.make_record(stage1.sha_he, "vlm:old", HEBREW, finish="looping", seconds=1.0,
+                                meta={"finish_reason": "length", "looped": True, "cut_at": None, "repeat_share": 0.0,
+                                      "retried": True})
+    loop = reads.make_record(stage1.sha_he, "vlm:old", HEBREW, finish="looping", seconds=1.0,
+                             meta={"finish_reason": "length", "looped": True, "cut_at": 30, "repeat_share": 0.9})
+    assert "he.jpg" not in ids(reads.select_images(stage1.cands, [no_loop], script="hebrew", only_missing_usable=True))
+    assert "he.jpg" in ids(reads.select_images(stage1.cands, [loop], script="hebrew", only_missing_usable=True))
 
 
 def test_select_images_hashes_an_image_without_sha256(stage1: SimpleNamespace, tmp_path: Path) -> None:
@@ -802,47 +955,65 @@ def select_counted(cands: List[Candidate], existing: Sequence[ReadRecord], **kwa
 
 
 def test_phash_distance_counts_differing_bits() -> None:
-    """The distance is the number of differing bits of two 64-bit hashes; the default threshold is 6."""
+    """The distance is the number of differing bits of two 64-bit hashes; the rule is opt-in (default 0: off)."""
     assert reads._phash_distance(phash_apart(0), phash_apart(0)) == 0
     assert reads._phash_distance(phash_apart(0), phash_apart(2)) == 2
     assert reads._phash_distance(phash_apart(3), phash_apart(10)) == 7
     assert reads._phash_distance("0" * 16, "f" * 16) == 64
-    assert reads.NEAR_DUPLICATE_BITS == 6
+    assert reads.NEAR_DUPLICATE_BITS == 0
+
+
+def test_the_near_duplicate_rule_is_off_by_default(tmp_path: Path) -> None:
+    """Two faces of one leaf can be phash twins: without opting in, a twin of a read photograph is still read."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(0)])
+    assert select_counted(photos.cands, [read_record(photos.sha[0])]) == (["photo0.jpg", "photo1.jpg"], 0)
+    assert select_counted(photos.cands, [read_record(photos.sha[0])], skip_near_duplicates=TWIN_BITS) == (
+        ["photo0.jpg"], 1)
 
 
 def test_select_images_skips_the_near_duplicate_of_a_read_photograph(tmp_path: Path) -> None:
     """A photograph 2 bits from an earlier one with a usable read is skipped and counted; the first is read normally."""
     photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
     first_read = [read_record(photos.sha[0], "kraken:test_model")]
-    assert select_counted(photos.cands, first_read, reader_id="vlm:model-x") == (["photo0.jpg"], 1)
+    assert select_counted(photos.cands, first_read, reader_id="vlm:model-x", skip_near_duplicates=TWIN_BITS) == (
+        ["photo0.jpg"], 1)
     # with only_missing_usable the read photograph leaves too; its near-duplicate is still what the rule removed
-    assert select_counted(photos.cands, first_read, only_missing_usable=True) == ([], 1)
+    assert select_counted(photos.cands, first_read, only_missing_usable=True, skip_near_duplicates=TWIN_BITS) == ([], 1)
     # nothing is read yet: the rule does not fire, so a pair fetched together is read together
-    assert select_counted(photos.cands, []) == (["photo0.jpg", "photo1.jpg"], 0)
+    assert select_counted(photos.cands, [], skip_near_duplicates=TWIN_BITS) == (["photo0.jpg", "photo1.jpg"], 0)
     # the count is added to the counter the caller passes in
     counts = Counter({"skipped_near_duplicate": 2})
-    reads.select_images(photos.cands, first_read, counts=counts)
+    reads.select_images(photos.cands, first_read, counts=counts, skip_near_duplicates=TWIN_BITS)
     assert counts["skipped_near_duplicate"] == 3
 
 
-@pytest.mark.parametrize("finish, text, lines", [("blank", "", 0), ("error", "", 0), ("length", HEBREW, 1),
-                                                 ("looping", HEBREW, 1), ("ok", HEBREW[:19], 1)])
+@pytest.mark.parametrize("finish, text, lines", [("blank", "", 0), ("error", "", 0), ("looping", HEBREW, 1),
+                                                 ("ok", HEBREW[:19], 1)])
 def test_an_unusable_read_does_not_make_its_twin_a_near_duplicate(tmp_path: Path, finish: str, text: str,
                                                                    lines: int) -> None:
     """Without a usable read on the first photograph nothing covers the second: both are read, nothing is counted."""
     photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
     record = reads.make_record(photos.sha[0], "kraken:test_model", text, finish=finish, seconds=1.0,
                                lines=[text] * lines)
-    assert select_counted(photos.cands, [record]) == (["photo0.jpg", "photo1.jpg"], 0)
-    assert select_counted(photos.cands, [record], only_missing_usable=True) == (["photo0.jpg", "photo1.jpg"], 0)
+    assert select_counted(photos.cands, [record], skip_near_duplicates=TWIN_BITS) == (["photo0.jpg", "photo1.jpg"], 0)
+    assert select_counted(photos.cands, [record], only_missing_usable=True, skip_near_duplicates=TWIN_BITS) == (
+        ["photo0.jpg", "photo1.jpg"], 0)
+
+
+def test_a_length_read_covers_its_twin(tmp_path: Path) -> None:
+    """A read the budget cut without a loop is usable, so it covers a near-duplicate like any usable read."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    capped = read_record(photos.sha[0], "vlm:model-x", finish="length")
+    assert select_counted(photos.cands, [capped], skip_near_duplicates=TWIN_BITS) == (["photo0.jpg"], 1)
 
 
 @pytest.mark.parametrize("bits, skipped", [(0, True), (2, True), (6, True), (7, False), (10, False), (64, False)])
-def test_near_duplicate_distance_is_inclusive_and_defaults_to_six(tmp_path: Path, bits: int, skipped: bool) -> None:
+def test_near_duplicate_distance_is_inclusive(tmp_path: Path, bits: int, skipped: bool) -> None:
     """Hashes up to the threshold apart are near-duplicates (equal hashes too); 10 bits apart are two photographs."""
     photos = photographs(tmp_path, [phash_apart(0), phash_apart(bits)])
     expected = ["photo0.jpg"] if skipped else ["photo0.jpg", "photo1.jpg"]
-    assert select_counted(photos.cands, [read_record(photos.sha[0])]) == (expected, int(skipped))
+    assert select_counted(photos.cands, [read_record(photos.sha[0])], skip_near_duplicates=TWIN_BITS) == (
+        expected, int(skipped))
 
 
 def test_near_duplicate_threshold_is_the_given_number_of_bits(tmp_path: Path) -> None:
@@ -866,44 +1037,52 @@ def test_zero_or_none_turns_the_near_duplicate_rule_off(tmp_path: Path, off: Opt
 def test_a_photograph_without_phash_is_never_skipped_and_covers_nothing(tmp_path: Path) -> None:
     """The rule needs both hashes: an image without one is read, and its own usable read skips no one."""
     no_second = photographs(tmp_path, [phash_apart(0), None])
-    assert select_counted(no_second.cands, [read_record(no_second.sha[0])]) == (["photo0.jpg", "photo1.jpg"], 0)
+    assert select_counted(no_second.cands, [read_record(no_second.sha[0])], skip_near_duplicates=TWIN_BITS) == (
+        ["photo0.jpg", "photo1.jpg"], 0)
     no_first = photographs(tmp_path, [None, phash_apart(0)], tag="bare", shade=50)
-    assert select_counted(no_first.cands, [read_record(no_first.sha[0])]) == (["bare0.jpg", "bare1.jpg"], 0)
+    assert select_counted(no_first.cands, [read_record(no_first.sha[0])], skip_near_duplicates=TWIN_BITS) == (
+        ["bare0.jpg", "bare1.jpg"], 0)
     neither = photographs(tmp_path, [None, None], tag="blank", shade=100)
-    assert select_counted(neither.cands, [read_record(neither.sha[0])]) == (["blank0.jpg", "blank1.jpg"], 0)
+    assert select_counted(neither.cands, [read_record(neither.sha[0])], skip_near_duplicates=TWIN_BITS) == (
+        ["blank0.jpg", "blank1.jpg"], 0)
 
 
 def test_the_first_photograph_of_a_pair_is_never_skipped(tmp_path: Path) -> None:
     """Candidate order decides: only an earlier photograph covers a later one, so a read on the second skips nothing."""
     photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
-    assert select_counted(photos.cands, [read_record(photos.sha[1])], only_missing_usable=True) == (["photo0.jpg"], 0)
+    assert select_counted(photos.cands, [read_record(photos.sha[1])], only_missing_usable=True,
+                          skip_near_duplicates=TWIN_BITS) == (["photo0.jpg"], 0)
     # both read by other readers, neither by this one: the first is read, the second is the near-duplicate
     both = [read_record(photos.sha[0]), read_record(photos.sha[1], "gemini:g", text=ARABIC)]
-    assert select_counted(photos.cands, both, reader_id="vlm:model-x") == (["photo0.jpg"], 1)
+    assert select_counted(photos.cands, both, reader_id="vlm:model-x", skip_near_duplicates=TWIN_BITS) == (
+        ["photo0.jpg"], 1)
     # the same photographs in the other order: now the other one is first
     swapped = [candidate("r_swapped", "hebrew", list(reversed(photos.refs)))]
-    assert select_counted(swapped, both, reader_id="vlm:model-x") == (["photo1.jpg"], 1)
+    assert select_counted(swapped, both, reader_id="vlm:model-x", skip_near_duplicates=TWIN_BITS) == (
+        ["photo1.jpg"], 1)
 
 
 @pytest.mark.parametrize("reader", ["kraken:other", "gemini:g", "vlm:model-x"])
 def test_a_usable_read_from_any_reader_covers_the_near_duplicate(tmp_path: Path, reader: str) -> None:
     """The covering read may come from the reader about to run or from any other."""
     photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
-    assert select_counted(photos.cands, [read_record(photos.sha[0], reader)], only_missing_usable=True) == ([], 1)
+    assert select_counted(photos.cands, [read_record(photos.sha[0], reader)], only_missing_usable=True,
+                          skip_near_duplicates=TWIN_BITS) == ([], 1)
 
 
 def test_near_duplicate_rule_leaves_the_distinct_photographs_of_a_candidate(tmp_path: Path) -> None:
     """Of three photographs the near-duplicate goes, the distant one stays."""
     photos = photographs(tmp_path, [phash_apart(0), phash_apart(2), phash_apart(30)])
-    assert select_counted(photos.cands, [read_record(photos.sha[0])], only_missing_usable=True) == (["photo2.jpg"], 1)
+    assert select_counted(photos.cands, [read_record(photos.sha[0])], only_missing_usable=True,
+                          skip_near_duplicates=TWIN_BITS) == (["photo2.jpg"], 1)
 
 
 def test_near_duplicates_are_looked_for_inside_one_candidate_only(tmp_path: Path) -> None:
     """A read photograph of one candidate covers nothing in another candidate, whatever its hash."""
     mine = photographs(tmp_path, [phash_apart(0)])
     other = photographs(tmp_path, [phash_apart(2)], tag="other", shade=60)
-    assert select_counted(mine.cands + other.cands, [read_record(mine.sha[0])], only_missing_usable=True) == (
-        ["other0.jpg"], 0)
+    assert select_counted(mine.cands + other.cands, [read_record(mine.sha[0])], only_missing_usable=True,
+                          skip_near_duplicates=TWIN_BITS) == (["other0.jpg"], 0)
 
 
 def test_a_dropped_near_duplicate_is_still_read_for_another_candidate(tmp_path: Path) -> None:
@@ -911,19 +1090,23 @@ def test_a_dropped_near_duplicate_is_still_read_for_another_candidate(tmp_path: 
     photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
     existing = [read_record(photos.sha[0])]
     lone = candidate("r_lone", "hebrew", [photos.refs[1]])
-    assert select_counted(photos.cands + [lone], existing, only_missing_usable=True) == (["photo1.jpg"], 0)
+    assert select_counted(photos.cands + [lone], existing, only_missing_usable=True,
+                          skip_near_duplicates=TWIN_BITS) == (["photo1.jpg"], 0)
     # skipped under two candidates, it is still one photograph in the count
     twin = candidate("r_twin", "hebrew", list(photos.refs))
-    assert select_counted(photos.cands + [twin], existing, only_missing_usable=True) == ([], 1)
+    assert select_counted(photos.cands + [twin], existing, only_missing_usable=True,
+                          skip_near_duplicates=TWIN_BITS) == ([], 1)
 
 
 def test_only_what_the_rule_removes_from_the_queue_is_counted(tmp_path: Path) -> None:
     """A photograph the other rules already dropped is not a near-duplicate skip, even when it has a read twin."""
     photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
     both = [read_record(photos.sha[0]), read_record(photos.sha[1])]
-    assert select_counted(photos.cands, both, only_missing_usable=True) == ([], 0)       # both have a usable read
+    assert select_counted(photos.cands, both, only_missing_usable=True, skip_near_duplicates=TWIN_BITS) == (
+        [], 0)                                                                            # both have a usable read
     done = [read_record(photos.sha[0], "vlm:model-x"), read_record(photos.sha[1], "vlm:model-x")]
-    assert select_counted(photos.cands, done, reader_id="vlm:model-x") == ([], 0)         # this reader read both
+    assert select_counted(photos.cands, done, reader_id="vlm:model-x", skip_near_duplicates=TWIN_BITS) == (
+        [], 0)                                                                            # this reader read both
 
 
 def test_select_images_rejects_a_negative_near_duplicate_distance() -> None:
@@ -954,6 +1137,100 @@ def test_has_usable_peer_needs_every_listing_covered() -> None:
     assert reads._has_usable_peer(image, {"s": [[]]}, {"b"}) is False                  # a listing without any twin
     assert reads._has_usable_peer(image, {}, {"b"}) is False                           # unknown to peers: not covered
     assert reads._has_usable_peer(image, {"s": [["a"]]}, set()) is False
+
+
+# --- select_images: candidates with an unplaced side ------------------------------------------------------------------
+
+def side_decision(row_id: str, side_key: str, outcome: str) -> schema.SideDecision:
+    """A synthetic stage 2 side decision.
+
+    :param row_id: Candidate id.
+    :param side_key: Side.
+    :param outcome: One of ``schema.OUTCOMES``.
+    :return: The decision (one synthetic reason unless accepted).
+    """
+    return schema.SideDecision(row_id=row_id, side_key=side_key, outcome=outcome,
+                               reasons=[] if outcome == "accepted" else ["synthetic_reason"])
+
+
+@pytest.fixture
+def unplaced_stage(tmp_path: Path) -> SimpleNamespace:
+    """A work dir with candidates in four placement states, their reads, and a stage 2 sides file.
+
+    ``r_done``: its one side accepted, its photograph read (usable). ``r_review``: recto accepted, verso needs_review;
+    ``rev0`` has a usable Kraken read that placed nothing, ``rev1`` was read by ``vlm:model-x`` (the reader about to
+    run). ``r_none``: its side unassigned, its photograph unread. ``r_fresh``: its side accepted, its photograph unread.
+
+    :param tmp_path: Pytest temp dir.
+    :return: Namespace with ``work``, ``cands``, ``refs`` and ``sha`` by name, the ``existing`` reads and ``sides``.
+    """
+    work = tmp_path / "work_unplaced"
+    names = ["done", "rev0", "rev1", "none", "fresh"]
+    files = {name: make_jpeg(work / "images" / f"{name}.jpg", color=(40 * i + 10, 60, 200 - 30 * i))
+             for i, name in enumerate(names)}
+    refs = {name: image_ref(f"iiif_pgp:{name}", path) for name, path in files.items()}
+    cands = [candidate("r_done", "hebrew", [refs["done"]]),
+             candidate("r_review", "hebrew", [refs["rev0"], refs["rev1"]]),
+             candidate("r_none", "hebrew", [refs["none"]]),
+             candidate("r_fresh", "hebrew", [refs["fresh"]])]
+    write_stage1(work, cands)
+    sha = {name: sha_of(path) for name, path in files.items()}
+    existing = [read_record(sha["done"]), read_record(sha["rev0"]), read_record(sha["rev1"], "vlm:model-x")]
+    for record in existing:
+        reads.append_jsonl(reads.reads_path(work), record)
+    sides = paths.stage_path(work, "sides")
+    schema.write_jsonl(sides, [side_decision("r_done", "recto", "accepted"),
+                               side_decision("r_review", "recto", "accepted"),
+                               side_decision("r_review", "verso", "needs_review"),
+                               side_decision("r_none", "", "unassigned"),
+                               side_decision("r_fresh", "page", "accepted")])
+    return SimpleNamespace(work=work, cands=cands, refs=refs, sha=sha, existing=existing, sides=sides)
+
+
+def test_unplaced_candidates_are_those_with_a_side_not_accepted(unplaced_stage: SimpleNamespace) -> None:
+    """One side needs_review, unassigned or dropped puts a candidate in; all sides accepted keeps it out."""
+    assert reads.unplaced_candidates(unplaced_stage.sides) == {"r_review", "r_none"}
+    dropped = unplaced_stage.work / "dropped.jsonl"
+    schema.write_jsonl(dropped, [side_decision("r_a", "recto", "dropped"), side_decision("r_b", "recto", "accepted")])
+    assert reads.unplaced_candidates(dropped) == {"r_a"}
+    with pytest.raises(FileNotFoundError):
+        reads.unplaced_candidates(unplaced_stage.work / "missing.jsonl")
+
+
+def test_only_unplaced_selects_the_photographs_this_reader_has_not_read(unplaced_stage: SimpleNamespace) -> None:
+    """The accepted-only candidate is skipped; the needs_review candidate's photograph is selected although another
+    reader's usable read exists, its photograph read by this reader is not; the unassigned one's is selected."""
+    unplaced = reads.unplaced_candidates(unplaced_stage.sides)
+    counts: Counter = Counter()
+    selected = reads.select_images(unplaced_stage.cands, unplaced_stage.existing, reader_id="vlm:model-x",
+                                   unplaced=unplaced, counts=counts)
+    assert ids(selected) == ["rev0.jpg", "none.jpg"]
+    assert counts["selected_unplaced"] == 2 and "selected_missing_usable" not in counts
+    # the usable read of rev0 is what keeps it out of --only-missing-usable
+    assert ids(reads.select_images(unplaced_stage.cands, unplaced_stage.existing, reader_id="vlm:model-x",
+                                   only_missing_usable=True)) == ["none.jpg", "fresh.jpg"]
+    # the script filter still applies, and an empty set selects nothing
+    assert reads.select_images(unplaced_stage.cands, unplaced_stage.existing, script="arabic", unplaced=unplaced) == []
+    assert reads.select_images(unplaced_stage.cands, unplaced_stage.existing, unplaced=set()) == []
+
+
+def test_only_unplaced_and_only_missing_usable_select_the_union(unplaced_stage: SimpleNamespace) -> None:
+    """Together they select what either selects, in candidate order; each selection is counted (overlap in both)."""
+    counts: Counter = Counter()
+    selected = reads.select_images(unplaced_stage.cands, unplaced_stage.existing, reader_id="vlm:model-x",
+                                   only_missing_usable=True, unplaced=reads.unplaced_candidates(unplaced_stage.sides),
+                                   counts=counts)
+    assert ids(selected) == ["rev0.jpg", "none.jpg", "fresh.jpg"]
+    assert counts["selected_missing_usable"] == 2 and counts["selected_unplaced"] == 2         # none.jpg is in both
+
+
+def test_a_photograph_a_placed_candidate_lists_first_is_selected_for_an_unplaced_one(
+        unplaced_stage: SimpleNamespace) -> None:
+    """Selection by placement is per listing: the placed candidate listing the photograph first does not hide it."""
+    sharing = candidate("r_sharing", "hebrew", [unplaced_stage.refs["done"]])
+    selected = reads.select_images(unplaced_stage.cands + [sharing], unplaced_stage.existing, reader_id="vlm:model-x",
+                                   unplaced={"r_sharing"})
+    assert [(Path(i.path).name, i.image_id) for i in selected] == [("done.jpg", "iiif_pgp:done")]
 
 
 # --- run_reads ---------------------------------------------------------------------------------------------------------
@@ -1173,7 +1450,7 @@ def test_run_reads_skips_near_duplicates_and_reports_the_count(tmp_path: Path, c
     reads.append_jsonl(reads.reads_path(work), read_record(photos.sha[0], "kraken:test_model"))
 
     reader = ScriptedReader(reader="vlm:model-x")
-    counts = run(work, reader, reader="vlm", model="model-x")
+    counts = run(work, reader, reader="vlm", model="model-x", skip_near_duplicates=TWIN_BITS)
     assert counts["queued"] == 1 and counts["skipped_near_duplicate"] == 1 and counts["read"] == 1
     assert [p.name for p in reader.calls] == ["photo0.jpg"]
     assert "1 skipped as near-duplicates" in capsys.readouterr().out
@@ -1191,7 +1468,7 @@ def test_run_reads_skips_a_twin_at_read_time_once_the_first_read_is_usable(tmp_p
     work = tmp_path / "work_twins"
     write_stage1(work, photos.cands)
     reader = ScriptedReader()
-    counts = run(work, reader)
+    counts = run(work, reader, skip_near_duplicates=TWIN_BITS)
     assert counts["queued"] == 2 and counts["read"] == 1 and counts["skipped_near_duplicate"] == 1
     assert counts["failed"] == 0 and [p.name for p in reader.calls] == ["photo0.jpg"]
     assert [r.sha256 for r in reads.load_reads(work)] == [photos.sha[0]]
@@ -1201,7 +1478,7 @@ def test_run_reads_skips_a_twin_at_read_time_once_the_first_read_is_usable(tmp_p
     assert "0 skipped as near-duplicates at launch" in out
     # the next run reaches the same verdict before it starts
     again = ScriptedReader()
-    counts = run(work, again)
+    counts = run(work, again, skip_near_duplicates=TWIN_BITS)
     assert counts["queued"] == 0 and counts["skipped_near_duplicate"] == 1 and again.calls == []
 
 
@@ -1222,7 +1499,7 @@ def test_run_reads_reads_the_twin_when_the_first_read_is_not_usable(tmp_path: Pa
     photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
     write_stage1(tmp_path / "work_twins", photos.cands)
     reader = ScriptedReader(**scripted)
-    counts = run(tmp_path / "work_twins", reader)
+    counts = run(tmp_path / "work_twins", reader, skip_near_duplicates=TWIN_BITS)
     assert counts["queued"] == 2 and counts["read"] + counts["failed"] == 2 and counts["skipped_near_duplicate"] == 0
     assert [p.name for p in reader.calls] == ["photo0.jpg", "photo1.jpg"]
 
@@ -1233,13 +1510,13 @@ def test_run_reads_reads_a_twin_that_another_candidate_lists_without_its_twin(tm
     lone = candidate("r_lone", "hebrew", [photos.refs[1]])                 # lists the second photograph on its own
     write_stage1(tmp_path / "work_lone", photos.cands + [lone])
     reader = ScriptedReader()
-    counts = run(tmp_path / "work_lone", reader)
+    counts = run(tmp_path / "work_lone", reader, skip_near_duplicates=TWIN_BITS)
     assert [p.name for p in reader.calls] == ["photo0.jpg", "photo1.jpg"] and counts["skipped_near_duplicate"] == 0
     # when the other candidate lists the twin too, nothing needs the second photograph
     both = candidate("r_both", "hebrew", list(photos.refs))
     write_stage1(tmp_path / "work_both", photos.cands + [both])
     reader = ScriptedReader()
-    counts = run(tmp_path / "work_both", reader)
+    counts = run(tmp_path / "work_both", reader, skip_near_duplicates=TWIN_BITS)
     assert [p.name for p in reader.calls] == ["photo0.jpg"] and counts["skipped_near_duplicate"] == 1
 
 
@@ -1251,7 +1528,7 @@ def test_run_reads_counts_reads_from_before_the_run_and_from_the_run_alike(tmp_p
                                            candidate("r_y", "hebrew", [new, shared])])
     reads.append_jsonl(reads.reads_path(tmp_path / "work_mixed"), read_record(photos.sha[0], "kraken:other"))
     reader = ScriptedReader()
-    counts = run(tmp_path / "work_mixed", reader, only_missing_usable=True)
+    counts = run(tmp_path / "work_mixed", reader, only_missing_usable=True, skip_near_duplicates=TWIN_BITS)
     # at launch only candidate r_x covers the shared photograph; once photo1 is read, r_y covers it as well
     assert counts["queued"] == 2 and counts["skipped_near_duplicate"] == 1
     assert [p.name for p in reader.calls] == ["photo1.jpg"]
@@ -1263,7 +1540,7 @@ def test_run_reads_reads_near_duplicates_that_sit_in_different_candidates(tmp_pa
     other = photographs(tmp_path, [phash_apart(2)], tag="other", shade=60)
     write_stage1(tmp_path / "work_two", mine.cands + other.cands)
     reader = ScriptedReader()
-    counts = run(tmp_path / "work_two", reader)
+    counts = run(tmp_path / "work_two", reader, skip_near_duplicates=TWIN_BITS)
     assert counts["read"] == 2 and counts["skipped_near_duplicate"] == 0
 
 
@@ -1288,6 +1565,234 @@ def test_run_reads_repairs_a_cut_off_tail_before_appending(stage1: SimpleNamespa
         fh.write('{"sha256": "cut off')
     assert run(stage1.work, ScriptedReader())["queued"] == 1
     assert [r.sha256 for r in reads.load_reads(stage1.work)] == [stage1.sha_he, stage1.sha_ar]
+
+
+def test_run_reads_only_unplaced_reads_and_counts_the_selection(unplaced_stage: SimpleNamespace,
+                                                                capsys: pytest.CaptureFixture) -> None:
+    """The sides file selects the unread photographs of unplaced candidates; the counts are printed and returned."""
+    reader = ScriptedReader(reader="vlm:model-x", text=ARABIC)
+    counts = run(unplaced_stage.work, reader, reader="vlm", model="model-x", only_unplaced=unplaced_stage.sides)
+    assert [p.name for p in reader.calls] == ["rev0.jpg", "none.jpg"]
+    assert counts["queued"] == 2 and counts["candidates_unplaced"] == 2 and counts["selected_unplaced"] == 2
+    assert "selected_missing_usable" not in counts
+    assert "selected: 2 of 2 candidates with an unplaced side" in capsys.readouterr().out
+    again = run(unplaced_stage.work, ScriptedReader(reader="vlm:model-x"), reader="vlm", model="model-x",
+                only_unplaced=unplaced_stage.sides)
+    assert again["queued"] == 0                                                 # both now read by this reader
+    with pytest.raises(FileNotFoundError):
+        run(unplaced_stage.work, ScriptedReader(), only_unplaced=unplaced_stage.work / "missing.jsonl")
+
+
+def test_run_reads_with_both_selections_reads_the_union(unplaced_stage: SimpleNamespace,
+                                                        capsys: pytest.CaptureFixture) -> None:
+    """``only_missing_usable`` and ``only_unplaced`` together: the union is read, each selection counted."""
+    reader = ScriptedReader(reader="vlm:model-x", text=ARABIC)
+    counts = run(unplaced_stage.work, reader, reader="vlm", model="model-x", only_unplaced=unplaced_stage.sides,
+                 only_missing_usable=True)
+    assert [p.name for p in reader.calls] == ["rev0.jpg", "none.jpg", "fresh.jpg"]
+    assert counts["queued"] == 3 and counts["selected_missing_usable"] == 2 and counts["selected_unplaced"] == 2
+    assert "selected: 2 without a usable read, 2 of 2 candidates with an unplaced side" in capsys.readouterr().out
+
+
+def test_run_reads_only_missing_usable_honours_a_looping_record_on_disk(stage1: SimpleNamespace) -> None:
+    """A record on disk stored as looping whose meta shows a budget cut without a loop counts as a usable read."""
+    reads.append_jsonl(reads.reads_path(stage1.work), reads.make_record(
+        stage1.sha_ar, "vlm:old", ARABIC, finish="looping", seconds=1.0,
+        meta={"finish_reason": "length", "looped": True, "cut_at": None, "repeat_share": 0.01, "retried": True}))
+    reader = ScriptedReader(reader="vlm:model-x")
+    counts = run(stage1.work, reader, reader="vlm", model="model-x", only_missing_usable=True)
+    assert [p.name for p in reader.calls] == ["he.jpg"] and counts["selected_missing_usable"] == 1
+
+
+# --- claims shared by concurrent jobs ----------------------------------------------------------------------------------
+
+def two_jobs(tmp_path: Path, n: int) -> SimpleNamespace:
+    """Two snapshot work dirs whose stage 1 files list the same ``n`` photographs, and the claim log they share.
+
+    :param tmp_path: Pytest temp dir.
+    :param n: Number of photographs.
+    :return: Namespace with the work dirs ``a`` and ``b``, the photograph ``files``, their ``sha`` and ``claims``.
+    """
+    stage = many_images(tmp_path, n)
+    other = tmp_path / "work_other"
+    write_stage1(other, list(schema.read_jsonl(paths.stage_path(stage.work, "images"), Candidate)))
+    return SimpleNamespace(a=stage.work, b=other, files=stage.files, sha=[sha_of(f) for f in stage.files],
+                           claims=tmp_path / "shared" / "claims.jsonl")
+
+
+def claim_line(sha256: str, reader: str = KRAKEN_READER, job: str = "other-job",
+               hours_ago: float = 0.0) -> Dict[str, str]:
+    """A claim log line as another job would write it.
+
+    :param sha256: Photograph.
+    :param reader: Reader id.
+    :param job: Job id.
+    :param hours_ago: Age of the claim.
+    :return: The line's fields.
+    """
+    stamp = (datetime.now(timezone.utc) - timedelta(hours=hours_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return {"sha256": sha256, "reader": reader, "claimed_at": stamp, "job": job}
+
+
+def test_a_second_job_skips_what_the_first_claimed(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """One claim line per attempt with the four fields; a job on another work dir skips every claimed photograph."""
+    jobs = two_jobs(tmp_path, 3)
+    counts = run(jobs.a, ScriptedReader(), claim_file=jobs.claims)
+    assert counts["read"] == 3 and counts["claims_written"] == 3 and counts["skipped_claimed"] == 0
+    lines = jsonl_dicts(jobs.claims)
+    assert [set(line) for line in lines] == [{"sha256", "reader", "claimed_at", "job"}] * 3
+    assert [line["sha256"] for line in lines] == jobs.sha and {line["reader"] for line in lines} == {KRAKEN_READER}
+    assert {line["job"] for line in lines} == {str(jobs.a.resolve())} and all(TIMESTAMP.match(line["claimed_at"])
+                                                                              for line in lines)
+    capsys.readouterr()
+    second = ScriptedReader()
+    counts = run(jobs.b, second, claim_file=jobs.claims)
+    assert second.calls == [] and counts["queued"] == 0 and counts["skipped_claimed"] == 3 and counts["read"] == 0
+    assert "3 held by other jobs" in capsys.readouterr().out and not reads.reads_path(jobs.b).exists()
+
+
+def test_ignore_claims_reads_what_another_job_claimed(tmp_path: Path) -> None:
+    """``ignore_claims`` reads every photograph and still writes its own claims."""
+    jobs = two_jobs(tmp_path, 2)
+    run(jobs.a, ScriptedReader(), claim_file=jobs.claims)
+    second = ScriptedReader()
+    counts = run(jobs.b, second, claim_file=jobs.claims, ignore_claims=True)
+    assert len(second.calls) == 2 and counts["read"] == 2 and counts["skipped_claimed"] == 0
+    assert counts["claims_written"] == 2 and len(jsonl_dicts(jobs.claims)) == 4
+
+
+def test_each_attempt_is_claimed_before_its_request(tmp_path: Path) -> None:
+    """The claim is in the log when the reader is called; a failed attempt keeps its claim."""
+    jobs = two_jobs(tmp_path, 2)
+    claimed_first: List[bool] = []
+
+    def check_the_log(call: int, path: Path) -> None:
+        """Look at the last claim when the request starts."""
+        claimed_first.append(jsonl_dicts(jobs.claims)[-1]["sha256"] == sha_of(path))
+
+    counts = run(jobs.a, ScriptedReader(hook=check_the_log, fail_calls=[2]), claim_file=jobs.claims)
+    assert claimed_first == [True, True] and counts["failed"] == 1 and len(jsonl_dicts(jobs.claims)) == 2
+
+
+def test_only_a_live_claim_of_this_reader_by_another_job_blocks(tmp_path: Path) -> None:
+    """Another reader's claim, a claim older than 24 hours and the job's own claim do not block; the rest does."""
+    jobs = two_jobs(tmp_path, 4)
+    schema.write_jsonl(jobs.claims, [claim_line(jobs.sha[0], reader="vlm:model-x"),     # another reader
+                                     claim_line(jobs.sha[1], hours_ago=25),             # expired
+                                     claim_line(jobs.sha[2], hours_ago=23),             # live: blocks
+                                     claim_line(jobs.sha[3], job="gpu")])               # this job's own
+    reader = ScriptedReader()
+    counts = run(jobs.a, reader, claim_file=jobs.claims, job_id="gpu")
+    assert [p.name for p in reader.calls] == ["img0.jpg", "img1.jpg", "img3.jpg"]
+    assert counts["skipped_claimed"] == 1 and counts["claims_written"] == 3
+    # under another id the job's earlier claim of img3 is someone else's
+    other = ScriptedReader()
+    assert run(jobs.b, other, claim_file=jobs.claims, job_id="cpu")["skipped_claimed"] == 4 and other.calls == []
+
+
+def test_a_restarted_job_reads_what_it_claimed_but_did_not_read(tmp_path: Path) -> None:
+    """Same work dir, same default id: the photograph whose read failed is read on restart; another job skips it."""
+    jobs = two_jobs(tmp_path, 3)
+    first = run(jobs.a, ScriptedReader(fail_calls=[2]), claim_file=jobs.claims)
+    assert first["read"] == 2 and first["failed"] == 1
+    other = ScriptedReader()
+    assert run(jobs.b, other, claim_file=jobs.claims)["skipped_claimed"] == 3 and other.calls == []
+    again = ScriptedReader()
+    counts = run(jobs.a, again, claim_file=jobs.claims)
+    assert [p.name for p in again.calls] == ["img1.jpg"] and counts["skipped_claimed"] == 0
+
+
+def test_claimed_photographs_do_not_use_up_the_limit(tmp_path: Path) -> None:
+    """Claims are applied when the queue is made, before ``limit`` cuts it."""
+    jobs = two_jobs(tmp_path, 3)
+    run(jobs.a, ScriptedReader(), claim_file=jobs.claims, limit=1)
+    second = ScriptedReader()
+    counts = run(jobs.b, second, claim_file=jobs.claims, limit=1)
+    assert [p.name for p in second.calls] == ["img1.jpg"] and counts["skipped_claimed"] == 1 and counts["queued"] == 1
+
+
+def test_jobs_running_at_the_same_time_share_progress(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """The log is read again before each read: a photograph another job claims during this run is skipped."""
+    jobs = two_jobs(tmp_path, 3)
+    other = reads.ClaimLog(jobs.claims, "other-job")
+
+    def other_job_claims_the_third(call: int, path: Path) -> None:
+        """While this job reads its first photograph, the other job claims the third."""
+        if call == 1:
+            assert other.claim(jobs.sha[2], KRAKEN_READER)
+
+    reader = ScriptedReader(hook=other_job_claims_the_third)
+    counts = run(jobs.a, reader, claim_file=jobs.claims)
+    assert [p.name for p in reader.calls] == ["img0.jpg", "img1.jpg"]
+    assert counts["queued"] == 3 and counts["skipped_claimed"] == 1 and counts["read"] == 2
+    assert "img2.jpg: claimed by job other-job" in capsys.readouterr().out
+
+
+def test_when_two_jobs_claim_at_once_the_first_line_wins(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                         capsys: pytest.CaptureFixture) -> None:
+    """A claim that lands between this job's check and its own line holds the photograph: this job skips it."""
+    jobs = two_jobs(tmp_path, 2)
+    claim = reads.ClaimLog.claim
+
+    def racing_claim(self: reads.ClaimLog, sha256: str, reader: str) -> bool:
+        """The other job appends its line for the first photograph just before this job does."""
+        if sha256 == jobs.sha[0] and self.job != "other-job":
+            claim(reads.ClaimLog(self.path, "other-job"), sha256, reader)
+        return claim(self, sha256, reader)
+
+    monkeypatch.setattr(reads.ClaimLog, "claim", racing_claim)
+    reader = ScriptedReader()
+    counts = run(jobs.a, reader, claim_file=jobs.claims)
+    assert [p.name for p in reader.calls] == ["img1.jpg"]
+    assert counts["skipped_claimed"] == 1 and counts["claims_written"] == 2
+    assert "img0.jpg: job other-job claimed it first" in capsys.readouterr().out
+
+
+def test_claim_log_first_live_claim_holds(tmp_path: Path) -> None:
+    """Both jobs agree on the holder; pairs are per reader; an expired first claim yields to the next live one."""
+    path = tmp_path / "logs" / "claims.jsonl"
+    a, b = reads.ClaimLog(path, "a"), reads.ClaimLog(path, "b")
+    assert a.refresh() == 0                                           # no log yet
+    assert a.claim("s1", "r") is True and b.claim("s1", "r") is False
+    a.refresh()
+    assert a.holder("s1", "r") == b.holder("s1", "r") == "a"
+    assert b.held_by_other("s1", "r") and not a.held_by_other("s1", "r")
+    assert b.claim("s1", "other-reader") is True
+    assert a.holder("s1", "r", now=reads.time.time() + reads.CLAIM_TTL_S + 60) is None       # every claim expired
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(json.dumps(claim_line("s2", "r", job="a", hours_ago=30)) + "\n")
+        fh.write(json.dumps(claim_line("s2", "r", job="b", hours_ago=1)) + "\n")
+    a.refresh()
+    assert a.holder("s2", "r") == "b"
+
+
+def test_claim_log_skips_garbled_lines_and_waits_for_a_torn_one(tmp_path: Path) -> None:
+    """Complete lines that are not claims are counted and skipped; an unterminated last line is read once complete."""
+    path = tmp_path / "claims.jsonl"
+    torn = json.dumps(claim_line("s2", job="b"))
+    garbled = ['{"sha256": "s3", "reader"', '{"sha256": "s4"}', "[1, 2]", json.dumps(dict(claim_line("s5"),
+                                                                                         claimed_at="yesterday"))]
+    path.write_text("\n".join([json.dumps(claim_line("s1", job="a"))] + garbled) + "\n" + torn[:20], encoding="utf-8")
+    log = reads.ClaimLog(path, "me")
+    assert log.refresh() == 1 and log.malformed == 4
+    assert log.holder("s1", KRAKEN_READER) == "a" and log.holder("s2", KRAKEN_READER) is None
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(torn[20:] + "\n")
+    assert log.refresh() == 1 and log.holder("s2", KRAKEN_READER) == "b" and log.malformed == 4
+    assert log.refresh() == 0
+
+
+def test_default_job_id_is_the_absolute_work_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A relative work dir becomes its absolute path, so a restart from anywhere keeps the id."""
+    monkeypatch.chdir(tmp_path)
+    assert reads.default_job_id(Path("snap")) == str((tmp_path / "snap").resolve())
+
+
+def test_run_reads_without_a_claim_file_writes_no_claims(stage1: SimpleNamespace, capsys: pytest.CaptureFixture) -> None:
+    """The claim counts are in every summary (0 without a log), and the launch line says there is none."""
+    counts = run(stage1.work, ScriptedReader())
+    assert counts["skipped_claimed"] == 0 and counts["claims_written"] == 0
+    assert "no claim file" in capsys.readouterr().out
 
 
 # --- main --------------------------------------------------------------------------------------------------------------
@@ -1335,7 +1840,9 @@ def test_main_passes_the_options_to_run_reads(stage1: SimpleNamespace, monkeypat
                 "--limit", "7", "--only-missing-usable"])
     assert captured["work_dir"] == stage1.work and captured["reader"] == "vlm" and captured["model"] == "model-x"
     assert captured["script"] == "arabic" and captured["limit"] == 7 and captured["only_missing_usable"] is True
-    assert captured["skip_near_duplicates"] == reads.NEAR_DUPLICATE_BITS == 6        # on by default
+    assert captured["skip_near_duplicates"] == reads.NEAR_DUPLICATE_BITS == 0        # off unless asked for
+    assert captured["only_unplaced"] is None and captured["claim_file"] is None
+    assert captured["ignore_claims"] is False and captured["job_id"] is None
     assert captured["stop_file"] == stage1.work / "reads" / "STOP"
     assert isinstance(captured["read_fn"], reads.functools.partial) and captured["read_fn"].func is reads.vlm_read
     assert captured["read_fn"].keywords == {"model_key": "model-x"}
@@ -1346,11 +1853,11 @@ def test_main_passes_the_options_to_run_reads(stage1: SimpleNamespace, monkeypat
     assert captured["read_fn"].keywords["model_path"] == "/m/other.mlmodel" and captured["limit"] is None
 
 
-@pytest.mark.parametrize("flag, expected", [([], 6), (["--skip-near-duplicates", "0"], 0),
-                                            (["--skip-near-duplicates", "3"], 3)])
+@pytest.mark.parametrize("flag, expected", [([], 0), (["--skip-near-duplicates", "0"], 0),
+                                            (["--skip-near-duplicates", "3"], 3), (["--skip-near-duplicates", "6"], 6)])
 def test_main_passes_the_near_duplicate_distance(stage1: SimpleNamespace, monkeypatch: pytest.MonkeyPatch,
                                                  flag: List[str], expected: int) -> None:
-    """``--skip-near-duplicates N`` reaches ``run_reads`` as ``skip_near_duplicates``; default 6, ``0`` is off."""
+    """``--skip-near-duplicates N`` reaches ``run_reads`` as ``skip_near_duplicates``; default 0 (off), opt-in."""
     captured: Dict[str, Any] = {}
 
     def fake_run_reads(work_dir: Path, **kwargs: Any) -> Dict[str, int]:
@@ -1378,7 +1885,7 @@ def test_main_prints_the_near_duplicate_count_in_the_summary(tmp_path: Path, mon
         return read_record(sha_of(path), reads.make_reader_id("kraken", kwargs["model_path"]))
 
     monkeypatch.setattr(reads, "kraken_read", fake_kraken_read)
-    reads.main(["--work-dir", str(work), "--reader", "kraken"])
+    reads.main(["--work-dir", str(work), "--reader", "kraken", "--skip-near-duplicates", str(TWIN_BITS)])
     out = capsys.readouterr().out
     summary = json.loads(out[out.rindex("{\n"):])
     assert summary["skipped_near_duplicate"] == 1 and summary["queued"] == 1 and summary["read"] == 1
@@ -1398,6 +1905,36 @@ def test_main_imports_then_reads(stage1: SimpleNamespace, tmp_path: Path, monkey
     assert stored[0].meta["source"] == "legacy_import" and "source" not in stored[1].meta
 
 
+def test_main_passes_the_selection_and_claim_options(stage1: SimpleNamespace, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--only-unplaced``, ``--claim-file``, ``--job-id`` and ``--ignore-claims`` reach ``run_reads``."""
+    captured: Dict[str, Any] = {}
+
+    def fake_run_reads(work_dir: Path, **kwargs: Any) -> Dict[str, int]:
+        """Capture the call instead of reading."""
+        captured.update(kwargs)
+        return {"read": 0}
+
+    monkeypatch.setattr(reads, "run_reads", fake_run_reads)
+    sides = paths.stage_path(stage1.work, "sides")
+    schema.write_jsonl(sides, [side_decision("r_he", "", "needs_review")])
+    claims = stage1.work / "claims.jsonl"
+    reads.main(["--work-dir", str(stage1.work), "--reader", "vlm", "--model", "model-x", "--only-unplaced", str(sides),
+                "--only-missing-usable", "--claim-file", str(claims), "--job-id", "gpu", "--ignore-claims"])
+    assert captured["only_unplaced"] == sides and captured["only_missing_usable"] is True
+    assert captured["claim_file"] == claims and captured["job_id"] == "gpu" and captured["ignore_claims"] is True
+
+
+def test_main_reads_with_a_claim_file_end_to_end(stage1: SimpleNamespace, monkeypatch: pytest.MonkeyPatch,
+                                                 capsys: pytest.CaptureFixture) -> None:
+    """Through the command line the claims are written under the job id, and the summary carries their count."""
+    monkeypatch.setattr(reads, "kraken_read", lambda path, **kw: read_record(sha_of(path), "kraken:MiDRASH_Gen_01"))
+    claims = stage1.work / "claims.jsonl"
+    reads.main(["--work-dir", str(stage1.work), "--reader", "kraken", "--claim-file", str(claims), "--job-id", "cpu"])
+    out = capsys.readouterr().out
+    assert json.loads(out[out.rindex("{\n"):])["claims_written"] == 2
+    assert {line["job"] for line in jsonl_dicts(claims)} == {"cpu"}
+
+
 @pytest.mark.parametrize("argv", [
     [],
     ["--reader", "vlm"],
@@ -1406,9 +1943,13 @@ def test_main_imports_then_reads(stage1: SimpleNamespace, tmp_path: Path, monkey
     ["--reader", "kraken", "--script", "latin"],
     ["--reader", "kraken", "--skip-near-duplicates", "-1"],
     ["--reader", "kraken", "--skip-near-duplicates", "many"],
+    ["--reader", "kraken", "--ignore-claims"],
+    ["--reader", "kraken", "--job-id", "gpu"],
+    ["--reader", "kraken", "--only-unplaced", "no_such_dir/stage2_sides.jsonl"],
 ])
 def test_main_rejects_bad_arguments(tmp_path: Path, argv: List[str]) -> None:
-    """Missing reader, vlm without a model, Gemini index without import, unknown choices, bad bit distance: exit 2."""
+    """Missing reader, vlm without a model, Gemini index without import, unknown choices, bad bit distance, claim
+    options without a claim file, a missing sides file: exit 2."""
     with pytest.raises(SystemExit) as raised:
         reads.main(["--work-dir", str(tmp_path / "work")] + argv)
     assert raised.value.code == 2

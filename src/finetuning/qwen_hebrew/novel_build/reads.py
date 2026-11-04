@@ -16,14 +16,29 @@ and appends each record to the file the moment it exists (a flush per record). I
 with its error and the image stays unread for the next run. The run stops cleanly when the stop file exists (checked
 before every image) and after five failures in a row.
 
-A photograph that is a near-duplicate of an earlier photograph of the same candidate (64-bit perceptual hashes at most
-:data:`NEAR_DUPLICATE_BITS` bits apart, ``--skip-near-duplicates``) is not read once that earlier one has a usable
-read from any reader: the same leaf stored twice needs one read, not two. The rule is applied when the queue is made
-and again before each read, so of two twins that are both unread at launch the first is read and the second skipped.
-The number of photographs skipped either way is the summary key ``skipped_near_duplicate``.
+Finish of a page-reader read (:func:`vlm_finish`): ``looping`` only when the reader's loop detector found a loop;
+a generation the 1,200-token budget cut without one (a long page) is ``length``. A ``length`` read is usable evidence
+(:func:`is_usable`): a truncated read still places a side. ``looping``, ``blank`` and ``error`` reads are not.
+
+Fallback selections (a second reader for what the first left unplaced): ``--only-missing-usable`` reads photographs
+without a usable read from any reader; ``--only-unplaced SIDES`` reads the photographs of candidates with at least one
+side that stage 2 sides did not accept, whatever reads they already have (a usable read that placed nothing does not
+block a second read). Given together, the queue is the union of both.
+
+Near-duplicates (opt-in, ``--skip-near-duplicates N``; :data:`NEAR_DUPLICATE_BITS` is 0, off): a photograph whose
+64-bit perceptual hash is at most N bits from an earlier photograph of the same candidate is not read once that earlier
+one has a usable read from any reader. It is off by default because two faces of one leaf, photographed alike, can be
+perceptual-hash twins: skipping one would leave a side without its photograph's read. The rule is applied when the
+queue is made and again before each read, so of two twins that are both unread at launch the first is read and the
+second skipped. The number of photographs skipped either way is the summary key ``skipped_near_duplicate``.
+
+Claims (optional, ``--claim-file PATH``): jobs that read into separate work dirs (one snapshot per job) share progress
+through one append-only claim log (:class:`ClaimLog`): a job skips a photograph that another job claimed for the same
+reader within the last 24 hours (``--ignore-claims`` reads it anyway), and claims each photograph before requesting it.
 
 The only try/except blocks of the module wrap the service request (:func:`kraken_read`) and the page-reader call
-(:func:`vlm_read`): there a failure must be recorded as a status (``finish="error"``), not raised.
+(:func:`vlm_read`), where a failure must be recorded as a status (``finish="error"``), not raised, and the parse of one
+claim line (:func:`_parse_claim`), where a line garbled by a concurrent writer is skipped and counted, not fatal.
 
 Usage::
 
@@ -31,7 +46,8 @@ Usage::
         [--gemini-index INDEX]
     python -m src.finetuning.qwen_hebrew.novel_build.reads --work-dir WORK --reader kraken --script hebrew
     python -m src.finetuning.qwen_hebrew.novel_build.reads --work-dir WORK --reader vlm --model KEY \\
-        --script arabic --only-missing-usable [--skip-near-duplicates N]
+        --script arabic --only-missing-usable [--only-unplaced SIDES] [--skip-near-duplicates N] \\
+        [--claim-file CLAIMS [--job-id NAME] [--ignore-claims]]
 """
 from __future__ import annotations
 
@@ -67,7 +83,8 @@ JPEG_QUALITY = 90
 MIN_SCRIPT_LETTERS = 20             # a read with fewer Hebrew plus Arabic letters is unusable
 MAX_CONSECUTIVE_FAILURES = 5
 #: Two photographs of one candidate whose 64-bit perceptual hashes differ in at most this many bits are near-duplicates.
-NEAR_DUPLICATE_BITS = 6
+#: 0 turns the rule off (the default: two faces of one leaf can be perceptual-hash twins); ``--skip-near-duplicates``.
+NEAR_DUPLICATE_BITS = 0
 PROGRESS_EVERY = 25
 READS_DIR = "reads"
 READS_NAME = "reads.jsonl"
@@ -76,13 +93,18 @@ STOP_NAME = "STOP"
 READABLE_STATUSES = ("present", "fetched")      # ``too_small`` and every other status is never read
 SCRIPT_CHOICES = ("all", "hebrew", "arabic")
 READER_CHOICES = ("kraken", "vlm")
-UNUSABLE_FINISH = frozenset({"looping", "length", "error", "blank"})
+#: Finishes that make a read unusable; ``length`` (a read the token budget cut, no loop found) is usable evidence.
+UNUSABLE_FINISH = frozenset({"looping", "error", "blank"})
+ACCEPTED = "accepted"                           # the ``SideDecision.outcome`` of a placed side
 NO_TEXT = re.compile(r"^\W*NO\s+TEXT\W*$", re.IGNORECASE)      # a Gemini read that says the page has no text
 GEMINI_FINISH = {"STOP": "ok", "MAX_TOKENS": "length"}          # every other Gemini finish reason is an error
 #: Fields of a ``page_reader.read_page`` result kept in ``ReadRecord.meta``.
 VLM_META_FIELDS = ("reason", "finish_reason", "first_finish_reason", "looped", "cut_at", "letters_removed",
-                   "repeat_share", "attempts", "retried", "prompt", "max_tokens", "temperature", "model", "ink",
-                   "prompt_tokens", "completion_tokens", "total_tokens", "rotation", "options")
+                   "repeat_share", "unit_repeat_share", "attempts", "retried", "prompt", "max_tokens", "temperature",
+                   "model", "ink", "prompt_tokens", "completion_tokens", "total_tokens", "rotation", "options")
+#: A claim older than this (seconds) no longer holds a photograph: the job that made it is presumed gone.
+CLAIM_TTL_S = 24 * 3600.0
+CLAIM_STAMP = "%Y-%m-%dT%H:%M:%SZ"              # ``claimed_at`` format (the format of :func:`now_utc`)
 #: Failures of the Kraken request or of preparing its upload that become an ``error`` record.
 KRAKEN_ERRORS = (requests.RequestException, OSError, ValueError, Image.DecompressionBombError)
 
@@ -268,15 +290,64 @@ def error_record(sha256: str, reader: str, error: BaseException, seconds: float)
                        meta={"error": f"{type(error).__name__}: {str(error)[:300]}"})
 
 
+def loop_detected(fields: Mapping[str, Any]) -> bool:
+    """Whether the page reader's loop detector found a loop in a read, as opposed to the token budget merely cutting it.
+
+    The reader marks every generation the budget cut ``looped`` (``page_reader.settle_read``: a ``length`` finish is
+    treated as a loop), so for such a read the flag alone says nothing about a loop. The detector's own verdict is
+    then its evidence: the gateless loop guard found where a loop starts (``cut_at`` set), or the repeat share of the
+    generation exceeds the production loop gate (``repeat_share``, or ``unit_repeat_share`` of the marker detector,
+    above ``page_reader.DEFAULT_SETTINGS.loop_gate``). For any other finish the ``looped`` flag is the detector's.
+
+    :param fields: A ``page_reader.read_page`` result, or the ``meta`` of a stored page-reader read.
+    :return: False when ``looped`` is false; True for a looped read that the budget did not cut; for a cut read, True
+        when ``cut_at`` is set or a repeat share exceeds the gate, and also when ``cut_at`` or ``repeat_share`` is not
+        recorded at all (no evidence against the flag).
+    """
+    if not fields.get("looped"):
+        return False
+    if fields.get("finish_reason") != page_reader.LENGTH:
+        return True
+    if "cut_at" not in fields or "repeat_share" not in fields:
+        return True
+    gate = page_reader.DEFAULT_SETTINGS.loop_gate
+    return (fields.get("cut_at") is not None or float(fields.get("repeat_share") or 0.0) > gate
+            or float(fields.get("unit_repeat_share") or 0.0) > gate)
+
+
+def effective_finish(read: ReadRecord) -> str:
+    """The finish a read is judged by: its ``finish``, with page-reader ``looping`` records re-judged from ``meta``.
+
+    Before the mapping of :func:`vlm_finish` was corrected, a page-reader read that the token budget cut twice (first
+    request and retry) was stored as ``looping`` even when no loop was found. Such a record is re-judged from the
+    reader's fields in its ``meta`` (``finish_reason`` and ``looped``; ``cut_at`` and ``repeat_share`` when ``looped``
+    is set): a ``length`` finish without a detected loop (:func:`loop_detected`) counts as ``length``.
+
+    :param read: A read.
+    :return: ``length`` for a ``looping`` record whose ``meta`` shows a length cut and no loop; else ``read.finish``
+        (a ``looping`` record without the reader's fields in ``meta`` stays ``looping``).
+    """
+    if read.finish != "looping" or "finish_reason" not in read.meta or "looped" not in read.meta:
+        return read.finish
+    if read.meta.get("finish_reason") == page_reader.LENGTH and not loop_detected(read.meta):
+        return "length"
+    return read.finish
+
+
 def is_usable(read: ReadRecord) -> bool:
     """Whether a read can serve as evidence for a side.
 
+    A ``length`` read (the token budget cut it, the loop detector found no loop) is usable: a truncated read is still
+    valid placement evidence. A ``looping`` record already on disk is judged by :func:`effective_finish`: when its
+    ``meta`` carries the page reader's fields and they show a length cut without a loop (``looped`` false, or set only
+    by the cut: no ``cut_at`` and a repeat share within the gate), it is treated as ``length``, hence usable.
+
     :param read: A read.
-    :return: False for a read with no lines, fewer than :data:`MIN_SCRIPT_LETTERS` Hebrew plus Arabic letters, or a
-        ``finish`` of looping, length, blank or error.
+    :return: False for a read with no lines, fewer than :data:`MIN_SCRIPT_LETTERS` Hebrew plus Arabic letters, or an
+        effective finish of looping, blank or error; True otherwise (``ok`` and ``length``).
     """
     letters = read.letters_hebrew + read.letters_arabic
-    return read.n_lines > 0 and letters >= MIN_SCRIPT_LETTERS and read.finish not in UNUSABLE_FINISH
+    return read.n_lines > 0 and letters >= MIN_SCRIPT_LETTERS and effective_finish(read) not in UNUSABLE_FINISH
 
 
 # --- legacy import -----------------------------------------------------------------------------------------------------
@@ -467,20 +538,24 @@ def kraken_read(path: Path, *, url: Optional[str] = None, model_path: Optional[s
 def vlm_finish(result: Mapping[str, Any]) -> str:
     """The ``ReadRecord.finish`` of a ``page_reader.read_page`` result.
 
-    :param result: The result dict (``text``, ``reason``, ``blank``, ``finish_reason``, ``looped``, ``retried``).
+    Whether the length retry ran does not matter: a long page whose first request and retry both reach the token
+    budget is ``length``, not ``looping``.
+
+    :param result: The result dict (``text``, ``reason``, ``blank``, ``finish_reason``, ``looped``, ``cut_at``,
+        ``repeat_share``).
     :return: ``error`` when the request failed (``reason`` ``failed`` or no text at all); ``blank`` for a page the ink
-        gate skipped or a generation with nothing in it (``reason`` ``blank`` or ``empty``); ``looping`` for a
-        generation the token budget cut after the length retry (``finish_reason`` ``length`` and ``retried``) and for
-        any read the loop guard flagged (``looped``); ``length`` for a cut generation that was not retried; else ``ok``.
+        gate skipped or a generation with nothing in it (``reason`` ``blank`` or ``empty``); ``looping`` when the
+        reader's loop detector found a loop (:func:`loop_detected`); ``length`` for a generation the token budget cut
+        without one (``finish_reason`` ``length``); else ``ok``.
     """
     reason = result.get("reason")
     if reason == page_reader.REASON_FAILED or result.get("text") is None:
         return "error"
     if reason in (page_reader.REASON_BLANK, page_reader.REASON_EMPTY) or result.get("blank"):
         return "blank"
-    if result.get("finish_reason") == page_reader.LENGTH:
-        return "looping" if result.get("retried") else "length"
-    return "looping" if result.get("looped") else "ok"
+    if loop_detected(result):
+        return "looping"
+    return "length" if result.get("finish_reason") == page_reader.LENGTH else "ok"
 
 
 def vlm_read(path: Path, *, model_key: str, read_page: Optional[PageReader] = None) -> ReadRecord:
@@ -571,15 +646,32 @@ def _readable_photographs(cand: Candidate) -> Iterator[Tuple[ImageRef, str]]:
         yield image, sha256
 
 
+def unplaced_candidates(sides_path: Path) -> Set[str]:
+    """Candidates that stage 2 sides left with at least one side not placed.
+
+    :param sides_path: A stage 2 sides file (:class:`~.schema.SideDecision` JSON lines).
+    :return: ``row_id`` of every candidate with a side whose ``outcome`` is not ``accepted`` (``needs_review``,
+        ``unassigned`` or ``dropped``). A candidate absent from the file (no side to place) is not included.
+    :raises FileNotFoundError: When the file does not exist.
+    """
+    return {decision.row_id for decision in schema.read_jsonl(sides_path, schema.SideDecision)
+            if decision.outcome != ACCEPTED}
+
+
 def select_images(cands: Iterable[Candidate], reads: Iterable[ReadRecord], *, script: str = "all",
                   only_missing_usable: bool = False, reader_id: Optional[str] = None,
                   skip_near_duplicates: Optional[int] = NEAR_DUPLICATE_BITS,
-                  counts: Optional[Counter] = None) -> List[ImageRef]:
+                  counts: Optional[Counter] = None, unplaced: Optional[Set[str]] = None) -> List[ImageRef]:
     """The photographs a reader still has to read, in candidate order.
 
     Images count when their status is ``present`` or ``fetched`` (never ``too_small``, ``listed``, ``missing``, ...)
     and they have a path; an image without a sha256 is hashed here (the returned copy carries it); an image that
-    several candidates list is returned once, by its first occurrence.
+    several candidates list is returned once, by its first selected occurrence.
+
+    Without a selection (``only_missing_usable`` false, ``unplaced`` None) every such image this reader has not read is
+    returned. With ``only_missing_usable``, ``unplaced`` or both, an image is returned when it satisfies at least one of
+    them (the union): it has no usable read, or a candidate in ``unplaced`` lists it. The second is decided per listing,
+    so a photograph listed by a placed candidate and by an unplaced one is selected through the unplaced one.
 
     The near-duplicate rule is applied last, one candidate at a time and in candidate order: a photograph is dropped
     when an earlier photograph of the same candidate is within ``skip_near_duplicates`` bits of it and already has a
@@ -591,15 +683,20 @@ def select_images(cands: Iterable[Candidate], reads: Iterable[ReadRecord], *, sc
     :param reads: Reads of every reader so far.
     :param script: ``all`` | ``hebrew`` | ``arabic``: candidates whose ledger script matches (``mixed`` matches both
         ``hebrew`` and ``arabic``).
-    :param only_missing_usable: Keep only images without a usable read from any reader (:func:`is_usable`): no read
-        at all, or only reads with no lines, fewer than 20 script letters, or a finish of looping/length/error.
+    :param only_missing_usable: Select images without a usable read from any reader (:func:`is_usable`): no read at
+        all, or only reads with no lines, fewer than 20 script letters, or a finish of looping/blank/error.
     :param reader_id: The reader about to run (:func:`make_reader_id`): its images are skipped once it has a read of
         them. None: no per-reader skip.
     :param skip_near_duplicates: Largest Hamming distance, in bits of the 64-bit hex ``ImageRef.phash``, at which two
-        photographs of one candidate are near-duplicates. None or 0: the rule is off. A photograph without a
-        ``phash`` is never dropped by it and never stands in for another.
-    :param counts: Counter that receives ``skipped_near_duplicate``, the number of distinct photographs the rule kept
-        out of the result (added to what the counter holds). None: the number is not reported.
+        photographs of one candidate are near-duplicates. None or 0 (the default): the rule is off. A photograph
+        without a ``phash`` is never dropped by it and never stands in for another.
+    :param counts: Counter that receives (added to what it holds) ``skipped_near_duplicate``, the number of distinct
+        photographs the near-duplicate rule kept out of the result; with ``only_missing_usable``,
+        ``selected_missing_usable``, the returned images without a usable read; with ``unplaced``,
+        ``selected_unplaced``, the returned images that a candidate of ``unplaced`` lists (an image satisfying both is
+        counted in both). None: nothing is reported.
+    :param unplaced: Row ids of candidates with a side not placed (:func:`unplaced_candidates`): select their
+        photographs whatever reads they have. None: no such selection.
     :return: The images to read.
     :raises ValueError: For an unknown ``script``, a negative ``skip_near_duplicates``, or a ``phash`` that is not hex
         (only compared when the rule is on).
@@ -611,12 +708,16 @@ def select_images(cands: Iterable[Candidate], reads: Iterable[ReadRecord], *, sc
     by_sha: Dict[str, List[ReadRecord]] = defaultdict(list)
     for read in reads:
         by_sha[read.sha256].append(read)
+    filtered = only_missing_usable or unplaced is not None
     selected: List[ImageRef] = []
-    seen = set()
-    near_duplicates = set()         # sha256 of the photographs the rule dropped and no other candidate then selected
+    chosen: Set[str] = set()                # sha256 of the images selected so far
+    without_usable: Set[str] = set()        # sha256 of the photographs looked at that have no usable read
+    of_unplaced: Set[str] = set()           # sha256 of the photographs that an unplaced candidate lists
+    near_duplicates: Set[str] = set()       # sha256 the near-duplicate rule dropped and no other listing selected
     for cand in cands:
         if not _script_selected(cand.script, script):
             continue
+        cand_unplaced = unplaced is not None and cand.row_id in unplaced
         covered: List[str] = []     # hashes of this candidate's earlier photographs that already have a usable read
         for image, sha256 in _readable_photographs(cand):
             existing = by_sha.get(sha256, [])
@@ -624,21 +725,28 @@ def select_images(cands: Iterable[Candidate], reads: Iterable[ReadRecord], *, sc
             near_duplicate = _is_near_duplicate(image.phash, covered, skip_near_duplicates)
             if usable and image.phash:
                 covered.append(image.phash)
-            if sha256 in seen:
+            if not usable:
+                without_usable.add(sha256)
+            if cand_unplaced:
+                of_unplaced.add(sha256)
+            if sha256 in chosen:
                 continue
-            seen.add(sha256)
             if reader_id is not None and any(read.reader == reader_id for read in existing):
                 continue
-            if only_missing_usable and usable:
-                continue
+            if filtered and not ((only_missing_usable and not usable) or cand_unplaced):
+                continue                    # another candidate that lists it may still select it
             if near_duplicate:
-                seen.discard(sha256)        # only this candidate has a read twin: another one may still need it read
-                near_duplicates.add(sha256)
+                near_duplicates.add(sha256)     # only this candidate has a read twin: another one may still need it
                 continue
             near_duplicates.discard(sha256)
+            chosen.add(sha256)
             selected.append(image if image.sha256 else dataclasses.replace(image, sha256=sha256))
     if counts is not None:
         counts["skipped_near_duplicate"] += len(near_duplicates)
+        if only_missing_usable:
+            counts["selected_missing_usable"] += len(chosen & without_usable)
+        if unplaced is not None:
+            counts["selected_unplaced"] += len(chosen & of_unplaced)
     return selected
 
 
@@ -689,6 +797,142 @@ def _has_usable_peer(image: ImageRef, peers: Mapping[str, Sequence[Sequence[str]
     return bool(listings) and all(any(peer in usable for peer in listing) for listing in listings)
 
 
+# --- claims shared by concurrent jobs ----------------------------------------------------------------------------------
+
+def _parse_claim(raw: bytes) -> Optional[Tuple[str, str, str, float]]:
+    """One line of a claim log.
+
+    The parse is wrapped in try/except because the log is written by other processes, possibly from other machines
+    over a network volume where appends are not guaranteed atomic: a line torn, garbled or edited by hand must not stop
+    a reading job, so it is reported as None (the caller counts it) instead of raised.
+
+    :param raw: The line's bytes, without its newline.
+    :return: ``(sha256, reader, job, claimed_at as epoch seconds)``, or None for a line that is not a valid claim.
+    """
+    try:
+        record = json.loads(raw)
+        stamp = datetime.strptime(record["claimed_at"], CLAIM_STAMP).replace(tzinfo=timezone.utc).timestamp()
+        return str(record["sha256"]), str(record["reader"]), str(record["job"]), stamp
+    except (ValueError, KeyError, TypeError):       # invalid JSON or UTF-8, a field missing, not an object, bad time
+        return None
+
+
+def default_job_id(work_dir: Path) -> str:
+    """A job's id in a claim log when none is given: its work dir as an absolute path.
+
+    Under the per-job snapshot design each job reads into its own work dir, so concurrent jobs get different ids, and a
+    job restarted on the same work dir gets its old id back (it holds its earlier claims and can read those images).
+
+    :param work_dir: The job's work dir.
+    :return: The resolved path as a string.
+    """
+    return str(work_dir.resolve())
+
+
+class ClaimLog:
+    """An append-only log through which jobs reading into separate work dirs avoid reading the same photograph twice.
+
+    Each job keeps its own reads file (one snapshot work dir per job); the claim log is the only file they share.
+    Before every read attempt a job appends one line ``{"sha256", "reader", "claimed_at", "job"}`` in a single
+    ``O_APPEND`` write, then reads back what has been appended since it last looked. A (sha256, reader) pair is *held*
+    by the job of its first claim, in file order, that is younger than ``ttl_s`` (24 hours): appends are ordered, so
+    two jobs that claim one photograph at the same moment agree on which of them holds it. A job reads a photograph
+    only when no other job holds it. Claims are never released: a failed or interrupted attempt keeps its claim, which
+    expires after 24 hours; the same job (same id) holds its own claims and may read those photographs again.
+
+    Never edit or truncate the log while jobs run. On a volume shared by two machines appends are not guaranteed atomic:
+    a claim can be lost or a line torn (it is skipped and counted in ``malformed``); the worst outcome is one photograph
+    read by both jobs, never a wrong read (the reads files are merged on (sha256, reader)).
+
+    :ivar path: The log file (created, with its parent dirs, on the first claim).
+    :ivar job: This job's id.
+    :ivar ttl_s: Age in seconds after which a claim no longer holds its photograph.
+    :ivar malformed: Complete lines read so far that are not valid claims (skipped).
+    """
+
+    def __init__(self, path: Path, job: str, ttl_s: float = CLAIM_TTL_S) -> None:
+        """Open a claim log (nothing is read until :meth:`refresh`).
+
+        :param path: The log file (it may not exist yet).
+        :param job: This job's id (see :func:`default_job_id`).
+        :param ttl_s: Age in seconds after which a claim expires.
+        """
+        self.path, self.job, self.ttl_s = path, job, ttl_s
+        self.malformed = 0
+        self._offset = 0                    # bytes of the log read so far (always the end of a complete line)
+        self._claims: Dict[Tuple[str, str], List[Tuple[str, float]]] = defaultdict(list)
+
+    def refresh(self) -> int:
+        """Read the lines appended since the last call.
+
+        A last line without its newline is still being written by another job: it is left for the next call.
+
+        :return: Number of valid claims read.
+        """
+        if not self.path.exists():
+            return 0
+        with self.path.open("rb") as fh:
+            fh.seek(self._offset)
+            chunk = fh.read()
+        end = chunk.rfind(b"\n") + 1
+        added = 0
+        for raw in chunk[:end].split(b"\n"):
+            if not raw.strip():
+                continue
+            parsed = _parse_claim(raw)
+            if parsed is None:
+                self.malformed += 1
+                continue
+            sha256, reader, job, stamp = parsed
+            self._claims[(sha256, reader)].append((job, stamp))
+            added += 1
+        self._offset += end
+        return added
+
+    def holder(self, sha256: str, reader: str, now: Optional[float] = None) -> Optional[str]:
+        """The job holding a photograph for a reader, from the claims read so far.
+
+        :param sha256: The photograph's sha256.
+        :param reader: Reader id.
+        :param now: Epoch seconds to judge the claims' age at; None: the current time.
+        :return: The job of the first claim of the pair (file order) younger than ``ttl_s``; None when there is none.
+        """
+        now = time.time() if now is None else now
+        for job, stamp in self._claims.get((sha256, reader), ()):
+            if now - stamp < self.ttl_s:
+                return job
+        return None
+
+    def held_by_other(self, sha256: str, reader: str) -> bool:
+        """Whether another job holds a photograph for a reader (from the claims read so far; see :meth:`refresh`).
+
+        :param sha256: The photograph's sha256.
+        :param reader: Reader id.
+        :return: True when :meth:`holder` is a job other than this one.
+        """
+        return self.holder(sha256, reader) not in (None, self.job)
+
+    def claim(self, sha256: str, reader: str) -> bool:
+        """Append this job's claim of a photograph, then read the log back and say whether this job holds it.
+
+        :param sha256: The photograph's sha256.
+        :param reader: Reader id.
+        :return: False when another job's live claim of the pair comes first in the log (it holds the photograph).
+        """
+        line = json.dumps({"sha256": sha256, "reader": reader, "claimed_at": now_utc(), "job": self.job},
+                          ensure_ascii=False) + "\n"
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o644)
+        try:
+            os.write(fd, line.encode("utf-8"))      # one write: on a local volume concurrent appends do not interleave
+        finally:
+            os.close(fd)
+        self.refresh()
+        return not self.held_by_other(sha256, reader)
+
+
+# --- the run -----------------------------------------------------------------------------------------------------------
+
 def _attempt(image: ImageRef, read_fn: ReadFn) -> Tuple[Optional[ReadRecord], Optional[str]]:
     """Read one selected image and judge the outcome.
 
@@ -708,9 +952,28 @@ def _attempt(image: ImageRef, read_fn: ReadFn) -> Tuple[Optional[ReadRecord], Op
     return record, None
 
 
+def _selection_note(counts: Mapping[str, int], only_missing_usable: bool, n_unplaced: Optional[int]) -> str:
+    """The selection part of the launch line of :func:`run_reads`.
+
+    :param counts: The counter :func:`select_images` filled.
+    :param only_missing_usable: Whether that selection is on.
+    :param n_unplaced: Number of candidates with an unplaced side; None when that selection is off.
+    :return: E.g. ``"selected: 12 without a usable read, 30 of 9 candidates with an unplaced side"`` or
+        ``"selected: every image not read by this reader"``.
+    """
+    parts = []
+    if only_missing_usable:
+        parts.append(f"{counts['selected_missing_usable']} without a usable read")
+    if n_unplaced is not None:
+        parts.append(f"{counts['selected_unplaced']} of {n_unplaced} candidates with an unplaced side")
+    return "selected: " + (", ".join(parts) if parts else "every image not read by this reader")
+
+
 def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, script: str = "all",
               limit: Optional[int] = None, stop_file: Optional[Path] = None, only_missing_usable: bool = False,
-              skip_near_duplicates: Optional[int] = NEAR_DUPLICATE_BITS) -> Dict[str, int]:
+              skip_near_duplicates: Optional[int] = NEAR_DUPLICATE_BITS, only_unplaced: Optional[Path] = None,
+              claim_file: Optional[Path] = None, ignore_claims: bool = False,
+              job_id: Optional[str] = None) -> Dict[str, int]:
     """Read the photographs of the stage 1 file that this reader has not read yet.
 
     Records are appended to ``reads/reads.jsonl`` one at a time (flushed), so an interrupted run loses nothing. A
@@ -718,12 +981,18 @@ def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, scrip
     ``reads/reads_failures.jsonl`` and leaves the image unread. The run ends after five failures in a row, when
     ``stop_file`` exists (checked before each image), or when the queue is empty. Progress is printed every 25 reads.
 
-    The near-duplicate rule is applied twice. :func:`select_images` applies it when the queue is made, which removes
-    the photographs whose twin already has a usable read. Most twins are still unread then, so it is applied again
-    before each read: the photograph is skipped (not read, not a failure, counted) when, in every candidate that lists
-    it, an earlier near-duplicate has a usable read by now, the reads of this run included. The queue keeps candidate
-    order, so of two twins unread at launch the first is read and the second skipped, unless that first read is
-    unusable or fails.
+    The near-duplicate rule (off unless ``skip_near_duplicates`` is set) is applied twice. :func:`select_images`
+    applies it when the queue is made, which removes the photographs whose twin already has a usable read. Most twins
+    are still unread then, so it is applied again before each read: the photograph is skipped (not read, not a failure,
+    counted) when, in every candidate that lists it, an earlier near-duplicate has a usable read by now, the reads of
+    this run included. The queue keeps candidate order, so of two twins unread at launch the first is read and the
+    second skipped, unless that first read is unusable or fails.
+
+    With a ``claim_file`` (:class:`ClaimLog`) the photographs another job holds for this reader are dropped when the
+    queue is made (before ``limit`` cuts it), and the log is read again before each read, so jobs running at the same
+    time share progress: a photograph another job has claimed by then is skipped; otherwise this job claims it (one
+    line per attempt, written before the request) and reads it unless another job's claim landed first. With
+    ``ignore_claims`` nothing is skipped for a claim, but every attempt is still claimed.
 
     :param work_dir: The build's work dir (stage 1 file in, reads out).
     :param reader: ``kraken`` or ``vlm``.
@@ -736,10 +1005,19 @@ def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, scrip
     :param stop_file: Stop before the next image when this file exists; None: no stop file.
     :param only_missing_usable: See :func:`select_images`.
     :param skip_near_duplicates: See :func:`select_images`; None or 0 turns both applications of the rule off.
+    :param only_unplaced: A stage 2 sides file: also select the photographs of the candidates it leaves with a side
+        not accepted (:func:`unplaced_candidates`; the union with ``only_missing_usable`` when both are given). None:
+        no such selection.
+    :param claim_file: Claim log shared with other jobs; None: no claims.
+    :param ignore_claims: Read photographs other jobs hold (claims are still written).
+    :param job_id: This job's id in the claim log; None: :func:`default_job_id` of ``work_dir``.
     :return: Counts: ``queued``, ``skipped_near_duplicate`` (photographs the near-duplicate rule kept out of the queue
-        plus those it skipped at read time), ``read``, ``failed``, ``finish_<finish>`` per finish seen,
-        ``stopped_by_stop_file`` and ``stopped_by_failures`` (1 when that ended the run, else 0).
-    :raises FileNotFoundError: When the stage 1 file does not exist.
+        plus those it skipped at read time), ``skipped_claimed`` (photographs another job held, at launch or at read
+        time), ``claims_written``, ``read``, ``failed``, ``finish_<finish>`` per finish seen, ``stopped_by_stop_file``
+        and ``stopped_by_failures`` (1 when that ended the run, else 0); with ``only_missing_usable``,
+        ``selected_missing_usable``; with ``only_unplaced``, ``candidates_unplaced`` and ``selected_unplaced`` (see
+        :func:`select_images`; counted before claims and ``limit``).
+    :raises FileNotFoundError: When the stage 1 file or the ``only_unplaced`` file does not exist.
     """
     stage1 = paths.stage_path(work_dir, "images")
     if not stage1.exists():
@@ -749,19 +1027,38 @@ def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, scrip
     repair_tail(reads_file)
     repair_tail(failures_file)
     existing = load_reads(work_dir)
-    skips: Counter = Counter()
+    unplaced = unplaced_candidates(only_unplaced) if only_unplaced is not None else None
+    selection: Counter = Counter()
     queue = select_images(schema.read_jsonl(stage1, Candidate), existing, script=script,
                           only_missing_usable=only_missing_usable, reader_id=reader_id,
-                          skip_near_duplicates=skip_near_duplicates, counts=skips)
+                          skip_near_duplicates=skip_near_duplicates, counts=selection, unplaced=unplaced)
+    counts: Counter = Counter({"queued": 0, "skipped_near_duplicate": selection["skipped_near_duplicate"],
+                               "skipped_claimed": 0, "claims_written": 0, "read": 0, "failed": 0,
+                               "stopped_by_stop_file": 0, "stopped_by_failures": 0})
+    if only_missing_usable:
+        counts["selected_missing_usable"] = selection["selected_missing_usable"]
+    if unplaced is not None:
+        counts["candidates_unplaced"] = len(unplaced)
+        counts["selected_unplaced"] = selection["selected_unplaced"]
+    claims = ClaimLog(claim_file, job_id or default_job_id(work_dir)) if claim_file is not None else None
+    if claims is not None:
+        claims.refresh()
+        if not ignore_claims:
+            free = [image for image in queue if not claims.held_by_other(image.sha256 or "", reader_id)]
+            counts["skipped_claimed"] = len(queue) - len(free)
+            queue = free
     if limit is not None:
         queue = queue[: max(0, limit)]
+    counts["queued"] = len(queue)
     peers = _near_duplicate_peers(schema.read_jsonl(stage1, Candidate), script, skip_near_duplicates)
     usable = {read.sha256 for read in existing if is_usable(read)}      # grows with every usable read of this run
-    counts: Counter = Counter({"queued": len(queue), "skipped_near_duplicate": skips["skipped_near_duplicate"],
-                               "read": 0, "failed": 0, "stopped_by_stop_file": 0, "stopped_by_failures": 0})
-    print(f"{now_utc()} {reader_id}: {len(queue)} images queued ({script}, only_missing_usable={only_missing_usable}, "
+    claim_note = "no claim file" if claims is None else (
+        f"claim file {claims.path} as job {claims.job}: "
+        + ("claims ignored" if ignore_claims else f"{counts['skipped_claimed']} held by other jobs"))
+    print(f"{now_utc()} {reader_id}: {len(queue)} images queued ({script}; "
+          f"{_selection_note(selection, only_missing_usable, None if unplaced is None else len(unplaced))}; "
           f"skip_near_duplicates={skip_near_duplicates}: {counts['skipped_near_duplicate']} skipped as "
-          f"near-duplicates at launch)", flush=True)
+          f"near-duplicates at launch; {claim_note})", flush=True)
     consecutive, seconds = 0, 0.0
     for image in queue:
         if stop_file is not None and stop_file.exists():
@@ -772,6 +1069,20 @@ def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, scrip
             counts["skipped_near_duplicate"] += 1
             print(f"{now_utc()} skipped {image.path}: a near-duplicate of it now has a usable read", flush=True)
             continue
+        if claims is not None:
+            sha256 = image.sha256 or ""             # always set on a selected image
+            claims.refresh()
+            if not ignore_claims and claims.held_by_other(sha256, reader_id):
+                counts["skipped_claimed"] += 1
+                print(f"{now_utc()} skipped {image.path}: claimed by job {claims.holder(sha256, reader_id)}", flush=True)
+                continue
+            held = claims.claim(sha256, reader_id)
+            counts["claims_written"] += 1
+            if not held and not ignore_claims:
+                counts["skipped_claimed"] += 1
+                print(f"{now_utc()} skipped {image.path}: job {claims.holder(sha256, reader_id)} claimed it first",
+                      flush=True)
+                continue
         record, error = _attempt(image, read_fn)
         if record is None:
             append_jsonl(failures_file, {"sha256": image.sha256, "reader": reader_id, "path": image.path, "error": error,
@@ -803,7 +1114,7 @@ def build_parser() -> argparse.ArgumentParser:
     """The command-line parser.
 
     :return: Parser with ``--work-dir --reader --model --script --limit --stop-file --only-missing-usable
-        --skip-near-duplicates --import-legacy --gemini-index``.
+        --only-unplaced --skip-near-duplicates --claim-file --job-id --ignore-claims --import-legacy --gemini-index``.
     """
     parser = argparse.ArgumentParser(description="Stage 2 of the novel-rows build: OCR reads of the candidate photographs "
                                                  "(evidence for side placement only).")
@@ -820,10 +1131,21 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--stop-file", type=Path, default=None,
                         help="stop cleanly before the next image when this file exists (default: <work dir>/reads/STOP)")
     parser.add_argument("--only-missing-usable", action="store_true",
-                        help="read only images without a usable read from any reader")
+                        help="read only images without a usable read from any reader (with --only-unplaced: the union)")
+    parser.add_argument("--only-unplaced", type=Path, default=None, metavar="SIDES_FILE",
+                        help="read the photographs of candidates that this stage 2 sides file leaves with a side not "
+                             "accepted, whatever reads they have (with --only-missing-usable: the union)")
     parser.add_argument("--skip-near-duplicates", type=int, default=NEAR_DUPLICATE_BITS, metavar="N",
-                        help="do not read a photograph whose 64-bit phash is within N bits of an earlier photograph of "
-                             "the same candidate that already has a usable read (default: %(default)s; 0 disables)")
+                        help="opt-in: do not read a photograph whose 64-bit phash is within N bits of an earlier "
+                             "photograph of the same candidate that already has a usable read (default: %(default)s, "
+                             "off; two faces of one leaf can be phash twins)")
+    parser.add_argument("--claim-file", type=Path, default=None,
+                        help="append-only claim log shared with jobs reading into other work dirs: skip photographs "
+                             "another job claimed for this reader in the last 24 h, claim each one before reading it")
+    parser.add_argument("--job-id", default=None,
+                        help="with --claim-file: this job's id in the log (default: the work dir's absolute path)")
+    parser.add_argument("--ignore-claims", action="store_true",
+                        help="with --claim-file: read photographs other jobs claimed (this job still writes its claims)")
     parser.add_argument("--import-legacy", type=Path, default=None, metavar="KRAKEN_CACHE",
                         help="import the Kraken read cache of the earlier legacy-store build (JSON lines) first")
     parser.add_argument("--gemini-index", type=Path, default=None,
@@ -846,6 +1168,10 @@ def main(argv: Optional[List[str]] = None) -> None:
         parser.error("--model (the model key) is required with --reader vlm")
     if args.skip_near_duplicates < 0:
         parser.error("--skip-near-duplicates takes a number of bits: 0 (off) or more")
+    if args.claim_file is None and (args.ignore_claims or args.job_id is not None):
+        parser.error("--ignore-claims and --job-id need --claim-file")
+    if args.reader is not None and args.only_unplaced is not None and not args.only_unplaced.is_file():
+        parser.error(f"--only-unplaced: no sides file at {args.only_unplaced}")
     if args.import_legacy is not None:
         imported = import_legacy_reads(args.work_dir, args.import_legacy, args.gemini_index)
         print(f"{now_utc()} imported {imported} legacy reads into {reads_path(args.work_dir)}", flush=True)
@@ -858,7 +1184,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         read_fn = functools.partial(vlm_read, model_key=model)
     counts = run_reads(args.work_dir, reader=args.reader, model=model, read_fn=read_fn, script=args.script,
                        limit=args.limit, stop_file=args.stop_file or default_stop_file(args.work_dir),
-                       only_missing_usable=args.only_missing_usable, skip_near_duplicates=args.skip_near_duplicates)
+                       only_missing_usable=args.only_missing_usable, skip_near_duplicates=args.skip_near_duplicates,
+                       only_unplaced=args.only_unplaced, claim_file=args.claim_file, ignore_claims=args.ignore_claims,
+                       job_id=args.job_id)
     print(json.dumps(counts, indent=1), flush=True)
 
 

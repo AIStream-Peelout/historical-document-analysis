@@ -15,6 +15,10 @@ stage0 down the stages and stops at the first stage it does not pass.
 
 Script: the ledger's script up to "side verified"; from "quality passed" on, the script measured on the final target.
 Document groups are the ledger's ``document_group`` (sides and editions of one fragment share one group).
+
+The build's human-review gate (approved works, approved rows, review policy) is reported apart, in the review table
+(:func:`review_counts`): per source the sides pending work or row review, the sides rejected by review, the rows
+admitted with review flags, and the rule-recovered placements admitted and excluded.
 """
 from __future__ import annotations
 
@@ -45,6 +49,21 @@ VERDICT_STAGES = {"held_out": "held_out_ledger", "previously_trained": "previous
 EVIDENCE_KEYS = ("image", "document", "image_uncertain", "document_uncertain")
 #: Display names of the legacy-store sources (reports never print the ledger's source keys for them).
 SOURCE_LABELS = {"fjp": "legacy_store", "fjp_scrape": "legacy_store_scrape"}
+#: Stage-2 reason codes that mark a rule-recovered placement on an accepted side (``side_assign.FLAG_ONLY``; a test
+#: pins the two lists together).
+RULE_RECOVERED_REASONS = ("spill_ratio_ok", "conflict_ratio_ok")
+#: Review codes the build writes. Each is an exclusion reason when its class is under review policy ``require`` and a
+#: ``quality_flags`` entry on the admitted row when it is under ``flag``; ``review_pending_work`` and
+#: ``review_rejected`` are followed by ``:<source>:<work>`` and ``:<verdict>``.
+REVIEW_PENDING_WORK = "review_pending_work"
+REVIEW_PENDING_ROW = "review_pending_row"
+REVIEW_REJECTED = "review_rejected"
+#: Columns of the review table: key, display label.
+REVIEW_COLUMNS: Tuple[Tuple[str, str], ...] = (
+    ("pending_work", "pending work review"), ("pending_row", "pending row review"),
+    ("rejected", "rejected by review"), ("admitted_flagged", "admitted with flags"),
+    ("rule_admitted", "rule-recovered admitted"), ("rule_excluded", "rule-recovered excluded"),
+    ("rule_excluded_by_review", "of which by review"))
 
 
 @dataclass(frozen=True)
@@ -305,6 +324,31 @@ def cleared(result: HoldoutResult) -> bool:
     return not result.held_out and result.split in ROW_SPLITS
 
 
+def is_rule_recovered(reasons: Iterable[str]) -> bool:
+    """True when the reasons of an accepted side decision include a rule-recovery code.
+
+    :param reasons: A stage2 decision's reasons.
+    :return: Whether any is in :data:`RULE_RECOVERED_REASONS` (``spill_ratio_ok`` / ``conflict_ratio_ok``).
+    """
+    return any(reason in RULE_RECOVERED_REASONS for reason in reasons or [])
+
+
+def review_kind(code: str) -> Optional[str]:
+    """Which review class a reason or flag code belongs to.
+
+    :param code: A reason or a ``quality_flags`` entry.
+    :return: ``pending_work`` (``review_pending_work:<source>:<work>``), ``pending_row`` (``review_pending_row``),
+        ``rejected`` (``review_rejected:<verdict>``), or None for any other code.
+    """
+    if code == REVIEW_PENDING_ROW:
+        return "pending_row"
+    if code.startswith(REVIEW_PENDING_WORK + ":"):
+        return "pending_work"
+    if code.startswith(REVIEW_REJECTED + ":"):
+        return "rejected"
+    return None
+
+
 # ---------------------------------------------------------------------------------------------------------- counting
 
 def stage_members(data: StageData) -> Dict[str, List[Member]]:
@@ -470,7 +514,8 @@ def trace(data: StageData, limit: Optional[int] = None) -> List[Dict[str, Any]]:
     :param data: Loaded stage data.
     :param limit: Only the first N stage0 candidates.
     :return: Records ``{row_id, side_key, source, document_group, ledger_script, verdict, stage, reasons,
-        side_outcome, image_sha256, measured_script, quality_flags, split, holdout_reasons, rnl}``.
+        side_outcome, image_sha256, measured_script, quality_flags, split, holdout_reasons, rnl, rule_recovered}``
+        (``rule_recovered``: the side was accepted by the spill or conflict ratio rule, :func:`is_rule_recovered`).
     """
     lookup = Lookup(data)
     stage1 = {cand.row_id: cand for cand in data.images}
@@ -485,7 +530,7 @@ def trace(data: StageData, limit: Optional[int] = None) -> List[Dict[str, Any]]:
         base = {"row_id": cand.row_id, "source": source, "document_group": group, "ledger_script": script,
                 "verdict": entry.verdict if entry is not None else "not_in_ledger", "side_outcome": None,
                 "image_sha256": None, "measured_script": None, "quality_flags": [], "split": None,
-                "holdout_reasons": [], "rnl": bool(cand.rnl)}
+                "holdout_reasons": [], "rnl": bool(cand.rnl), "rule_recovered": False}
         if not cand.targets:
             out.append({**base, "side_key": "", "stage": "novel", "reasons": ["no_target"]})
             continue
@@ -522,7 +567,8 @@ def _trace_side(rec: Dict[str, Any], found: Sequence[ImageRef], stage1: Optional
     if decision.outcome != "accepted":
         rec["reasons"] = list(decision.reasons) or [f"side_{decision.outcome}"]
         return rec
-    rec.update(stage="side_verified", image_sha256=decision.image_sha256)
+    rec.update(stage="side_verified", image_sha256=decision.image_sha256,
+               rule_recovered=is_rule_recovered(decision.reasons))
     if result is None:
         rec["reasons"] = ["no_quality_record"]
         return rec
@@ -586,7 +632,9 @@ def drop_reasons(data: StageData, traced: Sequence[Mapping[str, Any]]) -> Dict[s
 
     Ledger stages count candidates once per reason; builder stages count sides once per reason (a side with two
     reasons counts in both). Hold-out reasons are counted without their document ids. Sides that cleared the
-    hold-outs but are not rows take the build's reasons from the stage6 decisions, else ``not_built``.
+    hold-outs but are not rows take the build's reasons from the stage6 decisions, else ``not_built``; the build's
+    review reasons are counted without their work (``review_pending_work:literature``) and verdict
+    (``review_rejected:wrong_side``), which :func:`review_counts` lists.
 
     :param data: Loaded stage data.
     :param traced: :func:`trace` records.
@@ -614,7 +662,7 @@ def drop_reasons(data: StageData, traced: Sequence[Mapping[str, Any]]) -> Dict[s
             target, reasons = "rows", reasons or ["not_built"]
         else:
             target, reasons = NEXT_STAGE[rec["stage"]], list(rec["reasons"])
-        if target == "held_out_builder":
+        if target in ("held_out_builder", "rows"):
             reasons = [reason_code(reason) for reason in reasons]
         for reason in dict.fromkeys(reasons):
             table[target][(reason, rec["source"])] += 1
@@ -638,6 +686,54 @@ def review_queue(data: StageData) -> Dict[str, Dict[str, int]]:
             for reason in dict.fromkeys(decision.reasons or ["unspecified"]):
                 counter[(reason, source)] += 1
     return nest(counter)
+
+
+def review_counts(decisions: Sequence[Mapping[str, Any]], rows: Sequence[RowRecord]) -> Dict[str, Any]:
+    """The human-review gate in numbers: what waits on a reviewer, what a reviewer rejected, what got in unreviewed.
+
+    Counted from the build's own outputs: its per-(candidate, side) decisions (:func:`trace` records plus the build's
+    reasons) and its row manifest. A side is *pending work review* / *pending row review* / *rejected by review* when
+    it cleared every stage and the build's other checks and carries the matching review reason (a side with two review
+    reasons counts in each column); *admitted with flags* counts rows whose ``quality_flags`` hold a
+    ``review_pending_*`` code (policy ``flag``). Rule-recovered sides (:func:`is_rule_recovered`) are split into
+    those that became rows and those that did not, with the number of the latter that the review gate stopped.
+
+    :param decisions: Stage6 decision records (empty before the first build: every count is then 0).
+    :param rows: Stage6 row manifest.
+    :return: ``{sources, by_source, total, pending_works}``: ``by_source`` and ``total`` map each key of
+        :data:`REVIEW_COLUMNS` to a count (sides, or rows for ``admitted_flagged``); ``pending_works`` maps each
+        pending ``<source>:<work>`` key to the sides waiting on it.
+    """
+    cells: Dict[str, Counter] = defaultdict(Counter)
+    works: Counter = Counter()
+    for row in rows:
+        cells[row.source]["admitted_flagged"] += int(any(review_kind(flag) in ("pending_work", "pending_row")
+                                                         for flag in row.quality_flags))
+    for decision in decisions:
+        cell = cells[str(decision.get("source") or "unknown")]
+        built = decision.get("stage") == "row"
+        kinds = set()
+        if decision.get("stage") == "holdout_cleared":
+            for reason in dict.fromkeys(decision.get("reasons") or []):
+                kind = review_kind(reason)
+                if kind is not None:
+                    kinds.add(kind)
+                if kind == "pending_work":
+                    works[reason.split(":", 1)[1]] += 1
+        for kind in kinds:
+            cell[kind] += 1
+        if decision.get("rule_recovered"):
+            if built:
+                cell["rule_admitted"] += 1
+            else:
+                cell["rule_excluded"] += 1
+                cell["rule_excluded_by_review"] += int(bool(kinds))
+    sources = sorted(cells)
+    keys = [key for key, _ in REVIEW_COLUMNS]
+    by_source = {src: {key: cells[src][key] for key in keys} for src in sources}
+    return {"sources": sources, "by_source": by_source,
+            "total": {key: sum(by_source[src][key] for src in sources) for key in keys},
+            "pending_works": dict(sorted(works.items()))}
 
 
 def duplicate_keys(data: StageData) -> Dict[str, int]:
@@ -668,14 +764,15 @@ def funnel_from_data(data: StageData, *, now: Optional[datetime] = None) -> Dict
 
     :param data: Loaded stage data.
     :param now: Generation time (default: now, UTC).
-    :return: ``{generated_at, inputs, stages, counts, reasons, review_queue, other_verdicts, duplicates,
-        monotone_violations}`` (JSON-serialisable).
+    :return: ``{generated_at, inputs, stages, counts, reasons, review_queue, review, other_verdicts, duplicates,
+        monotone_violations}`` (JSON-serialisable; ``review`` is :func:`review_counts`).
     """
     counts = stage_counts(data)
     when = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
     return {"generated_at": when, "inputs": data.inputs,
             "stages": [{"key": s.key, "label": s.label, "level": s.level, "rendered": s.rendered} for s in STAGES],
             "counts": counts, "reasons": drop_reasons(data, trace(data)), "review_queue": review_queue(data),
+            "review": review_counts(data.decisions, data.rows),
             "other_verdicts": dict(Counter(e.verdict for e in data.ledger if e.verdict not in VERDICT_STAGES)),
             "duplicates": duplicate_keys(data), "monotone_violations": monotone_violations(counts)}
 
@@ -736,6 +833,31 @@ def stage_lines(cells_for: Mapping[str, Mapping[str, Mapping[str, Optional[int]]
     return lines
 
 
+def review_lines(review: Mapping[str, Any]) -> List[str]:
+    """The human-review gate section of ``FUNNEL.md``.
+
+    :param review: :func:`review_counts` result.
+    :return: Markdown lines (a heading, an explanation, the per-source table and the pending works).
+    """
+    out = ["", "## Human review gate", "",
+           "Sides that cleared every stage and the build's own checks, then met the review gate (a private reviews "
+           "file: approved works, approved rows, review policy). Counts are sides, except *admitted with flags*, "
+           "which counts rows; a side with two review reasons counts in each column. *Pending*: no approval yet "
+           "(excluded under policy `require`, which the reviews file's `required_works` imposes work by work; "
+           "admitted with a `review_pending_*` entry in `quality_flags` under `flag`); *rejected*: a reviewer's "
+           "verdict other than `ok`. *Rule-recovered*: accepted at stage 2 by the spill or conflict ratio rule; "
+           "*excluded* counts those that did not become rows at any stage.", ""]
+    keys = [key for key, _ in REVIEW_COLUMNS]
+    rows = [[source_label(src)] + [review["by_source"][src][key] for key in keys] for src in review["sources"]]
+    rows.append(["all"] + [review["total"][key] for key in keys])
+    out += _table(["source"] + [label for _, label in REVIEW_COLUMNS], rows, 1)
+    works = review["pending_works"]
+    out += ["", "Pending work review by work (the `approved_works` entry that clears it), sides:", ""]
+    out += _table(["work", "sides"], [[work, works[work]] for work in sorted(works, key=lambda w: (-works[w], w))],
+                  1) if works else ["(no work awaits review)"]
+    return out
+
+
 def render(funnel: Mapping[str, Any]) -> str:
     """``FUNNEL.md`` of a computed funnel.
 
@@ -785,8 +907,9 @@ def render(funnel: Mapping[str, Any]) -> str:
         else ["(empty)"]
     uncertain = counts["total"]["uncertain_history"]
     out += ["", f"Ledger review queue: {uncertain['candidates']} uncertain-history candidates "
-                f"({uncertain['groups']} document groups), neither counted as novel nor discarded.", "",
-            "## Consistency", ""]
+                f"({uncertain['groups']} document groups), neither counted as novel nor discarded."]
+    out += review_lines(funnel["review"])
+    out += ["", "## Consistency", ""]
     violations = funnel["monotone_violations"]
     out += ([f"- NOT MONOTONE: {v}" for v in violations] if violations else
             ["- Every stage count is at most the count of the stage before it (candidates, sides and document "

@@ -6,6 +6,17 @@ found (stage1), the side placed on that photograph by reads (stage2), the qualit
 stage1 image with a local file; the read that placed the side exists; the text is not empty) and never re-decides
 novelty, sides or quality.
 
+A last gate makes the plan's human review executable (:func:`review_gate`; the private reviews file comes from
+``--reviews`` or the env var ``NOVEL_BUILD_REVIEWS``). A passed quality stage only means the automated checks passed:
+a side of a scanned-edition source (``literature``, ``lit_run2``) counts once its work's OCR eye sheet is listed under
+``approved_works``, and a rule-recovered placement (decision reasons ``spill_ratio_ok`` / ``conflict_ratio_ok``) once
+an ``approved_rows`` entry says ``ok`` for it, when the review policy of that class is ``require``. Under ``flag`` the
+row is admitted with a ``review_pending_*`` entry in its ``quality_flags``. A verdict other than ``ok`` excludes the
+row under either policy. With no reviews file the defaults apply: scanned-edition works ``require``, rule-recovered
+placements ``flag``. The works named in the reviews file's ``required_works`` are ``require`` whatever the policy of
+the rest says (the typewritten theses need their eye sheet; printed editions can be flagged);
+``python -m src.finetuning.qwen_hebrew.novel_build.build --list-works`` prints the work keys of stage0 to choose from.
+
 Rows are in the KTIV ``FEATURES`` schema every page builder writes (``image`` = the local file, which
 ``save_dataset`` embeds), ``question = SCRIPT_NEUTRAL_PROMPT`` on every row, section ``novel_page``.
 
@@ -24,13 +35,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import shutil
 from collections import Counter, defaultdict
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 from PIL import Image as PILImage
 
@@ -66,6 +78,26 @@ OUT_NAME = re.compile(r"^genizah_novel_v\d+")
 FORBIDDEN_README = (LEGACY_STORE_ORIGIN_PREFIX, "/volumes", "studio_offload", "localhost", "http://", "https://")
 PRIVATE_BANNER = ("**PRIVATE. Never publish, push or release this dataset, its images-once export or anything derived "
                   "from them.**")
+#: Ledger sources whose targets are OCR of scanned (typewritten) editions: each of their works needs an eye sheet.
+TYPEWRITTEN_SOURCES = ("literature", "lit_run2")
+#: Environment variable naming the private reviews file (``--reviews`` wins over it).
+REVIEWS_ENV = "NOVEL_BUILD_REVIEWS"
+#: How ``stats.json`` names the reviews file in its input digests (never its path).
+REVIEWS_INPUT_NAME = "reviews.json"
+#: A reviewer's verdicts on one (candidate, side); only ``ok`` approves.
+REVIEW_VERDICTS = ("ok", "wrong_side", "wrong_image", "partial", "bad_ocr")
+#: What a review policy does with a class of rows that has no approval: refuse them or admit them with a flag.
+REVIEW_POLICY_VALUES = ("require", "flag")
+#: Review classes and their default policy (no reviews file: scanned-edition works need approval, rule-recovered
+#: placements are flagged).
+DEFAULT_REVIEW_POLICY = {"typewritten_works": "require", "rule_recovered": "flag"}
+#: Top-level keys of the reviews file (``required_works``: work keys that are ``require`` whatever the policy says).
+REVIEW_FILE_KEYS = ("approved_works", "approved_rows", "required_works", "review_policy")
+#: Fields of an ``approved_works`` entry (all required; ``note`` is optional) and of an ``approved_rows`` entry.
+WORK_ENTRY_FIELDS = ("work", "reviewed_by", "date", "sheet")
+ROW_ENTRY_FIELDS = ("row_id", "side_key", "verdict")
+#: Entry fields that are matched by exact string: surrounding whitespace is refused (it would never match).
+KEY_FIELDS = ("work", "row_id", "side_key")
 EXIF_ORIENTATION = 0x0112
 ROTATED_ORIENTATIONS = (5, 6, 7, 8)
 #: ``images_once`` manifest keys copied into ``stats.json`` (counts only, no paths).
@@ -243,13 +275,382 @@ def build_gates(rec: Mapping[str, Any], image: Optional[ImageRef], read: Optiona
     return reasons
 
 
+# ------------------------------------------------------------------------------------------------------- review gate
+
+@dataclass(frozen=True)
+class Reviews:
+    """The human-review state of a build: what reviewers approved or rejected, and how strictly each class is gated.
+
+    :param approved_works: ``<source>:<work>`` (see :func:`work_key`) -> its approval entry (``work``,
+        ``reviewed_by``, ``date``, ``sheet``, optional ``note``): scanned-edition works whose OCR eye sheet was done.
+    :param approved_rows: ``(row_id, side_key)`` -> its entry (``verdict`` one of :data:`REVIEW_VERDICTS`, optional
+        ``note``).
+    :param policy: ``typewritten_works`` and ``rule_recovered`` -> ``require`` (a row without an approval is excluded)
+        or ``flag`` (admitted with a ``review_pending_*`` entry in its ``quality_flags``).
+    :param required_works: ``<source>:<work>`` keys that are ``require`` whatever ``policy["typewritten_works"]``
+        says (that policy then applies to the other scanned-edition works): the typewritten theses need their eye
+        sheet, printed editions with a good OCR can be flagged.
+    """
+
+    approved_works: Mapping[str, Mapping[str, str]] = field(default_factory=dict)
+    approved_rows: Mapping[Tuple[str, str], Mapping[str, str]] = field(default_factory=dict)
+    policy: Mapping[str, str] = field(default_factory=lambda: dict(DEFAULT_REVIEW_POLICY))
+    required_works: FrozenSet[str] = field(default_factory=frozenset)
+
+    def work_policy(self, key: str) -> str:
+        """The policy that applies to a scanned-edition work.
+
+        :param key: The work key (:func:`work_key`).
+        :return: ``require`` for a work in ``required_works``, else the ``typewritten_works`` policy.
+        """
+        return "require" if key in self.required_works else self.policy["typewritten_works"]
+
+
+def _work_key_problem(key: str, where: str) -> Optional[str]:
+    """What is wrong with a work key as the reviews file spells it.
+
+    :param key: The key (``<source>:<work>``).
+    :param where: Its position, for the message.
+    :return: A message, or None when the key reads ``<source>:<work>`` with a source of :data:`TYPEWRITTEN_SOURCES`
+        and no surrounding whitespace.
+    """
+    source, _, name = key.partition(":")
+    if key != key.strip():
+        return f"{where}: {key!r} has leading or trailing whitespace (it would never match)"
+    if source not in TYPEWRITTEN_SOURCES or not name:
+        return f"{where}: {key!r} must read <source>:<work> with source one of {', '.join(TYPEWRITTEN_SOURCES)}"
+    return None
+
+
+def _entry_problems(entry: Mapping[str, Any], where: str, required: Sequence[str], optional: Sequence[str] = (),
+                    may_be_empty: Sequence[str] = ()) -> List[str]:
+    """Problems of one reviews-file entry: unknown or missing fields, non-string or blank values.
+
+    :param entry: The entry.
+    :param where: Its position, for the messages (``approved_rows[3]``).
+    :param required: Fields it must hold.
+    :param optional: Fields it may hold.
+    :param may_be_empty: String fields that may be the empty string (an unlabelled side's ``side_key``).
+    :return: One message per problem.
+    """
+    problems = [f"{where}: unknown field {name!r}" for name in entry if name not in (*required, *optional)]
+    for name in (*required, *optional):
+        if name not in entry:
+            if name in required:
+                problems.append(f"{where}: missing field {name!r}")
+            continue
+        value = entry[name]
+        if not isinstance(value, str):
+            problems.append(f"{where}.{name}: must be a string")
+        elif not value.strip() and name not in may_be_empty:
+            problems.append(f"{where}.{name}: must not be blank")
+        elif name in KEY_FIELDS and value != value.strip():
+            problems.append(f"{where}.{name}: {value!r} has leading or trailing whitespace (it would never match)")
+    return problems
+
+
+def parse_reviews(raw: Any) -> Reviews:
+    """Validate and index the content of a reviews file.
+
+    The file is one JSON object with four optional keys: ``approved_works`` (a list of ``{work, reviewed_by, date,
+    sheet}`` objects, ``note`` optional; ``work`` reads ``<source>:<work>`` with a source of
+    :data:`TYPEWRITTEN_SOURCES`, see :func:`work_key`), ``approved_rows`` (a list of ``{row_id, side_key, verdict}``
+    objects, ``note`` optional; ``verdict`` one of :data:`REVIEW_VERDICTS`), ``required_works`` (a list of work keys
+    that are ``require`` whatever ``typewritten_works`` says) and ``review_policy`` (``typewritten_works`` and
+    ``rule_recovered``, each ``require`` or ``flag``; defaults :data:`DEFAULT_REVIEW_POLICY`).
+
+    :param raw: The decoded JSON.
+    :return: The reviews.
+    :raises ValueError: Listing every problem found. A typo in a key, a verdict or a policy must not quietly turn a
+        rejection into nothing, so unknown keys, unknown verdicts and duplicate entries are errors.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("invalid reviews file: it must hold one JSON object")
+    problems = [f"unknown top-level key {key!r} (known: {', '.join(REVIEW_FILE_KEYS)})"
+                for key in raw if key not in REVIEW_FILE_KEYS]
+    policy = dict(DEFAULT_REVIEW_POLICY)
+    given = raw.get("review_policy", {})
+    if not isinstance(given, dict):
+        problems.append("review_policy: must be an object")
+        given = {}
+    for name, value in given.items():
+        if name not in DEFAULT_REVIEW_POLICY:
+            problems.append(f"review_policy: unknown class {name!r} (known: {', '.join(DEFAULT_REVIEW_POLICY)})")
+        elif value not in REVIEW_POLICY_VALUES:
+            problems.append(f"review_policy.{name}: {value!r} is not one of {', '.join(REVIEW_POLICY_VALUES)}")
+        else:
+            policy[name] = value
+    listed: Dict[str, List[Any]] = {}
+    for name in ("approved_works", "approved_rows", "required_works"):
+        listed[name] = raw.get(name, [])
+        if not isinstance(listed[name], list):
+            problems.append(f"{name}: must be a list")
+            listed[name] = []
+    works: Dict[str, Dict[str, str]] = {}
+    for i, entry in enumerate(listed["approved_works"]):
+        where = f"approved_works[{i}]"
+        if not isinstance(entry, dict):
+            problems.append(f"{where}: must be an object with {', '.join(WORK_ENTRY_FIELDS)}")
+            continue
+        found = _entry_problems(entry, where, WORK_ENTRY_FIELDS, ("note",))
+        problems += found
+        if found:
+            continue
+        problem = _work_key_problem(entry["work"], f"{where}.work")
+        if problem is not None:
+            problems.append(problem)
+        elif entry["work"] in works:
+            problems.append(f"{where}.work: {entry['work']!r} is listed twice")
+        else:
+            works[entry["work"]] = dict(entry)
+    required: List[str] = []
+    for i, key in enumerate(listed["required_works"]):
+        where = f"required_works[{i}]"
+        problem = (_work_key_problem(key, where) if isinstance(key, str)
+                   else f"{where}: must be a string <source>:<work>")
+        if problem is not None:
+            problems.append(problem)
+        elif key in required:
+            problems.append(f"{where}: {key!r} is listed twice")
+        else:
+            required.append(key)
+    rows: Dict[Tuple[str, str], Dict[str, str]] = {}
+    for i, entry in enumerate(listed["approved_rows"]):
+        where = f"approved_rows[{i}]"
+        if not isinstance(entry, dict):
+            problems.append(f"{where}: must be an object with {', '.join(ROW_ENTRY_FIELDS)}")
+            continue
+        found = _entry_problems(entry, where, ROW_ENTRY_FIELDS, ("note",), may_be_empty=("side_key", "note"))
+        problems += found
+        if found:
+            continue
+        key = (entry["row_id"], entry["side_key"])
+        if entry["verdict"] not in REVIEW_VERDICTS:
+            problems.append(f"{where}.verdict: {entry['verdict']!r} is not one of {', '.join(REVIEW_VERDICTS)}")
+        elif key in rows:
+            problems.append(f"{where}: ({key[0]!r}, {key[1]!r}) is listed twice")
+        else:
+            rows[key] = dict(entry)
+    if problems:
+        raise ValueError("invalid reviews file:\n  - " + "\n  - ".join(problems))
+    return Reviews(approved_works=works, approved_rows=rows, policy=policy, required_works=frozenset(required))
+
+
+def reviews_path(arg: Optional[Path]) -> Optional[Path]:
+    """The reviews file to use: the ``--reviews`` argument, else the env var :data:`REVIEWS_ENV`, else none.
+
+    :param arg: The ``--reviews`` argument.
+    :return: The path, or None.
+    """
+    if arg is not None:
+        return arg
+    return Path(os.environ[REVIEWS_ENV]) if os.environ.get(REVIEWS_ENV) else None
+
+
+def load_reviews(path: Optional[Path]) -> Reviews:
+    """Read a reviews file.
+
+    :param path: The file (see :func:`parse_reviews`), or None for no reviews: the default policy, nothing approved.
+    :return: The reviews.
+    :raises ValueError: When the file is missing or invalid (a configured file that cannot be used is an error, never
+        silently "no approvals").
+    """
+    if path is None:
+        return Reviews()
+    if not path.is_file():
+        raise ValueError(f"reviews file not found: {path}")
+    return parse_reviews(json.loads(path.read_text(encoding="utf-8")))
+
+
+def work_key(source: str, pointer: Mapping[str, Any]) -> str:
+    """The work a side of a scanned-edition source belongs to, spelled as an ``approved_works`` entry spells it.
+
+    ``literature``: ``literature:<work>/<part>`` from the target pointer's ``work`` and ``part`` fields (``work`` is
+    the scanned-edition folder and ``part`` the file inside it, e.g. ``dissertations/<one thesis>``; ``work`` alone
+    would merge several theses). ``lit_run2``: ``lit_run2:<doc_id without its last ':' segment>`` from the pointer's
+    ``doc_id`` (``lit:sample_1970:29,30`` gives ``lit_run2:lit:sample_1970``; the last segment is the item inside the
+    work). A pointer without those fields gives ``<source>:unknown``, which no sensible approval names.
+
+    :param source: Ledger source.
+    :param pointer: The side's target pointer.
+    :return: The work key.
+    """
+    if source == "literature":
+        name = "/".join(str(pointer[part]) for part in ("work", "part") if pointer.get(part))
+    else:
+        doc_id = str(pointer.get("doc_id") or "")
+        name = doc_id.rsplit(":", 1)[0] if ":" in doc_id else doc_id
+    return f"{source}:{name or 'unknown'}"
+
+
+def review_gate(source: str, row_id: str, side_key: str, pointer: Mapping[str, Any],
+                decision_reasons: Sequence[str], reviews: Reviews) -> Tuple[List[str], List[str]]:
+    """The human-review gate for one side that passed every other check.
+
+    * A verdict other than ``ok`` in ``approved_rows`` excludes the side with ``review_rejected:<verdict>``, whatever
+      its class and the policy.
+    * A side of a source in :data:`TYPEWRITTEN_SOURCES` whose work (:func:`work_key`) is not in ``approved_works`` is
+      ``review_pending_work:<source>:<work>``.
+    * A rule-recovered side (decision reasons ``spill_ratio_ok`` / ``conflict_ratio_ok``) with no ``approved_rows``
+      entry at all is ``review_pending_row``. A row-level ``ok`` does not approve an unapproved work.
+
+    A pending code excludes the side when the policy of its class is ``require`` and is returned as a flag (kept in
+    ``quality_flags`` of the admitted row) when it is ``flag``. The policy of a scanned-edition work is
+    :meth:`Reviews.work_policy`: ``require`` for the works in ``required_works``, else ``typewritten_works``.
+
+    :param source: Ledger source.
+    :param row_id: Candidate id.
+    :param side_key: Target side.
+    :param pointer: The side's target pointer (:func:`work_key`).
+    :param decision_reasons: Reasons of the side's stage2 decision.
+    :param reviews: The reviews.
+    :return: ``(exclusion reasons, flags)``; empty exclusion reasons mean the side is admitted.
+    """
+    reasons: List[str] = []
+    flags: List[str] = []
+    entry = reviews.approved_rows.get((row_id, side_key))
+    verdict = entry["verdict"] if entry is not None else None
+    if verdict is not None and verdict != "ok":
+        reasons.append(f"{funnel.REVIEW_REJECTED}:{verdict}")
+    if source in TYPEWRITTEN_SOURCES:
+        key = work_key(source, pointer)
+        if key not in reviews.approved_works:
+            (reasons if reviews.work_policy(key) == "require" else flags).append(f"{funnel.REVIEW_PENDING_WORK}:{key}")
+    if verdict is None and funnel.is_rule_recovered(decision_reasons):
+        (reasons if reviews.policy["rule_recovered"] == "require" else flags).append(funnel.REVIEW_PENDING_ROW)
+    return reasons, flags
+
+
+def review_violations(manifest: Sequence[RowRecord], reviews: Reviews) -> List[str]:
+    """The review gate's acceptance rules, checked on the admitted rows themselves (not on the gate's code path).
+
+    No admitted row of a class under policy ``require`` lacks its approval (a scanned-edition row: its work in
+    ``approved_works``, where a work in ``required_works`` is ``require`` whatever ``typewritten_works`` says; a
+    rule-recovered row: an ``ok`` entry in ``approved_rows``); no admitted row of a class under ``flag`` lacks its
+    ``review_pending_*`` entry in ``quality_flags``; no admitted row has a verdict other than ``ok``.
+
+    :param manifest: Row manifest.
+    :param reviews: The reviews.
+    :return: Violation messages (empty: acceptable).
+    """
+    unapproved_work: List[str] = []
+    unapproved_row: List[str] = []
+    rejected: List[str] = []
+    unflagged: List[str] = []
+    for m in manifest:
+        entry = reviews.approved_rows.get((m.row_id, m.side_key))
+        verdict = entry["verdict"] if entry is not None else None
+        flags = set(m.quality_flags)
+        if verdict is not None and verdict != "ok":
+            rejected.append(m.stem)
+        key = work_key(m.source, m.target_pointer) if m.source in TYPEWRITTEN_SOURCES else None
+        if key is not None and key not in reviews.approved_works:
+            if reviews.work_policy(key) == "require":
+                unapproved_work.append(m.stem)
+            elif f"{funnel.REVIEW_PENDING_WORK}:{key}" not in flags:
+                unflagged.append(m.stem)
+        if verdict is None and funnel.is_rule_recovered((m.side_basis or {}).get("reasons") or []):
+            if reviews.policy["rule_recovered"] == "require":
+                unapproved_row.append(m.stem)
+            elif funnel.REVIEW_PENDING_ROW not in flags:
+                unflagged.append(m.stem)
+    return (_examples("scanned-edition row whose work is not in approved_works (policy require)", unapproved_work)
+            + _examples("rule-recovered row without an ok entry in approved_rows (policy require)", unapproved_row)
+            + _examples("row with a review verdict other than ok", rejected)
+            + _examples("unreviewed row without its review_pending flag in quality_flags (policy flag)",
+                        list(dict.fromkeys(unflagged))))
+
+
+def unmatched_rejections(reviews: Reviews, data: funnel.StageData) -> List[str]:
+    """Rejections that name no (candidate, side) of stage0: a mistyped key would leave the row in the dataset.
+
+    A verdict other than ``ok`` only works when its ``(row_id, side_key)`` is exact, so one that matches nothing is a
+    violation (an ``ok`` that matches nothing merely leaves its row pending).
+
+    :param reviews: The reviews.
+    :param data: Loaded stage data (all stage0 candidates, whatever ``--limit`` says).
+    :return: ``[]`` or one violation message.
+    """
+    known = {(cand.row_id, target.side_key) for cand in data.candidates for target in cand.targets}
+    missing = [f"{row_id}#{side_key}" for (row_id, side_key), entry in reviews.approved_rows.items()
+               if entry["verdict"] != "ok" and (row_id, side_key) not in known]
+    return ([f"review verdict names no (candidate, side) of stage0: {len(missing)}, e.g. {', '.join(missing[:3])}"]
+            if missing else [])
+
+
+def list_works(cands: Iterable[Candidate]) -> Dict[str, int]:
+    """Sides per scanned-edition work of the stage0 candidates, spelled as ``approved_works`` / ``required_works`` do.
+
+    :param cands: Stage0 candidates (:func:`work_key` reads their sides' pointers; other sources have no work).
+    :return: ``work key -> sides``, most sides first, ties by key.
+    """
+    counts: Counter = Counter()
+    for cand in cands:
+        if cand.source in TYPEWRITTEN_SOURCES:
+            for target in cand.targets:
+                counts[work_key(cand.source, target.pointer)] += 1
+    return dict(sorted(counts.items(), key=lambda item: (-item[1], item[0])))
+
+
+def works_lines(counts: Mapping[str, int]) -> List[str]:
+    """What ``--list-works`` prints: a header with the totals per source, then one line per work.
+
+    :param counts: :func:`list_works` result.
+    :return: Lines (``<sides>  <work key>``).
+    """
+    per_source: Dict[str, List[int]] = {source: [0, 0] for source in TYPEWRITTEN_SOURCES}
+    for key, sides in counts.items():
+        totals = per_source.setdefault(key.split(":", 1)[0], [0, 0])
+        totals[0] += 1
+        totals[1] += sides
+    head = ", ".join(f"{source} {works} works / {sides} sides" for source, (works, sides) in per_source.items())
+    return [f"scanned-edition works in stage0: {len(counts)} works, {sum(counts.values())} sides ({head})",
+            "sides  work key (the string approved_works and required_works use)"
+            ] + [f"{sides:>5}  {key}" for key, sides in counts.items()]
+
+
+def unmatched_required_works(reviews: Reviews, data: funnel.StageData) -> List[str]:
+    """Required works that name no work of stage0: a mistyped key would fall back to the looser policy.
+
+    A work in ``required_works`` is ``require``; one that matches nothing silently leaves the intended work under
+    ``typewritten_works`` (possibly ``flag``), so it is a violation.
+
+    :param reviews: The reviews.
+    :param data: Loaded stage data (all stage0 candidates, whatever ``--limit`` says).
+    :return: ``[]`` or one violation message.
+    """
+    missing = sorted(reviews.required_works - set(list_works(data.candidates)))
+    return ([f"required_works names no work of stage0: {len(missing)}, e.g. {', '.join(missing[:3])}"]
+            if missing else [])
+
+
+def review_stats(reviews: Reviews, manifest: Sequence[RowRecord]) -> Dict[str, Any]:
+    """The review gate's part of ``stats.json``: the policy, what was approved or ruled on, and the unreviewed rows.
+
+    :param reviews: The reviews.
+    :param manifest: Row manifest.
+    :return: ``{policy, required_works, approved_works, row_verdicts, rows_admitted_with_flags}`` (counts only, no
+        keys or paths).
+    """
+    flagged = sum(1 for m in manifest if any(funnel.review_kind(flag) in ("pending_work", "pending_row")
+                                             for flag in m.quality_flags))
+    return {"policy": dict(reviews.policy), "required_works": len(reviews.required_works),
+            "approved_works": len(reviews.approved_works),
+            "row_verdicts": dict(Counter(entry["verdict"] for entry in reviews.approved_rows.values())),
+            "rows_admitted_with_flags": flagged}
+
+
 # ----------------------------------------------------------------------------------------------------------- assembly
 
 def assemble_rows(work_dir: Path, *, pool: Path, data: Optional[funnel.StageData] = None,
                   reads_path: Optional[Path] = None, limit: Optional[int] = None,
-                  is_file: Callable[[Path], bool] = Path.is_file
+                  is_file: Callable[[Path], bool] = Path.is_file, reviews: Optional[Reviews] = None
                   ) -> Tuple[List[Dict[str, Any]], List[RowRecord], List[Dict[str, Any]]]:
     """Join the stage files into rows, their manifest and one decision per (candidate, side).
+
+    A side that cleared the hold-outs and the build's own checks meets the review gate last (:func:`review_gate`):
+    its review exclusions are appended to the decision's ``reasons`` (the side stays at stage ``holdout_cleared``),
+    and a row admitted under policy ``flag`` carries the review flags in ``quality_flags``.
 
     :param work_dir: The build's work dir.
     :param pool: The novelty ledger.
@@ -257,12 +658,14 @@ def assemble_rows(work_dir: Path, *, pool: Path, data: Optional[funnel.StageData
     :param reads_path: Reads file (default: :func:`find_reads_file`).
     :param limit: Only the first N stage0 candidates.
     :param is_file: File-existence check (tests stub it).
+    :param reviews: Approvals and policy (default: no reviews file, i.e. the default policy and nothing approved).
     :return: ``(rows, manifest, decisions)``: rows in the KTIV ``FEATURES`` schema, one :class:`RowRecord` per row
         in the same order, and the decision records (the :func:`.funnel.trace` fields plus ``stem``,
         ``label_source``, ``image_origin`` and ``shelfmark``; stage ``row`` for rows).
     :raises ValueError: When two rows would get the same stem.
     """
     data = data if data is not None else funnel.load_stage_data(work_dir, pool, build_outputs=False)
+    reviews = reviews if reviews is not None else Reviews()
     reads = load_reads_index(reads_path if reads_path is not None else find_reads_file(work_dir))
     cands = {cand.row_id: cand for cand in data.candidates}
     stage1 = {cand.row_id: cand for cand in data.images}
@@ -284,10 +687,15 @@ def assemble_rows(work_dir: Path, *, pool: Path, data: Optional[funnel.StageData
         read = find_read(reads, side.image_sha256, side.reader)
         decision["image_origin"] = image.origin if image is not None else None
         gates = build_gates(rec, image, read, result, is_file)
-        if gates:
-            decision["reasons"] = gates
-            continue
         target = next(t for t in cand.targets if t.side_key == rec["side_key"])
+        review_reasons: List[str] = []
+        review_flags: List[str] = []
+        if not gates:         # the review gate is the last one: only sides that would be rows wait on a reviewer
+            review_reasons, review_flags = review_gate(rec["source"], rec["row_id"], rec["side_key"], target.pointer,
+                                                       side.reasons, reviews)
+        if gates or review_reasons:
+            decision["reasons"] = gates + review_reasons
+            continue
         stem = row_stem(rec["source"], rec["row_id"], rec["side_key"])
         text = result.text.strip()
         width, height = image_size(Path(image.path))
@@ -302,7 +710,8 @@ def assemble_rows(work_dir: Path, *, pool: Path, data: Optional[funnel.StageData
             image_sha256=side.image_sha256, image_path=image.path, image_url=image.url, image_origin=image.origin,
             target_pointer=dict(target.pointer), side_basis=side_basis(side, read), script=result.script,
             languages_stated=cand.languages_stated, verdict=rec["verdict"], witnesses=list(cand.witnesses),
-            quality_flags=list(result.reasons), holdout_reasons=list(rec["holdout_reasons"]), split=rec["split"],
+            quality_flags=list(dict.fromkeys([*result.reasons, *review_flags])),
+            holdout_reasons=list(rec["holdout_reasons"]), split=rec["split"],
             letters=result.letters_hebrew + result.letters_arabic, target_tokens=tokens))
         decision.update(stage="row", stem=stem)
     duplicates = sorted(stem for stem, n in Counter(row["stem"] for row in rows).items() if n > 1)
@@ -379,19 +788,23 @@ def _examples(label: str, stems: Sequence[str]) -> List[str]:
 
 
 def acceptance_checks(rows: Sequence[Dict[str, Any]], manifest: Sequence[RowRecord],
-                      decisions: Sequence[Mapping[str, Any]], counts: Mapping[str, Any]) -> List[str]:
+                      decisions: Sequence[Mapping[str, Any]], counts: Mapping[str, Any],
+                      reviews: Optional[Reviews] = None) -> List[str]:
     """The acceptance rules the build enforces; the build writes nothing while any is violated.
 
     Every row has an image sha256, a side basis (an accepted decision with its rule, reader and the read of the same
     photograph) and a hold-out result (split train or val) without reasons; the ledger verdict is ``novel``; the
     question is ``SCRIPT_NEUTRAL_PROMPT``; no answer holds a hygiene character (:data:`HYGIENE_CHARS`); no measured
     token count exceeds :data:`TOKEN_BUDGET`; stems are unique; validation rows share no document group with training
-    rows; every (candidate, side) that is not a row carries a reason; the stage counts are monotone.
+    rows; every (candidate, side) that is not a row carries a reason; the stage counts are monotone; and the review
+    gate holds (:func:`review_violations`): where the review policy requires a class, no admitted row of that class
+    lacks its approval.
 
     :param rows: Rows.
     :param manifest: Their manifest (same order).
     :param decisions: Decision records.
     :param counts: :func:`.funnel.stage_counts` of the stage data with this manifest as rows.
+    :param reviews: Approvals and policy (default: no reviews file, i.e. the default policy and nothing approved).
     :return: Violation messages (empty: acceptable).
     """
     out: List[str] = []
@@ -426,6 +839,7 @@ def acceptance_checks(rows: Sequence[Dict[str, Any]], manifest: Sequence[RowReco
     if silent:
         out.append(f"excluded without a reason: {len(silent)} (candidate, side), e.g. {', '.join(silent[:3])}")
     out += [f"stage counts not monotone: {v}" for v in funnel.monotone_violations(counts)]
+    out += review_violations(manifest, reviews if reviews is not None else Reviews())
     return out
 
 
@@ -444,7 +858,8 @@ def _has_side_basis(record: RowRecord) -> bool:
 
 def build_stats(name: str, manifest: Sequence[RowRecord], decisions: Sequence[Mapping[str, Any]],
                 counts: Mapping[str, Any], inputs: Sequence[Mapping[str, Any]], private_reasons: Sequence[str], *,
-                limit: Optional[int] = None, built: Optional[str] = None) -> Dict[str, Any]:
+                limit: Optional[int] = None, built: Optional[str] = None,
+                reviews: Optional[Reviews] = None) -> Dict[str, Any]:
     """``stats.json`` of a build (source names shown with their public-safe labels; no paths).
 
     :param name: Dataset directory name.
@@ -455,6 +870,7 @@ def build_stats(name: str, manifest: Sequence[RowRecord], decisions: Sequence[Ma
     :param private_reasons: :func:`privacy_reasons`.
     :param limit: The candidate limit of the run, if any.
     :param built: Build time (default: now, UTC).
+    :param reviews: Approvals and policy (default: no reviews file, i.e. the default policy and nothing approved).
     :return: Statistics.
     """
     per: Dict[str, Dict[str, Dict[str, int]]] = defaultdict(lambda: defaultdict(Counter))
@@ -477,6 +893,7 @@ def build_stats(name: str, manifest: Sequence[RowRecord], decisions: Sequence[Ma
             "exclusion_reasons": dict(reasons.most_common()),
             "funnel": {"total": counts["total"],
                        "by_source": {funnel.source_label(src): cells for src, cells in counts["by_source"].items()}},
+            "review": review_stats(reviews if reviews is not None else Reviews(), manifest),
             "inputs": [dict(i) for i in inputs], "limit": limit, "private": bool(private_reasons),
             "private_reasons": list(private_reasons), "acceptance": {"violations": []}}
 
@@ -500,6 +917,7 @@ def readme_text(stats: Mapping[str, Any]) -> str:
     :raises ValueError: When the text would name something :func:`check_public_text` refuses.
     """
     rows = stats["rows"]
+    review = stats["review"]
     lines = [f"# {stats['name']}", ""]
     if stats.get("private_reasons"):
         lines += [f"{PRIVATE_BANNER} {'; '.join(stats['private_reasons'])}.", ""]
@@ -512,6 +930,11 @@ def readme_text(stats: Mapping[str, Any]) -> str:
               f"document groups, {stats['row_letters']} letters)",
               "- each side was placed on its photograph by reads (never by a file name or a canvas order), passed the "
               "quality gates and the benchmark hold-outs; validation rows share no document group with training rows",
+              f"- human review gate: scanned-edition works `{review['policy']['typewritten_works']}`, rule-recovered "
+              f"placements `{review['policy']['rule_recovered']}` (`require`: no row without a recorded approval; "
+              f"`flag`: admitted with a `review_pending_*` entry in `quality_flags`)"
+              + (f"; {review['required_works']} named work(s) are always `require`" if review["required_works"] else "")
+              + f"; {review['rows_admitted_with_flags']} row(s) carry such a flag",
               "", "## Rows per source, script and split", ""]
     table = [[src, scr, by_split.get("train_page", 0), by_split.get("val", 0)]
              for src, by_scr in sorted(stats["rows_by_source_script_split"].items())
@@ -643,14 +1066,15 @@ def check_out_dir(out: Path, work_dir: Path) -> None:
 
 def summary_lines(rows: Sequence[Dict[str, Any]], manifest: Sequence[RowRecord],
                   decisions: Sequence[Mapping[str, Any]], counts: Mapping[str, Any],
-                  private_reasons: Sequence[str]) -> List[str]:
-    """What a run prints: rows, decisions by stage, funnel totals, privacy.
+                  private_reasons: Sequence[str], reviews: Optional[Reviews] = None) -> List[str]:
+    """What a run prints: rows, decisions by stage, funnel totals, the review gate, privacy.
 
     :param rows: Rows.
     :param manifest: Row manifest.
     :param decisions: Decision records.
     :param counts: Stage counts.
     :param private_reasons: :func:`privacy_reasons`.
+    :param reviews: Approvals and policy (default: no reviews file, i.e. the default policy and nothing approved).
     :return: Lines.
     """
     splits = Counter(SPLIT_NAMES.get(m.split, m.split) for m in manifest)
@@ -658,19 +1082,30 @@ def summary_lines(rows: Sequence[Dict[str, Any]], manifest: Sequence[RowRecord],
     chain = " -> ".join(
         f"{stage.label} {total[stage.key]['candidates' if stage.level in ('ledger', 'target') else 'sides']}"
         f" ({total[stage.key]['groups']})" for stage in funnel.STAGES if stage.rendered)
+    review = funnel.review_counts(decisions, manifest)
+    reviews = reviews if reviews is not None else Reviews()
+    policy, gate, works = reviews.policy, review["total"], review["pending_works"]
+    named = f", {len(reviews.required_works)} required works" if reviews.required_works else ""
     return [f"rows: {len(rows)} (train_page {splits.get('train_page', 0)}, val {splits.get('val', 0)}; "
             f"{len({m.document_group for m in manifest})} document groups)",
             f"decisions by stage: {dict(Counter(d.get('stage') for d in decisions))}",
             f"funnel: {chain}",
+            f"review (typewritten works {policy['typewritten_works']}{named}, rule-recovered "
+            f"{policy['rule_recovered']}): "
+            f"pending work {gate['pending_work']} sides ({len(works)} works), pending row {gate['pending_row']}, "
+            f"rejected {gate['rejected']}, admitted with flags {gate['admitted_flagged']}; rule-recovered admitted "
+            f"{gate['rule_admitted']}, excluded {gate['rule_excluded']} ({gate['rule_excluded_by_review']} by review)",
             "private: " + ("; ".join(private_reasons) if private_reasons else "nothing forces privacy")]
 
 
 def main(argv: Optional[List[str]] = None) -> None:
-    """CLI: assemble, check and write the dataset (or only print, with ``--dry-run``).
+    """CLI: assemble, check and write the dataset (or only print, with ``--dry-run``; or list the scanned-edition work
+    keys of stage0, with ``--list-works``).
 
     Exits with status 1 when any acceptance check fails (nothing is written then).
 
     :param argv: Arguments (default: ``sys.argv``).
+    :raises ValueError: When ``--list-works`` finds no stage0 file, or the reviews file is missing or invalid.
     """
     parser = argparse.ArgumentParser(description="Assemble the novel-rows dataset from the stage files, check the "
                                                  "acceptance rules and write it.")
@@ -683,17 +1118,35 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--public", action="store_true",
                         help="A build meant for release: refuse when any row would use a legacy-store photograph or "
                              "transcription or hold a Russian National Library document.")
+    parser.add_argument("--reviews", type=Path, default=None,
+                        help="Private JSON file with the human-review state: approved_works, approved_rows, "
+                             "required_works, review_policy "
+                             f"(env {REVIEWS_ENV}; default none: scanned-edition works need approval "
+                             "and nothing is approved). Never commit it.")
+    parser.add_argument("--list-works", action="store_true",
+                        help="Print every scanned-edition work key of the work dir's stage0 candidates with its side "
+                             "count (the keys approved_works and required_works use), then exit.")
     args = parser.parse_args(argv)
+    if args.list_works:
+        stage0 = paths.stage_path(args.work_dir, "candidates")
+        if not stage0.is_file():
+            raise ValueError(f"stage0 candidates not found: {stage0}")
+        for line in works_lines(list_works(read_jsonl(stage0, Candidate))):
+            print(line)
+        return
+    reviews_file = reviews_path(args.reviews)
+    reviews = load_reviews(reviews_file)
     data = funnel.load_stage_data(args.work_dir, args.pool, build_outputs=False)
     reads_path = find_reads_file(args.work_dir)
     rows, manifest, decisions = assemble_rows(args.work_dir, pool=args.pool, data=data, reads_path=reads_path,
-                                              limit=args.limit)
+                                              limit=args.limit, reviews=reviews)
     counts = funnel.stage_counts(replace(data, rows=list(manifest)))
-    violations = acceptance_checks(rows, manifest, decisions, counts) + out_dir_problems(args.out, args.work_dir)
+    violations = (acceptance_checks(rows, manifest, decisions, counts, reviews) + unmatched_rejections(reviews, data)
+                  + unmatched_required_works(reviews, data) + out_dir_problems(args.out, args.work_dir))
     private = privacy_reasons(manifest, decisions)
     if args.public:
         violations += [f"public build refused: {reason}" for reason in private]
-    for line in summary_lines(rows, manifest, decisions, counts, private):
+    for line in summary_lines(rows, manifest, decisions, counts, private, reviews):
         print(line)
     print("violations: " + ("none" if not violations else str(len(violations))))
     for violation in violations:
@@ -710,7 +1163,13 @@ def main(argv: Optional[List[str]] = None) -> None:
     if reads_path is not None:
         inputs.append(funnel.input_record(reads_path, reads_path.relative_to(args.work_dir).as_posix(),
                                           "reads (side-placement evidence)", count_records(reads_path)))
-    stats = build_stats(args.out.name, manifest, decisions, counts, inputs, private, limit=args.limit)
+    if reviews_file is not None:
+        inputs.append(funnel.input_record(reviews_file, REVIEWS_INPUT_NAME,
+                                          "private reviews file (approved and required works, row verdicts, policy)",
+                                          len(reviews.approved_works) + len(reviews.approved_rows)
+                                          + len(reviews.required_works)))
+    stats = build_stats(args.out.name, manifest, decisions, counts, inputs, private, limit=args.limit,
+                        reviews=reviews)
     stats = write_dataset(rows_by_split(rows, manifest), manifest, decisions, args.out, export=not args.no_export,
                           private=bool(private), stats=stats, readme=readme_text(stats))
     write_jsonl(paths.stage_path(args.work_dir, "rows"), manifest_lines(manifest, decisions))

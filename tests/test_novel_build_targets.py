@@ -7,6 +7,7 @@ from typing import Any, Dict, List
 
 import pytest
 
+from src.finetuning.qwen_hebrew import build_pgp_editions as bpe
 from src.finetuning.qwen_hebrew.novel_build import paths
 from src.finetuning.qwen_hebrew.novel_build import targets as T
 from src.finetuning.qwen_hebrew.novel_build.schema import Candidate, read_jsonl, write_jsonl
@@ -96,12 +97,102 @@ def test_pgp_text_before_first_label_goes_to_recto_and_unlabelled_is_one_side() 
     assert [(s.side_key, s.side_marker) for s in single.sides] == [("", None)]
 
 
-def test_pgp_cleaner_runs_and_flags_are_kept() -> None:
-    """The builder's line cleaner gives ``[...]`` for restorations; a repeated bare label is flagged complex."""
+def test_pgp_cleaner_runs() -> None:
+    """The builder's line cleaner gives ``[...]`` for restorations."""
     built = T.pgp_hebrew_sides("\n".join([R1, "אבגד [הוזח] טיכל"]), "7")
     assert built.sides[0].lines[1] == "אבגד [...] טיכל"
-    complex_ = T.pgp_hebrew_sides("\n".join(["Recto", R1, "Verso", V1, "Recto", R2]), "7")
-    assert complex_.flags["recto"][0] == "complex_side_labels"
+
+
+def _sections(built: T.Built) -> List[Any]:
+    """Key, marker, block indices and lines of each built side.
+
+    :param built: Built sides.
+    :return: One tuple per side.
+    """
+    return [(s.side_key, s.side_marker, s.pointer["block_indices"], s.lines) for s in built.sides]
+
+
+def test_pgp_complex_edition_one_side_per_section_label() -> None:
+    """Folio labels (most followed by a blank line) give one side each, keyed and marked by the label."""
+    text = "\n".join(["Fol. 1r", "", R1, R2, "", "Fol. 1v", "", V1, "", "Fol. 2r", R3, "", "Fol. 2v", V2])
+    built = T.pgp_hebrew_sides(text, "7")
+    assert _sections(built) == [("Fol. 1r", "Fol. 1r", [0], [R1, R2]), ("Fol. 1v", "Fol. 1v", [1], [V1]),
+                                ("Fol. 2r", "Fol. 2r", [2], [R3]), ("Fol. 2v", "Fol. 2v", [3], [V2])]
+    assert built.flags == {key: ["complex_side_labels"] for key in ("Fol. 1r", "Fol. 1v", "Fol. 2r", "Fol. 2v")}
+    assert built.sides[0].pointer == {"source": "pgp_export_footnotes", "pgpid": "7", "parser": "parse_edition",
+                                      "block_indices": [0], "kinds": ["main"]}
+
+
+def test_pgp_complex_same_side_name_on_two_folios_is_not_joined() -> None:
+    """Two pages named recto stay apart, with page numbers or as a repeated bare label (``~2`` key)."""
+    paged = T.pgp_hebrew_sides("\n".join(["Recto (page 1)", R1, "Verso (page 2)", V1, "Recto (page 3)", R2,
+                                          "Verso (page 4)", V2]), "7")
+    assert [(s.side_key, s.lines) for s in paged.sides] == [
+        ("Recto (page 1)", [R1]), ("Verso (page 2)", [V1]), ("Recto (page 3)", [R2]), ("Verso (page 4)", [V2])]
+    repeated = T.pgp_hebrew_sides("\n".join(["Recto", R1, "Verso", V1, "Recto", R2]), "7")
+    assert _sections(repeated) == [("Recto", "Recto", [0], [R1]), ("Verso", "Verso", [1], [V1]),
+                                   ("Recto~2", "Recto", [2], [R2])]
+    assert repeated.flags["Recto~2"] == ["complex_side_labels"]
+
+
+def test_pgp_complex_unlabelled_blocks_regions_and_places_on_the_page() -> None:
+    """Blocks before the first section label form side ``""`` (flagged); a margin and a place on the page
+    (``top of the page``) stay in the section in force."""
+    text = "\n".join([R1, "", "Right margin", M1, "", "page b", "", V1, "", "top of the page", V2])
+    built = T.pgp_hebrew_sides(text, "7")
+    assert _sections(built) == [("", None, [0, 1], [R1, M1]), ("page b", "page b", [2, 3], [V1, V2])]
+    assert built.flags == {"": ["complex_side_labels", "unlabelled_block_in_complex_edition"],
+                           "page b": ["complex_side_labels"]}
+
+
+def test_pgp_complex_enumerators_and_regions_that_name_another_side() -> None:
+    """``I``/``II`` under a named side number its parts, without one they open sections; a region label naming
+    another side opens a section, one naming no side stays."""
+    numbered = T.pgp_hebrew_sides("\n".join(["(Recto)", "I", R1, "II", R2, "(Verso)", V1]), "7")
+    assert _sections(numbered) == [("(Recto)", "(Recto)", [0, 1], [R1, R2]), ("(Verso)", "(Verso)", [2], [V1])]
+    bare = T.pgp_hebrew_sides("\n".join(["I", R1, "II", R2]), "7")
+    assert [(s.side_key, s.lines) for s in bare.sides] == [("I", [R1]), ("II", [R2])]
+    regions = T.pgp_hebrew_sides("\n".join(["Fol. 1 recto", R1, "Right margin", M1, "Verso, upside down", V1]), "7")
+    assert _sections(regions) == [("Fol. 1 recto", "Fol. 1 recto", [0, 1], [R1, M1]),
+                                  ("Verso, upside down", "Verso, upside down", [2], [V1])]
+
+
+def test_walk_edition_finds_the_parser_blocks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The walk sees the parser's blocks (numbered lines, commentary, an unrendered line, a rule, the apparatus);
+    a walk that disagrees leaves the candidate without sides."""
+    text = "\n".join(["Recto", f"1 {R1}", f"2 {R2}", f"3 {R3}", "", "This is an editor's note about the hand.",
+                      "[...]", "_____", "Verso", f"4 {V1}", "Footnotes", "אבגד הוזח"])
+    lines, spans = T.edition_lines(text)
+    edition = bpe.parse_edition("\n".join(lines))
+    walk = T.walk_edition(lines, spans)
+    assert edition.numbered and edition.n_commentary == 1 and edition.n_tail == 1
+    assert T.walk_matches(walk, edition) and walk.labels == ["Recto", "Verso"]
+    assert [(b.section, b.lines, b.n_dropped) for b in walk.blocks] == [(0, [R1, R2, R3], 0), (0, [], 1), (1, [V1], 0)]
+    monkeypatch.setattr(T, "walk_edition", lambda lines, spans: T.EditionWalk([], []))
+    assert T.pgp_hebrew_sides(text, "7").reasons == ["edition_walk_mismatch"]
+
+
+def test_unreverse_supplied_spans() -> None:
+    """``>x<`` becomes ``<x>``; the ink between two supplied spans and doubled brackets stay."""
+    assert T.unreverse_supplied("אבג>ד<הו") == ("אבג<ד>הו", 1)
+    assert T.unreverse_supplied("x >אב< y >גד<") == ("x <אב> y <גד>", 2)
+    assert T.unreverse_supplied("א<ל>גאני אב<ו>") == ("א<ל>גאני אב<ו>", 0)
+    assert T.unreverse_supplied(">>אבג<<") == (">>אבג<<", 0)
+
+
+def test_pgp_reversed_supplied_letters_are_dropped_like_supplied_letters() -> None:
+    """A reversed supplied span goes the way of ``<x>`` (letters and brackets), the side is flagged."""
+    built = T.pgp_hebrew_sides("\n".join(["Recto", "אבגד הוז>ח< טיכל מנסע", "פצקר <ש>תאב גד>הו< זחטי", "Verso", V1]),
+                               "7")
+    assert built.sides[0].lines == ["אבגד הוז טיכל מנסע", "פצקר תאב גד זחטי"]
+    assert built.flags == {"recto": ["supplied_reversed"]}
+
+
+def test_pgp_arabic_reversed_supplied_span_keeps_the_line() -> None:
+    """In an Arabic-script edition the reversed span is dropped and the rest of its line stays."""
+    built = T.pgp_arabic_sides("\n".join(["Recto", "ابتث جح>خ<د ذرزس", A3, "Verso", A1]), "9")
+    assert [(s.side_key, s.lines) for s in built.sides] == [("recto", ["ابتث جح د ذرزس", A3]), ("verso", [A1])]
+    assert built.flags == {"recto": ["supplied_reversed"]}
 
 
 def test_pgp_arabic_edition_uses_the_arabic_splitter() -> None:
@@ -193,6 +284,76 @@ def test_scrape_side_headings_split_sides() -> None:
     assert [(s.side_key, s.side_marker, s.pointer["sigla_side"]) for s in built.sides] == [
         ("1r", "1r", 0), ("1v", "1v", 1)]
     assert T.unique_keys(["", "r", "", ""]) == ["", "r", "~2", "~3"]
+
+
+#: A scrape text with a final letter stored before its word (``ן שאי`` for ``שאין``).
+SCRAPE_REVERSED = "אבגד הוזח ן שאי טיכל מנסע"
+
+
+def test_load_lexicon_and_scrape_word_order_repair(tmp_path: Path) -> None:
+    """The lexicon holds the Hebrew words (2+ letters) of the records' text; with it the rules re-order a final letter
+    stored before its word, without it they leave the text alone."""
+    path = _jsonl(tmp_path / "words.jsonl", [{"text": "שאין א [...] בג"}, {"text": None}, {"side": "1r"}])
+    lexicon = T.load_lexicon(path)
+    assert lexicon == frozenset({"שאין", "בג"})
+    assert T.scrape_sides(SCRAPE_REVERSED, None, "X", "", lexicon).sides[0].text == "אבגד הוזח שאין טיכל מנסע"
+    assert T.scrape_sides(SCRAPE_REVERSED, None, "X", "").sides[0].text == SCRAPE_REVERSED
+
+
+@pytest.fixture()
+def scrape_inputs(tmp_path: Path) -> Dict[str, Path]:
+    """A legacy-store scrape candidate, a sections file that knows the repaired word and an empty word file.
+
+    :param tmp_path: Pytest temp dir.
+    :return: Paths by name.
+    """
+    cdir = tmp_path / "candidates"
+    _jsonl(cdir / "fjp_scrape.jsonl", [{"row_id": "Testville_Lib_B_2:s0", "edition_text": SCRAPE_REVERSED,
+                                        "side": None, "notes": "entry=0/1; block=0/1"}])
+    return {"candidates": cdir, "sections": _jsonl(tmp_path / "sections.jsonl", [{"text": f"{R1} שאין"}]),
+            "empty": _jsonl(tmp_path / "empty.jsonl", [{"text": R1}]), "blocks": _jsonl(tmp_path / "b.jsonl", []),
+            "run2": _jsonl(tmp_path / "run2.jsonl", []), "root": tmp_path / "datasets"}
+
+
+def test_attach_targets_scrape_lexicon_comes_from_the_sections_file(scrape_inputs: Dict[str, Path]) -> None:
+    """By default the scrape's lexicon is built from ``sections_path``; another file or None can replace it."""
+    def scrape_text(**kw: Any) -> str:
+        """Attach the scrape candidate's target and return its text.
+
+        :param kw: Extra :func:`targets.attach_targets` arguments.
+        :return: The target text.
+        """
+        cand = _cand("Testville_Lib_B_2:s0", "fjp_scrape")
+        T.attach_targets([cand], candidates_dir=scrape_inputs["candidates"], sections_path=scrape_inputs["sections"],
+                         lit_blocks_path=scrape_inputs["blocks"], run2_path=scrape_inputs["run2"],
+                         datasets_root=scrape_inputs["root"], **kw)
+        return cand.targets[0].text
+
+    assert scrape_text() == "אבגד הוזח שאין טיכל מנסע"
+    assert scrape_text(lexicon_path=None) == SCRAPE_REVERSED
+    assert scrape_text(lexicon_path=scrape_inputs["empty"]) == SCRAPE_REVERSED
+
+
+def test_targets_main_lexicon_options(tmp_path: Path, scrape_inputs: Dict[str, Path]) -> None:
+    """``main`` uses the sections file as lexicon unless ``--lexicon`` names another or ``--no-lexicon`` is given."""
+    work = tmp_path / "work"
+    stage = paths.stage_path(work, "candidates")
+
+    def run(*extra: str) -> str:
+        """Re-attach the scrape candidate through ``main``.
+
+        :param extra: Extra CLI arguments.
+        :return: The stored target text.
+        """
+        write_jsonl(stage, [_cand("Testville_Lib_B_2:s0", "fjp_scrape")])
+        T.main(["--work-dir", str(work), "--candidates-dir", str(scrape_inputs["candidates"]),
+                "--sections", str(scrape_inputs["sections"]), "--lit-blocks", str(scrape_inputs["blocks"]),
+                "--run2", str(scrape_inputs["run2"]), "--datasets-root", str(scrape_inputs["root"]), *extra])
+        return next(read_jsonl(stage, Candidate)).targets[0].text
+
+    assert run() == "אבגד הוזח שאין טיכל מנסע"
+    assert run("--no-lexicon") == SCRAPE_REVERSED
+    assert run("--lexicon", str(scrape_inputs["empty"])) == SCRAPE_REVERSED
 
 
 # ----------------------------------------------------------------------------- ktiv

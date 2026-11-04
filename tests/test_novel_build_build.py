@@ -207,14 +207,16 @@ def make_world(tmp_path: Path) -> World:
     return World(work=work, pool=pool, out=tmp_path / "datasets" / "genizah_novel_v1")
 
 
-def _assembled(world: World) -> Tuple[List[Dict[str, Any]], List[RowRecord], List[Dict[str, Any]], Dict[str, Any]]:
+def _assembled(world: World, reviews: Optional[build.Reviews] = None
+               ) -> Tuple[List[Dict[str, Any]], List[RowRecord], List[Dict[str, Any]], Dict[str, Any]]:
     """Rows, manifest, decisions and stage counts of a world.
 
     :param world: The world.
+    :param reviews: Approvals and policy (default: none, i.e. the default policy and nothing approved).
     :return: The four.
     """
     data = funnel.load_stage_data(world.work, world.pool, build_outputs=False)
-    rows, manifest, decisions = build.assemble_rows(world.work, pool=world.pool, data=data)
+    rows, manifest, decisions = build.assemble_rows(world.work, pool=world.pool, data=data, reviews=reviews)
     counts = funnel.stage_counts(replace(data, rows=list(manifest)))
     return rows, manifest, decisions, counts
 
@@ -271,6 +273,15 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> Calls:
     monkeypatch.setattr(build, "save_dataset", recorder.save)
     monkeypatch.setattr(build, "export_images_once", recorder.export)
     return recorder
+
+
+@pytest.fixture(autouse=True)
+def no_reviews_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No test picks up a reviews file from the environment.
+
+    :param monkeypatch: Pytest monkeypatch.
+    """
+    monkeypatch.delenv(build.REVIEWS_ENV, raising=False)
 
 
 # ------------------------------------------------------------------------------------------------------------ assembly
@@ -601,3 +612,712 @@ def test_readme_refuses_forbidden_words() -> None:
     with pytest.raises(ValueError):
         build.check_public_text("images from https://example.invalid")
     build.check_public_text("photographs from the project's legacy image store")
+
+
+# ------------------------------------------------------------------------------------------------------- review gate
+
+LIT_POINTER = {"source": "scanned_edition", "work": "dissertations", "part": "test_thesis_1965",
+               "page_files": ["page_001_structured.json"], "shelf_key": "k1"}
+LIT_KEY = "literature:dissertations/test_thesis_1965"
+PENDING_LIT = f"review_pending_work:{LIT_KEY}"
+RUN2_POINTER = {"source": "run2_edition", "file": "run2_test.jsonl", "doc_id": "lit:sample_1970:29,30",
+                "line_numbers": [1, 2, 3]}
+RUN2_KEY = "lit_run2:lit:sample_1970"
+PENDING_ROW = "review_pending_row"
+
+
+def _retarget(world: World, row_id: str, source: str, pointer: Dict[str, Any]) -> None:
+    """Make a candidate a scanned-edition one: its ledger source, its source in stage0 and stage1, its pointers.
+
+    :param world: The world.
+    :param row_id: Candidate id.
+    :param source: New ledger source (``literature`` / ``lit_run2``).
+    :param pointer: The target pointer every side of the candidate gets.
+    """
+    ledger = list(read_jsonl(world.pool))
+    for record in ledger:
+        if record["row_id"] == row_id:
+            record["source"] = source
+    write_jsonl(world.pool, ledger)
+    for stage in ("candidates", "images"):
+        path = paths.stage_path(world.work, stage)
+        cands = list(read_jsonl(path, Candidate))
+        for cand in cands:
+            if cand.row_id == row_id:
+                cand.source = source
+                for target in cand.targets:
+                    target.pointer = dict(pointer)
+        write_jsonl(path, cands)
+
+
+def _recover(world: World, row_id: str, side_key: str, reason: str, basis: str) -> None:
+    """Make an accepted side a rule-recovered one (the stage2 reason and basis of the ratio rules).
+
+    :param world: The world.
+    :param row_id: Candidate id.
+    :param side_key: Target side.
+    :param reason: ``spill_ratio_ok`` or ``conflict_ratio_ok``.
+    :param basis: ``p99_ratio2`` or ``p99_ratio2_mirror``.
+    """
+    path = paths.stage_path(world.work, "sides")
+    sides = list(read_jsonl(path, SideDecision))
+    for side in sides:
+        if (side.row_id, side.side_key) == (row_id, side_key):
+            side.reasons, side.basis = [reason], basis
+    write_jsonl(path, sides)
+
+
+def _recovered_world(tmp_path: Path) -> World:
+    """The base world with both sides of A rule-recovered (recto by the spill rule, verso by the mirror rule).
+
+    :param tmp_path: Pytest temp dir.
+    :return: The world.
+    """
+    world = make_world(tmp_path)
+    _recover(world, A, "recto", "spill_ratio_ok", "p99_ratio2")
+    _recover(world, A, "verso", "conflict_ratio_ok", "p99_ratio2_mirror")
+    return world
+
+
+def _approved_work(key: str) -> Dict[str, str]:
+    """An ``approved_works`` entry.
+
+    :param key: ``<source>:<work>``.
+    :return: The entry.
+    """
+    return {"work": key, "reviewed_by": "reviewer_a", "date": "2026-11-05", "sheet": "sheets/eye_sheet_test.md"}
+
+
+def _verdict(row_id: str, side_key: str, verdict: str) -> Dict[str, str]:
+    """An ``approved_rows`` entry.
+
+    :param row_id: Candidate id.
+    :param side_key: Target side.
+    :param verdict: One of ``build.REVIEW_VERDICTS``.
+    :return: The entry.
+    """
+    return {"row_id": row_id, "side_key": side_key, "verdict": verdict, "note": "checked by eye"}
+
+
+def _reviews(works: Sequence[str] = (), rows: Sequence[Dict[str, str]] = (), required: Sequence[str] = (),
+             **policy: str) -> build.Reviews:
+    """Reviews from approved works, row entries, required works and policy values.
+
+    :param works: Work keys with an approval.
+    :param rows: ``approved_rows`` entries.
+    :param required: Work keys that are ``require`` whatever the policy says.
+    :param policy: Policy values by class.
+    :return: The parsed reviews.
+    """
+    return build.parse_reviews({"approved_works": [_approved_work(key) for key in works],
+                                "approved_rows": list(rows), "required_works": list(required),
+                                "review_policy": dict(policy)})
+
+
+def _by_key(decisions: Sequence[Dict[str, Any]]) -> Dict[Tuple[str, str], Dict[str, Any]]:
+    """Decision records by (candidate, side).
+
+    :param decisions: Decision records.
+    :return: ``(row_id, side_key) -> record``.
+    """
+    return {(d["row_id"], d["side_key"]): d for d in decisions}
+
+
+def _write_reviews(path: Path, **content: Any) -> Path:
+    """Write a reviews file.
+
+    :param path: Destination.
+    :param content: Top-level keys of the file.
+    :return: The path.
+    """
+    path.write_text(json.dumps(content, ensure_ascii=False), encoding="utf-8")
+    return path
+
+
+def test_work_key_is_the_pointers_work_and_part_or_the_doc_id_minus_its_item() -> None:
+    """Literature: ``<work>/<part>`` (the folder alone would merge theses); run 2: the doc id without its item."""
+    assert build.work_key("literature", LIT_POINTER) == LIT_KEY
+    assert build.work_key("literature", {"work": "dissertations"}) == "literature:dissertations"
+    assert build.work_key("lit_run2", RUN2_POINTER) == RUN2_KEY
+    assert build.work_key("lit_run2", {"doc_id": "cohen_2013:1"}) == "lit_run2:cohen_2013"
+    assert (build.work_key("lit_run2", {"doc_id": "web:blog_misc:article-3_fragment-1:2"})
+            == "lit_run2:web:blog_misc:article-3_fragment-1")
+    assert build.work_key("lit_run2", {"doc_id": "no_colon"}) == "lit_run2:no_colon"
+    assert build.work_key("literature", {}) == "literature:unknown"
+    assert build.work_key("lit_run2", {"doc_id": None}) == "lit_run2:unknown"
+
+
+def test_a_scanned_edition_work_without_approval_is_excluded_under_require(tmp_path: Path) -> None:
+    """Policy ``require`` (the default, with or without a reviews file): the sides stay at ``holdout_cleared`` with
+    ``review_pending_work:<source>:<work>``; the other rows are untouched."""
+    world = make_world(tmp_path)
+    _retarget(world, A, "literature", LIT_POINTER)
+    for reviews in (None, _reviews(typewritten_works="require")):
+        _, manifest, decisions = build.assemble_rows(world.work, pool=world.pool, reviews=reviews)
+        by_key = _by_key(decisions)
+        assert [m.row_id for m in manifest] == [B]
+        for side in ("recto", "verso"):
+            assert (by_key[(A, side)]["stage"], by_key[(A, side)]["reasons"]) == ("holdout_cleared", [PENDING_LIT])
+            assert by_key[(A, side)]["stem"] is None
+        assert by_key[(B, "")]["stage"] == "row"
+
+
+def test_flag_policy_admits_a_scanned_edition_work_with_its_flag(tmp_path: Path) -> None:
+    """Policy ``flag``: the sides become rows and the manifest's ``quality_flags`` carry the pending-work code."""
+    world = make_world(tmp_path)
+    _retarget(world, A, "literature", LIT_POINTER)
+    rows, manifest, decisions = build.assemble_rows(world.work, pool=world.pool,
+                                                    reviews=_reviews(typewritten_works="flag"))
+    assert [(m.row_id, m.side_key, m.quality_flags) for m in manifest] == [
+        (A, "recto", [PENDING_LIT]), (A, "verso", [PENDING_LIT]), (B, "", ["tokens_unmeasured"])]
+    assert [row["label_source"] for row in rows] == ["scanned_edition", "scanned_edition", "legacy_store_diplomatic"]
+    assert _by_key(decisions)[(A, "recto")]["stage"] == "row"
+
+
+@pytest.mark.parametrize("policy", ["require", "flag"])
+def test_an_approved_work_is_admitted_without_a_flag(tmp_path: Path, policy: str) -> None:
+    """A work listed in ``approved_works`` is admitted under either policy and carries no review flag."""
+    world = make_world(tmp_path)
+    _retarget(world, A, "literature", LIT_POINTER)
+    _, manifest, _ = build.assemble_rows(world.work, pool=world.pool,
+                                         reviews=_reviews(works=[LIT_KEY], typewritten_works=policy))
+    assert [(m.row_id, m.quality_flags) for m in manifest] == [(A, []), (A, []), (B, ["tokens_unmeasured"])]
+
+
+def test_an_approval_covers_one_work_of_one_source_only(tmp_path: Path) -> None:
+    """Another thesis of the same folder, or the same name under the other source, does not approve a work."""
+    world = make_world(tmp_path)
+    _retarget(world, A, "literature", LIT_POINTER)
+    decoys = [LIT_KEY.replace("test_thesis_1965", "other_thesis_1970"), "literature:dissertations",
+              LIT_KEY.replace("literature:", "lit_run2:")]
+    _, manifest, decisions = build.assemble_rows(world.work, pool=world.pool, reviews=_reviews(works=decoys))
+    assert [m.row_id for m in manifest] == [B]
+    assert _by_key(decisions)[(A, "recto")]["reasons"] == [PENDING_LIT]
+    _retarget(world, A, "lit_run2", RUN2_POINTER)
+    _, manifest, decisions = build.assemble_rows(world.work, pool=world.pool, reviews=_reviews(works=decoys))
+    assert _by_key(decisions)[(A, "recto")]["reasons"] == [f"review_pending_work:{RUN2_KEY}"]
+    _, manifest, _ = build.assemble_rows(world.work, pool=world.pool, reviews=_reviews(works=[RUN2_KEY]))
+    assert [m.row_id for m in manifest] == [A, A, B] and manifest[0].source == "lit_run2"
+
+
+def test_a_row_level_ok_does_not_approve_an_unapproved_work(tmp_path: Path) -> None:
+    """The work gate depends on ``approved_works`` alone."""
+    world = make_world(tmp_path)
+    _retarget(world, A, "literature", LIT_POINTER)
+    reviews = _reviews(rows=[_verdict(A, "recto", "ok"), _verdict(A, "verso", "ok")])
+    _, manifest, decisions = build.assemble_rows(world.work, pool=world.pool, reviews=reviews)
+    assert [m.row_id for m in manifest] == [B]
+    assert _by_key(decisions)[(A, "recto")]["reasons"] == [PENDING_LIT]
+
+
+def test_rule_recovered_rows_are_flagged_under_the_default_flag_policy(tmp_path: Path) -> None:
+    """Spill- and mirror-rule placements are admitted with ``review_pending_row`` in ``quality_flags``; the
+    manifest's side basis still names the ratio rule."""
+    world = _recovered_world(tmp_path)
+    for reviews in (None, _reviews(rule_recovered="flag")):
+        _, manifest, _ = build.assemble_rows(world.work, pool=world.pool, reviews=reviews)
+        assert [(m.side_key, m.quality_flags) for m in manifest if m.row_id == A] == [
+            ("recto", [PENDING_ROW]), ("verso", [PENDING_ROW])]
+        assert [m.side_basis["basis"] for m in manifest if m.row_id == A] == ["p99_ratio2", "p99_ratio2_mirror"]
+        assert manifest[-1].quality_flags == ["tokens_unmeasured"]
+
+
+def test_rule_recovered_rows_are_excluded_under_require(tmp_path: Path) -> None:
+    """Policy ``require`` with no ``approved_rows`` entry: ``review_pending_row``, the side stays at
+    ``holdout_cleared``."""
+    world = _recovered_world(tmp_path)
+    reviews = _reviews(rule_recovered="require")
+    _, manifest, decisions = build.assemble_rows(world.work, pool=world.pool, reviews=reviews)
+    by_key = _by_key(decisions)
+    assert [m.row_id for m in manifest] == [B]
+    for side in ("recto", "verso"):
+        assert (by_key[(A, side)]["stage"], by_key[(A, side)]["reasons"]) == ("holdout_cleared", [PENDING_ROW])
+        assert by_key[(A, side)]["rule_recovered"] is True
+    assert by_key[(B, "")]["rule_recovered"] is False
+
+
+@pytest.mark.parametrize("policy", ["require", "flag"])
+def test_an_ok_approval_admits_a_rule_recovered_row_without_a_flag(tmp_path: Path, policy: str) -> None:
+    """An ``ok`` entry clears the recto of A; the verso, without one, is excluded (``require``) or flagged
+    (``flag``)."""
+    world = _recovered_world(tmp_path)
+    reviews = _reviews(rows=[_verdict(A, "recto", "ok")], rule_recovered=policy)
+    _, manifest, decisions = build.assemble_rows(world.work, pool=world.pool, reviews=reviews)
+    by_key = _by_key(decisions)
+    assert by_key[(A, "recto")]["stage"] == "row" and manifest[0].quality_flags == []
+    if policy == "require":
+        assert [m.side_key for m in manifest if m.row_id == A] == ["recto"]
+        assert by_key[(A, "verso")]["reasons"] == [PENDING_ROW]
+    else:
+        assert [(m.side_key, m.quality_flags) for m in manifest if m.row_id == A] == [
+            ("recto", []), ("verso", [PENDING_ROW])]
+
+
+@pytest.mark.parametrize("verdict", ["wrong_side", "wrong_image", "partial", "bad_ocr"])
+@pytest.mark.parametrize("policy", ["require", "flag"])
+def test_any_other_verdict_excludes_the_row_whatever_the_policy(tmp_path: Path, verdict: str, policy: str) -> None:
+    """A verdict other than ``ok`` gives ``review_rejected:<verdict>`` alone (the row was reviewed, so it is not
+    also pending); the recto of A, without an entry, follows the policy."""
+    world = _recovered_world(tmp_path)
+    reviews = _reviews(rows=[_verdict(A, "verso", verdict)], rule_recovered=policy)
+    _, manifest, decisions = build.assemble_rows(world.work, pool=world.pool, reviews=reviews)
+    by_key = _by_key(decisions)
+    assert by_key[(A, "verso")]["stage"] == "holdout_cleared"
+    assert by_key[(A, "verso")]["reasons"] == [f"review_rejected:{verdict}"]
+    assert (by_key[(A, "recto")]["stage"] == "row") == (policy == "flag")
+    assert (A, "verso") not in {(m.row_id, m.side_key) for m in manifest}
+
+
+def test_a_verdict_rejects_a_row_of_any_class(tmp_path: Path) -> None:
+    """A rejection applies to an ordinary row too (not scanned-edition, not rule-recovered), with an unlabelled side."""
+    world = make_world(tmp_path)
+    _, manifest, decisions = build.assemble_rows(world.work, pool=world.pool,
+                                                 reviews=_reviews(rows=[_verdict(B, "", "wrong_image")]))
+    assert [m.row_id for m in manifest] == [A, A]
+    assert _by_key(decisions)[(B, "")]["reasons"] == ["review_rejected:wrong_image"]
+
+
+def test_a_side_in_two_review_classes_lists_both_reasons(tmp_path: Path) -> None:
+    """A rule-recovered side of an unapproved work under ``require`` for both is pending twice."""
+    world = _recovered_world(tmp_path)
+    _retarget(world, A, "literature", LIT_POINTER)
+    reviews = _reviews(rule_recovered="require")
+    _, _, decisions = build.assemble_rows(world.work, pool=world.pool, reviews=reviews)
+    assert _by_key(decisions)[(A, "recto")]["reasons"] == [PENDING_LIT, PENDING_ROW]
+
+
+def test_review_reasons_wait_for_the_build_gates(tmp_path: Path) -> None:
+    """A side that fails a build gate shows only that gate, so "pending" means "would be a row"."""
+    world = _recovered_world(tmp_path)
+    missing = {str(world.work / "images" / "a_r.jpg")}
+    _, _, decisions = build.assemble_rows(world.work, pool=world.pool, is_file=lambda p: str(p) not in missing,
+                                          reviews=_reviews(rule_recovered="require"))
+    by_key = _by_key(decisions)
+    assert by_key[(A, "recto")]["reasons"] == ["image_file_missing"]
+    assert by_key[(A, "verso")]["reasons"] == [PENDING_ROW]
+
+
+def test_quality_flags_keep_the_stage3_flags_first_and_add_each_review_flag_once(tmp_path: Path) -> None:
+    """Stage3 flags stay in front; the same review flag is not listed twice."""
+    world = make_world(tmp_path)
+    _recover(world, B, "", "spill_ratio_ok", "p99_ratio2")
+    _, manifest, _ = build.assemble_rows(world.work, pool=world.pool)
+    assert manifest[-1].row_id == B and manifest[-1].quality_flags == ["tokens_unmeasured", PENDING_ROW]
+
+
+# -------------------------------------------------------------------------------------------------- the reviews file
+
+def test_parse_reviews_reads_the_documented_format() -> None:
+    """Approved works with reviewer, date and sheet; row verdicts keyed by (row id, side); the policy."""
+    reviews = build.parse_reviews({
+        "approved_works": [_approved_work(LIT_KEY), {**_approved_work(RUN2_KEY), "note": "60 lines read"}],
+        "approved_rows": [_verdict(A, "recto", "ok"), {"row_id": B, "side_key": "", "verdict": "partial"}],
+        "review_policy": {"typewritten_works": "flag", "rule_recovered": "require"}})
+    assert reviews.policy == {"typewritten_works": "flag", "rule_recovered": "require"}
+    assert reviews.approved_works[LIT_KEY] == _approved_work(LIT_KEY)
+    assert reviews.approved_works[RUN2_KEY]["note"] == "60 lines read"
+    assert reviews.approved_rows[(A, "recto")]["verdict"] == "ok"
+    assert reviews.approved_rows[(B, "")]["verdict"] == "partial"
+
+
+def test_missing_parts_of_the_reviews_file_take_the_defaults() -> None:
+    """Scanned-edition works ``require``, rule-recovered placements ``flag``; no file at all is the same state."""
+    default = {"typewritten_works": "require", "rule_recovered": "flag"}
+    assert build.Reviews().policy == default and build.parse_reviews({}).policy == default
+    assert build.parse_reviews({"review_policy": {"rule_recovered": "require"}}).policy == {
+        "typewritten_works": "require", "rule_recovered": "require"}
+    assert build.parse_reviews({}).approved_works == {} and build.parse_reviews({}).approved_rows == {}
+
+
+@pytest.mark.parametrize("raw, message", [
+    ([], "one JSON object"),
+    ({"approved_row": []}, "unknown top-level key 'approved_row'"),
+    ({"review_policy": {"typewritten_works": "optional"}}, "'optional' is not one of require, flag"),
+    ({"review_policy": {"all_rows": "flag"}}, "unknown class 'all_rows'"),
+    ({"review_policy": "flag"}, "review_policy: must be an object"),
+    ({"approved_works": [LIT_KEY]}, "approved_works[0]: must be an object"),
+    ({"approved_works": {"work": LIT_KEY}}, "approved_works: must be a list"),
+    ({"approved_works": [{**_approved_work("pgp:123")}]}, "must read <source>:<work>"),
+    ({"approved_works": [{**_approved_work("literature:")}]}, "must read <source>:<work>"),
+    ({"approved_works": [{**_approved_work(LIT_KEY), "reviewed_by": " "}]}, "reviewed_by: must not be blank"),
+    ({"approved_works": [{k: v for k, v in _approved_work(LIT_KEY).items() if k != "sheet"}]}, "missing field 'sheet'"),
+    ({"approved_works": [{**_approved_work(LIT_KEY), "reviewer": "x"}]}, "unknown field 'reviewer'"),
+    ({"approved_works": [_approved_work(LIT_KEY), _approved_work(LIT_KEY)]}, "listed twice"),
+    ({"approved_works": [_approved_work(" " + LIT_KEY)]}, "leading or trailing whitespace"),
+    ({"approved_rows": [{"row_id": A, "side_key": "recto", "verdict": "okay"}]}, "'okay' is not one of ok, wrong_side"),
+    ({"approved_rows": [{"row_id": A, "side_key": "recto"}]}, "missing field 'verdict'"),
+    ({"approved_rows": [{"row_id": A, "side_key": 1, "verdict": "ok"}]}, "side_key: must be a string"),
+    ({"approved_rows": [{"row_id": "", "side_key": "", "verdict": "ok"}]}, "row_id: must not be blank"),
+    ({"approved_rows": [{"row_id": A, "side_key": "recto ", "verdict": "ok"}]}, "leading or trailing whitespace"),
+    ({"approved_rows": [_verdict(A, "recto", "ok"), _verdict(A, "recto", "wrong_side")]}, "listed twice"),
+    ({"required_works": LIT_KEY}, "required_works: must be a list"),
+    ({"required_works": [1]}, "required_works[0]: must be a string"),
+    ({"required_works": ["pgp:123"]}, "required_works[0]: 'pgp:123' must read <source>:<work>"),
+    ({"required_works": ["literature:"]}, "must read <source>:<work>"),
+    ({"required_works": [" literature:x/y"]}, "' literature:x/y' has leading or trailing whitespace"),
+    ({"required_works": ["literature:x/y", "literature:x/y"]}, "required_works[1]: 'literature:x/y' is listed twice"),
+])
+def test_invalid_reviews_files_are_refused(raw: Any, message: str) -> None:
+    """Unknown keys, verdicts and policies, blank or missing fields and duplicate entries are errors: a typo must
+    not quietly turn a rejection into nothing."""
+    with pytest.raises(ValueError) as error:
+        build.parse_reviews(raw)
+    assert message in str(error.value)
+
+
+def test_every_problem_of_a_reviews_file_is_listed_at_once() -> None:
+    """One error names all problems, so the file is fixed in one pass."""
+    with pytest.raises(ValueError) as error:
+        build.parse_reviews({"approved_row": [], "review_policy": {"rule_recovered": "maybe"},
+                             "approved_rows": [{"row_id": A, "side_key": "recto", "verdict": "fine"}]})
+    text = str(error.value)
+    assert "unknown top-level key" in text and "'maybe'" in text and "'fine'" in text
+
+
+def test_load_reviews_reads_a_file_and_refuses_a_missing_one(tmp_path: Path) -> None:
+    """No path is the default state; a configured path that does not exist is an error, never "no approvals"."""
+    assert build.load_reviews(None) == build.Reviews()
+    path = _write_reviews(tmp_path / "reviews.json", approved_works=[_approved_work(LIT_KEY)],
+                          approved_rows=[_verdict(A, "recto", "ok")], review_policy={"typewritten_works": "flag"})
+    loaded = build.load_reviews(path)
+    assert list(loaded.approved_works) == [LIT_KEY] and loaded.policy["typewritten_works"] == "flag"
+    with pytest.raises(ValueError, match="not found"):
+        build.load_reviews(tmp_path / "missing.json")
+
+
+def test_the_reviews_argument_wins_over_the_env_var(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--reviews`` first, then ``NOVEL_BUILD_REVIEWS``, else none."""
+    assert build.reviews_path(None) is None
+    monkeypatch.setenv(build.REVIEWS_ENV, str(tmp_path / "env.json"))
+    assert build.reviews_path(None) == tmp_path / "env.json"
+    assert build.reviews_path(tmp_path / "arg.json") == tmp_path / "arg.json"
+
+
+# ---------------------------------------------------------------------------------------------- acceptance and the CLI
+
+def test_acceptance_asserts_the_review_gate_on_the_admitted_rows(tmp_path: Path) -> None:
+    """Rows built under ``flag`` pass a ``flag`` policy; checked against ``require`` (or with a verdict, or with their
+    flag removed) they violate: the check reads the manifest, not the gate's code path."""
+    world = _recovered_world(tmp_path)
+    _retarget(world, A, "literature", LIT_POINTER)
+    flag = _reviews(typewritten_works="flag", rule_recovered="flag")
+    rows, manifest, decisions, counts = _assembled(world, flag)
+    assert [m.row_id for m in manifest] == [A, A, B]
+    assert build.acceptance_checks(rows, manifest, decisions, counts, flag) == []
+    # the default (no reviews) is the strictest class: a scanned-edition row needs its work approved
+    assert any("work is not in approved_works" in v and "2 row(s)" in v
+               for v in build.acceptance_checks(rows, manifest, decisions, counts))
+    require_rows = _reviews(typewritten_works="flag", rule_recovered="require")
+    assert any("rule-recovered row without an ok entry" in v and "2 row(s)" in v
+               for v in build.acceptance_checks(rows, manifest, decisions, counts, require_rows))
+    one_ok = _reviews(works=[LIT_KEY], rows=[_verdict(A, "recto", "ok")], rule_recovered="require")
+    assert any("rule-recovered row without an ok entry" in v and "1 row(s)" in v
+               for v in build.acceptance_checks(rows, manifest, decisions, counts, one_ok))
+    rejected = _reviews(works=[LIT_KEY], rows=[_verdict(A, "verso", "wrong_side")])
+    assert any("verdict other than ok" in v and manifest[1].stem in v
+               for v in build.acceptance_checks(rows, manifest, decisions, counts, rejected))
+    stripped = [replace(m, quality_flags=[f for f in m.quality_flags if not f.startswith("review_")])
+                for m in manifest]
+    assert any("without its review_pending flag" in v and "2 row(s)" in v
+               for v in build.acceptance_checks(rows, stripped, decisions, counts, flag))
+
+
+def test_acceptance_is_clean_when_every_class_is_approved(tmp_path: Path) -> None:
+    """Approved work and ``ok`` rows under ``require`` for both classes: no violation, no flag."""
+    world = _recovered_world(tmp_path)
+    _retarget(world, A, "literature", LIT_POINTER)
+    reviews = _reviews(works=[LIT_KEY], rows=[_verdict(A, "recto", "ok"), _verdict(A, "verso", "ok")],
+                       typewritten_works="require", rule_recovered="require")
+    rows, manifest, decisions, counts = _assembled(world, reviews)
+    assert [m.quality_flags for m in manifest] == [[], [], ["tokens_unmeasured"]]
+    assert build.acceptance_checks(rows, manifest, decisions, counts, reviews) == []
+
+
+def test_a_rejection_that_matches_no_side_is_a_violation(tmp_path: Path) -> None:
+    """A verdict other than ``ok`` works only on an exact (row id, side): a mistyped key would leave the row in the
+    dataset, so it is reported; an ``ok`` that matches nothing merely leaves its row pending."""
+    world = make_world(tmp_path)
+    data = funnel.load_stage_data(world.work, world.pool, build_outputs=False)
+    reviews = _reviews(rows=[_verdict(A, "rectum", "wrong_side"), _verdict("pgp:0", "recto", "ok"),
+                             _verdict(A, "verso", "bad_ocr"), _verdict(B, "", "partial")])
+    assert build.unmatched_rejections(reviews, data) == [
+        "review verdict names no (candidate, side) of stage0: 1, e.g. pgp:9001#rectum"]
+    assert build.unmatched_rejections(build.Reviews(), data) == []
+
+
+def test_dry_run_prints_the_review_gate_with_the_default_policy(tmp_path: Path, calls: Calls,
+                                                                 capsys: pytest.CaptureFixture) -> None:
+    """Without a reviews file the scanned-edition rows wait for approval; the flagged rule-recovered row is admitted."""
+    world = make_world(tmp_path)
+    _retarget(world, A, "literature", LIT_POINTER)
+    _recover(world, B, "", "spill_ratio_ok", "p99_ratio2")
+    build.main(_argv(world, "--dry-run"))
+    printed = capsys.readouterr().out
+    assert "rows: 1 (train_page 0, val 1" in printed and "violations: none" in printed
+    assert ("review (typewritten works require, rule-recovered flag): pending work 2 sides (1 works), pending row 0, "
+            "rejected 0, admitted with flags 1; rule-recovered admitted 1, excluded 0 (0 by review)") in printed
+    assert calls.saved == []
+
+
+def test_the_reviews_env_var_feeds_the_cli(tmp_path: Path, calls: Calls, capsys: pytest.CaptureFixture,
+                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    """With ``NOVEL_BUILD_REVIEWS`` set and no flag, the approved work is admitted; the policy line shows ``require``
+    for rule-recovered rows from the file, and the one rule-recovered row waiting for approval is counted."""
+    world = make_world(tmp_path)
+    _retarget(world, A, "literature", LIT_POINTER)
+    _recover(world, B, "", "spill_ratio_ok", "p99_ratio2")
+    path = _write_reviews(tmp_path / "private_reviews.json", approved_works=[_approved_work(LIT_KEY)],
+                          review_policy={"rule_recovered": "require"})
+    monkeypatch.setenv(build.REVIEWS_ENV, str(path))
+    build.main(_argv(world, "--dry-run"))
+    printed = capsys.readouterr().out
+    assert "rows: 2 (train_page 2, val 0" in printed
+    assert ("review (typewritten works require, rule-recovered require): pending work 0 sides (0 works), "
+            "pending row 1, rejected 0, admitted with flags 0; rule-recovered admitted 0, excluded 1 (1 by review)"
+            ) in printed
+
+
+def test_main_writes_the_review_flags_policy_digest_and_funnel_table(tmp_path: Path, calls: Calls) -> None:
+    """An approved work and a flagged rule-recovered row: the manifest shows the flag, ``stats.json`` the policy and
+    the digest of the (privately named) reviews file, the README the policy, FUNNEL.md the review table."""
+    world = make_world(tmp_path)
+    _retarget(world, A, "literature", LIT_POINTER)
+    _recover(world, B, "", "spill_ratio_ok", "p99_ratio2")
+    path = _write_reviews(tmp_path / "private_reviews.json", approved_works=[_approved_work(LIT_KEY)])
+    build.main(_argv(world, "--reviews", str(path)))
+    stats = json.loads((world.out / "stats.json").read_text())
+    assert stats["review"] == {"policy": {"typewritten_works": "require", "rule_recovered": "flag"},
+                               "required_works": 0, "approved_works": 1, "row_verdicts": {},
+                               "rows_admitted_with_flags": 1}
+    digest, = [i for i in stats["inputs"] if i["name"] == build.REVIEWS_INPUT_NAME]
+    assert digest["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest() and digest["records"] == 1
+    assert "private_reviews" not in (world.out / "stats.json").read_text() and str(tmp_path) not in json.dumps(stats)
+    manifest = list(read_jsonl(world.out / "manifest.jsonl"))
+    assert [m["quality_flags"] for m in manifest] == [[], [], ["tokens_unmeasured", PENDING_ROW]]
+    readme = (world.out / "README.md").read_text()
+    assert ("human review gate: scanned-edition works `require`, rule-recovered placements `flag`" in readme
+            and "1 row(s) carry such a flag" in readme)
+    decisions = _by_key(list(read_jsonl(world.out / "decisions.jsonl")))
+    assert decisions[(B, "")]["rule_recovered"] is True and decisions[(A, "recto")]["rule_recovered"] is False
+    text = (world.work / funnel.FUNNEL_FILE).read_text()
+    assert "## Human review gate" in text and "(no work awaits review)" in text
+    assert "| legacy_store | 0 | 0 | 0 | 1 | 1 | 0 | 0 |" in text and "| all | 0 | 0 | 0 | 1 | 1 | 0 | 0 |" in text
+
+
+def test_main_with_a_pending_work_lists_it_in_the_funnel(tmp_path: Path, calls: Calls) -> None:
+    """Without approval the work is excluded and named in FUNNEL.md exactly as ``approved_works`` must spell it."""
+    world = make_world(tmp_path)
+    _retarget(world, A, "literature", LIT_POINTER)
+    build.main(_argv(world))
+    text = (world.work / funnel.FUNNEL_FILE).read_text()
+    assert f"| {LIT_KEY} | 2 |" in text and "| literature | 2 | 0 | 0 | 0 | 0 | 0 | 0 |" in text
+    stats = json.loads((world.out / "stats.json").read_text())
+    assert stats["exclusion_reasons"]["review_pending_work:literature"] == 2
+    assert stats["rows"] == {"val": 1}
+    assert LIT_KEY not in (world.out / "stats.json").read_text()
+
+
+def test_an_unmatched_rejection_stops_the_build(tmp_path: Path, calls: Calls, capsys: pytest.CaptureFixture) -> None:
+    """The violation is printed and nothing is written."""
+    world = make_world(tmp_path)
+    path = _write_reviews(tmp_path / "reviews.json", approved_rows=[_verdict(A, "rectum", "wrong_side")])
+    before = _snapshot(tmp_path)
+    with pytest.raises(SystemExit) as stop:
+        build.main(_argv(world, "--reviews", str(path)))
+    assert stop.value.code == 1 and calls.saved == [] and not world.out.exists() and _snapshot(tmp_path) == before
+    assert "review verdict names no (candidate, side) of stage0: 1, e.g. pgp:9001#rectum" in capsys.readouterr().out
+
+
+def test_a_missing_or_invalid_reviews_file_stops_the_cli(tmp_path: Path, calls: Calls) -> None:
+    """A configured reviews file that cannot be used is an error before anything is assembled or written."""
+    world = make_world(tmp_path)
+    with pytest.raises(ValueError, match="not found"):
+        build.main(_argv(world, "--reviews", str(tmp_path / "missing.json")))
+    bad = _write_reviews(tmp_path / "bad.json", approved_rows=[_verdict(A, "recto", "fine")])
+    with pytest.raises(ValueError, match="'fine' is not one of"):
+        build.main(_argv(world, "--reviews", str(bad)))
+    assert calls.saved == [] and not world.out.exists()
+
+
+# ---------------------------------------------------------------------------------------------------- required works
+
+OTHER_POINTER = {"source": "scanned_edition", "work": "dissertations", "part": "printed_edition_1990",
+                 "page_files": ["page_002_structured.json"], "shelf_key": "k2"}
+OTHER_KEY = "literature:dissertations/printed_edition_1990"
+PENDING_OTHER = f"review_pending_work:{OTHER_KEY}"
+
+
+def _two_works_world(tmp_path: Path) -> World:
+    """The base world with A (two sides) in the thesis LIT_KEY and B (one unlabelled side) in the printed edition
+    OTHER_KEY, both scanned-edition works.
+
+    :param tmp_path: Pytest temp dir.
+    :return: The world.
+    """
+    world = make_world(tmp_path)
+    _retarget(world, A, "literature", LIT_POINTER)
+    _retarget(world, B, "literature", OTHER_POINTER)
+    return world
+
+
+def test_required_works_are_parsed_and_default_to_none() -> None:
+    """The optional list holds work keys; a required work is ``require`` whatever ``typewritten_works`` says."""
+    reviews = build.parse_reviews({"required_works": [LIT_KEY, RUN2_KEY],
+                                   "review_policy": {"typewritten_works": "flag"}})
+    assert reviews.required_works == frozenset({LIT_KEY, RUN2_KEY})
+    assert reviews.work_policy(LIT_KEY) == "require" and reviews.work_policy(RUN2_KEY) == "require"
+    assert reviews.work_policy(OTHER_KEY) == "flag"
+    assert build.parse_reviews({}).required_works == frozenset() == build.Reviews().required_works
+    assert build.Reviews().work_policy(OTHER_KEY) == "require"                  # the default policy applies to the rest
+    assert _reviews(typewritten_works="flag").work_policy(LIT_KEY) == "flag"
+
+
+@pytest.mark.parametrize("policy", ["require", "flag"])
+def test_a_required_work_is_excluded_and_the_policy_governs_the_other_works(tmp_path: Path, policy: str) -> None:
+    """A required thesis waits for its approval under either policy; a printed edition follows ``typewritten_works``:
+    excluded under ``require``, admitted with its flag under ``flag``."""
+    world = _two_works_world(tmp_path)
+    _, manifest, decisions = build.assemble_rows(world.work, pool=world.pool,
+                                                 reviews=_reviews(required=[LIT_KEY], typewritten_works=policy))
+    by_key = _by_key(decisions)
+    for side in ("recto", "verso"):
+        assert (by_key[(A, side)]["stage"], by_key[(A, side)]["reasons"]) == ("holdout_cleared", [PENDING_LIT])
+    if policy == "require":
+        assert manifest == [] and by_key[(B, "")]["reasons"] == [PENDING_OTHER]
+    else:
+        assert [(m.row_id, m.quality_flags) for m in manifest] == [(B, ["tokens_unmeasured", PENDING_OTHER])]
+
+
+def test_an_approved_required_work_is_admitted_without_a_flag(tmp_path: Path) -> None:
+    """The eye sheet of a required thesis lifts its rows; the other work stays flagged under ``flag``."""
+    world = _two_works_world(tmp_path)
+    reviews = _reviews(works=[LIT_KEY], required=[LIT_KEY], typewritten_works="flag")
+    _, manifest, _ = build.assemble_rows(world.work, pool=world.pool, reviews=reviews)
+    assert [(m.row_id, m.side_key, m.quality_flags) for m in manifest] == [
+        (A, "recto", []), (A, "verso", []), (B, "", ["tokens_unmeasured", PENDING_OTHER])]
+
+
+def test_a_required_work_does_not_touch_the_rule_recovered_policy(tmp_path: Path) -> None:
+    """``rule_recovered`` keeps its own policy: an approved, required thesis side that was rule-recovered is flagged
+    under ``flag`` and excluded under ``require``."""
+    world = _two_works_world(tmp_path)
+    _recover(world, A, "recto", "spill_ratio_ok", "p99_ratio2")
+    for policy, admitted in (("flag", True), ("require", False)):
+        reviews = _reviews(works=[LIT_KEY], required=[LIT_KEY], typewritten_works="flag", rule_recovered=policy)
+        _, manifest, decisions = build.assemble_rows(world.work, pool=world.pool, reviews=reviews)
+        assert ((A, "recto") in {(m.row_id, m.side_key) for m in manifest}) == admitted
+        if admitted:
+            assert manifest[0].quality_flags == [PENDING_ROW]
+        else:
+            assert _by_key(decisions)[(A, "recto")]["reasons"] == [PENDING_ROW]
+
+
+def test_acceptance_holds_a_required_work_to_require_while_a_flagged_work_passes(tmp_path: Path) -> None:
+    """Rows built with nothing required pass; checked with the thesis required, only its rows violate (the flagged
+    printed edition still carries its flag)."""
+    world = _two_works_world(tmp_path)
+    flag = _reviews(typewritten_works="flag")
+    rows, manifest, decisions, counts = _assembled(world, flag)
+    assert [m.row_id for m in manifest] == [A, A, B]
+    assert build.acceptance_checks(rows, manifest, decisions, counts, flag) == []
+    required = _reviews(required=[LIT_KEY], typewritten_works="flag")
+    violations = build.acceptance_checks(rows, manifest, decisions, counts, required)
+    assert len(violations) == 1 and "work is not in approved_works" in violations[0] and "2 row(s)" in violations[0]
+    approved = _reviews(works=[LIT_KEY], required=[LIT_KEY], typewritten_works="flag")
+    assert build.acceptance_checks(rows, manifest, decisions, counts, approved) == []
+
+
+def test_a_required_work_that_matches_no_work_is_a_violation(tmp_path: Path) -> None:
+    """A mistyped required key would leave the intended work under the looser policy, so it is reported."""
+    world = _two_works_world(tmp_path)
+    data = funnel.load_stage_data(world.work, world.pool, build_outputs=False)
+    reviews = _reviews(required=[LIT_KEY, LIT_KEY.replace("1965", "1956"), RUN2_KEY])
+    assert build.unmatched_required_works(reviews, data) == [
+        f"required_works names no work of stage0: 2, e.g. {RUN2_KEY}, {LIT_KEY.replace('1965', '1956')}"]
+    assert build.unmatched_required_works(_reviews(required=[LIT_KEY, OTHER_KEY]), data) == []
+    assert build.unmatched_required_works(build.Reviews(), data) == []
+
+
+def test_a_mistyped_required_work_stops_the_build(tmp_path: Path, calls: Calls, capsys: pytest.CaptureFixture) -> None:
+    """The violation is printed and nothing is written."""
+    world = _two_works_world(tmp_path)
+    path = _write_reviews(tmp_path / "reviews.json", required_works=[LIT_KEY.replace("1965", "1956")],
+                          review_policy={"typewritten_works": "flag"})
+    before = _snapshot(tmp_path)
+    with pytest.raises(SystemExit) as stop:
+        build.main(_argv(world, "--reviews", str(path)))
+    assert stop.value.code == 1 and calls.saved == [] and not world.out.exists() and _snapshot(tmp_path) == before
+    assert ("required_works names no work of stage0: 1, e.g. literature:dissertations/test_thesis_1956"
+            in capsys.readouterr().out)
+
+
+def test_dry_run_prints_the_number_of_required_works(tmp_path: Path, calls: Calls,
+                                                     capsys: pytest.CaptureFixture) -> None:
+    """The review line names the policy of the other works and the count of required ones."""
+    world = _two_works_world(tmp_path)
+    path = _write_reviews(tmp_path / "reviews.json", required_works=[LIT_KEY],
+                          review_policy={"typewritten_works": "flag", "rule_recovered": "flag"})
+    build.main(_argv(world, "--dry-run", "--reviews", str(path)))
+    assert ("review (typewritten works flag, 1 required works, rule-recovered flag): pending work 2 sides (1 works), "
+            "pending row 0, rejected 0, admitted with flags 1; rule-recovered admitted 0, excluded 0 (0 by review)"
+            ) in capsys.readouterr().out
+
+
+def test_main_counts_the_required_works_in_the_stats_digest_and_readme(tmp_path: Path, calls: Calls) -> None:
+    """``stats.json`` and the reviews digest count the required works; the README says how many are always
+    ``require``."""
+    world = _two_works_world(tmp_path)
+    path = _write_reviews(tmp_path / "reviews.json", required_works=[LIT_KEY], approved_works=[_approved_work(LIT_KEY)],
+                          review_policy={"typewritten_works": "flag"})
+    build.main(_argv(world, "--reviews", str(path)))
+    stats = json.loads((world.out / "stats.json").read_text())
+    assert stats["review"] == {"policy": {"typewritten_works": "flag", "rule_recovered": "flag"}, "required_works": 1,
+                               "approved_works": 1, "row_verdicts": {}, "rows_admitted_with_flags": 1}
+    digest, = [i for i in stats["inputs"] if i["name"] == build.REVIEWS_INPUT_NAME]
+    assert digest["records"] == 2
+    readme = (world.out / "README.md").read_text()
+    assert "scanned-edition works `flag`" in readme and "1 named work(s) are always `require`" in readme
+    assert LIT_KEY not in readme and LIT_KEY not in (world.out / "stats.json").read_text()
+
+
+# ------------------------------------------------------------------------------------------------------- --list-works
+
+def test_list_works_counts_the_sides_of_each_scanned_edition_work(tmp_path: Path) -> None:
+    """Only the scanned-edition sources have work keys; most sides first, ties by key."""
+    world = _two_works_world(tmp_path)
+    _retarget(world, E, "lit_run2", RUN2_POINTER)
+    cands = list(read_jsonl(paths.stage_path(world.work, "candidates"), Candidate))
+    assert build.list_works(cands) == {LIT_KEY: 2, RUN2_KEY: 1, OTHER_KEY: 1, "literature:unknown": 1}
+    assert list(build.list_works(cands)) == [LIT_KEY, RUN2_KEY, OTHER_KEY, "literature:unknown"]
+    assert build.list_works([c for c in cands if c.source == "pgp"]) == {}
+    assert build.list_works([]) == {}
+
+
+def test_works_lines_give_totals_per_source_then_one_line_per_work() -> None:
+    """The header counts works and sides per source; each work line starts with its side count."""
+    lines = build.works_lines({LIT_KEY: 12, OTHER_KEY: 3, RUN2_KEY: 2})
+    assert lines[0] == ("scanned-edition works in stage0: 3 works, 17 sides "
+                        "(literature 2 works / 15 sides, lit_run2 1 works / 2 sides)")
+    assert lines[1].startswith("sides  work key")
+    assert lines[2:] == [f"   12  {LIT_KEY}", f"    3  {OTHER_KEY}", f"    2  {RUN2_KEY}"]
+    assert build.works_lines({})[0].startswith("scanned-edition works in stage0: 0 works, 0 sides")
+
+
+def test_list_works_cli_prints_the_keys_and_writes_nothing(tmp_path: Path, calls: Calls,
+                                                           capsys: pytest.CaptureFixture) -> None:
+    """``--list-works`` reads only stage0: no ledger, no reviews, no output files."""
+    world = _two_works_world(tmp_path)
+    _retarget(world, E, "lit_run2", RUN2_POINTER)
+    before = _snapshot(tmp_path)
+    build.main(["--work-dir", str(world.work), "--list-works", "--pool", str(tmp_path / "no_ledger.jsonl")])
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0] == ("scanned-edition works in stage0: 4 works, 5 sides "
+                        "(literature 3 works / 4 sides, lit_run2 1 works / 1 sides)")
+    assert lines[2:] == [f"    2  {LIT_KEY}", f"    1  {RUN2_KEY}", f"    1  {OTHER_KEY}", "    1  literature:unknown"]
+    assert _snapshot(tmp_path) == before and calls.saved == []
+
+
+def test_list_works_cli_needs_a_stage0_file(tmp_path: Path) -> None:
+    """A work dir without stage0 is an error, not an empty list."""
+    with pytest.raises(ValueError, match="stage0 candidates not found"):
+        build.main(["--work-dir", str(tmp_path / "nowhere"), "--list-works"])
