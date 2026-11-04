@@ -2123,3 +2123,19 @@ def test_main_rejects_bad_arguments(tmp_path: Path, argv: List[str]) -> None:
     with pytest.raises(SystemExit) as raised:
         reads.main(["--work-dir", str(tmp_path / "work")] + argv)
     assert raised.value.code == 2
+
+
+def test_vlm_read_fn_honours_the_model_server_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The VLM read function binds the server named by ``NOVEL_BUILD_LMS_URL`` and nothing when it is unset.
+
+    :param monkeypatch: Pytest monkeypatch fixture.
+    """
+    monkeypatch.delenv(reads.LMS_URL_ENV, raising=False)
+    plain = reads.vlm_read_fn("qwen-x")
+    assert plain.keywords == {"model_key": "qwen-x"}
+    monkeypatch.setenv(reads.LMS_URL_ENV, "http://192.0.2.7:1234/v1")
+    remote = reads.vlm_read_fn("qwen-x")
+    assert remote.keywords["read_page"].keywords == {"base_url": "http://192.0.2.7:1234/v1"}
+    assert remote.keywords["read_page"].func is reads.page_reader.read_page
+    explicit = reads.vlm_read_fn("qwen-x", base_url="http://192.0.2.8:1234/v1")
+    assert explicit.keywords["read_page"].keywords["base_url"] == "http://192.0.2.8:1234/v1"

@@ -79,6 +79,10 @@ from src.models.ocr import page_reader
 
 #: Line-transcription endpoint of the Kraken service (override with ``NOVEL_BUILD_KRAKEN_URL``).
 KRAKEN_URL = os.environ.get("NOVEL_BUILD_KRAKEN_URL", "http://localhost:8002/transcribe_lines")
+#: Environment variable naming the model server of the VLM reader (an OpenAI-compatible base URL such as
+#: ``http://host:1234/v1``); unset: the page reader's default, the local server. Lets a job on another machine's
+#: server share a claim log with the local jobs.
+LMS_URL_ENV = "NOVEL_BUILD_LMS_URL"
 #: Recognition model as the service names it (override with ``NOVEL_BUILD_KRAKEN_MODEL``).
 KRAKEN_MODEL = os.environ.get("NOVEL_BUILD_KRAKEN_MODEL", "/app/models/MiDRASH_Gen_01.mlmodel")
 KRAKEN_TIMEOUT_S = 600.0
@@ -592,6 +596,21 @@ def vlm_read(path: Path, *, model_key: str, read_page: Optional[PageReader] = No
     meta = _jsonable({key: result[key] for key in VLM_META_FIELDS if key in result})
     return make_record(sha256, reader, result.get("text") or "", finish=vlm_finish(result),
                        seconds=round(time.perf_counter() - started, 1), meta=meta)
+
+
+def vlm_read_fn(model_key: str, base_url: Optional[str] = None) -> ReadFn:
+    """The read function of a VLM run: :func:`vlm_read` on the production page reader, against one model server.
+
+    :param model_key: Model key of the vision-language model.
+    :param base_url: The server's OpenAI-compatible base URL; None: ``$NOVEL_BUILD_LMS_URL`` when set, else the page
+        reader's default (the local server).
+    :return: ``read_fn(path) -> ReadRecord``.
+    """
+    url = base_url or os.environ.get(LMS_URL_ENV) or None
+    if url:
+        return functools.partial(vlm_read, model_key=model_key,
+                                 read_page=functools.partial(page_reader.read_page, base_url=url))
+    return functools.partial(vlm_read, model_key=model_key)
 
 
 # --- selection and the run ---------------------------------------------------------------------------------------------
@@ -1272,7 +1291,8 @@ def main(argv: Optional[List[str]] = None) -> None:
     if args.reader == "kraken":
         read_fn: ReadFn = functools.partial(kraken_read, url=KRAKEN_URL, model_path=model)
     else:
-        read_fn = functools.partial(vlm_read, model_key=model)
+        read_fn = vlm_read_fn(model)
+        print(f"model server: {os.environ.get(LMS_URL_ENV) or 'the local default'}", flush=True)
     counts = run_reads(args.work_dir, reader=args.reader, model=model, read_fn=read_fn, script=args.script,
                        limit=args.limit, stop_file=args.stop_file or default_stop_file(args.work_dir),
                        only_missing_usable=args.only_missing_usable, skip_near_duplicates=args.skip_near_duplicates,
