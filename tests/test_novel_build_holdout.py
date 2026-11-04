@@ -14,8 +14,8 @@ import pytest
 from src.datasets import shelfmarks as shelf
 from src.finetuning.qwen_hebrew.novel_build import holdout as ho
 from src.finetuning.qwen_hebrew.novel_build import paths
-from src.finetuning.qwen_hebrew.novel_build.schema import (Candidate, HoldoutResult, QualityResult, read_jsonl,
-                                                           write_jsonl)
+from src.finetuning.qwen_hebrew.novel_build.schema import (Candidate, HoldoutResult, QualityResult, TargetSide,
+                                                           read_jsonl, write_jsonl)
 
 HEBREW = "אבגדהוזחטיכלמנסעפצקרשת"                  # 22 Hebrew letters (an alphabet, not a text)
 ARABIC = "ابتثجحخدذرزسشصضطظعغفقكلمنهوي"              # 28 Arabic letters (an alphabet, not a text)
@@ -92,13 +92,16 @@ GT_ARABIC = words(ARABIC, 300, seed=98)
 
 def resources(registry_dir: Path, *, apd: Optional[Dict[str, str]] = None,
               named: Optional[Dict[str, Dict[str, List[str]]]] = None,
-              index: Optional[shelf.ShelfmarkIndex] = None) -> ho.HoldoutResources:
+              index: Optional[shelf.ShelfmarkIndex] = None, gt: Optional[Dict[str, List[tuple]]] = None,
+              text_rule: ho.TextRule = ho.TextRule()) -> ho.HoldoutResources:
     """Resources over the synthetic registry, frozen and religious lists and GT sets.
 
     :param registry_dir: Registry directory.
     :param apd: APD exclusion identifiers.
     :param named: Named exclusions (default: one synthetic name).
     :param index: Merged-corpus index.
+    :param gt: GT sets replacing the default two (``{set: [(doc, text)]}``).
+    :param text_rule: The text rule (default: the module's default, ``boilerplate``).
     :return: The resources.
     """
     frozen_ids = registry_dir / "frozen_ids.json"
@@ -111,9 +114,10 @@ def resources(registry_dir: Path, *, apd: Optional[Dict[str, str]] = None,
                          encoding="utf-8")
     benchmarks = [ho.registry_set(REGISTRY, registry_dir, {"999001": "T-S 93.1"}, index),
                   ho.frozen_set(frozen_ids, frozen_keys, index), ho.religious_set(religious)]
-    gt = {"genizah_test_v1": [("gt_doc_1", GT_DOC), ("gt_doc_2", words(HEBREW, 300, seed=97))],
-          "arabic_script_benchmark_v0": [("ar_doc_1", GT_ARABIC)]}
-    return ho.make_resources(benchmarks, gt, apd=apd, index=index,
+    if gt is None:
+        gt = {"genizah_test_v1": [("gt_doc_1", GT_DOC), ("gt_doc_2", words(HEBREW, 300, seed=97))],
+              "arabic_script_benchmark_v0": [("ar_doc_1", GT_ARABIC)]}
+    return ho.make_resources(benchmarks, gt, apd=apd, index=index, text_rule=text_rule,
                              named=named if named is not None else {"named_doc": {"pgpids": ["999003"],
                                                                                  "marks": ["T-S 96.1"]}})
 
@@ -330,3 +334,198 @@ def test_main_writes_the_stage_file(registry_dir: Path, tmp_path: Path, monkeypa
     out = {r.row_id: r for r in read_jsonl(paths.stage_path(work, "holdout"), HoldoutResult)}
     assert out["pgp:20"].split == "excluded" and out["pgp:21"].rnl
     assert seen["use_index"] is False and seen["apd_files"] == []
+
+
+# ===================================================================================================================
+# The boilerplate text rule
+# ===================================================================================================================
+
+FORMULA = words(HEBREW, 70, seed=11)             # a 70-letter "formula" shared by many pool documents
+LONG_FORMULA = words(HEBREW, 130, seed=12)       # a formula longer than the long-run guard
+ARABIC_FORMULA = words(ARABIC, 60, seed=21)
+
+
+def with_target(candidate: Candidate, text: str, side_key: str = "recto") -> Candidate:
+    """Give a candidate one target side (what the pool frequencies count).
+
+    :param candidate: The candidate.
+    :param text: Target text.
+    :param side_key: Side key.
+    :return: The same candidate.
+    """
+    candidate.targets = [TargetSide(side_key, text, text, text.splitlines(), {})]
+    return candidate
+
+
+def formula_pool(formula: str, alphabet: str = HEBREW, groups: Optional[Sequence[str]] = None) -> List[Candidate]:
+    """Three pool candidates whose targets carry a formula, each in its own document group unless ``groups`` says
+    otherwise.
+
+    :param formula: The shared formula.
+    :param alphabet: Alphabet of the other words.
+    :param groups: Document groups of the three (default: one each).
+    :return: The candidates.
+    """
+    out = []
+    for i, seed in enumerate((31, 32, 33)):
+        group = groups[i] if groups is not None else None
+        out.append(with_target(cand(f"pgp:3{i}", group=group), words(alphabet, 150, seed=seed) + " " + formula))
+    return out
+
+
+def gt_with(formula: str, arabic_formula: str = "") -> Dict[str, List[tuple]]:
+    """GT sets whose documents end with a formula.
+
+    :param formula: Hebrew formula appended to the Hebrew GT document.
+    :param arabic_formula: Arabic formula appended to the Arabic GT document.
+    :return: ``{set: [(doc, text)]}``.
+    """
+    return {"genizah_test_v1": [("gt_doc_1", GT_DOC + " " + formula), ("gt_doc_2", words(HEBREW, 300, seed=97))],
+            "arabic_script_benchmark_v0": [("ar_doc_1", GT_ARABIC + " " + arabic_formula)]}
+
+
+def test_text_rule_validation() -> None:
+    """The rule rejects an unknown name and parameters that cannot work."""
+    assert ho.TextRule().name == "boilerplate" and ho.TextRule("strict").name == "strict"
+    with pytest.raises(ValueError):
+        ho.TextRule("loose")
+    with pytest.raises(ValueError):
+        ho.TextRule(common_df=1)
+    with pytest.raises(ValueError):
+        ho.TextRule(long_run_letters=10)
+    with pytest.raises(ValueError):
+        ho.TextRule(share_threshold=0.0)
+
+
+def test_pool_frequency_counts_gt_shingles_once_per_group() -> None:
+    """Only GT shingles are counted, and a group with two candidates counts once."""
+    gt = ho.lsr.build_gt_index(gt_with(FORMULA))
+    pool = formula_pool(FORMULA, groups=["group:a", "group:a", "group:b"])
+    other = with_target(cand("pgp:50"), words(HEBREW, 200, seed=50))      # shares nothing with the GT
+    freq = ho.pool_frequency(pool + [other], gt)
+    formula_shingles = ho.lsr.hebrew_shingles(FORMULA)
+    assert freq.groups == 3
+    assert {freq.hebrew[s] for s in formula_shingles} == {2}
+    assert not (set(freq.hebrew) - set().union(*gt.hebrew.values()))
+
+
+def test_boilerplate_shared_by_three_groups_is_discounted(registry_dir: Path) -> None:
+    """A formula held by three other document groups does not hold a side out; the match is flagged.
+
+    :param registry_dir: Directory of the synthetic registry.
+    """
+    res = resources(registry_dir, gt=gt_with(FORMULA))
+    side = with_target(cand("pgp:40"), words(HEBREW, 200, seed=40) + " " + FORMULA)
+    out = decide(formula_pool(FORMULA) + [side], [passed("pgp:40", text=side.targets[0].text)], res)
+    result = out[("pgp:40", "recto")]
+    assert not result.held_out and result.reasons == [] and result.split in ("train", "val")
+    assert result.flags == ["boilerplate:genizah_test_v1:gt_doc_1"]
+    strict = resources(registry_dir, gt=gt_with(FORMULA), text_rule=ho.TextRule("strict"))
+    out = decide(formula_pool(FORMULA) + [side], [passed("pgp:40", text=side.targets[0].text)], strict)
+    assert out[("pgp:40", "recto")].reasons == ["text:genizah_test_v1:gt_doc_1"]
+    assert out[("pgp:40", "recto")].flags == []
+
+
+def test_boilerplate_counts_document_groups_not_candidates(registry_dir: Path) -> None:
+    """Three pool candidates of one document group are one holder: the formula stays specific and holds out.
+
+    :param registry_dir: Directory of the synthetic registry.
+    """
+    res = resources(registry_dir, gt=gt_with(FORMULA))
+    side = with_target(cand("pgp:40"), words(HEBREW, 200, seed=40) + " " + FORMULA)
+    pool = formula_pool(FORMULA, groups=["group:one", "group:one", "group:one"])
+    out = decide(pool + [side], [passed("pgp:40", text=side.targets[0].text)], res)
+    assert out[("pgp:40", "recto")].reasons == ["text:genizah_test_v1:gt_doc_1"]
+    assert out[("pgp:40", "recto")].flags == []
+
+
+def test_specific_passage_still_holds_out(registry_dir: Path) -> None:
+    """A passage of the GT document that no pool group holds keeps holding out, formula or not.
+
+    :param registry_dir: Directory of the synthetic registry.
+    """
+    res = resources(registry_dir, gt=gt_with(FORMULA))
+    text = words(HEBREW, 100, seed=40) + " " + GT_DOC[40:160] + " " + FORMULA
+    side = with_target(cand("pgp:40"), text)
+    out = decide(formula_pool(FORMULA) + [side], [passed("pgp:40", text=text)], res)
+    assert out[("pgp:40", "recto")].held_out
+    assert out[("pgp:40", "recto")].reasons == ["text:genizah_test_v1:gt_doc_1"]
+
+
+def test_long_run_guard_holds_out_boilerplate(registry_dir: Path) -> None:
+    """A shared run of 100 letters or more holds out even when every shingle is boilerplate.
+
+    :param registry_dir: Directory of the synthetic registry.
+    """
+    res = resources(registry_dir, gt=gt_with(LONG_FORMULA))
+    text = words(HEBREW, 400, seed=40) + " " + LONG_FORMULA
+    side = with_target(cand("pgp:40"), text)
+    out = decide(formula_pool(LONG_FORMULA) + [side], [passed("pgp:40", text=text)], res)
+    assert out[("pgp:40", "recto")].reasons == ["text:genizah_test_v1:gt_doc_1"]
+    lenient = resources(registry_dir, gt=gt_with(LONG_FORMULA), text_rule=ho.TextRule(long_run_letters=400))
+    out = decide(formula_pool(LONG_FORMULA) + [side], [passed("pgp:40", text=text)], lenient)
+    assert not out[("pgp:40", "recto")].held_out
+
+
+def test_share_guard_holds_out_boilerplate(registry_dir: Path) -> None:
+    """A side made mostly of a formula holds out through the share guard.
+
+    :param registry_dir: Directory of the synthetic registry.
+    """
+    res = resources(registry_dir, gt=gt_with(FORMULA))
+    text = words(HEBREW, 30, seed=40) + " " + FORMULA           # about two thirds of its shingles are shared
+    side = with_target(cand("pgp:40"), text)
+    out = decide(formula_pool(FORMULA) + [side], [passed("pgp:40", text=text)], res)
+    assert out[("pgp:40", "recto")].reasons == ["text:genizah_test_v1:gt_doc_1"]
+
+
+def test_arabic_boilerplate_exception(registry_dir: Path) -> None:
+    """The rasm rule discounts a formula held by three pool groups and keeps a specific passage.
+
+    :param registry_dir: Directory of the synthetic registry.
+    """
+    res = resources(registry_dir, gt=gt_with(FORMULA, ARABIC_FORMULA))
+    pool = formula_pool(ARABIC_FORMULA, alphabet=ARABIC)
+    formulaic = words(ARABIC, 220, seed=41) + " " + ARABIC_FORMULA
+    specific = GT_ARABIC[:200]
+    cands = pool + [with_target(cand("apd_v3:f", source="apd_v3"), formulaic),
+                    with_target(cand("apd_v3:s", source="apd_v3"), specific)]
+    out = decide(cands, [passed("apd_v3:f", text=formulaic), passed("apd_v3:s", text=specific)], res)
+    assert not out[("apd_v3:f", "recto")].held_out
+    assert out[("apd_v3:f", "recto")].flags == ["boilerplate:arabic_script_benchmark_v0:ar_doc_1"]
+    assert out[("apd_v3:s", "recto")].reasons == ["text:arabic_script_benchmark_v0:ar_doc_1"]
+
+
+def test_main_passes_the_text_rule_and_writes_the_sidecar(registry_dir: Path, tmp_path: Path,
+                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI builds the rule from its options and records it next to the stage file.
+
+    :param registry_dir: Directory of the synthetic registry.
+    :param tmp_path: Pytest temporary directory.
+    :param monkeypatch: Pytest monkeypatch fixture.
+    """
+    work = tmp_path / "work"
+    write_jsonl(paths.stage_path(work, "images"), [cand("pgp:20")])
+    write_jsonl(paths.stage_path(work, "quality"), [passed("pgp:20")])
+    seen: Dict[str, Any] = {}
+
+    def fake_resources(**kwargs: Any) -> ho.HoldoutResources:
+        """Synthetic resources carrying the rule given.
+
+        :param kwargs: ``load_resources`` arguments.
+        :return: The resources.
+        """
+        seen.update(kwargs)
+        return resources(registry_dir, text_rule=kwargs["text_rule"])
+
+    monkeypatch.setattr(ho, "load_resources", fake_resources)
+    monkeypatch.delenv(ho.APD_EXCLUSIONS_ENV, raising=False)
+    ho.main(["--work-dir", str(work), "--no-index"])
+    assert seen["text_rule"] == ho.TextRule()
+    record = json.loads(ho.text_rule_path(paths.stage_path(work, "holdout")).read_text(encoding="utf-8"))
+    assert record["name"] == "boilerplate" and record["common_df"] == 3 and record["pool_groups"] == 1
+    assert record["admitted"] == 0 and record["matches_discounted"] == {}
+    ho.main(["--work-dir", str(work), "--no-index", "--text-rule", "strict", "--common-df", "5"])
+    assert seen["text_rule"].name == "strict" and seen["text_rule"].common_df == 5
+    record = json.loads(ho.text_rule_path(paths.stage_path(work, "holdout")).read_text(encoding="utf-8"))
+    assert record["name"] == "strict" and record["pool_groups"] is None

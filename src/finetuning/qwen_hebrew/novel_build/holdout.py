@@ -24,6 +24,14 @@ Text (per side): ``text:<set>:<id>`` when the final target shares 25-letter Hebr
 ``build_legacy_store_rows.GT_SETS`` (``load_gt_sets`` / ``build_gt_index`` / ``text_leakage``); ``<id>`` is the GT
 document with the most shared shingles.
 
+Text rule (``--text-rule``): ``strict`` is the rule above as it stands. ``boilerplate`` (the default) is the same rule
+with one exception for formulae: a shared shingle held by at least ``--common-df`` (3) independent document groups of
+the pool (the candidates' targets, counted once per ``document_group``) is boilerplate, an epistolary opening, a deed
+clause or a basmala, and does not count towards the shared-shingle thresholds. A side still holds out, boilerplate or
+not, when its longest shared run spans at least ``--long-run-letters`` (100) letters or at least
+``--share-threshold`` (0.30) of its shingles are shared with one GT set. The text matches the exception discounted are
+recorded in the result's ``flags`` (``boilerplate:<set>:<id>``); identity reasons are unchanged.
+
 Split: ``val`` when ``int(sha1(document_group)[:8], 16) / 0xFFFFFFFF < val_share`` (default 5 %), else ``train``;
 both sides of a sheet and every candidate of a group land together. ``rnl`` is copied from the candidate.
 
@@ -47,13 +55,18 @@ from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Seque
 
 from src.datasets import shelfmarks as shelf
 from src.datasets.evaluations import benchmark_registry as br
-from src.datasets.evaluations.helper_eval_scripts.decontam_gate import DecontamGate
+from src.datasets.evaluations.helper_eval_scripts.decontam_gate import _HEB, DecontamGate
 from src.finetuning.qwen_hebrew import build_legacy_store_rows as lsr
 from src.finetuning.qwen_hebrew.novel_build import paths
 from src.finetuning.qwen_hebrew.novel_build.schema import (Candidate, HoldoutResult, QualityResult, read_jsonl,
                                                            write_jsonl)
 
 VAL_SHARE = 0.05
+TEXT_RULES = ("strict", "boilerplate")
+COMMON_DF = 3                   # a shingle held by this many pool document groups, or more, is boilerplate
+LONG_RUN_LETTERS = 100          # a shared run of this many letters holds out whatever its shingles' status
+SHARE_THRESHOLD = 0.30          # this share of a side's shingles in one GT set holds out whatever their status
+BOILERPLATE_FLAG = "boilerplate"
 FROZEN_NAME = "pgp131"
 RELIGIOUS_NAME = "religious"
 APD_EXCLUSION = "derive_v25a_apd"
@@ -388,6 +401,85 @@ def compile_named(named: Mapping[str, Mapping[str, Sequence[str]]]) -> List[Name
 # Resources and decisions
 # ===================================================================================================================
 
+@dataclass(frozen=True)
+class TextRule:
+    """How shingles shared with a GT document hold a side out.
+
+    :ivar name: ``strict`` (``build_legacy_store_rows.text_leakage`` as it stands) or ``boilerplate`` (the same
+        thresholds over the shared shingles that are not boilerplate, plus the long-run and share guards).
+    :ivar common_df: Pool document groups holding a shingle from which it is boilerplate (at least 2: the side's own
+        group always holds its shingles).
+    :ivar long_run_letters: Shared run length, in letters, that holds out whatever the shingles' status.
+    :ivar share_threshold: Share of a side's shingles found in one GT set that holds out whatever their status.
+    """
+
+    name: str = "boilerplate"
+    common_df: int = COMMON_DF
+    long_run_letters: int = LONG_RUN_LETTERS
+    share_threshold: float = SHARE_THRESHOLD
+
+    def __post_init__(self) -> None:
+        """Validate the parameters.
+
+        :raises ValueError: On an unknown name, ``common_df`` below 2, or thresholds that cannot fire or always fire.
+        """
+        if self.name not in TEXT_RULES:
+            raise ValueError(f"text rule {self.name!r}: expected one of {TEXT_RULES}")
+        if self.common_df < 2:
+            raise ValueError(f"common_df {self.common_df}: a shingle is always held by the side's own group")
+        if self.long_run_letters < lsr.HEBREW_SHINGLE:
+            raise ValueError(f"long_run_letters {self.long_run_letters}: shorter than one shingle")
+        if not 0.0 < self.share_threshold <= 1.0:
+            raise ValueError(f"share_threshold {self.share_threshold}: expected a share in (0, 1]")
+
+
+@dataclass
+class PoolFrequency:
+    """Document frequency of the GT shingles over the pool: in how many independent document groups each occurs.
+
+    Only the shingles of the GT index are counted (no other shingle can match a GT document), which keeps the
+    counters small.
+
+    :ivar hebrew: Hebrew 25-letter shingle -> number of document groups holding it.
+    :ivar arabic: Rasm 20-letter shingle -> number of document groups holding it.
+    :ivar groups: Document groups counted.
+    """
+
+    hebrew: Counter
+    arabic: Counter
+    groups: int
+
+
+def pool_frequency(cands: Iterable[Candidate], gt: lsr.GtIndex) -> PoolFrequency:
+    """Count, per GT shingle, the pool document groups whose targets hold it.
+
+    Every candidate of a group contributes to one count (two editions of one fragment are one group), so a passage
+    specific to one document that the pool holds twice through two sources stays rare.
+
+    :param cands: Every candidate of the build (their ``targets``).
+    :type cands: Iterable[Candidate]
+    :param gt: GT index (its shingles are the ones counted).
+    :type gt: lsr.GtIndex
+    :return: The frequencies.
+    :rtype: PoolFrequency
+    """
+    relevant_hebrew: Set[str] = set().union(*gt.hebrew.values()) if gt.hebrew else set()
+    relevant_arabic: Set[str] = set().union(*(index.keys() for index in gt.arabic.values())) if gt.arabic else set()
+    per_group_hebrew: Dict[str, Set[str]] = defaultdict(set)
+    per_group_arabic: Dict[str, Set[str]] = defaultdict(set)
+    groups: Set[str] = set()
+    for cand in cands:
+        groups.add(cand.document_group)
+        for target in cand.targets:
+            if relevant_hebrew:
+                per_group_hebrew[cand.document_group] |= lsr.hebrew_shingles(target.text) & relevant_hebrew
+            if relevant_arabic:
+                per_group_arabic[cand.document_group] |= lsr.arabic_shingles(target.text) & relevant_arabic
+    hebrew: Counter = Counter(s for shingles in per_group_hebrew.values() for s in shingles)
+    arabic: Counter = Counter(s for shingles in per_group_arabic.values() for s in shingles)
+    return PoolFrequency(hebrew, arabic, len(groups))
+
+
 def _default_contaminated(text: str, shingles: set) -> bool:
     """The Hebrew content rule of ``DecontamGate.content_contaminated``: at least two shared 25-letter shingles.
 
@@ -413,6 +505,9 @@ class HoldoutResources:
     :ivar contaminated: The Hebrew content rule (``DecontamGate.content_contaminated``).
     :ivar index: Merged-corpus index, or None.
     :ivar shingle_cache: Hebrew shingles per GT document, filled on first use.
+    :ivar text_rule: The text rule (:class:`TextRule`).
+    :ivar pool: Pool document frequencies of the GT shingles (filled by :func:`decide_holdout` under the
+        ``boilerplate`` rule; None under ``strict``).
     """
     benchmarks: List[BenchmarkSet]
     apd: Dict[str, str]
@@ -422,13 +517,15 @@ class HoldoutResources:
     contaminated: Callable[[str, set], bool] = _default_contaminated
     index: Optional[shelf.ShelfmarkIndex] = None
     shingle_cache: Dict[Tuple[str, int], Set[str]] = field(default_factory=dict)
+    text_rule: TextRule = TextRule()
+    pool: Optional[PoolFrequency] = None
 
 
 def make_resources(benchmarks: Sequence[BenchmarkSet], gt_sets: Mapping[str, Sequence[Tuple[str, str]]], *,
                    apd: Optional[Mapping[str, str]] = None,
                    named: Mapping[str, Mapping[str, Sequence[str]]] = NAMED_EXCLUSIONS,
                    contaminated: Callable[[str, set], bool] = _default_contaminated,
-                   index: Optional[shelf.ShelfmarkIndex] = None) -> HoldoutResources:
+                   index: Optional[shelf.ShelfmarkIndex] = None, text_rule: TextRule = TextRule()) -> HoldoutResources:
     """Assemble the resources (builds the GT index).
 
     :param benchmarks: Benchmark sets.
@@ -443,12 +540,14 @@ def make_resources(benchmarks: Sequence[BenchmarkSet], gt_sets: Mapping[str, Seq
     :type contaminated: Callable[[str, set], bool]
     :param index: Merged-corpus index, or None.
     :type index: Optional[shelf.ShelfmarkIndex]
+    :param text_rule: The text rule.
+    :type text_rule: TextRule
     :return: The resources.
     :rtype: HoldoutResources
     """
     sets = {name: list(items) for name, items in gt_sets.items()}
     return HoldoutResources(list(benchmarks), dict(apd or {}), compile_named(named), sets, lsr.build_gt_index(sets),
-                            contaminated, index)
+                            contaminated, index, text_rule=text_rule)
 
 
 def identity_reasons(cand: Candidate, res: HoldoutResources) -> List[str]:
@@ -509,6 +608,175 @@ def text_reasons(text: str, res: HoldoutResources) -> List[str]:
     return list(dict.fromkeys(reasons))
 
 
+def _hebrew_positions(text: str, n: int = lsr.HEBREW_SHINGLE) -> List[str]:
+    """The Hebrew shingles of a text in position order (the gate's letter class, no folding).
+
+    :param text: Text.
+    :type text: str
+    :param n: Shingle length.
+    :type n: int
+    :return: One shingle per position.
+    :rtype: List[str]
+    """
+    letters = "".join(_HEB.findall(text or ""))
+    return [letters[i:i + n] for i in range(len(letters) - n + 1)]
+
+
+def _rasm_positions(text: str, n: int = lsr.ARABIC_SHINGLE) -> List[str]:
+    """The rasm shingles of a text in position order (``build_legacy_store_rows.arabic_shingles``'s skeleton).
+
+    :param text: Text.
+    :type text: str
+    :param n: Shingle length.
+    :type n: int
+    :return: One shingle per position.
+    :rtype: List[str]
+    """
+    rasm = lsr.rasm_skeleton(text or "")
+    return [rasm[i:i + n] for i in range(len(rasm) - n + 1)]
+
+
+def longest_shared_run(positions: Sequence[str], shared: Callable[[str], bool], n: int) -> int:
+    """Letters spanned by the longest run of consecutive positions whose shingle is shared.
+
+    :param positions: Shingles in position order.
+    :type positions: Sequence[str]
+    :param shared: Whether a shingle is shared.
+    :type shared: Callable[[str], bool]
+    :param n: Shingle length.
+    :type n: int
+    :return: ``run + n - 1`` letters for a run of ``run`` positions; 0 when no position is shared.
+    :rtype: int
+    """
+    best = run = 0
+    for shingle in positions:
+        run = run + 1 if shared(shingle) else 0
+        best = max(best, run)
+    return best + n - 1 if best else 0
+
+
+def hebrew_match(text: str, set_name: str, res: HoldoutResources) -> Tuple[bool, bool, Optional[str]]:
+    """One side against one GT set's Hebrew shingles: the strict decision, the rule's decision, the document.
+
+    Strict: at least two shingle positions shared with the set (``DecontamGate.content_contaminated``'s threshold).
+    Boilerplate: at least two shared positions whose shingle fewer than ``common_df`` pool groups hold, or a shared
+    run of ``long_run_letters``, or ``share_threshold`` of the positions shared.
+
+    :param text: Final target text.
+    :type text: str
+    :param set_name: GT set.
+    :type set_name: str
+    :param res: Resources (``pool`` filled under the boilerplate rule).
+    :type res: HoldoutResources
+    :return: ``(strict, held, doc)``: whether the strict rule holds the side out, whether the resources' rule does,
+        and the GT document sharing the most shingles (None when none is shared).
+    :rtype: Tuple[bool, bool, Optional[str]]
+    """
+    shingles = res.gt_index.hebrew.get(set_name) or set()
+    positions = _hebrew_positions(text)
+    hits = [shingle in shingles for shingle in positions]
+    n_hits = sum(hits)
+    strict = n_hits >= 2
+    if not strict:
+        return False, False, None
+    doc = _hebrew_doc(text, set_name, res)
+    rule = res.text_rule
+    if rule.name == "strict":
+        return True, True, doc
+    pool = res.pool.hebrew if res.pool is not None else Counter()
+    specific = sum(1 for shingle, hit in zip(positions, hits) if hit and pool[shingle] < rule.common_df)
+    run = longest_shared_run(positions, shingles.__contains__, lsr.HEBREW_SHINGLE)
+    share = n_hits / len(positions)
+    held = specific >= 2 or run >= rule.long_run_letters or share >= rule.share_threshold
+    return True, held, doc
+
+
+def arabic_match(text: str, set_name: str, res: HoldoutResources) -> Tuple[bool, bool, Optional[str]]:
+    """One side against one GT set's rasm shingles: the strict decision, the rule's decision, the document.
+
+    Strict (``build_legacy_store_rows.text_leakage``): at least ``ARABIC_MIN_SHARED_ONE_DOC`` shingles shared with
+    one GT document, or ``ARABIC_MIN_SHARE_UNION`` of the side's shingles shared with the set. Boilerplate: the
+    one-document count over the shingles fewer than ``common_df`` pool groups hold, the share guard over every shared
+    shingle (``share_threshold``), and the long-run guard (``long_run_letters``, rasm letters).
+
+    :param text: Final target text.
+    :type text: str
+    :param set_name: GT set.
+    :type set_name: str
+    :param res: Resources (``pool`` filled under the boilerplate rule).
+    :type res: HoldoutResources
+    :return: ``(strict, held, doc)`` as :func:`hebrew_match`; the document is the one sharing the most counted
+        shingles.
+    :rtype: Tuple[bool, bool, Optional[str]]
+    """
+    index = res.gt_index.arabic.get(set_name) or {}
+    positions = _rasm_positions(text)
+    mine = set(positions)
+    if not mine or not index:
+        return False, False, None
+    per_doc: Counter = Counter()
+    union = 0
+    for shingle in mine:
+        holders = index.get(shingle)
+        if holders:
+            union += 1
+            per_doc.update(holders)
+    top = per_doc.most_common(1)
+    max_one = top[0][1] if top else 0
+    share = union / len(mine)
+    strict = max_one >= lsr.ARABIC_MIN_SHARED_ONE_DOC or share >= lsr.ARABIC_MIN_SHARE_UNION
+    doc = res.gt_index.docs[set_name][top[0][0]] if top else None
+    if not strict:
+        return False, False, doc
+    rule = res.text_rule
+    if rule.name == "strict":
+        return True, True, doc
+    pool = res.pool.arabic if res.pool is not None else Counter()
+    per_doc_specific: Counter = Counter()
+    for shingle in mine:
+        holders = index.get(shingle)
+        if holders and pool[shingle] < rule.common_df:
+            per_doc_specific.update(holders)
+    top_specific = per_doc_specific.most_common(1)
+    max_specific = top_specific[0][1] if top_specific else 0
+    run = longest_shared_run(positions, index.__contains__, lsr.ARABIC_SHINGLE)
+    held = (max_specific >= lsr.ARABIC_MIN_SHARED_ONE_DOC or share >= rule.share_threshold
+            or run >= rule.long_run_letters)
+    if held and top_specific:
+        doc = res.gt_index.docs[set_name][top_specific[0][0]]
+    return True, held, doc
+
+
+def text_decision(text: str, res: HoldoutResources) -> Tuple[List[str], List[str]]:
+    """Text reasons and boilerplate flags of one side under the resources' text rule.
+
+    Under ``strict`` this is :func:`text_reasons` with no flags. Under ``boilerplate`` every GT set is judged by
+    :func:`hebrew_match` and :func:`arabic_match`.
+
+    :param text: Final target text.
+    :type text: str
+    :param res: Resources.
+    :type res: HoldoutResources
+    :return: ``(reasons, flags)``: ``text:<set>:<doc>`` for every set the rule holds the side out on, and
+        ``boilerplate:<set>:<doc>`` for every set the strict rule would have held it out on but the exception admits.
+    :rtype: Tuple[List[str], List[str]]
+    """
+    if res.text_rule.name == "strict":
+        return text_reasons(text, res), []
+    reasons: List[str] = []
+    flags: List[str] = []
+    for name in res.gt_sets:
+        hebrew = hebrew_match(text, name, res)
+        arabic = arabic_match(text, name, res)
+        for (strict, held, doc), fallback in ((hebrew, f"hebrew_{lsr.HEBREW_SHINGLE}_letter_shingles"),
+                                              (arabic, f"rasm_{lsr.ARABIC_SHINGLE}_shingles")):
+            if held:
+                reasons.append(f"text:{name}:{doc or fallback}")
+            elif strict:
+                flags.append(f"{BOILERPLATE_FLAG}:{name}:{doc or fallback}")
+    return list(dict.fromkeys(reasons)), list(dict.fromkeys(flags))
+
+
 def split_of(group: str, val_share: float = VAL_SHARE) -> str:
     """Deterministic split of a document group.
 
@@ -528,9 +796,11 @@ def decide_holdout(cands: Mapping[str, Candidate], quality: Iterable[QualityResu
     """Hold-out and split of every quality-passed side.
 
     Identity reasons of every candidate of a document group hold out every side of the group (a benchmark fragment
-    gives no row through another source or edition); text reasons hold out the side whose text matched.
+    gives no row through another source or edition); text reasons hold out the side whose text matched. Under the
+    ``boilerplate`` text rule the pool document frequencies are counted here from ``cands`` (once per resources).
 
-    :param cands: Candidates by row id (every candidate of the build, so a group's other candidates count).
+    :param cands: Candidates by row id (every candidate of the build, so a group's other candidates count and the
+        pool frequencies cover the whole pool).
     :type cands: Mapping[str, Candidate]
     :param quality: Quality results (only ``ok`` ones get a record).
     :type quality: Iterable[QualityResult]
@@ -542,6 +812,8 @@ def decide_holdout(cands: Mapping[str, Candidate], quality: Iterable[QualityResu
     :rtype: List[HoldoutResult]
     """
     passed = [q for q in quality if q.ok]
+    if res.text_rule.name == "boilerplate" and res.pool is None:
+        res.pool = pool_frequency(cands.values(), res.gt_index)
     groups = {cands[q.row_id].document_group for q in passed if q.row_id in cands}
     by_group: Dict[str, List[str]] = defaultdict(list)
     for cand in cands.values():
@@ -553,9 +825,10 @@ def decide_holdout(cands: Mapping[str, Candidate], quality: Iterable[QualityResu
         if cand is None:
             out.append(HoldoutResult(q.row_id, q.side_key, True, [CANDIDATE_MISSING], "excluded", False))
             continue
-        reasons = list(dict.fromkeys(by_group[cand.document_group] + text_reasons(q.text, res)))
+        text, flags = text_decision(q.text, res)
+        reasons = list(dict.fromkeys(by_group[cand.document_group] + text))
         split = "excluded" if reasons else split_of(cand.document_group, val_share)
-        out.append(HoldoutResult(q.row_id, q.side_key, bool(reasons), reasons, split, bool(cand.rnl)))
+        out.append(HoldoutResult(q.row_id, q.side_key, bool(reasons), reasons, split, bool(cand.rnl), flags))
     return out
 
 
@@ -583,7 +856,8 @@ def load_resources(*, apd_files: Sequence[Path] = (),
                    named: Mapping[str, Mapping[str, Sequence[str]]] = NAMED_EXCLUSIONS,
                    use_index: bool = True, merged: Path = shelf.MERGED_SHELFMARKS, pgp_export: Path = lsr.PGP_EXPORT,
                    index_cache: Optional[Path] = None, registry_dir: Path = br.REGISTRY_DIR,
-                   registries: Sequence[str] = br.BENCHMARK_REGISTRIES) -> HoldoutResources:
+                   registries: Sequence[str] = br.BENCHMARK_REGISTRIES,
+                   text_rule: TextRule = TextRule()) -> HoldoutResources:
     """The real registries, benchmark lists, exclusion lists, GT texts and merged-corpus index (read only).
 
     :param apd_files: APD exclusion lists.
@@ -602,6 +876,8 @@ def load_resources(*, apd_files: Sequence[Path] = (),
     :type registry_dir: Path
     :param registries: Registry names.
     :type registries: Sequence[str]
+    :param text_rule: The text rule.
+    :type text_rule: TextRule
     :return: The resources.
     :rtype: HoldoutResources
     """
@@ -612,7 +888,7 @@ def load_resources(*, apd_files: Sequence[Path] = (),
     benchmarks = [registry_set(name, registry_dir, marks, index) for name in registries]
     benchmarks += [frozen_set(FROZEN_IDS, FROZEN_KEYS, index), religious_set(RELIGIOUS)]
     return make_resources(benchmarks, lsr.load_gt_sets(), apd=load_apd_exclusions(apd_files), named=named,
-                          contaminated=DecontamGate().content_contaminated, index=index)
+                          contaminated=DecontamGate().content_contaminated, index=index, text_rule=text_rule)
 
 
 def summarize(results: Sequence[HoldoutResult]) -> str:
@@ -625,9 +901,47 @@ def summarize(results: Sequence[HoldoutResult]) -> str:
     """
     splits = Counter(r.split for r in results)
     families = Counter(":".join(reason.split(":")[:2]) for r in results for reason in r.reasons)
-    return (f"{len(results):,} passed sides: " + ", ".join(f"{s} {splits[s]:,}" for s in ("train", "val", "excluded"))
+    admitted = [r for r in results if r.flags and not r.held_out]
+    flagged = Counter(":".join(flag.split(":")[:2]) for r in results for flag in r.flags)
+    text = (f"{len(results):,} passed sides: " + ", ".join(f"{s} {splits[s]:,}" for s in ("train", "val", "excluded"))
             + f"; rnl {sum(r.rnl for r in results):,}\n  reasons: "
             + ", ".join(f"{k} {n:,}" for k, n in families.most_common()))
+    if flagged:
+        text += (f"\n  boilerplate exception: {len(admitted):,} side(s) admitted that the strict rule holds out; "
+                 "matches discounted: " + ", ".join(f"{k} {n:,}" for k, n in flagged.most_common()))
+    return text
+
+
+def text_rule_path(holdout_file: Path) -> Path:
+    """The sidecar recording the text rule next to a holdout stage file.
+
+    :param holdout_file: The stage file.
+    :type holdout_file: Path
+    :return: ``<its directory>/<basename of paths.TEXT_RULE_FILE>``.
+    :rtype: Path
+    """
+    return holdout_file.with_name(Path(paths.TEXT_RULE_FILE).name)
+
+
+def text_rule_record(rule: TextRule, res: HoldoutResources, results: Sequence[HoldoutResult]) -> Dict[str, Any]:
+    """What the sidecar records: the rule's parameters and the exception's effect.
+
+    :param rule: The text rule.
+    :type rule: TextRule
+    :param res: Resources (``pool`` under the boilerplate rule).
+    :type res: HoldoutResources
+    :param results: The decisions.
+    :type results: Sequence[HoldoutResult]
+    :return: ``{name, common_df, long_run_letters, share_threshold, pool_groups, admitted, flagged_sides,
+        matches_discounted: {set: n}}``.
+    :rtype: Dict[str, Any]
+    """
+    flagged = [r for r in results if r.flags]
+    matches = Counter(":".join(flag.split(":")[:2]) for r in results for flag in r.flags)
+    return {"name": rule.name, "common_df": rule.common_df, "long_run_letters": rule.long_run_letters,
+            "share_threshold": rule.share_threshold, "pool_groups": res.pool.groups if res.pool else None,
+            "admitted": sum(1 for r in flagged if not r.held_out), "flagged_sides": len(flagged),
+            "matches_discounted": dict(sorted(matches.items()))}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -653,6 +967,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="cache directory of the index (default: <work dir>/cache/shelfmark_index)")
     parser.add_argument("--sources", default=None, help="comma-separated sources (default: all)")
     parser.add_argument("--limit", type=int, default=None, help="decide at most this many passed sides")
+    parser.add_argument("--text-rule", choices=TEXT_RULES, default="boilerplate",
+                        help="text rule: strict, or boilerplate (shared shingles held by --common-df pool document "
+                             "groups do not count; the long-run and share guards still hold out)")
+    parser.add_argument("--common-df", type=int, default=COMMON_DF,
+                        help="pool document groups holding a shingle from which it is boilerplate")
+    parser.add_argument("--long-run-letters", type=int, default=LONG_RUN_LETTERS,
+                        help="a shared run of this many letters holds out whatever its shingles' status")
+    parser.add_argument("--share-threshold", type=float, default=SHARE_THRESHOLD,
+                        help="this share of a side's shingles in one GT set holds out whatever their status")
     return parser
 
 
@@ -676,14 +999,23 @@ def main(argv: Optional[List[str]] = None) -> None:
         print("no APD exclusion list given: no exclusion:derive_v25a_apd reasons")
     _named_path = args.named_exclusions or (Path(os.environ[NAMED_EXCLUSIONS_ENV]) if os.environ.get(NAMED_EXCLUSIONS_ENV) else None)
     named = (json.loads(_named_path.read_text(encoding="utf-8")) if _named_path is not None else NAMED_EXCLUSIONS)
+    text_rule = TextRule(args.text_rule, args.common_df, args.long_run_letters, args.share_threshold)
     res = load_resources(apd_files=apd_files, named=named, use_index=not args.no_index, merged=args.merged,
                          pgp_export=args.pgp_export,
-                         index_cache=args.index_cache or args.work_dir / "cache" / "shelfmark_index")
+                         index_cache=args.index_cache or args.work_dir / "cache" / "shelfmark_index",
+                         text_rule=text_rule)
     results = decide_holdout(cands, quality, res, args.val_share)
+    print(f"text rule: {text_rule.name}" + (f" (common_df {text_rule.common_df} document groups, long run "
+                                            f"{text_rule.long_run_letters} letters, share {text_rule.share_threshold}; "
+                                            f"pool groups counted {res.pool.groups:,})"
+                                            if res.pool is not None else ""))
     out = args.out or paths.stage_path(args.work_dir, "holdout")
     write_jsonl(out, results)
+    sidecar = text_rule_path(out)
+    sidecar.write_text(json.dumps(text_rule_record(text_rule, res, results), ensure_ascii=False, indent=1) + "\n",
+                       encoding="utf-8")
     print(summarize(results))
-    print(f"wrote {out}")
+    print(f"wrote {out} and {sidecar}")
 
 
 if __name__ == "__main__":

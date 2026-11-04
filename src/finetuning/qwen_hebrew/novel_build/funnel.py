@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -759,13 +760,40 @@ def duplicate_keys(data: StageData) -> Dict[str, int]:
 
 # -------------------------------------------------------------------------------------------------------- the funnel
 
-def funnel_from_data(data: StageData, *, now: Optional[datetime] = None) -> Dict[str, Any]:
+def boilerplate_counts(holdout: Iterable[HoldoutResult]) -> Dict[str, Any]:
+    """What the hold-out's boilerplate exception did, from the results' ``flags``.
+
+    :param holdout: Stage5 results.
+    :return: ``{admitted, flagged_sides, matches_discounted: {"boilerplate:<set>": n}}``: sides admitted that the
+        strict text rule holds out, sides carrying any flag, and the discounted matches per GT set.
+    """
+    results = list(holdout)
+    flagged = [r for r in results if r.flags]
+    matches = Counter(":".join(flag.split(":")[:2]) for r in results for flag in r.flags)
+    return {"admitted": sum(1 for r in flagged if not r.held_out), "flagged_sides": len(flagged),
+            "matches_discounted": dict(sorted(matches.items()))}
+
+
+def load_text_rule(work_dir: Path) -> Optional[Dict[str, Any]]:
+    """The text rule stage 5 recorded (``paths.TEXT_RULE_FILE``), or None when the sidecar is absent.
+
+    :param work_dir: The build's work dir.
+    :return: The sidecar's record.
+    """
+    path = work_dir / paths.TEXT_RULE_FILE
+    return json.loads(path.read_text(encoding="utf-8")) if path.is_file() else None
+
+
+def funnel_from_data(data: StageData, *, now: Optional[datetime] = None,
+                     text_rule: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """The funnel of loaded stage data.
 
     :param data: Loaded stage data.
     :param now: Generation time (default: now, UTC).
-    :return: ``{generated_at, inputs, stages, counts, reasons, review_queue, review, other_verdicts, duplicates,
-        monotone_violations}`` (JSON-serialisable; ``review`` is :func:`review_counts`).
+    :param text_rule: The text rule record stage 5 wrote (:func:`load_text_rule`), if any.
+    :return: ``{generated_at, inputs, stages, counts, reasons, review_queue, review, boilerplate, text_rule,
+        other_verdicts, duplicates, monotone_violations}`` (JSON-serialisable; ``review`` is :func:`review_counts`,
+        ``boilerplate`` is :func:`boilerplate_counts`).
     """
     counts = stage_counts(data)
     when = (now or datetime.now(timezone.utc)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -773,19 +801,47 @@ def funnel_from_data(data: StageData, *, now: Optional[datetime] = None) -> Dict
             "stages": [{"key": s.key, "label": s.label, "level": s.level, "rendered": s.rendered} for s in STAGES],
             "counts": counts, "reasons": drop_reasons(data, trace(data)), "review_queue": review_queue(data),
             "review": review_counts(data.decisions, data.rows),
+            "boilerplate": boilerplate_counts(data.holdout), "text_rule": dict(text_rule) if text_rule else None,
             "other_verdicts": dict(Counter(e.verdict for e in data.ledger if e.verdict not in VERDICT_STAGES)),
             "duplicates": duplicate_keys(data), "monotone_violations": monotone_violations(counts)}
 
 
 def compute_funnel(work_dir: Path, pool: Path, *, now: Optional[datetime] = None) -> Dict[str, Any]:
-    """Load the ledger and the stage files and compute the funnel.
+    """Load the ledger, the stage files and the text-rule sidecar and compute the funnel.
 
     :param work_dir: The build's work dir.
     :param pool: The novelty ledger.
     :param now: Generation time (default: now, UTC).
     :return: See :func:`funnel_from_data`.
     """
-    return funnel_from_data(load_stage_data(work_dir, pool), now=now)
+    return funnel_from_data(load_stage_data(work_dir, pool), now=now, text_rule=load_text_rule(work_dir))
+
+
+def text_rule_lines(record: Optional[Mapping[str, Any]], boilerplate: Optional[Mapping[str, Any]]) -> List[str]:
+    """Markdown lines describing the text hold-out rule and its boilerplate exception.
+
+    :param record: The sidecar record (:func:`load_text_rule`), or None.
+    :param boilerplate: :func:`boilerplate_counts`, or None.
+    :return: Bullet lines.
+    """
+    admitted = (boilerplate or {}).get("admitted", 0)
+    discounted = (boilerplate or {}).get("matches_discounted") or {}
+    if record is None:
+        rule = ["- rule not recorded (stage 5 ran without the sidecar)" + (f"; {admitted} side(s) carry boilerplate "
+                "flags and are admitted" if admitted else "")]
+    elif record.get("name") == "strict":
+        rule = ["- rule `strict`: every shingle shared with a benchmark document counts (no boilerplate exception)."]
+    else:
+        rule = [f"- rule `{record.get('name')}`: a shared shingle held by at least {record.get('common_df')} "
+                f"independent document groups of the pool ({record.get('pool_groups')} groups counted) is "
+                "boilerplate and does not count towards the shared-shingle thresholds; a side still holds out when "
+                f"its longest shared run spans at least {record.get('long_run_letters')} letters or at least "
+                f"{record.get('share_threshold')} of its shingles are shared with one benchmark set. Identity "
+                "hold-outs are unchanged.",
+                f"- sides admitted that the strict rule holds out: {admitted}"
+                + ("; matches discounted: " + ", ".join(f"{k.split(':', 1)[1]} {n}" for k, n in discounted.items())
+                   if discounted else "")]
+    return ["", "## Text hold-out rule", ""] + rule
 
 
 # ---------------------------------------------------------------------------------------------------------- rendering
@@ -898,6 +954,7 @@ def render(funnel: Mapping[str, Any]) -> str:
                         + [sum(by_reason[reason].values())])
     out += _table(["stage", "reason"] + [source_label(s) for s in reason_sources] + ["all"], rows, 2) if rows \
         else ["(no reasons)"]
+    out += text_rule_lines(funnel.get("text_rule"), funnel.get("boilerplate"))
     out += ["", "## Review queue", "", "Side placements sent to review (stage2 `needs_review`), sides by reason.", ""]
     queue = funnel["review_queue"]
     queue_sources = sorted({src for by_src in queue.values() for src in by_src})

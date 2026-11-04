@@ -1321,3 +1321,14 @@ def test_list_works_cli_needs_a_stage0_file(tmp_path: Path) -> None:
     """A work dir without stage0 is an error, not an empty list."""
     with pytest.raises(ValueError, match="stage0 candidates not found"):
         build.main(["--work-dir", str(tmp_path / "nowhere"), "--list-works"])
+
+
+def test_readme_names_the_text_rule() -> None:
+    """The README bullet reports the text hold-out rule stage 5 recorded, and nothing when it is absent."""
+    assert build._text_rule_bullets(None) == []
+    strict = build._text_rule_bullets({"name": "strict"})
+    assert len(strict) == 1 and "`strict`" in strict[0]
+    record = {"name": "boilerplate", "common_df": 3, "long_run_letters": 100, "share_threshold": 0.3, "admitted": 82}
+    bullet = build._text_rule_bullets(record)[0]
+    assert "at least 3 independent document groups" in bullet and "82 side(s) admitted" in bullet
+    assert "100 letters" in bullet and "0.3" in bullet

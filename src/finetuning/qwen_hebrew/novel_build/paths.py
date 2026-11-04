@@ -28,6 +28,10 @@ STAGE_FILES = {
 }
 
 
+#: Sidecar of the holdout stage file: the text rule stage 5 used and what its boilerplate exception admitted.
+TEXT_RULE_FILE = "stages/stage5_text_rule.json"
+
+
 def stage_path(work_dir: Path, stage: str) -> Path:
     """Return the stage file path inside a work dir.
 

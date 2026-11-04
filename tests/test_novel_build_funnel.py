@@ -6,6 +6,7 @@ stage files in the schema types written to ``tmp_path``. No network, no NAS.
 from __future__ import annotations
 
 import hashlib
+import json
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -420,3 +421,35 @@ def test_review_counts_ignore_stale_review_reasons_on_sides_that_did_not_reach_t
     assert review["by_source"]["pgp"] == {"pending_work": 0, "pending_row": 1, "rejected": 1, "admitted_flagged": 0,
                                           "rule_admitted": 0, "rule_excluded": 2, "rule_excluded_by_review": 1}
     assert review["by_source"]["ktiv"]["admitted_flagged"] == 0 and review["pending_works"] == {}
+
+
+def test_text_rule_sidecar_and_boilerplate_counts(tmp_path: Path) -> None:
+    """The funnel reads stage 5's text-rule sidecar, counts the exception from the flags and renders both.
+
+    :param tmp_path: Pytest temporary directory.
+    """
+    assert funnel.load_text_rule(tmp_path) is None
+    sidecar = tmp_path / paths.TEXT_RULE_FILE
+    sidecar.parent.mkdir(parents=True, exist_ok=True)
+    record = {"name": "boilerplate", "common_df": 3, "long_run_letters": 100, "share_threshold": 0.3,
+              "pool_groups": 12, "admitted": 1, "flagged_sides": 2,
+              "matches_discounted": {"boilerplate:genizah_test_v1": 2}}
+    sidecar.write_text(json.dumps(record), encoding="utf-8")
+    assert funnel.load_text_rule(tmp_path) == record
+    results = [HoldoutResult(row_id="pgp:1", side_key="recto", held_out=False, reasons=[], split="train", rnl=False,
+                             flags=["boilerplate:genizah_test_v1:doc_a"]),
+               HoldoutResult(row_id="pgp:2", side_key="recto", held_out=True,
+                             reasons=["text:genizah_test_v1:doc_b"], split="excluded", rnl=False,
+                             flags=["boilerplate:genizah_test_v1:doc_c"]),
+               HoldoutResult(row_id="pgp:3", side_key="recto", held_out=False, reasons=[], split="val", rnl=False)]
+    counts = funnel.boilerplate_counts(results)
+    assert counts == {"admitted": 1, "flagged_sides": 2, "matches_discounted": {"boilerplate:genizah_test_v1": 2}}
+    lines = funnel.text_rule_lines(record, counts)
+    assert "## Text hold-out rule" in lines
+    assert any("at least 3 independent document groups" in line and "12 groups counted" in line for line in lines)
+    assert any("admitted that the strict rule holds out: 1; matches discounted: genizah_test_v1 2" in line
+               for line in lines)
+    strict = funnel.text_rule_lines({"name": "strict"}, counts)
+    assert any("rule `strict`" in line for line in strict)
+    absent = funnel.text_rule_lines(None, counts)
+    assert any("not recorded" in line and "1 side(s) carry boilerplate flags" in line for line in absent)

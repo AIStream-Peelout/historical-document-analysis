@@ -219,6 +219,8 @@ class HoldoutResult:
     :param reasons: ``benchmark:<name>:<id>`` / ``text:<set>:<id>`` / ``exclusion:<name>`` codes.
     :param split: One of :data:`SPLITS`.
     :param rnl: Russian National Library holder flag.
+    :param flags: ``boilerplate:<set>:<id>`` for every text match the boilerplate exception discounted (the strict
+        text rule would have held the side out on it); empty under the strict rule.
     """
 
     row_id: str
@@ -227,6 +229,7 @@ class HoldoutResult:
     reasons: List[str]
     split: str
     rnl: bool
+    flags: List[str] = field(default_factory=list)
 
 
 @dataclass

@@ -859,7 +859,7 @@ def _has_side_basis(record: RowRecord) -> bool:
 def build_stats(name: str, manifest: Sequence[RowRecord], decisions: Sequence[Mapping[str, Any]],
                 counts: Mapping[str, Any], inputs: Sequence[Mapping[str, Any]], private_reasons: Sequence[str], *,
                 limit: Optional[int] = None, built: Optional[str] = None,
-                reviews: Optional[Reviews] = None) -> Dict[str, Any]:
+                reviews: Optional[Reviews] = None, text_rule: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
     """``stats.json`` of a build (source names shown with their public-safe labels; no paths).
 
     :param name: Dataset directory name.
@@ -869,6 +869,7 @@ def build_stats(name: str, manifest: Sequence[RowRecord], decisions: Sequence[Ma
     :param inputs: Input digest records (names relative).
     :param private_reasons: :func:`privacy_reasons`.
     :param limit: The candidate limit of the run, if any.
+    :param text_rule: The text hold-out rule record stage 5 wrote (``funnel.load_text_rule``), if any.
     :param built: Build time (default: now, UTC).
     :param reviews: Approvals and policy (default: no reviews file, i.e. the default policy and nothing approved).
     :return: Statistics.
@@ -894,7 +895,8 @@ def build_stats(name: str, manifest: Sequence[RowRecord], decisions: Sequence[Ma
             "funnel": {"total": counts["total"],
                        "by_source": {funnel.source_label(src): cells for src, cells in counts["by_source"].items()}},
             "review": review_stats(reviews if reviews is not None else Reviews(), manifest),
-            "inputs": [dict(i) for i in inputs], "limit": limit, "private": bool(private_reasons),
+            "inputs": [dict(i) for i in inputs], "limit": limit, "text_rule": dict(text_rule) if text_rule else None,
+            "private": bool(private_reasons),
             "private_reasons": list(private_reasons), "acceptance": {"violations": []}}
 
 
@@ -907,6 +909,24 @@ def check_public_text(text: str) -> None:
     hits = [word for word in FORBIDDEN_README if word in text.lower()]
     if hits:
         raise ValueError(f"README text would name {hits}")
+
+
+def _text_rule_bullets(record: Optional[Mapping[str, Any]]) -> List[str]:
+    """README bullet(s) on the text hold-out rule stage 5 used.
+
+    :param record: ``stats["text_rule"]`` (the stage 5 sidecar), or None.
+    :return: One bullet, or none when the rule was not recorded.
+    """
+    if not record:
+        return []
+    if record.get("name") == "strict":
+        return ["- text hold-outs: `strict` (every 25-letter Hebrew or 20-letter rasm shingle shared with a benchmark "
+                "document counts)"]
+    return [f"- text hold-outs: `{record.get('name')}` (a shared shingle held by at least {record.get('common_df')} "
+            "independent document groups of the pool is a formula and does not count; a shared run of at least "
+            f"{record.get('long_run_letters')} letters or a shared share of at least {record.get('share_threshold')} "
+            f"still holds out; identity hold-outs unchanged); {record.get('admitted', 0)} side(s) admitted that the "
+            "strict rule holds out"]
 
 
 def readme_text(stats: Mapping[str, Any]) -> str:
@@ -930,6 +950,7 @@ def readme_text(stats: Mapping[str, Any]) -> str:
               f"document groups, {stats['row_letters']} letters)",
               "- each side was placed on its photograph by reads (never by a file name or a canvas order), passed the "
               "quality gates and the benchmark hold-outs; validation rows share no document group with training rows",
+              *_text_rule_bullets(stats.get("text_rule")),
               f"- human review gate: scanned-edition works `{review['policy']['typewritten_works']}`, rule-recovered "
               f"placements `{review['policy']['rule_recovered']}` (`require`: no row without a recorded approval; "
               f"`flag`: admitted with a `review_pending_*` entry in `quality_flags`)"
@@ -1169,7 +1190,7 @@ def main(argv: Optional[List[str]] = None) -> None:
                                           len(reviews.approved_works) + len(reviews.approved_rows)
                                           + len(reviews.required_works)))
     stats = build_stats(args.out.name, manifest, decisions, counts, inputs, private, limit=args.limit,
-                        reviews=reviews)
+                        reviews=reviews, text_rule=funnel.load_text_rule(args.work_dir))
     stats = write_dataset(rows_by_split(rows, manifest), manifest, decisions, args.out, export=not args.no_export,
                           private=bool(private), stats=stats, readme=readme_text(stats))
     write_jsonl(paths.stage_path(args.work_dir, "rows"), manifest_lines(manifest, decisions))
