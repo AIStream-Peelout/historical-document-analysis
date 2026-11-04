@@ -16,6 +16,12 @@ and appends each record to the file the moment it exists (a flush per record). I
 with its error and the image stays unread for the next run. The run stops cleanly when the stop file exists (checked
 before every image) and after five failures in a row.
 
+A photograph that is a near-duplicate of an earlier photograph of the same candidate (64-bit perceptual hashes at most
+:data:`NEAR_DUPLICATE_BITS` bits apart, ``--skip-near-duplicates``) is not read once that earlier one has a usable
+read from any reader: the same leaf stored twice needs one read, not two. The rule is applied when the queue is made
+and again before each read, so of two twins that are both unread at launch the first is read and the second skipped.
+The number of photographs skipped either way is the summary key ``skipped_near_duplicate``.
+
 The only try/except blocks of the module wrap the service request (:func:`kraken_read`) and the page-reader call
 (:func:`vlm_read`): there a failure must be recorded as a status (``finish="error"``), not raised.
 
@@ -25,7 +31,7 @@ Usage::
         [--gemini-index INDEX]
     python -m src.finetuning.qwen_hebrew.novel_build.reads --work-dir WORK --reader kraken --script hebrew
     python -m src.finetuning.qwen_hebrew.novel_build.reads --work-dir WORK --reader vlm --model KEY \\
-        --script arabic --only-missing-usable
+        --script arabic --only-missing-usable [--skip-near-duplicates N]
 """
 from __future__ import annotations
 
@@ -42,7 +48,7 @@ import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
-from typing import Any, Awaitable, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Dict, Iterable, Iterator, List, Mapping, Optional, Sequence, Set, Tuple
 
 import requests
 from PIL import Image
@@ -60,6 +66,8 @@ LONG_SIDE = 2000                    # long side of the copy sent to Kraken, in p
 JPEG_QUALITY = 90
 MIN_SCRIPT_LETTERS = 20             # a read with fewer Hebrew plus Arabic letters is unusable
 MAX_CONSECUTIVE_FAILURES = 5
+#: Two photographs of one candidate whose 64-bit perceptual hashes differ in at most this many bits are near-duplicates.
+NEAR_DUPLICATE_BITS = 6
 PROGRESS_EVERY = 25
 READS_DIR = "reads"
 READS_NAME = "reads.jsonl"
@@ -518,13 +526,66 @@ def _script_selected(candidate_script: str, wanted: str) -> bool:
     return (candidate_script or "").lower() in (wanted, "mixed")
 
 
+def _phash_distance(a: str, b: str) -> int:
+    """Hamming distance, in bits, of two perceptual hashes.
+
+    The same measure as ``images.phash_distance``, kept local so that reading images does not import the stage 1
+    builder (and, through it, the merging and shelf-mark modules).
+
+    :param a: 64-bit hash as hex.
+    :param b: 64-bit hash as hex.
+    :return: Number of bits in which they differ.
+    :raises ValueError: When either is not hex.
+    """
+    return bin(int(a, 16) ^ int(b, 16)).count("1")
+
+
+def _is_near_duplicate(phash: Optional[str], covered: Sequence[str], max_bits: Optional[int]) -> bool:
+    """Whether a photograph's perceptual hash is within ``max_bits`` bits of one of the ``covered`` hashes.
+
+    :param phash: The photograph's hash; None or empty: never a near-duplicate.
+    :param covered: Hashes of the photographs that already have a usable read.
+    :param max_bits: Largest distance in bits that still counts; None or 0: the rule is off.
+    :return: True when any hash of ``covered`` is at most ``max_bits`` bits away from ``phash``.
+    """
+    if not phash or not max_bits:
+        return False
+    return any(_phash_distance(phash, other) <= max_bits for other in covered)
+
+
+def _readable_photographs(cand: Candidate) -> Iterator[Tuple[ImageRef, str]]:
+    """The photographs of a candidate that can be read, in candidate order, each with its sha256.
+
+    :param cand: A candidate.
+    :return: Iterator of ``(image, sha256)`` for every image whose status is ``present`` or ``fetched`` and that has a
+        path; an image without a recorded sha256 is hashed from its file here (and left out when the file is missing).
+    """
+    for image in cand.images:
+        if image.status not in READABLE_STATUSES or not image.path:
+            continue
+        sha256 = image.sha256
+        if not sha256:
+            if not Path(image.path).is_file():
+                continue
+            sha256 = file_sha256(Path(image.path))
+        yield image, sha256
+
+
 def select_images(cands: Iterable[Candidate], reads: Iterable[ReadRecord], *, script: str = "all",
-                  only_missing_usable: bool = False, reader_id: Optional[str] = None) -> List[ImageRef]:
+                  only_missing_usable: bool = False, reader_id: Optional[str] = None,
+                  skip_near_duplicates: Optional[int] = NEAR_DUPLICATE_BITS,
+                  counts: Optional[Counter] = None) -> List[ImageRef]:
     """The photographs a reader still has to read, in candidate order.
 
     Images count when their status is ``present`` or ``fetched`` (never ``too_small``, ``listed``, ``missing``, ...)
     and they have a path; an image without a sha256 is hashed here (the returned copy carries it); an image that
     several candidates list is returned once, by its first occurrence.
+
+    The near-duplicate rule is applied last, one candidate at a time and in candidate order: a photograph is dropped
+    when an earlier photograph of the same candidate is within ``skip_near_duplicates`` bits of it and already has a
+    usable read from any reader (:func:`is_usable`). The rule only fires once such a read exists, so the first
+    photograph of a near-duplicate pair is always read normally, and it only drops what the other rules would have
+    queued. A photograph dropped from one candidate stays eligible for any other candidate that lists it.
 
     :param cands: Candidates with completed ``images`` (the stage 1 file).
     :param reads: Reads of every reader so far.
@@ -534,37 +595,98 @@ def select_images(cands: Iterable[Candidate], reads: Iterable[ReadRecord], *, sc
         at all, or only reads with no lines, fewer than 20 script letters, or a finish of looping/length/error.
     :param reader_id: The reader about to run (:func:`make_reader_id`): its images are skipped once it has a read of
         them. None: no per-reader skip.
+    :param skip_near_duplicates: Largest Hamming distance, in bits of the 64-bit hex ``ImageRef.phash``, at which two
+        photographs of one candidate are near-duplicates. None or 0: the rule is off. A photograph without a
+        ``phash`` is never dropped by it and never stands in for another.
+    :param counts: Counter that receives ``skipped_near_duplicate``, the number of distinct photographs the rule kept
+        out of the result (added to what the counter holds). None: the number is not reported.
     :return: The images to read.
-    :raises ValueError: For an unknown ``script``.
+    :raises ValueError: For an unknown ``script``, a negative ``skip_near_duplicates``, or a ``phash`` that is not hex
+        (only compared when the rule is on).
     """
     if script not in SCRIPT_CHOICES:
         raise ValueError(f"unknown script {script!r}; expected one of {SCRIPT_CHOICES}")
+    if skip_near_duplicates is not None and skip_near_duplicates < 0:
+        raise ValueError(f"skip_near_duplicates must be None, 0 or a positive bit distance, not {skip_near_duplicates}")
     by_sha: Dict[str, List[ReadRecord]] = defaultdict(list)
     for read in reads:
         by_sha[read.sha256].append(read)
     selected: List[ImageRef] = []
     seen = set()
+    near_duplicates = set()         # sha256 of the photographs the rule dropped and no other candidate then selected
     for cand in cands:
         if not _script_selected(cand.script, script):
             continue
-        for image in cand.images:
-            if image.status not in READABLE_STATUSES or not image.path:
-                continue
-            sha256 = image.sha256
-            if not sha256:
-                if not Path(image.path).is_file():
-                    continue
-                sha256 = file_sha256(Path(image.path))
+        covered: List[str] = []     # hashes of this candidate's earlier photographs that already have a usable read
+        for image, sha256 in _readable_photographs(cand):
+            existing = by_sha.get(sha256, [])
+            usable = any(is_usable(read) for read in existing)
+            near_duplicate = _is_near_duplicate(image.phash, covered, skip_near_duplicates)
+            if usable and image.phash:
+                covered.append(image.phash)
             if sha256 in seen:
                 continue
             seen.add(sha256)
-            existing = by_sha.get(sha256, [])
             if reader_id is not None and any(read.reader == reader_id for read in existing):
                 continue
-            if only_missing_usable and any(is_usable(read) for read in existing):
+            if only_missing_usable and usable:
                 continue
+            if near_duplicate:
+                seen.discard(sha256)        # only this candidate has a read twin: another one may still need it read
+                near_duplicates.add(sha256)
+                continue
+            near_duplicates.discard(sha256)
             selected.append(image if image.sha256 else dataclasses.replace(image, sha256=sha256))
+    if counts is not None:
+        counts["skipped_near_duplicate"] += len(near_duplicates)
     return selected
+
+
+def _near_duplicate_peers(cands: Iterable[Candidate], script: str,
+                          max_bits: Optional[int]) -> Dict[str, List[List[str]]]:
+    """For every readable photograph, which earlier photographs of its candidates are near-duplicates of it.
+
+    The input of the read-time form of the near-duplicate rule (see :func:`run_reads`). It scans the candidates that
+    :func:`select_images` looks at for ``script``, in the same order, so both agree on what "earlier" means.
+
+    :param cands: Candidates (the stage 1 file).
+    :param script: ``all`` | ``hebrew`` | ``arabic`` (see :func:`select_images`).
+    :param max_bits: Largest Hamming distance, in bits of the ``phash``, that counts; None or 0: nothing has a peer.
+    :return: ``{sha256: [peers of its first listing, peers of its second listing, ...]}``: one list per candidate that
+        lists the photograph, holding the sha256 of each earlier photograph of that candidate whose ``phash`` is within
+        ``max_bits`` bits of its own (itself excluded). A listing of a photograph without a ``phash`` gets an empty
+        list: nothing can cover it. Empty when ``max_bits`` is off.
+    """
+    peers: Dict[str, List[List[str]]] = defaultdict(list)
+    if not max_bits:
+        return peers
+    for cand in cands:
+        if not _script_selected(cand.script, script):
+            continue
+        earlier: List[Tuple[str, str]] = []         # (sha256, phash) of its earlier photographs that have a phash
+        for image, sha256 in _readable_photographs(cand):
+            if not image.phash:
+                peers[sha256].append([])
+                continue
+            peers[sha256].append([other for other, phash in earlier
+                                  if other != sha256 and _phash_distance(image.phash, phash) <= max_bits])
+            earlier.append((sha256, image.phash))
+    return peers
+
+
+def _has_usable_peer(image: ImageRef, peers: Mapping[str, Sequence[Sequence[str]]], usable: Set[str]) -> bool:
+    """Whether every candidate that lists a photograph has an earlier near-duplicate of it with a usable read.
+
+    A photograph several candidates list is covered only when each of them has such a twin: one candidate without one
+    still needs the photograph read.
+
+    :param image: A queued image (``sha256`` set).
+    :param peers: The result of :func:`_near_duplicate_peers`.
+    :param usable: sha256 of every photograph with a usable read so far, from any reader, this run's reads included.
+    :return: False for a photograph that ``peers`` does not know and for one with a listing that has no usable twin.
+    """
+    listings = peers.get(image.sha256 or "", ())
+    return bool(listings) and all(any(peer in usable for peer in listing) for listing in listings)
 
 
 def _attempt(image: ImageRef, read_fn: ReadFn) -> Tuple[Optional[ReadRecord], Optional[str]]:
@@ -587,7 +709,8 @@ def _attempt(image: ImageRef, read_fn: ReadFn) -> Tuple[Optional[ReadRecord], Op
 
 
 def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, script: str = "all",
-              limit: Optional[int] = None, stop_file: Optional[Path] = None, only_missing_usable: bool = False) -> Dict[str, int]:
+              limit: Optional[int] = None, stop_file: Optional[Path] = None, only_missing_usable: bool = False,
+              skip_near_duplicates: Optional[int] = NEAR_DUPLICATE_BITS) -> Dict[str, int]:
     """Read the photographs of the stage 1 file that this reader has not read yet.
 
     Records are appended to ``reads/reads.jsonl`` one at a time (flushed), so an interrupted run loses nothing. A
@@ -595,17 +718,27 @@ def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, scrip
     ``reads/reads_failures.jsonl`` and leaves the image unread. The run ends after five failures in a row, when
     ``stop_file`` exists (checked before each image), or when the queue is empty. Progress is printed every 25 reads.
 
+    The near-duplicate rule is applied twice. :func:`select_images` applies it when the queue is made, which removes
+    the photographs whose twin already has a usable read. Most twins are still unread then, so it is applied again
+    before each read: the photograph is skipped (not read, not a failure, counted) when, in every candidate that lists
+    it, an earlier near-duplicate has a usable read by now, the reads of this run included. The queue keeps candidate
+    order, so of two twins unread at launch the first is read and the second skipped, unless that first read is
+    unusable or fails.
+
     :param work_dir: The build's work dir (stage 1 file in, reads out).
     :param reader: ``kraken`` or ``vlm``.
     :param model: Kraken: recognition model path (empty: default); vlm: model key. With ``reader`` it makes the reader
         id that decides which images count as read.
     :param read_fn: ``read_fn(path) -> ReadRecord``, e.g. a :func:`kraken_read` or :func:`vlm_read` partial.
     :param script: ``all`` | ``hebrew`` | ``arabic`` (see :func:`select_images`).
-    :param limit: Attempt at most this many images in this run; None: all.
+    :param limit: Attempt at most this many images in this run; None: all. The queue is cut to this length when it is
+        made, so a photograph skipped at read time still uses up one place.
     :param stop_file: Stop before the next image when this file exists; None: no stop file.
     :param only_missing_usable: See :func:`select_images`.
-    :return: Counts: ``queued``, ``read``, ``failed``, ``finish_<finish>`` per finish seen, ``stopped_by_stop_file`` and
-        ``stopped_by_failures`` (1 when that ended the run, else 0).
+    :param skip_near_duplicates: See :func:`select_images`; None or 0 turns both applications of the rule off.
+    :return: Counts: ``queued``, ``skipped_near_duplicate`` (photographs the near-duplicate rule kept out of the queue
+        plus those it skipped at read time), ``read``, ``failed``, ``finish_<finish>`` per finish seen,
+        ``stopped_by_stop_file`` and ``stopped_by_failures`` (1 when that ended the run, else 0).
     :raises FileNotFoundError: When the stage 1 file does not exist.
     """
     stage1 = paths.stage_path(work_dir, "images")
@@ -615,20 +748,30 @@ def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, scrip
     reads_file, failures_file = reads_path(work_dir), failures_path(work_dir)
     repair_tail(reads_file)
     repair_tail(failures_file)
-    queue = select_images(schema.read_jsonl(stage1, Candidate), load_reads(work_dir), script=script,
-                          only_missing_usable=only_missing_usable, reader_id=reader_id)
+    existing = load_reads(work_dir)
+    skips: Counter = Counter()
+    queue = select_images(schema.read_jsonl(stage1, Candidate), existing, script=script,
+                          only_missing_usable=only_missing_usable, reader_id=reader_id,
+                          skip_near_duplicates=skip_near_duplicates, counts=skips)
     if limit is not None:
         queue = queue[: max(0, limit)]
-    counts: Counter = Counter({"queued": len(queue), "read": 0, "failed": 0, "stopped_by_stop_file": 0,
-                               "stopped_by_failures": 0})
-    print(f"{now_utc()} {reader_id}: {len(queue)} images queued ({script}, only_missing_usable={only_missing_usable})",
-          flush=True)
+    peers = _near_duplicate_peers(schema.read_jsonl(stage1, Candidate), script, skip_near_duplicates)
+    usable = {read.sha256 for read in existing if is_usable(read)}      # grows with every usable read of this run
+    counts: Counter = Counter({"queued": len(queue), "skipped_near_duplicate": skips["skipped_near_duplicate"],
+                               "read": 0, "failed": 0, "stopped_by_stop_file": 0, "stopped_by_failures": 0})
+    print(f"{now_utc()} {reader_id}: {len(queue)} images queued ({script}, only_missing_usable={only_missing_usable}, "
+          f"skip_near_duplicates={skip_near_duplicates}: {counts['skipped_near_duplicate']} skipped as "
+          f"near-duplicates at launch)", flush=True)
     consecutive, seconds = 0, 0.0
     for image in queue:
         if stop_file is not None and stop_file.exists():
             counts["stopped_by_stop_file"] = 1
             print(f"{now_utc()} stopping: stop file {stop_file} exists", flush=True)
             break
+        if _has_usable_peer(image, peers, usable):
+            counts["skipped_near_duplicate"] += 1
+            print(f"{now_utc()} skipped {image.path}: a near-duplicate of it now has a usable read", flush=True)
+            continue
         record, error = _attempt(image, read_fn)
         if record is None:
             append_jsonl(failures_file, {"sha256": image.sha256, "reader": reader_id, "path": image.path, "error": error,
@@ -643,6 +786,8 @@ def run_reads(work_dir: Path, *, reader: str, model: str, read_fn: ReadFn, scrip
             continue
         consecutive = 0
         append_jsonl(reads_file, record)
+        if is_usable(record):
+            usable.add(record.sha256)
         counts["read"] += 1
         counts[f"finish_{record.finish}"] += 1
         seconds += record.seconds
@@ -658,7 +803,7 @@ def build_parser() -> argparse.ArgumentParser:
     """The command-line parser.
 
     :return: Parser with ``--work-dir --reader --model --script --limit --stop-file --only-missing-usable
-        --import-legacy --gemini-index``.
+        --skip-near-duplicates --import-legacy --gemini-index``.
     """
     parser = argparse.ArgumentParser(description="Stage 2 of the novel-rows build: OCR reads of the candidate photographs "
                                                  "(evidence for side placement only).")
@@ -676,6 +821,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="stop cleanly before the next image when this file exists (default: <work dir>/reads/STOP)")
     parser.add_argument("--only-missing-usable", action="store_true",
                         help="read only images without a usable read from any reader")
+    parser.add_argument("--skip-near-duplicates", type=int, default=NEAR_DUPLICATE_BITS, metavar="N",
+                        help="do not read a photograph whose 64-bit phash is within N bits of an earlier photograph of "
+                             "the same candidate that already has a usable read (default: %(default)s; 0 disables)")
     parser.add_argument("--import-legacy", type=Path, default=None, metavar="KRAKEN_CACHE",
                         help="import the Kraken read cache of the earlier legacy-store build (JSON lines) first")
     parser.add_argument("--gemini-index", type=Path, default=None,
@@ -696,6 +844,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         parser.error("give --reader to read, or --import-legacy to import earlier reads")
     if args.reader == "vlm" and not args.model:
         parser.error("--model (the model key) is required with --reader vlm")
+    if args.skip_near_duplicates < 0:
+        parser.error("--skip-near-duplicates takes a number of bits: 0 (off) or more")
     if args.import_legacy is not None:
         imported = import_legacy_reads(args.work_dir, args.import_legacy, args.gemini_index)
         print(f"{now_utc()} imported {imported} legacy reads into {reads_path(args.work_dir)}", flush=True)
@@ -708,7 +858,7 @@ def main(argv: Optional[List[str]] = None) -> None:
         read_fn = functools.partial(vlm_read, model_key=model)
     counts = run_reads(args.work_dir, reader=args.reader, model=model, read_fn=read_fn, script=args.script,
                        limit=args.limit, stop_file=args.stop_file or default_stop_file(args.work_dir),
-                       only_missing_usable=args.only_missing_usable)
+                       only_missing_usable=args.only_missing_usable, skip_near_duplicates=args.skip_near_duplicates)
     print(json.dumps(counts, indent=1), flush=True)
 
 

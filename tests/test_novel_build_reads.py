@@ -9,9 +9,10 @@ import importlib
 import io
 import json
 import re
+from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import pytest
@@ -71,7 +72,7 @@ def sha_of(path: Path) -> str:
 
 
 def image_ref(image_id: str, path: Optional[Path], status: str = "present", sha256: Optional[str] = "auto",
-              origin: str = "iiif_pgp") -> ImageRef:
+              origin: str = "iiif_pgp", phash: Optional[str] = None) -> ImageRef:
     """An :class:`ImageRef` for a test file.
 
     :param image_id: Image id.
@@ -79,10 +80,12 @@ def image_ref(image_id: str, path: Optional[Path], status: str = "present", sha2
     :param status: Image status.
     :param sha256: ``"auto"``: the file's sha256; None: unknown; else the given digest.
     :param origin: Image origin.
+    :param phash: 64-bit perceptual hash as hex (None: the image has none).
     :return: The reference.
     """
     digest = sha_of(path) if (sha256 == "auto" and path is not None) else (None if sha256 == "auto" else sha256)
-    return ImageRef(image_id=image_id, origin=origin, path=str(path) if path else None, sha256=digest, status=status)
+    return ImageRef(image_id=image_id, origin=origin, path=str(path) if path else None, sha256=digest, status=status,
+                    phash=phash)
 
 
 def candidate(row_id: str, script: str, images: List[ImageRef]) -> Candidate:
@@ -755,6 +758,204 @@ def test_select_images_follows_candidate_order_and_reads_each_image_once(stage1:
     assert [(Path(i.path).name, i.image_id) for i in selected] == [("ar.jpg", "cudl_local:0"), ("he.jpg", "iiif_pgp:0")]
 
 
+# --- select_images: near-duplicate photographs -----------------------------------------------------------------------
+
+PHASH = 0x9C3A5E7102B4D6F8              # an arbitrary 64-bit perceptual hash
+
+
+def phash_apart(bits: int) -> str:
+    """A 64-bit hex perceptual hash that differs from :data:`PHASH` in exactly ``bits`` bits.
+
+    :param bits: How many of the lowest bits to flip (0 to 64).
+    :return: 16 hex characters.
+    """
+    return f"{PHASH ^ ((1 << bits) - 1):016x}"
+
+
+def photographs(tmp_path: Path, phashes: Sequence[Optional[str]], tag: str = "photo",
+                shade: int = 0) -> SimpleNamespace:
+    """One photograph per phash, each its own file (so its own sha256), listed by one hebrew candidate in that order.
+
+    :param tmp_path: Pytest temp dir.
+    :param phashes: Phash of each photograph in candidate order (None: the photograph has no phash).
+    :param tag: File name prefix (``<tag><index>.jpg``) and candidate row id (``r_<tag>``).
+    :param shade: Added to the green channel, so that two calls with different shades give different files.
+    :return: Namespace with ``cands`` (the one candidate), its ``refs`` and the files' ``sha`` values.
+    """
+    files = [make_jpeg(tmp_path / "photos" / f"{tag}{i}.jpg", color=(30 * i + 20, 90 + shade, 160))
+             for i in range(len(phashes))]
+    refs = [image_ref(f"iiif_pgp:{i}", f, phash=p) for i, (f, p) in enumerate(zip(files, phashes))]
+    return SimpleNamespace(cands=[candidate(f"r_{tag}", "hebrew", refs)], refs=refs, sha=[sha_of(f) for f in files])
+
+
+def select_counted(cands: List[Candidate], existing: Sequence[ReadRecord], **kwargs: Any) -> Tuple[List[str], int]:
+    """:func:`reads.select_images` together with the ``skipped_near_duplicate`` count it reports.
+
+    :param cands: Candidates.
+    :param existing: Reads so far.
+    :param kwargs: Further :func:`reads.select_images` arguments.
+    :return: ``(file names of the selected images, number skipped as near-duplicates)``.
+    """
+    counts: Counter = Counter()
+    selected = reads.select_images(cands, existing, counts=counts, **kwargs)
+    return ids(selected), counts["skipped_near_duplicate"]
+
+
+def test_phash_distance_counts_differing_bits() -> None:
+    """The distance is the number of differing bits of two 64-bit hashes; the default threshold is 6."""
+    assert reads._phash_distance(phash_apart(0), phash_apart(0)) == 0
+    assert reads._phash_distance(phash_apart(0), phash_apart(2)) == 2
+    assert reads._phash_distance(phash_apart(3), phash_apart(10)) == 7
+    assert reads._phash_distance("0" * 16, "f" * 16) == 64
+    assert reads.NEAR_DUPLICATE_BITS == 6
+
+
+def test_select_images_skips_the_near_duplicate_of_a_read_photograph(tmp_path: Path) -> None:
+    """A photograph 2 bits from an earlier one with a usable read is skipped and counted; the first is read normally."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    first_read = [read_record(photos.sha[0], "kraken:test_model")]
+    assert select_counted(photos.cands, first_read, reader_id="vlm:model-x") == (["photo0.jpg"], 1)
+    # with only_missing_usable the read photograph leaves too; its near-duplicate is still what the rule removed
+    assert select_counted(photos.cands, first_read, only_missing_usable=True) == ([], 1)
+    # nothing is read yet: the rule does not fire, so a pair fetched together is read together
+    assert select_counted(photos.cands, []) == (["photo0.jpg", "photo1.jpg"], 0)
+    # the count is added to the counter the caller passes in
+    counts = Counter({"skipped_near_duplicate": 2})
+    reads.select_images(photos.cands, first_read, counts=counts)
+    assert counts["skipped_near_duplicate"] == 3
+
+
+@pytest.mark.parametrize("finish, text, lines", [("blank", "", 0), ("error", "", 0), ("length", HEBREW, 1),
+                                                 ("looping", HEBREW, 1), ("ok", HEBREW[:19], 1)])
+def test_an_unusable_read_does_not_make_its_twin_a_near_duplicate(tmp_path: Path, finish: str, text: str,
+                                                                   lines: int) -> None:
+    """Without a usable read on the first photograph nothing covers the second: both are read, nothing is counted."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    record = reads.make_record(photos.sha[0], "kraken:test_model", text, finish=finish, seconds=1.0,
+                               lines=[text] * lines)
+    assert select_counted(photos.cands, [record]) == (["photo0.jpg", "photo1.jpg"], 0)
+    assert select_counted(photos.cands, [record], only_missing_usable=True) == (["photo0.jpg", "photo1.jpg"], 0)
+
+
+@pytest.mark.parametrize("bits, skipped", [(0, True), (2, True), (6, True), (7, False), (10, False), (64, False)])
+def test_near_duplicate_distance_is_inclusive_and_defaults_to_six(tmp_path: Path, bits: int, skipped: bool) -> None:
+    """Hashes up to the threshold apart are near-duplicates (equal hashes too); 10 bits apart are two photographs."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(bits)])
+    expected = ["photo0.jpg"] if skipped else ["photo0.jpg", "photo1.jpg"]
+    assert select_counted(photos.cands, [read_record(photos.sha[0])]) == (expected, int(skipped))
+
+
+def test_near_duplicate_threshold_is_the_given_number_of_bits(tmp_path: Path) -> None:
+    """A wider threshold catches a pair 10 bits apart; a narrower one lets a pair 2 bits apart through."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(10)])
+    first_read = [read_record(photos.sha[0])]
+    assert select_counted(photos.cands, first_read, skip_near_duplicates=10) == (["photo0.jpg"], 1)
+    close = photographs(tmp_path, [phash_apart(0), phash_apart(2)], tag="close", shade=50)
+    assert select_counted(close.cands, [read_record(close.sha[0])], skip_near_duplicates=1) == (
+        ["close0.jpg", "close1.jpg"], 0)
+
+
+@pytest.mark.parametrize("off", [0, None])
+def test_zero_or_none_turns_the_near_duplicate_rule_off(tmp_path: Path, off: Optional[int]) -> None:
+    """``0`` (the CLI's way to disable it) and None read a photograph whose twin already has a usable read."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    assert select_counted(photos.cands, [read_record(photos.sha[0])], skip_near_duplicates=off) == (
+        ["photo0.jpg", "photo1.jpg"], 0)
+
+
+def test_a_photograph_without_phash_is_never_skipped_and_covers_nothing(tmp_path: Path) -> None:
+    """The rule needs both hashes: an image without one is read, and its own usable read skips no one."""
+    no_second = photographs(tmp_path, [phash_apart(0), None])
+    assert select_counted(no_second.cands, [read_record(no_second.sha[0])]) == (["photo0.jpg", "photo1.jpg"], 0)
+    no_first = photographs(tmp_path, [None, phash_apart(0)], tag="bare", shade=50)
+    assert select_counted(no_first.cands, [read_record(no_first.sha[0])]) == (["bare0.jpg", "bare1.jpg"], 0)
+    neither = photographs(tmp_path, [None, None], tag="blank", shade=100)
+    assert select_counted(neither.cands, [read_record(neither.sha[0])]) == (["blank0.jpg", "blank1.jpg"], 0)
+
+
+def test_the_first_photograph_of_a_pair_is_never_skipped(tmp_path: Path) -> None:
+    """Candidate order decides: only an earlier photograph covers a later one, so a read on the second skips nothing."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    assert select_counted(photos.cands, [read_record(photos.sha[1])], only_missing_usable=True) == (["photo0.jpg"], 0)
+    # both read by other readers, neither by this one: the first is read, the second is the near-duplicate
+    both = [read_record(photos.sha[0]), read_record(photos.sha[1], "gemini:g", text=ARABIC)]
+    assert select_counted(photos.cands, both, reader_id="vlm:model-x") == (["photo0.jpg"], 1)
+    # the same photographs in the other order: now the other one is first
+    swapped = [candidate("r_swapped", "hebrew", list(reversed(photos.refs)))]
+    assert select_counted(swapped, both, reader_id="vlm:model-x") == (["photo1.jpg"], 1)
+
+
+@pytest.mark.parametrize("reader", ["kraken:other", "gemini:g", "vlm:model-x"])
+def test_a_usable_read_from_any_reader_covers_the_near_duplicate(tmp_path: Path, reader: str) -> None:
+    """The covering read may come from the reader about to run or from any other."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    assert select_counted(photos.cands, [read_record(photos.sha[0], reader)], only_missing_usable=True) == ([], 1)
+
+
+def test_near_duplicate_rule_leaves_the_distinct_photographs_of_a_candidate(tmp_path: Path) -> None:
+    """Of three photographs the near-duplicate goes, the distant one stays."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2), phash_apart(30)])
+    assert select_counted(photos.cands, [read_record(photos.sha[0])], only_missing_usable=True) == (["photo2.jpg"], 1)
+
+
+def test_near_duplicates_are_looked_for_inside_one_candidate_only(tmp_path: Path) -> None:
+    """A read photograph of one candidate covers nothing in another candidate, whatever its hash."""
+    mine = photographs(tmp_path, [phash_apart(0)])
+    other = photographs(tmp_path, [phash_apart(2)], tag="other", shade=60)
+    assert select_counted(mine.cands + other.cands, [read_record(mine.sha[0])], only_missing_usable=True) == (
+        ["other0.jpg"], 0)
+
+
+def test_a_dropped_near_duplicate_is_still_read_for_another_candidate(tmp_path: Path) -> None:
+    """The skip is per candidate: a photograph another candidate lists without a read twin is selected there."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    existing = [read_record(photos.sha[0])]
+    lone = candidate("r_lone", "hebrew", [photos.refs[1]])
+    assert select_counted(photos.cands + [lone], existing, only_missing_usable=True) == (["photo1.jpg"], 0)
+    # skipped under two candidates, it is still one photograph in the count
+    twin = candidate("r_twin", "hebrew", list(photos.refs))
+    assert select_counted(photos.cands + [twin], existing, only_missing_usable=True) == ([], 1)
+
+
+def test_only_what_the_rule_removes_from_the_queue_is_counted(tmp_path: Path) -> None:
+    """A photograph the other rules already dropped is not a near-duplicate skip, even when it has a read twin."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    both = [read_record(photos.sha[0]), read_record(photos.sha[1])]
+    assert select_counted(photos.cands, both, only_missing_usable=True) == ([], 0)       # both have a usable read
+    done = [read_record(photos.sha[0], "vlm:model-x"), read_record(photos.sha[1], "vlm:model-x")]
+    assert select_counted(photos.cands, done, reader_id="vlm:model-x") == ([], 0)         # this reader read both
+
+
+def test_select_images_rejects_a_negative_near_duplicate_distance() -> None:
+    """A negative distance would silently never match: it is refused."""
+    with pytest.raises(ValueError):
+        reads.select_images([], [], skip_near_duplicates=-1)
+
+
+def test_near_duplicate_peers_lists_the_earlier_twins_of_each_listing(tmp_path: Path) -> None:
+    """One list per candidate that lists a photograph: its earlier photographs within the distance, never itself."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2), phash_apart(30), None])
+    a, b, c, d = photos.sha
+    arabic = candidate("r_arabic", "arabic", [photos.refs[1]])             # lists the second photograph again, alone
+    cands = photos.cands + [arabic]
+    assert reads._near_duplicate_peers(cands, "all", 6) == {a: [[]], b: [[a], []], c: [[]], d: [[]]}
+    assert reads._near_duplicate_peers(cands, "hebrew", 6) == {a: [[]], b: [[a]], c: [[]], d: [[]]}    # no arabic
+    assert reads._near_duplicate_peers(cands, "all", 1) == {a: [[]], b: [[], []], c: [[]], d: [[]]}    # 2 bits > 1
+    assert reads._near_duplicate_peers(cands, "all", 0) == {} and reads._near_duplicate_peers(cands, "all", None) == {}
+    twice = candidate("r_twice", "hebrew", [photos.refs[0], photos.refs[0]])      # a photograph is not its own twin
+    assert reads._near_duplicate_peers([twice], "all", 6) == {a: [[], []]}
+
+
+def test_has_usable_peer_needs_every_listing_covered() -> None:
+    """A photograph is covered only when each of its listings has a twin with a usable read."""
+    image = ImageRef(image_id="x", origin="iiif_pgp", sha256="s")
+    assert reads._has_usable_peer(image, {"s": [["a", "b"]]}, {"b"}) is True
+    assert reads._has_usable_peer(image, {"s": [["a"], ["b"]]}, {"b"}) is False        # first listing: no twin read
+    assert reads._has_usable_peer(image, {"s": [[]]}, {"b"}) is False                  # a listing without any twin
+    assert reads._has_usable_peer(image, {}, {"b"}) is False                           # unknown to peers: not covered
+    assert reads._has_usable_peer(image, {"s": [["a"]]}, set()) is False
+
+
 # --- run_reads ---------------------------------------------------------------------------------------------------------
 
 class ScriptedReader:
@@ -964,6 +1165,114 @@ def test_run_reads_only_missing_usable_after_a_legacy_import(stage1: SimpleNames
     assert run(stage1.work, kraken_again, model="/app/models/MiDRASH_Gen_01.mlmodel")["queued"] == 0
 
 
+def test_run_reads_skips_near_duplicates_and_reports_the_count(tmp_path: Path, capsys: pytest.CaptureFixture) -> None:
+    """The photograph whose twin has a usable read is not requested and is counted; ``0`` queues it again."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    work = tmp_path / "work_twins"
+    write_stage1(work, photos.cands)
+    reads.append_jsonl(reads.reads_path(work), read_record(photos.sha[0], "kraken:test_model"))
+
+    reader = ScriptedReader(reader="vlm:model-x")
+    counts = run(work, reader, reader="vlm", model="model-x")
+    assert counts["queued"] == 1 and counts["skipped_near_duplicate"] == 1 and counts["read"] == 1
+    assert [p.name for p in reader.calls] == ["photo0.jpg"]
+    assert "1 skipped as near-duplicates" in capsys.readouterr().out
+
+    off = ScriptedReader(reader="vlm:model-y")
+    counts = run(work, off, reader="vlm", model="model-y", skip_near_duplicates=0)
+    assert counts["queued"] == 2 and counts["skipped_near_duplicate"] == 0
+    assert [p.name for p in off.calls] == ["photo0.jpg", "photo1.jpg"]
+
+
+def test_run_reads_skips_a_twin_at_read_time_once_the_first_read_is_usable(tmp_path: Path,
+                                                                           capsys: pytest.CaptureFixture) -> None:
+    """Both twins are unread at launch, so both are queued: the first is read and its usable read covers the second."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    work = tmp_path / "work_twins"
+    write_stage1(work, photos.cands)
+    reader = ScriptedReader()
+    counts = run(work, reader)
+    assert counts["queued"] == 2 and counts["read"] == 1 and counts["skipped_near_duplicate"] == 1
+    assert counts["failed"] == 0 and [p.name for p in reader.calls] == ["photo0.jpg"]
+    assert [r.sha256 for r in reads.load_reads(work)] == [photos.sha[0]]
+    assert not reads.failures_path(work).exists()                                      # a skip is not a failure
+    out = capsys.readouterr().out
+    assert "photo1.jpg: a near-duplicate of it now has a usable read" in out
+    assert "0 skipped as near-duplicates at launch" in out
+    # the next run reaches the same verdict before it starts
+    again = ScriptedReader()
+    counts = run(work, again)
+    assert counts["queued"] == 0 and counts["skipped_near_duplicate"] == 1 and again.calls == []
+
+
+def test_run_reads_reads_both_twins_when_the_rule_is_off(tmp_path: Path) -> None:
+    """``skip_near_duplicates=0`` turns the read-time check off too."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    write_stage1(tmp_path / "work_off", photos.cands)
+    reader = ScriptedReader()
+    counts = run(tmp_path / "work_off", reader, skip_near_duplicates=0)
+    assert counts["read"] == 2 and counts["skipped_near_duplicate"] == 0
+    assert [p.name for p in reader.calls] == ["photo0.jpg", "photo1.jpg"]
+
+
+@pytest.mark.parametrize("scripted", [{"text": "", "finish": "blank"}, {"text": HEBREW, "finish": "looping"},
+                                      {"fail_calls": [1]}], ids=["blank", "looping", "failed"])
+def test_run_reads_reads_the_twin_when_the_first_read_is_not_usable(tmp_path: Path, scripted: Dict[str, Any]) -> None:
+    """A blank, looping or failed first read covers nothing, so the second twin is read as well."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    write_stage1(tmp_path / "work_twins", photos.cands)
+    reader = ScriptedReader(**scripted)
+    counts = run(tmp_path / "work_twins", reader)
+    assert counts["queued"] == 2 and counts["read"] + counts["failed"] == 2 and counts["skipped_near_duplicate"] == 0
+    assert [p.name for p in reader.calls] == ["photo0.jpg", "photo1.jpg"]
+
+
+def test_run_reads_reads_a_twin_that_another_candidate_lists_without_its_twin(tmp_path: Path) -> None:
+    """Skipping at read time needs every candidate that lists the photograph to have a twin of it read before it."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    lone = candidate("r_lone", "hebrew", [photos.refs[1]])                 # lists the second photograph on its own
+    write_stage1(tmp_path / "work_lone", photos.cands + [lone])
+    reader = ScriptedReader()
+    counts = run(tmp_path / "work_lone", reader)
+    assert [p.name for p in reader.calls] == ["photo0.jpg", "photo1.jpg"] and counts["skipped_near_duplicate"] == 0
+    # when the other candidate lists the twin too, nothing needs the second photograph
+    both = candidate("r_both", "hebrew", list(photos.refs))
+    write_stage1(tmp_path / "work_both", photos.cands + [both])
+    reader = ScriptedReader()
+    counts = run(tmp_path / "work_both", reader)
+    assert [p.name for p in reader.calls] == ["photo0.jpg"] and counts["skipped_near_duplicate"] == 1
+
+
+def test_run_reads_counts_reads_from_before_the_run_and_from_the_run_alike(tmp_path: Path) -> None:
+    """Each listing of a photograph may be covered by a different read: one from before the run, one from this run."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(1), phash_apart(2)])        # all within 6 bits
+    old, new, shared = photos.refs
+    write_stage1(tmp_path / "work_mixed", [candidate("r_x", "hebrew", [old, shared]),
+                                           candidate("r_y", "hebrew", [new, shared])])
+    reads.append_jsonl(reads.reads_path(tmp_path / "work_mixed"), read_record(photos.sha[0], "kraken:other"))
+    reader = ScriptedReader()
+    counts = run(tmp_path / "work_mixed", reader, only_missing_usable=True)
+    # at launch only candidate r_x covers the shared photograph; once photo1 is read, r_y covers it as well
+    assert counts["queued"] == 2 and counts["skipped_near_duplicate"] == 1
+    assert [p.name for p in reader.calls] == ["photo1.jpg"]
+
+
+def test_run_reads_reads_near_duplicates_that_sit_in_different_candidates(tmp_path: Path) -> None:
+    """A read covers only photographs of its own candidate, at read time as at launch."""
+    mine = photographs(tmp_path, [phash_apart(0)])
+    other = photographs(tmp_path, [phash_apart(2)], tag="other", shade=60)
+    write_stage1(tmp_path / "work_two", mine.cands + other.cands)
+    reader = ScriptedReader()
+    counts = run(tmp_path / "work_two", reader)
+    assert counts["read"] == 2 and counts["skipped_near_duplicate"] == 0
+
+
+def test_run_reads_summary_always_has_the_near_duplicate_count(stage1: SimpleNamespace) -> None:
+    """Images without a phash are never skipped: the key is there, and it is 0."""
+    counts = run(stage1.work, ScriptedReader())
+    assert counts["skipped_near_duplicate"] == 0 and counts["queued"] == 2
+
+
 def test_run_reads_script_filter_and_missing_stage1(stage1: SimpleNamespace, tmp_path: Path) -> None:
     """``script`` limits the candidates; a work dir without a stage 1 file is an error."""
     reader = ScriptedReader()
@@ -1026,6 +1335,7 @@ def test_main_passes_the_options_to_run_reads(stage1: SimpleNamespace, monkeypat
                 "--limit", "7", "--only-missing-usable"])
     assert captured["work_dir"] == stage1.work and captured["reader"] == "vlm" and captured["model"] == "model-x"
     assert captured["script"] == "arabic" and captured["limit"] == 7 and captured["only_missing_usable"] is True
+    assert captured["skip_near_duplicates"] == reads.NEAR_DUPLICATE_BITS == 6        # on by default
     assert captured["stop_file"] == stage1.work / "reads" / "STOP"
     assert isinstance(captured["read_fn"], reads.functools.partial) and captured["read_fn"].func is reads.vlm_read
     assert captured["read_fn"].keywords == {"model_key": "model-x"}
@@ -1034,6 +1344,45 @@ def test_main_passes_the_options_to_run_reads(stage1: SimpleNamespace, monkeypat
     reads.main(["--work-dir", str(stage1.work), "--reader", "kraken", "--model", "/m/other.mlmodel", "--stop-file", str(stop)])
     assert captured["stop_file"] == stop and captured["model"] == "/m/other.mlmodel"
     assert captured["read_fn"].keywords["model_path"] == "/m/other.mlmodel" and captured["limit"] is None
+
+
+@pytest.mark.parametrize("flag, expected", [([], 6), (["--skip-near-duplicates", "0"], 0),
+                                            (["--skip-near-duplicates", "3"], 3)])
+def test_main_passes_the_near_duplicate_distance(stage1: SimpleNamespace, monkeypatch: pytest.MonkeyPatch,
+                                                 flag: List[str], expected: int) -> None:
+    """``--skip-near-duplicates N`` reaches ``run_reads`` as ``skip_near_duplicates``; default 6, ``0`` is off."""
+    captured: Dict[str, Any] = {}
+
+    def fake_run_reads(work_dir: Path, **kwargs: Any) -> Dict[str, int]:
+        """Capture the call instead of reading."""
+        captured.update(kwargs)
+        return {"read": 0}
+
+    monkeypatch.setattr(reads, "run_reads", fake_run_reads)
+    reads.main(["--work-dir", str(stage1.work), "--reader", "kraken"] + flag)
+    assert captured["skip_near_duplicates"] == expected
+
+
+def test_main_prints_the_near_duplicate_count_in_the_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                             capsys: pytest.CaptureFixture) -> None:
+    """The final JSON summary carries ``skipped_near_duplicate``; a photograph with a read twin is not requested."""
+    photos = photographs(tmp_path, [phash_apart(0), phash_apart(2)])
+    work = tmp_path / "work_twins"
+    write_stage1(work, photos.cands)
+    reads.append_jsonl(reads.reads_path(work), read_record(photos.sha[0], "kraken:test_model"))
+    requested: List[str] = []
+
+    def fake_kraken_read(path: Path, **kwargs: Any) -> ReadRecord:
+        """Stand-in for :func:`reads.kraken_read` that notes which file was requested."""
+        requested.append(path.name)
+        return read_record(sha_of(path), reads.make_reader_id("kraken", kwargs["model_path"]))
+
+    monkeypatch.setattr(reads, "kraken_read", fake_kraken_read)
+    reads.main(["--work-dir", str(work), "--reader", "kraken"])
+    out = capsys.readouterr().out
+    summary = json.loads(out[out.rindex("{\n"):])
+    assert summary["skipped_near_duplicate"] == 1 and summary["queued"] == 1 and summary["read"] == 1
+    assert requested == ["photo0.jpg"]
 
 
 def test_main_imports_then_reads(stage1: SimpleNamespace, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1055,9 +1404,11 @@ def test_main_imports_then_reads(stage1: SimpleNamespace, tmp_path: Path, monkey
     ["--gemini-index", "index.jsonl", "--reader", "kraken"],
     ["--reader", "claude"],
     ["--reader", "kraken", "--script", "latin"],
+    ["--reader", "kraken", "--skip-near-duplicates", "-1"],
+    ["--reader", "kraken", "--skip-near-duplicates", "many"],
 ])
 def test_main_rejects_bad_arguments(tmp_path: Path, argv: List[str]) -> None:
-    """Missing reader, vlm without a model, a Gemini index without an import, unknown choices: exit code 2."""
+    """Missing reader, vlm without a model, Gemini index without import, unknown choices, bad bit distance: exit 2."""
     with pytest.raises(SystemExit) as raised:
         reads.main(["--work-dir", str(tmp_path / "work")] + argv)
     assert raised.value.code == 2
