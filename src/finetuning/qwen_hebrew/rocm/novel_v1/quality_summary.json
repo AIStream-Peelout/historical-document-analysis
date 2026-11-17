@@ -1,0 +1,270 @@
+{
+  "evaluated_checkpoint": {
+    "repo": "isaacmg/qwen3-vl-8b-hebrew-novel-v1-ckpt",
+    "revision": "944377c9d2626805202ad11679257b928d77d910",
+    "step": 326
+  },
+  "inference_protocol": {
+    "engine": "LM Studio / MLX 8-bit on original evaluator",
+    "prompt_arm": "legacy",
+    "temperature": 0.1,
+    "max_tokens": {
+      "pgp131": 8192,
+      "religious": 2500,
+      "arabic": 2500
+    }
+  },
+  "coverage": {
+    "pgp131": {
+      "expected": 131,
+      "completed": 131,
+      "missing": 0
+    },
+    "religious": {
+      "expected": 140,
+      "completed": 140,
+      "missing": 0
+    },
+    "arabic": {
+      "expected": 117,
+      "completed": 117,
+      "missing": 0
+    }
+  },
+  "request_failures": 0,
+  "JA": {
+    "qwen3_vl_8b_heb_novel_v1_step326": {
+      "full": {
+        "n": 82,
+        "expected": 82,
+        "missing": 0,
+        "failure_modes": {
+          "substantive": 82
+        },
+        "cer_median_substantive": 0.14479999999999998,
+        "cer_median_all_outputs": 0.14479999999999998,
+        "n_substantive": 82
+      },
+      "paired": {
+        "n": 82,
+        "expected": 82,
+        "missing": 0,
+        "failure_modes": {
+          "substantive": 82
+        },
+        "cer_median_substantive": 0.14479999999999998,
+        "cer_median_all_outputs": 0.14479999999999998,
+        "n_substantive": 82
+      },
+      "common_substantive_cer_median": 0.14479999999999998
+    },
+    "qwen3_vl_8b_heb_v24a_step2000": {
+      "full": {
+        "n": 82,
+        "expected": 82,
+        "missing": 0,
+        "failure_modes": {
+          "substantive": 82
+        },
+        "cer_median_substantive": 0.15200000000000002,
+        "cer_median_all_outputs": 0.15200000000000002,
+        "n_substantive": 82
+      },
+      "paired": {
+        "n": 82,
+        "expected": 82,
+        "missing": 0,
+        "failure_modes": {
+          "substantive": 82
+        },
+        "cer_median_substantive": 0.15200000000000002,
+        "cer_median_all_outputs": 0.15200000000000002,
+        "n_substantive": 82
+      },
+      "common_substantive_cer_median": 0.15200000000000002
+    },
+    "qwen3_vl_8b_heb_v25a_step1200": {
+      "full": {
+        "n": 82,
+        "expected": 82,
+        "missing": 0,
+        "failure_modes": {
+          "substantive": 82
+        },
+        "cer_median_substantive": 0.1456,
+        "cer_median_all_outputs": 0.1456,
+        "n_substantive": 82
+      },
+      "paired": {
+        "n": 82,
+        "expected": 82,
+        "missing": 0,
+        "failure_modes": {
+          "substantive": 82
+        },
+        "cer_median_substantive": 0.1456,
+        "cer_median_all_outputs": 0.1456,
+        "n_substantive": 82
+      },
+      "common_substantive_cer_median": 0.1456
+    }
+  },
+  "religious_summary": [
+    {
+      "model": "novel_v1_step326",
+      "slice": "ALL",
+      "n": "140",
+      "subst": "0.986",
+      "readOK": "0.7166",
+      "orderScr": "0.021",
+      "ngramP": "0.5738",
+      "F1": "0.8675",
+      "CERsub": "0.1782"
+    },
+    {
+      "model": "v24a_step2000",
+      "slice": "ALL",
+      "n": "140",
+      "subst": "0.971",
+      "readOK": "0.6677",
+      "orderScr": "0.014",
+      "ngramP": "0.5847",
+      "F1": "0.8637",
+      "CERsub": "0.1819"
+    },
+    {
+      "model": "v25a_step1200",
+      "slice": "ALL",
+      "n": "140",
+      "subst": "0.986",
+      "readOK": "0.6947",
+      "orderScr": "0.014",
+      "ngramP": "0.5812",
+      "F1": "0.8663",
+      "CERsub": "0.1866"
+    }
+  ],
+  "religious_failures": {
+    "novel_v1_step326": {
+      "substantive": 138,
+      "hallucinated": 2
+    },
+    "v25a_step1200": {
+      "substantive": 138,
+      "loop_collapse": 1,
+      "hallucinated": 1
+    },
+    "v24a_step2000": {
+      "substantive": 136,
+      "hallucinated": 4
+    }
+  },
+  "arabic_paired": {
+    "qwen3-vl-8b-heb-novel-v1-step326__trained": {
+      "covered_documents": 56,
+      "covered_images": 67,
+      "status": {
+        "read": 45,
+        "loop": 11
+      },
+      "ler_mean": 2.0616839285714286,
+      "ler_median": 0.4669,
+      "f1_median": 0.2414
+    },
+    "qwen3-vl-8b-heb-v24a-step2000__trained": {
+      "covered_documents": 56,
+      "covered_images": 67,
+      "status": {
+        "read": 54,
+        "loop": 2
+      },
+      "ler_mean": 0.8707392857142857,
+      "ler_median": 0.5998,
+      "f1_median": 0.1748
+    },
+    "qwen3-vl-8b-heb-v25a-step1200__trained": {
+      "covered_documents": 56,
+      "covered_images": 67,
+      "status": {
+        "read": 52,
+        "loop": 4
+      },
+      "ler_mean": 1.2747732142857142,
+      "ler_median": 0.5459,
+      "f1_median": 0.2116
+    }
+  },
+  "PGP131": {
+    "overall": {
+      "qwen3_vl_8b_heb_v25a_step1200": {
+        "median_CER": 0.1451,
+        "mean_CER": 0.192618320610687,
+        "CER_gt1": 0
+      },
+      "qwen3_vl_8b_heb_novel_v1_step326": {
+        "median_CER": 0.1337,
+        "mean_CER": 0.45180992366412215,
+        "CER_gt1": 2
+      }
+    },
+    "by_bucket": {
+      "judaeo_arabic": {
+        "documents": 82,
+        "old_median_CER": 0.1456,
+        "new_median_CER": 0.14479999999999998,
+        "old_mean_CER": 0.19572439024390245,
+        "new_mean_CER": 0.4438060975609756,
+        "improved": 45,
+        "worsened": 33,
+        "tied": 4
+      },
+      "hebrew": {
+        "documents": 20,
+        "old_median_CER": 0.12530000000000002,
+        "new_median_CER": 0.11465,
+        "old_mean_CER": 0.17773,
+        "new_mean_CER": 0.17079,
+        "improved": 13,
+        "worsened": 5,
+        "tied": 2
+      },
+      "untagged": {
+        "documents": 22,
+        "old_median_CER": 0.15610000000000002,
+        "new_median_CER": 0.12455,
+        "old_mean_CER": 0.19657727272727274,
+        "new_mean_CER": 0.8215272727272728,
+        "improved": 11,
+        "worsened": 8,
+        "tied": 3
+      },
+      "aramaic": {
+        "documents": 6,
+        "old_median_CER": 0.16185,
+        "new_median_CER": 0.16455,
+        "old_mean_CER": 0.2047,
+        "new_mean_CER": 0.20533333333333334,
+        "improved": 2,
+        "worsened": 4,
+        "tied": 0
+      },
+      "arabic_script": {
+        "documents": 1,
+        "old_median_CER": 0.0761,
+        "new_median_CER": 0.0736,
+        "old_mean_CER": 0.0761,
+        "new_mean_CER": 0.0736,
+        "improved": 1,
+        "worsened": 0,
+        "tied": 0
+      }
+    },
+    "extreme_output_count": 2,
+    "extreme_output_CERs": [
+      14.486,
+      21.437
+    ],
+    "interpretation": "Medians are not additive: shifts in Hebrew-labelled and untagged groups and changes in JA ranks jointly lower the overall median. Untagged does not establish a language. Two length-limited extreme outputs worsen mean CER and remain classified substantive by the existing scorer. No answers or score definitions were changed."
+  },
+  "caveat": "Arabic median LER improved on covered images, but loop documents increased and mean LER worsened. This is not an unqualified production improvement."
+}

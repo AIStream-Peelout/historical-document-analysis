@@ -1,0 +1,40 @@
+{
+  "recorded_at": "2026-11-06T02:11:48.712212+00:00",
+  "completed_steps": 326,
+  "training_runtime_seconds_including_eval_and_checkpoints": 20808.8183,
+  "optimizer_step_median_seconds_all": 60.175008791999744,
+  "optimizer_step_median_seconds_after_first_10": 60.181193587498456,
+  "optimizer_step_p90_seconds_after_first_10": 61.826983814000414,
+  "optimizer_step_seconds_sum": 19693.906709843013,
+  "peak_allocated_bytes": 16280187392,
+  "peak_reserved_bytes": 40846229504,
+  "last_optimizer_step_at": "2026-11-06T00:15:08.914614+00:00",
+  "training_return_metrics_at": "2026-11-06T00:15:21.853584+00:00",
+  "full_train_metrics": {
+    "train_runtime": 20808.8183,
+    "train_samples_per_second": 0.125,
+    "train_steps_per_second": 0.016,
+    "total_flos": 8.833253672221861e+17,
+    "train_loss": 1.076024573273454,
+    "epoch": 1.0
+  },
+  "step0_eval_loss": 1.286753535270691,
+  "validation_history": [
+    {
+      "step": 100,
+      "eval_loss": 1.1558724641799927
+    },
+    {
+      "step": 200,
+      "eval_loss": 1.144506812095642
+    },
+    {
+      "step": 300,
+      "eval_loss": 1.1412885189056396
+    }
+  ],
+  "checkpoint_revision": "944377c9d2626805202ad11679257b928d77d910",
+  "merged_revision": "5d5eae266ab20c471ccc908e786e1faf90c3c0ce",
+  "benchmark_accuracy_evaluated": false,
+  "timing_definition": "Synchronized optimizer-step intervals exclude later validation and checkpoint callbacks. Warmup convention: first 10 optimizer steps excluded from steady statistics. PyTorch reserved memory includes cache and is not the minimum required VRAM. Full merge/upload wall time was not separately timestamped."
+}

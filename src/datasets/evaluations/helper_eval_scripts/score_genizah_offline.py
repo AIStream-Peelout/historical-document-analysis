@@ -72,6 +72,17 @@ _OUTPUTS = _REPO / "src/datasets/evaluations/transcription_raw_outputs"
 # Thresholds (documented in the paper's methods section).
 ABSTAIN_MIN_CHARS = 25       # below this the model effectively declined
 LOOP_REPEAT_RATIO = 0.45     # share of text covered by one repeated 12-gram
+# Period-aware loop rule (2026-11-08). The 12-gram rule above sees only loops whose repeated unit is short: in an
+# output that repeats one 45-letter line, any single 12-gram covers 12/45 of the text and stays under 0.45, so a
+# runaway of thousands of letters was scored as a substantive answer. The second rule looks at long windows instead.
+LOOP_WINDOW = 30             # letters per window
+LOOP_WINDOW_REPEATS = 3      # a window seen at least this often is repeated
+LOOP_WINDOW_SHARE = 0.5      # share of the output inside repeated windows ...
+LOOP_LENGTH_RATIO = 2.0      # ... when the output holds at least this many times the ground truth's letters
+LOOP_RULES = ("legacy", "period_aware")
+#: Default loop rule. ``legacy`` (the 12-gram rule alone) reproduces every score computed before 2026-11-08,
+#: including the paper's tables; ``period_aware`` adds the long-window rule.
+LOOP_RULE = "period_aware"
 HALLUCINATION_NGRAM = 0.10   # n-gram precision below this = not this page
 TIER_A_OVERLAP = 0.25        # per-system overlap needed to count as convergent
 NGRAM_N = 5
@@ -128,6 +139,57 @@ def loop_ratio(letters: str, span: int = 12) -> float:
     return (freq * span) / len(letters)
 
 
+def repeated_window_share(letters: str, window: int = LOOP_WINDOW, min_repeats: int = LOOP_WINDOW_REPEATS) -> float:
+    """Share of the letters covered by windows of ``window`` letters that occur at least ``min_repeats`` times.
+
+    Unlike :func:`loop_ratio`, the measure does not depend on the period of a loop: when one line of any length is
+    repeated, almost every window inside the repeated part recurs. Ordinary text, formulae included, rarely holds a
+    30-letter run three times.
+
+    :param letters: Hypothesis reduced to letters.
+    :type letters: str
+    :param window: Window length in letters.
+    :type window: int
+    :param min_repeats: Occurrences from which a window counts as repeated.
+    :type min_repeats: int
+    :return: Ratio in [0, 1]; 0.0 for texts shorter than ``window * min_repeats``.
+    :rtype: float
+    """
+    if window <= 0 or len(letters) < window * min_repeats:
+        return 0.0
+    grams = [letters[i:i + window] for i in range(len(letters) - window + 1)]
+    counts = collections.Counter(grams)
+    delta = [0] * (len(letters) + 1)
+    for i, gram in enumerate(grams):
+        if counts[gram] >= min_repeats:
+            delta[i] += 1
+            delta[i + window] -= 1
+    covered = depth = 0
+    for step in delta[:-1]:
+        depth += step
+        covered += depth > 0
+    return covered / len(letters)
+
+
+def is_long_period_loop(hyp_asserted: str, gt_letters: str) -> bool:
+    """The period-aware loop rule: an output much longer than its page and made mostly of repeated windows.
+
+    The length condition keeps a page whose own text repeats (a refrain, a list of like items) from counting as a loop
+    when it is read at its true length. Without a ground truth the rule does not apply.
+
+    :param hyp_asserted: Hypothesis reduced to asserted letters (Hebrew + Arabic).
+    :type hyp_asserted: str
+    :param gt_letters: Ground truth reduced to letters (empty: unknown).
+    :type gt_letters: str
+    :return: True when the output holds at least :data:`LOOP_LENGTH_RATIO` times the ground truth's letters and
+        :func:`repeated_window_share` reaches :data:`LOOP_WINDOW_SHARE`.
+    :rtype: bool
+    """
+    if not gt_letters or len(hyp_asserted) < LOOP_LENGTH_RATIO * len(gt_letters):
+        return False
+    return repeated_window_share(hyp_asserted) >= LOOP_WINDOW_SHARE
+
+
 def aligned_prf(hyp: str, gt: str) -> tuple:
     """Character-level precision, recall and F1 from a sequence alignment.
 
@@ -169,7 +231,7 @@ def asserted_letters(text: str) -> str:
     return "".join(_ASSERTED_RE.findall(text))
 
 
-def classify(raw: str, hyp_asserted: str, gt_letters: str, ngram_p: float) -> str:
+def classify(raw: str, hyp_asserted: str, gt_letters: str, ngram_p: float, loop_rule: str = LOOP_RULE) -> str:
     """Assign a failure mode to one model output.
 
     :param raw: Raw model output as saved.
@@ -181,12 +243,19 @@ def classify(raw: str, hyp_asserted: str, gt_letters: str, ngram_p: float) -> st
     :type gt_letters: str
     :param ngram_p: Order-independent n-gram precision.
     :type ngram_p: float
+    :param loop_rule: ``legacy`` (the 12-gram rule) or ``period_aware`` (also :func:`is_long_period_loop`).
+    :type loop_rule: str
     :return: One of abstained / loop_collapse / hallucinated / substantive.
     :rtype: str
+    :raises ValueError: On an unknown loop rule.
     """
+    if loop_rule not in LOOP_RULES:
+        raise ValueError(f"loop rule {loop_rule!r}: expected one of {LOOP_RULES}")
     if len(hyp_asserted) < ABSTAIN_MIN_CHARS or _REFUSAL_RE.search(raw[:400]):
         return "abstained"
     if loop_ratio(hyp_asserted) > LOOP_REPEAT_RATIO:
+        return "loop_collapse"
+    if loop_rule == "period_aware" and is_long_period_loop(hyp_asserted, gt_letters):
         return "loop_collapse"
     if ngram_p < HALLUCINATION_NGRAM:
         return "hallucinated"
@@ -221,6 +290,39 @@ def load_benchmark(which: str, spec_path: Optional[Path] = None) -> list:
     return docs
 
 
+def scoring_rule(loop_rule: str) -> dict:
+    """The failure-mode thresholds a scoring run used, for the record next to its tables.
+
+    :param loop_rule: The loop rule of the run.
+    :type loop_rule: str
+    :return: ``{loop_rule, abstain_min_chars, loop_repeat_ratio, loop_window, loop_window_repeats,
+        loop_window_share, loop_length_ratio, hallucination_ngram}``.
+    :rtype: dict
+    """
+    return {"loop_rule": loop_rule, "abstain_min_chars": ABSTAIN_MIN_CHARS, "loop_repeat_ratio": LOOP_REPEAT_RATIO,
+            "loop_window": LOOP_WINDOW, "loop_window_repeats": LOOP_WINDOW_REPEATS,
+            "loop_window_share": LOOP_WINDOW_SHARE, "loop_length_ratio": LOOP_LENGTH_RATIO,
+            "hallucination_ngram": HALLUCINATION_NGRAM}
+
+
+def write_scoring_rule(out_dir: Path, loop_rule: str, name: str = "scoring_rule.json") -> Path:
+    """Write :func:`scoring_rule` next to a run's tables.
+
+    :param out_dir: The run's output folder.
+    :type out_dir: Path
+    :param loop_rule: The loop rule of the run.
+    :type loop_rule: str
+    :param name: File name.
+    :type name: str
+    :return: The written file.
+    :rtype: Path
+    """
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / name
+    path.write_text(json.dumps(scoring_rule(loop_rule), indent=1) + "\n", encoding="utf-8")
+    return path
+
+
 def main() -> None:
     """Score every saved output and emit the paper tables."""
     parser = argparse.ArgumentParser()
@@ -239,7 +341,11 @@ def main() -> None:
                              "(overrides --benchmark)")
     parser.add_argument("--outputs-dir", type=Path, default=_OUTPUTS,
                         help="per-fragment output folders (<dir>/<doc_id>/<model>.txt)")
+    parser.add_argument("--loop-rule", choices=LOOP_RULES, default=LOOP_RULE,
+                        help="loop detection: legacy (one repeated 12-gram, as scored before 2026-11-08) or "
+                             "period_aware (also long repeated windows in an output twice the page's length)")
     args = parser.parse_args()
+    print(f"loop rule: {args.loop_rule}")
 
     script_tags = {}
     if args.script_tags.exists():
@@ -269,7 +375,7 @@ def main() -> None:
             hyp = normalize_ink_hypothesis(raw)
             hyp_letters = letters_only(hyp)
             ngram_p = ngram_precision(hyp_letters, gt_letters)
-            mode = classify(raw, asserted_letters(hyp), gt_letters, ngram_p)
+            mode = classify(raw, asserted_letters(hyp), gt_letters, ngram_p, loop_rule=args.loop_rule)
             precision, recall, f1 = aligned_prf(hyp, gt_ink)
             cer_s, cer_l = cer_pair(hyp, gt_ink)
             wer_s, _ = wer_pair(hyp, gt_ink)
@@ -301,6 +407,7 @@ def main() -> None:
         return
 
     args.out_dir.mkdir(parents=True, exist_ok=True)
+    write_scoring_rule(args.out_dir, args.loop_rule)
     long_csv = args.out_dir / "genizah_offline_long.csv"
     with open(long_csv, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=list(rows[0].keys()))

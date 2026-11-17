@@ -58,10 +58,13 @@ from src.datasets.evaluations.helper_eval_scripts.audit_genizah_benchmark import
     letters_only,
 )
 from src.datasets.evaluations.helper_eval_scripts.score_genizah_offline import (  # noqa: E402
+    LOOP_RULE,
+    LOOP_RULES,
     aligned_prf,
     asserted_letters,
     classify,
     ngram_precision,
+    write_scoring_rule,
 )
 from src.datasets.consensus.consensus_gate import build_fragment_prompt  # noqa: E402
 from src.models.ocr.lms_transcriber import (  # noqa: E402
@@ -219,13 +222,15 @@ def discover_model_keys(docs: list, out_dir: Path = _OUT) -> list:
     return vlm + [(k, k) for k in sorted(kraken_keys)]
 
 
-def score(docs: list, out_dir: Path = _OUT) -> list:
+def score(docs: list, out_dir: Path = _OUT, loop_rule: str = LOOP_RULE) -> list:
     """Score every model's saved output against each page's GT.
 
     :param docs: Benchmark doc entries.
     :type docs: list
     :param out_dir: Per-page output root.
     :type out_dir: Path
+    :param loop_rule: Loop rule of the failure classifier (``score_genizah_offline.LOOP_RULES``).
+    :type loop_rule: str
     :return: Per-(doc, model) score rows.
     :rtype: list
     """
@@ -245,7 +250,7 @@ def score(docs: list, out_dir: Path = _OUT) -> list:
             hyp = normalize_ink_hypothesis(raw)
             hyp_letters = letters_only(hyp)
             ngram_p = ngram_precision(hyp_letters, gt_letters)
-            mode = classify(raw, asserted_letters(hyp), gt_letters, ngram_p)
+            mode = classify(raw, asserted_letters(hyp), gt_letters, ngram_p, loop_rule=loop_rule)
             _, _, f1 = aligned_prf(hyp, gt_ink)
             cer_s, _ = cer_pair(hyp, gt_ink)
             line_p = line_ngram_precision(raw, gt_letters)
@@ -347,17 +352,21 @@ def main() -> None:
                         help="benchmark JSON in this format (score CSVs are written next to it)")
     parser.add_argument("--outputs-dir", type=Path, default=_OUT,
                         help="per-page output root (<dir>/<doc_id>/<model>.txt)")
+    parser.add_argument("--loop-rule", choices=LOOP_RULES, default=LOOP_RULE,
+                        help="failure classifier's loop rule (legacy reproduces scores before 2026-11-08)")
     args = parser.parse_args()
     docs = json.load(open(args.spec))["docs"]
     if args.limit:
         docs = docs[:args.limit]
     if not args.score_only:
         asyncio.run(transcribe_all(docs, args.vlm_model, args.kraken_model, args.kraken_tag, args.outputs_dir))
-    rows = score(docs, args.outputs_dir)
+    print(f"loop rule: {args.loop_rule}")
+    rows = score(docs, args.outputs_dir, args.loop_rule)
     if not rows:
         print("no scored rows")
         return
     report(rows, args.spec.resolve().parent)
+    write_scoring_rule(args.spec.resolve().parent, args.loop_rule, "religious_scoring_rule.json")
 
 
 if __name__ == "__main__":
