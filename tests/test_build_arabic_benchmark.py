@@ -51,6 +51,19 @@ def test_tier1_documents_merges_rows_of_one_document(tmp_path):
     assert docs["Oxford_X"]["manifests"] == ["https://b/m4"] and docs["Oxford_X"]["single_fragment"]
 
 
+def test_tier1_documents_skips_store_only_rows(tmp_path):
+    path = tmp_path / "queue.csv"
+    columns = QUEUE_COLUMNS + ["image_source"]
+    with open(path, "w", encoding="utf-8", newline="") as fh:
+        writer = csv.DictWriter(fh, fieldnames=columns)
+        writer.writeheader()
+        writer.writerow({c: "" for c in columns} | {"tier": "1", "pgpid": "20", "canonical_id": "Store_only", "single_fragment": "True",
+                                                   "image_source": "fjp_only"})
+        writer.writerow({c: "" for c in columns} | {"tier": "1", "pgpid": "21", "canonical_id": "Library_doc", "single_fragment": "True",
+                                                   "image_source": "iiif_pgp", "iiif_urls": "https://a/m5"})
+    assert list(bab.tier1_documents(path)) == ["Library_doc"]                  # store photographs only: never a benchmark document
+
+
 def test_training_documents_reads_manifests_and_id_lists(tmp_path):
     (tmp_path / "pgp_editions_v1").mkdir()
     (tmp_path / "documentary_grounding_v1").mkdir()

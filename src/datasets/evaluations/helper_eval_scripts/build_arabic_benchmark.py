@@ -78,7 +78,9 @@ def tier1_documents(queue_csv: Path) -> Dict[str, Dict[str, Any]]:
     """Benchmark-ready documents of the Arabic queue, one entry per canonical id.
 
     The queue has one row per PGP document and fragment; rows that share a canonical id are
-    merged (their PGP ids and manifests are collected).
+    merged (their PGP ids and manifests are collected). Rows whose ``image_source`` is
+    ``fjp_only`` (the only photographs are store photographs) are skipped: the benchmark pool
+    never gains such documents, even though the queue no longer ranks them tier 1.
 
     :param queue_csv: ``arabic_scrape_priority_queue.csv``.
     :type queue_csv: Path
@@ -89,7 +91,7 @@ def tier1_documents(queue_csv: Path) -> Dict[str, Dict[str, Any]]:
     docs: Dict[str, Dict[str, Any]] = {}
     with open(queue_csv, encoding="utf-8") as fh:
         for row in csv.DictReader(fh):
-            if row["tier"] != "1" or not row["canonical_id"]:
+            if row["tier"] != "1" or not row["canonical_id"] or row.get("image_source") == "fjp_only":
                 continue
             doc = docs.setdefault(row["canonical_id"], {
                 "pgpids": [], "shelfmark": row["shelfmark"], "library": row["library"], "doc_type": row["doc_type"],
@@ -305,6 +307,7 @@ def megapixels(path: Path) -> float:
         return image.size[0] * image.size[1] / 1e6
 
 
+# index_urls may already be store photographs (the merged index serves them when a record's preferred source is the store); pre-existing behaviour, unchanged here.
 def planned_images(doc_id: str, doc: Dict[str, Any], index_urls: List[str], use_iiif: bool, max_side: int,
                    max_canvases: int, delay_s: float) -> Tuple[List[Dict[str, Any]], str]:
     """Where a document's images come from.
