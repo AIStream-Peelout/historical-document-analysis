@@ -7,6 +7,7 @@ import hashlib
 from datetime import datetime
 from types import MappingProxyType
 from typing import ClassVar, Dict, Iterable, List, Mapping, Optional, Any, Tuple, Union
+from urllib.parse import quote
 import numpy as np
 from pydantic import BaseModel, Field, validator
 from enum import Enum
@@ -46,6 +47,24 @@ def _split_names(value: Optional[str]) -> List[str]:
     return [n.strip() for n in str(value).split(";") if n.strip()]
 
 
+def fjp_image_url(entry: str) -> str:
+    """Absolute URL of one image-store pointer of a merged record (an entry of ``images.fjp``).
+
+    The merge stores either a bare file name, which lives under the image store's bucket path and
+    is URL-quoted there (``/`` kept; ``name 2.jpg`` becomes ``name%202.jpg``), or an
+    already-absolute ``http(s)`` URL, which is returned unchanged.
+
+    :param entry: Bare file name or ``http(s)`` URL.
+    :type entry: str
+    :return: Absolute image URL.
+    :rtype: str
+    """
+    text = str(entry)
+    if text.startswith(("http://", "https://")):
+        return text
+    return f"{_FJP_IMAGE_BASE}/{quote(text, safe='/')}"
+
+
 def _merged_image_urls(images: Dict[str, Any]) -> List[str]:
     """Resolve a merged record's image pointers to full URLs, preferred source first.
 
@@ -56,10 +75,7 @@ def _merged_image_urls(images: Dict[str, Any]) -> List[str]:
     :returns: Ordered list of absolute image URLs.
     """
     by_source = {
-        "fjp": [
-            img if str(img).startswith("http") else f"{_FJP_IMAGE_BASE}/{img}"
-            for img in (images.get("fjp") or [])
-        ],
+        "fjp": [fjp_image_url(img) for img in (images.get("fjp") or [])],
         "ktiv": list(((images.get("ktiv") or {}).get("image_urls")) or []),
         "bodleian": list(((images.get("bodleian") or {}).get("image_urls")) or []),
     }

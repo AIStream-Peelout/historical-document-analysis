@@ -66,12 +66,14 @@ import hashlib
 import os
 import re
 import statistics
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Callable, Counter, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
 import fitz
 
 from src.datasets.cleaning import legacy_store_sigla as L
+from src.datasets.indexing.legacy_store import pdf_glyphs
 from src.datasets.document_models.genizah_normalizer import ShelfmarkNormalizer
 
 # ───────────────────────────── constants ─────────────────────────────
@@ -92,6 +94,48 @@ INSTITUTION_RE = re.compile(r"\b(?:Library|Museum|Institute|Collection|Archives?
                             re.IGNORECASE)
 # Notes heading (also in visual order, colon first), apparatus rule, sigla legend.
 NOTES_START_RE = re.compile(r"^\s*(?::?\s*הערות\s*:?|_{10,})\s*$|^\s*מקרא\s+סימני")
+#: a drawn horizontal rule (the separator above a page's footnotes): at most this high and at least this wide, in points
+# a span's next character starts a new position run when its box lies farther than this x font size from the
+# previous character's box (a tab, or a part stored out of reading order); word spaces are characters themselves.
+# Neighbouring glyphs of one run sit 0-0.14 x size apart, the narrowest glyphs (apostrophes) are 0.16 x size wide:
+# a larger tolerance would join a run across a glyph stored elsewhere
+RUN_GAP_RATIO = 0.15
+# a character that repeats an earlier character of the page (same character, font and size) with both box edges and
+# the baseline within this x font size is an overprint (fake bold) and is dropped
+OVERPRINT_RATIO = 0.1
+# a character whose box is at most this x font size wide is a zero-advance glyph (a point), whatever its code
+ZERO_WIDTH_RATIO = 0.05
+# a space wider than this x font size (a tab drawn as one box) joins a run but never becomes its anchor
+WIDE_SPACE_RATIO = 0.5
+# the characters position runs treat as spaces (a legacy font's control characters stand for letters)
+BLANK_CHARS = " \t" + NBSP
+# geresh and gershayim (and the ASCII quotes typed for them): a run of these and spaces alone is placed by position
+GERESH_CHARS = "'\"\u05f3\u05f4"
+RULE_MAX_HEIGHT = 3.0
+RULE_MIN_WIDTH = 60.0
+#: a span at most this share of its line's font size is a superscript (a footnote mark when it holds only digits)
+SUPERSCRIPT_RATIO = 0.8
+#: a line set at most this share of the document's body size is in the notes' size
+SMALL_FONT_RATIO = 0.93
+#: a font size holding at least this share of a document's letters is a body size, however small
+BODY_SIZE_MIN_SHARE = 0.35
+#: the lines below a rule are notes when at least this share of their letters is set in a notes' size
+NOTES_SMALL_SHARE = 0.7
+DIGITS_ONLY_RE = re.compile(r"^[\s\d]*\d[\s\d]*$")
+#: a footnote separator is a short rule (at most this wide) set flush (within the tolerance) with a text margin
+SEPARATOR_MAX_WIDTH = 200.0
+MARGIN_TOLERANCE = 12.0
+#: a rule this close below a text baseline (points) that it overlaps is an underline, not a separator
+UNDERLINE_MAX_DROP = 4.0
+#: a typeset line at least this share of its page's widest line is full: the typesetter wrapped its end ...
+WRAP_FULL_SHARE = 0.90
+#: ... onto a following line at most this share of the widest line and at most this many letters long
+WRAP_TAIL_SHARE = 0.30
+WRAP_TAIL_LETTERS = 15
+#: ... no further below it than this many font sizes
+WRAP_MAX_LEADING = 1.8
+#: a line that opens with a note number: ``1 text``, ``12. text``, ``3) text``, ``(4) text``
+NOTE_NUMBER_RE = re.compile(r"^\s*\(?\d{1,3}(?!\d)\s*[.)]?\s*\S")
 # Only spaces and tabs around the number: Python's \s also matches control characters that may be finals.
 LINE_NUMBER_RE = re.compile(r"^[ \t]*(\d{1,4})(?:[ \t]*\.)?[ \t]*(?=[^\d \t.:])")
 # A geresh the text layer moved from the end of a word to the start of the next (``אמ 'לו``).
@@ -198,6 +242,13 @@ class PdfLine:
     :param y: Baseline (points from the page top).
     :param spans: ``(font, text)`` per span, in reading order.
     :param rtl: Whether the line was ordered right to left.
+    :param size: Font size holding most of the line's characters (0.0 when unknown).
+    :param note_mark: Whether the line has a superscript number at one of its ends (a footnote's number).
+    :param layout_note: Why the layout marks the line as an editor's note (``"below_rule"`` or ``"small_font"``,
+        set by :func:`mark_layout_notes`), or None.
+    :param x0: Left edge of the line's text.
+    :param x1: Right edge of the line's text.
+    :param span_extents: Horizontal bounds parallel to spans when requested.
     """
 
     text: str
@@ -205,6 +256,12 @@ class PdfLine:
     y: float
     spans: List[Tuple[str, str]] = field(default_factory=list)
     rtl: bool = False
+    size: float = 0.0
+    note_mark: bool = False
+    layout_note: Optional[str] = None
+    x0: float = 0.0
+    x1: float = 0.0
+    span_extents: List[Tuple[float, float]] = field(default_factory=list)
 
 
 @dataclass
@@ -306,27 +363,311 @@ def dedupe_pdfs(paths: Iterable[str]) -> List[Dict[str, object]]:
     return sorted(out, key=lambda g: (os.path.getmtime(g["canonical"]), os.path.basename(g["canonical"])))
 
 
-def page_lines(page: "fitz.Page", page_index: int = 0, tolerance: float = 0.3) -> List[PdfLine]:
+def mark_flags(chars: Sequence[Tuple[str, float, float]], size: float,
+               zero_ratio: float = ZERO_WIDTH_RATIO) -> List[bool]:
+    """Which characters of a span are marks (vowel points, accents) rather than letters.
+
+    A mark is a Unicode combining character, or, whatever its code point, a character whose box is (nearly) zero
+    wide or lies inside the box of the last letter stored before it and is narrower: legacy fonts draw
+    points as zero-advance glyphs under ASCII codes (``Q``, ``T``, ``4``).
+
+    :param chars: ``(char, x0, x1)`` of each character, in stored order.
+    :param size: Font size.
+    :param zero_ratio: Widest box, as a fraction of the font size, that counts as zero wide.
+    :return: Per character, whether it is a mark.
+    """
+    eps = zero_ratio * max(size, 1.0)
+    out: List[bool] = []
+    prev: Optional[Tuple[float, float]] = None
+    for ch, x0, x1 in chars:
+        if ch in BLANK_CHARS:
+            out.append(False)
+            continue
+        inside = prev is not None and x0 >= prev[0] - 0.01 and x1 <= prev[1] + 0.01 and x1 - x0 < prev[1] - prev[0]
+        out.append(unicodedata.category(ch).startswith("M") or x1 - x0 <= eps or inside)
+        if not out[-1]:
+            prev = (x0, x1)
+    return out
+
+
+def position_runs(chars: Sequence[Tuple[str, float, float]], size: float,
+                  gap_ratio: float = RUN_GAP_RATIO) -> List[List[int]]:
+    """Split a span's characters, in stored order, into runs of characters that sit next to each other.
+
+    A character is in place when its box touches the run's anchor box on either side (a right-to-left or a
+    left-to-right step) or overlaps it, within ``gap_ratio`` x ``size``. A character that is not in place starts a
+    new run and becomes its anchor; one in place joins the run and becomes the anchor, except a space wider than
+    :data:`WIDE_SPACE_RATIO` x ``size`` (a tab drawn as one box), which would join whatever it covers. Spaces are
+    characters like any other: they are drawn where they separate the words, also when the text layer stores them
+    elsewhere. A mark (:func:`mark_flags`: a combining character, or a zero-advance glyph under any code) in place
+    stays in the run and never becomes the anchor (the next letter is compared with the letter, not with the point
+    drawn inside it); a mark out of place is a run of its own, which nothing joins, placed by its position.
+
+    Then two neighbouring runs without a right-to-left character that touch are joined again, so a left-to-right
+    stretch (a number with its punctuation, Latin text) keeps its stored order, as before; a run made only of
+    spaces and gereshes (the text layer stores ``אמ 'רב`` as ``אמ``, space, geresh, ``רב`` while the geresh is
+    drawn right after ``אמ``) is split into single characters, which the line places by position; and a run of one
+    right-to-left letter with its punctuation stored left to right is put into reading order
+    (:func:`visual_order_fixed`). A word processor stores a line typed in parts separated by a tab as one span whose
+    parts can follow in the wrong order (left part first): each part becomes its own run, so the line can order
+    them by position.
+
+    :param chars: ``(char, x0, x1)`` of each character, in stored order.
+    :param size: Font size.
+    :param gap_ratio: Largest distance between two neighbouring boxes, as a fraction of the font size.
+    :return: Runs as lists of character indexes, in stored order (empty for no characters).
+    """
+    tol = gap_ratio * max(size, 1.0)
+    wide = WIDE_SPACE_RATIO * max(size, 1.0)
+    marks = mark_flags(chars, size)
+    runs: List[List[int]] = []
+    anchor: Optional[Tuple[float, float]] = None
+    closed = False      # the current run is a lone mark drawn away from its stored neighbour: nothing joins it
+    for i, (ch, x0, x1) in enumerate(chars):
+        in_place = anchor is not None and max(0.0, x0 - anchor[1], anchor[0] - x1) <= tol
+        if marks[i]:
+            if runs and in_place and not closed:
+                runs[-1].append(i)
+            else:
+                runs.append([i])
+                anchor, closed = None, True
+            continue
+        if runs and not closed and in_place:
+            runs[-1].append(i)
+            if not (ch in BLANK_CHARS and x1 - x0 > wide):
+                anchor = (x0, x1)
+        else:
+            runs.append([i])
+            anchor, closed = (x0, x1), False
+    merged: List[List[int]] = []
+    for run in runs:
+        if merged and not any(RTL_CHAR_RE.match(chars[i][0]) for i in merged[-1] + run) and max(
+                0.0, min(chars[i][1] for i in run) - max(chars[i][2] for i in merged[-1]),
+                min(chars[i][1] for i in merged[-1]) - max(chars[i][2] for i in run)) <= tol:
+            merged[-1].extend(run)
+        else:
+            merged.append(run)
+    out: List[List[int]] = []
+    for run in merged:
+        if len(run) > 1 and all(chars[i][0] in BLANK_CHARS + GERESH_CHARS for i in run):
+            out.extend([i] for i in run)     # `` '`` after a word: placed by position, the geresh before the space
+        else:
+            out.append(visual_order_fixed(chars, run, marks))
+    return out
+
+
+def visual_order_fixed(chars: Sequence[Tuple[str, float, float]], run: Sequence[int],
+                       marks: Sequence[bool]) -> List[int]:
+    """A single right-to-left letter whose punctuation is stored left to right, put into reading order.
+
+    The text layer can store ``צ"ל:`` as ``:``, ``ל``, ``"`` (left to right) and ``צ`` apart; once ``צ`` is its own
+    run, the run ``: ל"`` must read ``"ל:``. When a run holds exactly one right-to-left letter, no digit or Latin
+    letter, and its other non-space characters (its spaces, when the letter is its only other character: `` ה``)
+    all step rightwards in stored order, its characters are ordered by
+    their left edge from right to left (a mark stays after the character stored before it). A run with two or more
+    right-to-left letters is left as stored: a whole text layer stored in visual order is un-reversed later
+    (``legacy_store_sigla.unreverse_if_needed``).
+
+    :param chars: ``(char, x0, x1)`` of each character of the span.
+    :param run: Indexes of the run's characters, in stored order.
+    :param marks: Per character of the span, whether it is a mark (:func:`mark_flags`).
+    :return: The run's indexes in reading order (the stored order when the rule does not apply).
+    """
+    inked = [i for i in run if not marks[i] and chars[i][0] not in BLANK_CHARS]
+    rtl = [i for i in inked if RTL_CHAR_RE.match(chars[i][0])]
+    stepped = inked if len(inked) > 1 else [i for i in run if not marks[i]]
+    steps = [chars[b][1] - chars[a][1] for a, b in zip(stepped, stepped[1:])]
+    if (len(rtl) != 1 or not steps or any(d <= 0 for d in steps)
+            or any(chars[i][0].isdigit() or chars[i][0].isascii() and chars[i][0].isalpha() for i in inked)):
+        return list(run)
+    groups: List[List[int]] = []
+    for i in run:
+        if marks[i] and groups:
+            groups[-1].append(i)
+        else:
+            groups.append([i])
+    groups.sort(key=lambda g: -chars[g[0]][1])
+    return [i for g in groups for i in g]
+
+
+def run_extent(chars: Sequence[Tuple[str, float, float]], run: Sequence[int]) -> Tuple[float, float]:
+    """Left and right edge of a position run, from its non-space characters (all of them when it has none).
+
+    :param chars: ``(char, x0, x1)`` of each character of the span.
+    :param run: Indexes of the run's characters (:func:`position_runs`).
+    :return: ``(x0, x1)``.
+    """
+    inked = [i for i in run if chars[i][0] not in BLANK_CHARS] or list(run)
+    return min(chars[i][1] for i in inked), max(chars[i][2] for i in inked)
+
+
+def drop_overprints(chars: Sequence[Tuple[str, str, float, Tuple[float, float, float, float]]],
+                    ratio: float = OVERPRINT_RATIO) -> List[bool]:
+    """Find the characters a page prints again over themselves (fake bold).
+
+    A heading printed several times at almost the same position (as four spans, or as one span that repeats its
+    characters) would otherwise be read several times. A character is an overprint when an earlier kept character
+    has the same character, font and size, and all four edges of its box lie within ``ratio`` x the font size of
+    that character's. The whole box is compared because a rotated line (a margin note written upwards) gives all its
+    characters one horizontal extent.
+
+    :param chars: ``(char, font, size, (x0, y0, x1, y1))`` per character, in page order.
+    :param ratio: Position tolerance as a fraction of the font size.
+    :return: Per character, whether it is kept.
+    """
+    seen: Dict[Tuple[str, str, float, int, int], List[Tuple[float, float, float, float]]] = {}
+    keep: List[bool] = []
+    for ch, font, size, box in chars:
+        cell = max(size, 1.0)
+        tol = ratio * cell
+        gx, gy = int(box[0] // cell), int(box[1] // cell)
+        dup = any(all(abs(u - v) <= tol for u, v in zip(box, other))
+                  for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+                  for other in seen.get((ch, font, size, gx + dx, gy + dy), ()))
+        keep.append(not dup)
+        if not dup:
+            seen.setdefault((ch, font, size, gx, gy), []).append(tuple(box))
+    return keep
+
+
+def substitute_once(layer: Sequence[Mapping[str, object]], letters: Mapping[object, str]) -> List[List[str]]:
+    """The characters of a page's spans, with each glyph's letter substituted once.
+
+    MuPDF can add a space at the very position of a legacy font's final-letter glyph; both then share the glyph's
+    position key (:func:`pdf_glyphs.position_key`), and substituting both would write the letter twice. Per key,
+    exactly one character takes the letter: the first one in page order that is not a plain space, or the first
+    of them when all are spaces (the real glyph's own character can be a space). The others keep their text.
+
+    :param layer: The page's rawdict spans, in page order.
+    :param letters: Position key -> letter (:meth:`pdf_glyphs.GlyphDecoder.page_substitutions`); empty for none.
+    :return: Per span, its characters' texts.
+    """
+    texts = [[c["c"] for c in s["chars"]] for s in layer]
+    if not letters:
+        return texts
+    at: Dict[object, List[Tuple[int, int]]] = {}
+    for si, s in enumerate(layer):
+        for ci, c in enumerate(s["chars"]):
+            key = pdf_glyphs.position_key(s["font"], c["origin"][0], c["origin"][1])
+            if key in letters:
+                at.setdefault(key, []).append((si, ci))
+    for key, places in at.items():
+        si, ci = next(((a, b) for a, b in places if texts[a][b] != " "), places[0])
+        texts[si][ci] = letters[key]
+    return texts
+
+
+def layer_spans(page: "fitz.Page", glyphs: Optional["pdf_glyphs.GlyphDecoder"] = None,
+                glyph_finals: bool = False) -> List[_Span]:
+    """The spans a page's lines are built from: the text layer's, corrected from the glyphs where it is wrong.
+
+    Without ``glyphs`` these are the text layer's spans, each split into position runs (:func:`position_runs`) so
+    that parts of a line stored out of reading order are ordered by position, with overprinted characters left out
+    (:func:`drop_overprints`). With it, the spans of a font whose text layer is wrong
+    about Arabic letters (:meth:`pdf_glyphs.GlyphDecoder.page_spans`) are replaced by one span per glyph, placed by
+    geometry. A run of spaces that another font draws over those glyphs is left out. With ``glyph_finals`` also, a
+    character the layer has no letter for (a legacy font's final letter) is replaced by its glyph's letter in place
+    (:meth:`pdf_glyphs.GlyphDecoder.page_substitutions`), once per glyph (:func:`substitute_once`).
+
+    :param page: PDF page.
+    :param glyphs: The document's glyph decoder, or None.
+    :param glyph_finals: Also replace unmapped characters outside the rebuilt fonts.
+    :return: Spans in no particular order.
+    """
+    rebuilt, glyph_spans = glyphs.page_spans(page) if glyphs is not None else (set(), [])
+    letters = glyphs.page_substitutions(page, rebuilt) if glyphs is not None and glyph_finals else {}
+    lines = [line for block in page.get_text("rawdict")["blocks"] for line in block.get("lines", [])]
+    layer = [s for line in lines for s in line["spans"] if s["font"] not in rebuilt]
+    # a rotated line (a margin note written upwards) is kept whole, as the text layer stores it
+    horizontal = [abs(line["dir"][1]) < 1e-3 and line["dir"][0] > 0 for line in lines
+                  for s in line["spans"] if s["font"] not in rebuilt]
+    texts = substitute_once(layer, letters)
+    keep = iter(drop_overprints([(t, s["font"], s["size"], tuple(c["bbox"]))
+                                 for s, chars in zip(layer, texts) for t, c in zip(chars, s["chars"])]))
+    inked = [g for g in glyph_spans if g.text.strip()]
+    spans: List[_Span] = []
+    for s, chars, flat in zip(layer, texts, horizontal):
+        kept = [i for i in range(len(chars)) if next(keep)]
+        if inked and not normalise_span_text("".join(chars)).strip() and any(
+                g.x0 <= (s["bbox"][0] + s["bbox"][2]) / 2 <= g.x1
+                and abs(g.y - s["origin"][1]) <= 0.3 * max(g.size, s["size"], 1.0) for g in inked):
+            # a run of spaces drawn in another font over the rebuilt glyphs would land inside a word once the line is
+            # ordered by position: the rebuilt font's own spaces and gaps separate its words
+            continue
+        boxed = [(chars[i], s["chars"][i]["bbox"][0], s["chars"][i]["bbox"][2]) for i in kept]
+        runs = position_runs(boxed, s["size"]) if flat else [list(range(len(boxed)))]
+        for run in runs:
+            text = normalise_span_text("".join(boxed[j][0] for j in run))
+            if not text:
+                continue
+            x0, x1 = run_extent(boxed, run)
+            spans.append(_Span(text, s["font"], x0, x1, s["origin"][1], s["size"]))
+    spans.extend(_Span(normalise_span_text(g.text), g.font, g.x0, g.x1, g.y, g.size) for g in glyph_spans if g.text)
+    return spans
+
+
+def _parallel_translation(page: "fitz.Page", groups: Sequence[List[_Span]]) -> Optional[Tuple[float, "fitz.Rect"]]:
+    """Locate a ruled edition column whose first line explicitly labels it as the translation.
+
+    :param page: Page supplying the table rules.
+    :param groups: Spans grouped on the same baseline.
+    :return: Header baseline and translation cell, when separate ruled cells carry both exact headings.
+    """
+    labels = {"מקור", "תרגום"}
+    for group in groups:
+        words = [span for span in group if span.text.strip()]
+        if len(words) != 2 or {span.text.strip() for span in words} != labels:
+            continue
+        if not hasattr(page, "find_tables"):
+            continue
+        for table in page.find_tables().tables:
+            if table.row_count != 1:
+                continue
+            cells = {}
+            for coords in table.rows[0].cells:
+                if coords is None:
+                    continue
+                cell = fitz.Rect(coords)
+                for span in words:
+                    if cell.x0 <= span.x0 <= span.x1 <= cell.x1 and cell.y0 <= span.y <= cell.y1:
+                        cells[span.text.strip()] = cell
+            if cells.keys() != labels or cells["מקור"] == cells["תרגום"]:
+                continue
+            cell = cells["תרגום"]
+            header = words[0].y
+            contents = [(bounds, s) for bounds in cells.values() for row in groups for s in row
+                        if bounds.y0 <= s.y <= bounds.y1 and s.text.strip()
+                        and s.x1 > bounds.x0 and s.x0 < bounds.x1]
+            if all(bounds.x0 <= s.x0 <= s.x1 <= bounds.x1 and s.y >= header - 0.5
+                   for bounds, s in contents):
+                return header, cell
+    return None
+
+
+def page_lines(page: "fitz.Page", page_index: int = 0, tolerance: float = 0.3,
+               drop_superscript_digits: bool = False, glyphs: Optional["pdf_glyphs.GlyphDecoder"] = None,
+               glyph_finals: bool = False, separate_translation: bool = False,
+               keep_geometry: bool = False) -> List[PdfLine]:
     """Visual lines of one page, rebuilt from the text layer's spans.
 
     Spans whose baselines differ by at most ``tolerance`` x font size form one line (MuPDF's own
     lines split a visual line wherever the font, a gap or the direction changes). A line with a
     Hebrew or Arabic letter is ordered right to left by span centre, any other line left to right;
     a space is inserted between spans separated by more than a quarter of the font size when
-    neither side has one. Blank lines are omitted.
+    neither side has one. Blank lines are omitted. Each line records its dominant font size and whether a
+    superscript number (a digit-only span at most :data:`SUPERSCRIPT_RATIO` of that size) stands at one of its ends.
 
     :param page: PDF page.
     :param page_index: Its 0-based index (stored on the lines).
     :param tolerance: Baseline tolerance as a fraction of the font size.
+    :param drop_superscript_digits: Leave superscript numbers (footnote marks) out of the line text.
+    :param glyphs: The document's glyph decoder (see :func:`layer_spans`), or None for the text layer as it is.
+    :param glyph_finals: See :func:`layer_spans`.
+    :param separate_translation: Preserve an explicitly labelled parallel translation as layout notes.
+    :param keep_geometry: Record the horizontal extent of each source run for layout review.
     :return: Lines from top to bottom.
     """
-    spans: List[_Span] = []
-    for block in page.get_text("dict")["blocks"]:
-        for line in block.get("lines", []):
-            for s in line["spans"]:
-                text = normalise_span_text(s["text"])
-                if text:
-                    spans.append(_Span(text, s["font"], s["bbox"][0], s["bbox"][2], s["origin"][1], s["size"]))
+    spans = layer_spans(page, glyphs, glyph_finals)
     spans.sort(key=lambda s: s.y)
     groups: List[List[_Span]] = []
     for sp in spans:
@@ -334,10 +675,40 @@ def page_lines(page: "fitz.Page", page_index: int = 0, tolerance: float = 0.3) -
             groups[-1].append(sp)
         else:
             groups.append([sp])
+    rows = []
+    translation = _parallel_translation(page, groups) if separate_translation else None
+    for group in groups:
+        if translation is None:
+            rows.append((group, None))
+            continue
+        header, cell = translation
+        if any(s.text.strip() in {"מקור", "תרגום"} and abs(s.y - header) < 0.5 for s in group):
+            rows.append((group, "edition_column_heading"))
+            continue
+        source, translated = [], []
+        for span in group:
+            in_column = header < span.y <= cell.y1 and cell.x0 <= (span.x0 + span.x1) / 2 <= cell.x1
+            (translated if in_column else source).append(span)
+        if source:
+            rows.append((source, None))
+        if translated:
+            rows.append((translated, "edition_translation"))
     out: List[PdfLine] = []
-    for grp in groups:
+    for grp, note in rows:
         rtl = any(RTL_CHAR_RE.search(s.text) for s in grp)
         grp.sort(key=lambda s: -(s.x0 + s.x1) / 2 if rtl else (s.x0 + s.x1) / 2)
+        by_size: Dict[float, int] = collections.Counter()
+        for s in grp:
+            by_size[s.size] += len(s.text.strip())
+        size = max(by_size, key=lambda k: (by_size[k], k))
+        marks = [bool(DIGITS_ONLY_RE.match(s.text)) and s.size <= SUPERSCRIPT_RATIO * size for s in grp]
+        y = grp[0].y
+        ends = [mark for s, mark in zip(grp, marks) if s.text.strip()]
+        note_mark = bool(ends) and (ends[0] or ends[-1])
+        inked = [s for s in grp if s.text.strip()] or grp
+        x0, x1 = min(s.x0 for s in inked), max(s.x1 for s in inked)
+        if drop_superscript_digits and any(marks) and not all(marks):
+            grp = [s for s, mark in zip(grp, marks) if not mark]
         text = grp[0].text
         for prev, cur in zip(grp, grp[1:]):
             gap = (prev.x0 - cur.x1) if rtl else (cur.x0 - prev.x1)
@@ -345,20 +716,115 @@ def page_lines(page: "fitz.Page", page_index: int = 0, tolerance: float = 0.3) -
                 text += " "
             text += cur.text
         if text.strip(" \t" + NBSP):
-            out.append(PdfLine(text=text, page_index=page_index, y=grp[0].y,
-                               spans=[(s.font, s.text) for s in grp], rtl=rtl))
+            out.append(PdfLine(text=text, page_index=page_index, y=y, spans=[(s.font, s.text) for s in grp],
+                               rtl=rtl, size=size, note_mark=note_mark, x0=x0, x1=x1, layout_note=note,
+                               span_extents=[(s.x0, s.x1) for s in grp] if keep_geometry else []))
     return out
 
 
-def document_lines(doc: "fitz.Document") -> List[PdfLine]:
+def page_rules(page: "fitz.Page") -> List[Tuple[float, float, float]]:
+    """The horizontal rules drawn on a page (footnote separators, underlines, dividers).
+
+    :param page: PDF page.
+    :return: ``(y, x0, x1)`` per rule (points from the page's top left), top to bottom.
+    """
+    return sorted((d["rect"].y0, d["rect"].x0, d["rect"].x1) for d in page.get_drawings()
+                  if d["rect"].height <= RULE_MAX_HEIGHT and d["rect"].width >= RULE_MIN_WIDTH)
+
+
+def body_font_size(lines: Sequence[PdfLine]) -> float:
+    """The font size that holds most of a document's letters.
+
+    :param lines: The document's lines.
+    :return: The size (0.0 for a document without letters).
+    """
+    by_size: Dict[float, int] = collections.Counter()
+    for ln in lines:
+        by_size[round(ln.size, 1)] += len(LETTER_RE.findall(ln.text))
+    return max(by_size, key=lambda k: (by_size[k], k)) if by_size else 0.0
+
+
+def mark_layout_notes(lines: Sequence[PdfLine], rules: Mapping[int, Sequence[Tuple[float, float, float]]]) -> int:
+    """Mark the editor's notes that only the page layout shows: footnotes below a drawn rule, and small-font lines.
+
+    A font size is a notes' size when it is at most :data:`SMALL_FONT_RATIO` of the document's body size
+    (:func:`body_font_size`) and holds less than :data:`BODY_SIZE_MIN_SHARE` of the document's letters. On each page
+    the topmost rule that is a footnote separator turns every line below it into a note (``"below_rule"``). A rule
+    that underlines a text line (it overlaps the line and lies at most :data:`UNDERLINE_MAX_DROP` below its baseline)
+    is never one. Any other rule is a separator when the first line below it carries a superscript number (at one
+    of its ends, or as a raised number that the text layer puts on a line of its own), or at least
+    :data:`NOTES_SMALL_SHARE` of the letters below it are in a notes' size, or the rule is the page's only such
+    rule, has a word processor's separator shape (at most :data:`SEPARATOR_MAX_WIDTH` wide, flush with the page's
+    left or right text margin) and the first line below it opens with a note number (:data:`NOTE_NUMBER_RE`) or is
+    a number alone. A rule followed by body text (a divider between two sides, the ruling of a numbered list) cuts
+    nothing. Any other line set in a notes' size is marked ``"small_font"``.
+
+    :param lines: The document's lines, top to bottom within each page (changed in place).
+    :param rules: Page index -> rules (:func:`page_rules`).
+    :return: Number of lines marked.
+    """
+    body = body_font_size(lines)
+    letters = [len(LETTER_RE.findall(ln.text)) for ln in lines]
+    by_size: Dict[float, int] = collections.Counter()
+    for ln, n in zip(lines, letters):
+        by_size[round(ln.size, 1)] += n
+    total = sum(letters)
+    small = {size for size, n in by_size.items()
+             if body and size <= SMALL_FONT_RATIO * body and n < BODY_SIZE_MIN_SHARE * total}
+    for page_index in sorted({ln.page_index for ln in lines}):
+        on_page = [(ln, n) for ln, n in zip(lines, letters) if ln.page_index == page_index]
+        if not on_page:
+            continue
+        left, right = min(ln.x0 for ln, _ in on_page), max(ln.x1 for ln, _ in on_page)
+        drawn = [(y, rx0, rx1) for y, rx0, rx1 in rules.get(page_index, ())
+                 if not any(-1.0 <= y - ln.y <= UNDERLINE_MAX_DROP
+                            and min(ln.x1, rx1) - max(ln.x0, rx0) >= 0.5 * (rx1 - rx0) for ln, _ in on_page)]
+        for y, rx0, rx1 in drawn:
+            below = [(ln, n) for ln, n in on_page if ln.y > y]
+            if not below:
+                continue
+            n_below = sum(n for _, n in below)
+            n_small = sum(n for ln, n in below if round(ln.size, 1) in small)
+            shaped = len(drawn) == 1 and rx1 - rx0 <= SEPARATOR_MAX_WIDTH and (
+                abs(rx1 - right) <= MARGIN_TOLERANCE or abs(rx0 - left) <= MARGIN_TOLERANCE)
+            first = below[0][0]
+            alone = bool(DIGITS_ONLY_RE.match(first.text))
+            raised = alone and first.size <= SUPERSCRIPT_RATIO * body
+            if (first.note_mark or raised or (n_below and n_small >= NOTES_SMALL_SHARE * n_below)
+                    or (shaped and (alone or NOTE_NUMBER_RE.match(first.text)))):
+                for ln, _ in below:
+                    ln.layout_note = "below_rule"
+                break
+    marked = 0
+    for ln in lines:
+        if ln.layout_note is None and round(ln.size, 1) in small:
+            ln.layout_note = "small_font"
+        marked += ln.layout_note is not None
+    return marked
+
+
+def document_lines(doc: "fitz.Document", layout_notes: bool = False,
+                   glyphs: Optional["pdf_glyphs.GlyphDecoder"] = None, glyph_finals: bool = False,
+                   keep_geometry: bool = False) -> List[PdfLine]:
     """Visual lines of every page, in page order.
 
     :param doc: Open PDF.
+    :param layout_notes: Mark the notes the layout shows (:func:`mark_layout_notes`) and leave superscript footnote
+        numbers out of the line texts.
+    :param glyphs: The document's glyph decoder (see :func:`layer_spans`), or None.
+    :param glyph_finals: See :func:`layer_spans`.
+    :param keep_geometry: Retain per-span coordinates on each returned line.
     :return: Lines.
     """
     out: List[PdfLine] = []
+    rules: Dict[int, List[Tuple[float, float, float]]] = {}
     for i, page in enumerate(doc):
-        out.extend(page_lines(page, i))
+        out.extend(page_lines(page, i, drop_superscript_digits=layout_notes, glyphs=glyphs,
+                              glyph_finals=glyph_finals, separate_translation=layout_notes, keep_geometry=keep_geometry))
+        if layout_notes:
+            rules[i] = page_rules(page)
+    if layout_notes:
+        mark_layout_notes([ln for ln in out if ln.layout_note is None], rules)
     return out
 
 
@@ -677,7 +1143,7 @@ def _new_folio(label: Optional[str], kind: str, line: Optional[PdfLine], page_in
     """
     return {"folio": label, "page_index": page_index, "page_indices": [page_index], "marker_kind": kind,
             "marker_text": line.text if line else "", "lines": [], "spans": [], "spans_fonts": collections.Counter(),
-            "notes_lines": 0, "flags": collections.Counter()}
+            "notes_lines": 0, "layout_notes": [], "flags": collections.Counter()}
 
 
 def _add_line(folio: Dict[str, object], text: str, line: PdfLine) -> None:
@@ -694,6 +1160,43 @@ def _add_line(folio: Dict[str, object], text: str, line: PdfLine) -> None:
         folio["spans_fonts"][font] += len(LETTER_RE.findall(span))
     if line.page_index not in folio["page_indices"]:
         folio["page_indices"].append(line.page_index)
+
+
+def is_wrap_tail(prev: PdfLine, line: PdfLine, widest: Mapping[int, float]) -> bool:
+    """Whether a line is the wrapped end of the line before it.
+
+    An edition sets one manuscript line per typeset line; when the text is wider than the page the typesetter
+    moves its last word or two to a line of their own. Such a tail is short (at most :data:`WRAP_TAIL_SHARE` of the
+    page's widest line and :data:`WRAP_TAIL_LETTERS` letters) and comes right below a line that fills the width
+    (:data:`WRAP_FULL_SHARE`), or first on the next page.
+
+    :param prev: The line added before.
+    :param line: The candidate tail.
+    :param widest: Width of the widest line per page.
+    :return: True for a tail.
+    """
+    full = widest.get(prev.page_index, 0.0)
+    here = widest.get(line.page_index, 0.0)
+    if full <= 0 or here <= 0 or prev.x1 - prev.x0 < WRAP_FULL_SHARE * full:
+        return False
+    if line.x1 - line.x0 > WRAP_TAIL_SHARE * here or len(LETTER_RE.findall(line.text)) > WRAP_TAIL_LETTERS:
+        return False
+    if not LETTER_RE.search(line.text) or LINE_NUMBER_RE.match(line.text):
+        return False
+    if line.page_index == prev.page_index:
+        return 0 < line.y - prev.y <= WRAP_MAX_LEADING * max(prev.size, line.size, 1.0)
+    return line.page_index == prev.page_index + 1
+
+
+def _cut_layout_note(folio: Dict[str, object], line: PdfLine) -> None:
+    """Record a line the layout marks as an editor's note instead of adding it to the folio.
+
+    :param folio: Folio record.
+    :param line: The marked line (:func:`mark_layout_notes`).
+    """
+    folio["notes_lines"] += 1
+    folio["layout_notes"].append([line.layout_note, line.text])
+    folio["flags"]["layout_notes_cut"] += 1
 
 
 def side_index(label: Optional[str]) -> Optional[int]:
@@ -735,8 +1238,10 @@ def flag_sequence_and_outliers(folios: Sequence[Dict[str, object]],
             f["flags"]["line_count_outlier"] = 1
 
 
-def split_document(doc: "fitz.Document", header_lines: int = 0,
-                   min_preamble_text_lines: int = 3) -> Tuple[List[PdfLine], List[Dict[str, object]]]:
+def split_document(doc: "fitz.Document", header_lines: int = 0, min_preamble_text_lines: int = 3,
+                   layout_notes: bool = False, join_wraps: bool = False,
+                   glyphs: Optional["pdf_glyphs.GlyphDecoder"] = None, glyph_finals: bool = False
+                   ) -> Tuple[List[PdfLine], List[Dict[str, object]]]:
     """Cut a PDF's lines into folios at folio headings.
 
     With headings: lines before the first heading are the preamble (header, ``העתקות :`` label);
@@ -759,12 +1264,46 @@ def split_document(doc: "fitz.Document", header_lines: int = 0,
     :param doc: Open PDF.
     :param header_lines: Lines of page 1 that :func:`parse_header` consumed.
     :param min_preamble_text_lines: Text lines that make a preamble a folio.
+    :param layout_notes: Also cut the notes only the layout shows (:func:`mark_layout_notes`: footnotes below a
+        drawn rule, small-font lines) and superscript footnote numbers. Cut lines are counted in ``notes_lines``,
+        kept as ``[reason, text]`` in the folio's ``layout_notes`` and flagged ``layout_notes_cut``.
+    :param join_wraps: Join a typesetter's wrapped line end to its line (:func:`is_wrap_tail`: a short line right
+        below a line that fills the page's width; also across a page break). The folio is flagged
+        ``typeset_wraps_joined``.
+    :param glyphs: The document's glyph decoder (see :func:`layer_spans`), or None for the text layer as it is.
+    :param glyph_finals: See :func:`layer_spans`.
     :return: (preamble lines, folios). Each folio: ``folio``, ``page_index``, ``page_indices``,
         ``marker_kind``, ``marker_text``, ``lines`` (str), ``spans`` ((font, text, line number)),
-        ``spans_fonts`` (Counter font -> letters), ``notes_lines``, ``flags`` (Counter).
+        ``spans_fonts`` (Counter font -> letters), ``notes_lines``, ``layout_notes``, ``flags`` (Counter).
     """
-    lines = document_lines(doc)
-    markers = [match_folio_marker(ln.text) for ln in lines]
+    lines = document_lines(doc, layout_notes, glyphs, glyph_finals)
+    markers = [None if ln.layout_note else match_folio_marker(ln.text) for ln in lines]
+    widest: Dict[int, float] = {}
+    for ln in lines:
+        if not ln.layout_note:
+            widest[ln.page_index] = max(widest.get(ln.page_index, 0.0), ln.x1 - ln.x0)
+    last: List[Optional[Tuple[Dict[str, object], PdfLine]]] = [None]
+
+    def add(folio: Dict[str, object], text: str, ln: PdfLine) -> None:
+        """Add a line to a folio, or join it to the line before it when it is that line's wrapped end.
+
+        :param folio: Folio record.
+        :param text: Line text to store.
+        :param ln: The PDF line.
+        """
+        prev = last[0]
+        if join_wraps and prev is not None and prev[0]["lines"] and is_wrap_tail(prev[1], ln, widest):
+            target = prev[0]
+            target["lines"][-1] = str(target["lines"][-1]).rstrip() + " " + text.strip()
+            line_no = len(target["lines"]) - 1
+            for font, span in ln.spans:
+                target["spans"].append((font, span, line_no))
+                target["spans_fonts"][font] += len(LETTER_RE.findall(span))
+            target["flags"]["typeset_wraps_joined"] += 1
+            return
+        _add_line(folio, text, ln)
+        last[0] = (folio, ln)
+
     folios: List[Dict[str, object]] = []
     preamble: List[PdfLine] = []
     if not any(markers):
@@ -777,12 +1316,15 @@ def split_document(doc: "fitz.Document", header_lines: int = 0,
                 current["flags"]["no_folio_markers"] = 1
                 folios.append(current)
                 notes = False
+            if ln.layout_note:
+                _cut_layout_note(current, ln)
+                continue
             if NOTES_START_RE.match(ln.text):
                 notes = True
             if notes:
                 current["notes_lines"] += 1
                 continue
-            _add_line(current, ln.text, ln)
+            add(current, ln.text, ln)
         return preamble, folios
     current = None
     notes = False
@@ -808,6 +1350,10 @@ def split_document(doc: "fitz.Document", header_lines: int = 0,
             folios.append(current)
             notes = False
             continue
+        if ln.layout_note:
+            if current is not None:
+                _cut_layout_note(current, ln)
+            continue
         if current is None:
             preamble.append(ln)
             continue
@@ -818,7 +1364,7 @@ def split_document(doc: "fitz.Document", header_lines: int = 0,
             if ln.page_index not in marked_pages:
                 current["flags"]["unmarked_page_cut"] += 1
             continue
-        _add_line(current, ln.text, ln)
+        add(current, ln.text, ln)
     text_lines = [ln for ln in preamble if len(LETTER_RE.findall(ln.text)) >= 10]
     if len(text_lines) >= min_preamble_text_lines:
         pre = _new_folio(None, "preamble", None, preamble[0].page_index)
@@ -1222,7 +1768,8 @@ def pair_images(series_key: Optional[Tuple[str, str]], folio: Optional[str], raw
 # ───────────────────────────── one PDF ─────────────────────────────
 def ingest(pdf_path: str, raw_dir: Optional[str], lexicon: Optional[Mapping[str, int]],
            index: Optional[Mapping[str, List[str]]] = None, shelfmark_hint: Optional[str] = None,
-           finals_mapping: Optional[Mapping[str, str]] = None) -> List[Dict[str, object]]:
+           finals_mapping: Optional[Mapping[str, str]] = None, layout_notes: bool = False,
+           join_wraps: bool = False, glyph_text: bool = False, glyph_finals: bool = False) -> List[Dict[str, object]]:
     """Folio records of one transcription PDF.
 
     Shelf mark: the page-1 header when there is one, else ``shelfmark_hint`` or the
@@ -1242,6 +1789,13 @@ def ingest(pdf_path: str, raw_dir: Optional[str], lexicon: Optional[Mapping[str,
     :param index: :func:`image_index` of ``raw_dir`` (built once when None and ``raw_dir`` is set).
     :param shelfmark_hint: Shelf mark from another copy's file name (used when the header has none).
     :param finals_mapping: Document finals mapping, or None to infer.
+    :param layout_notes: Cut the notes only the layout shows (see :func:`split_document`); the cut lines are
+        returned per folio as ``layout_notes`` (``[reason, text]``).
+    :param join_wraps: Join typeset wrapped line ends to their lines (see :func:`split_document`).
+    :param glyph_text: Read the fonts whose text layer is wrong about Arabic letters from their glyphs
+        (:mod:`pdf_glyphs`; document flags ``glyph_text`` and, when a glyph stays unnamed, ``glyphs_unknown``).
+    :param glyph_finals: Also replace the characters the layer has no letter for by their glyphs' letters (legacy
+        fonts' final letters; document flag ``glyph_finals``).
     :return: One dict per folio (empty for a junk PDF): ``pdf_file``, ``shelfmark``,
         ``shelfmark_source``, ``series_key``, ``institution``, ``title``, ``folio``, ``page_index``,
         ``page_indices``, ``marker_kind``, ``marker_rest``, ``raw_lines``, ``notes_lines``,
@@ -1253,10 +1807,19 @@ def ingest(pdf_path: str, raw_dir: Optional[str], lexicon: Optional[Mapping[str,
     with fitz.open(pdf_path) as doc:
         if is_junk(doc):
             return []
-        page1 = [ln.text for ln in page_lines(doc[0], 0)] if len(doc) else []
+        glyphs = pdf_glyphs.GlyphDecoder(doc) if glyph_text or glyph_finals else None
+        page1 = [ln.text for ln in page_lines(doc[0], 0, glyphs=glyphs, glyph_finals=glyph_finals)] if len(doc) else []
         header = parse_header(page1)
-        preamble, folios = split_document(doc, header["header_lines"] if header else 0)
+        preamble, folios = split_document(doc, header["header_lines"] if header else 0, layout_notes=layout_notes,
+                                          join_wraps=join_wraps, glyphs=glyphs, glyph_finals=glyph_finals)
+        glyph_stats = dict(glyphs.stats) if glyphs is not None else {}
     doc_flags: Counter = collections.Counter()
+    if glyph_stats.get("glyphs_rebuilt"):
+        doc_flags["glyph_text"] = 1
+    if glyph_stats.get("glyphs_unknown"):
+        doc_flags["glyphs_unknown"] = 1
+    if glyph_stats.get("glyphs_substituted"):
+        doc_flags["glyph_finals"] = 1
     if any(EXCERPT_LABEL_RE.match(line) for line in page1[:3]):
         doc_flags["excerpt_document"] = 1
     file_mark = shelfmark_hint or shelfmark_from_filename(pdf_path)
@@ -1297,7 +1860,8 @@ def ingest(pdf_path: str, raw_dir: Optional[str], lexicon: Optional[Mapping[str,
             "series_key": list(key) if key else None, "institution": header["institution"] if header else None,
             "title": header["title"] if header else None, "folio": f["folio"], "page_index": f["page_index"],
             "page_indices": f["page_indices"], "marker_kind": f["marker_kind"], "marker_rest": f.get("marker_rest", ""),
-            "raw_lines": list(f["lines"]), "notes_lines": f["notes_lines"], "preamble_lines": len(preamble),
+            "raw_lines": list(f["lines"]), "notes_lines": f["notes_lines"],
+            "layout_notes": list(f.get("layout_notes") or []), "preamble_lines": len(preamble),
             **cleaned, "fonts": dict(f["spans_fonts"]), "font_check": fc, "flags": dict(flags),
             "image_candidate_path": img.get("image_candidate_path"), "image_sha256": img.get("image_sha256"),
             "image_size": img.get("image_size"), "image_files": img.get("image_files", []),

@@ -766,3 +766,53 @@ def test_transcription_correction_on_built_records_keeps_a_join_partner_intact()
     assert raw["transcriptions"] == {"1": text}
     assert q7["sources_present"] == []                       # provenance lives in the markers, not sources_present
     assert record_is_rich(q7)
+
+
+def test_split_pgpids_takes_the_exports_semicolon_join_and_a_comma():
+    from src.datasets.merging.merge_shelfmarks import split_pgpids
+    assert split_pgpids("34078 ; 34079") == ["34078", "34079"]
+    assert split_pgpids("6555") == ["6555"]
+    assert split_pgpids("1, 2;3 ; ") == ["1", "2", "3"]
+    assert split_pgpids("") == []
+    assert split_pgpids(None) == []
+
+
+def test_load_pgp_links_every_document_of_a_multi_document_fragment(tmp_path):
+    """A fragment whose ``pgpids`` column joins several ids with ``" ; "`` gets
+    every one of its documents, the same as a single-id fragment; ids absent
+    from ``documents.csv`` are dropped, not fatal."""
+    import csv
+    from src.datasets.merging.merge_shelfmarks import load_pgp
+
+    frag_cols = ["shelfmark", "pgpids", "shelfmarks_historic", "collection", "library",
+                 "library_abbrev", "collection_name", "collection_abbrev", "url", "iiif_url"]
+    doc_cols = ["pgpid", "shelfmark", "description", "doc_date_standard"]
+    fragments = tmp_path / "fragments.csv"
+    documents = tmp_path / "documents.csv"
+    with fragments.open("w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.DictWriter(fh, fieldnames=frag_cols)
+        writer.writeheader()
+        writer.writerow({"shelfmark": "DK 314", "pgpids": "34078 ; 34079", "library": "MTA",
+                         "library_abbrev": "MTA", "collection": "DK"})
+        writer.writerow({"shelfmark": "DK 231.1 (alt: IX)", "pgpids": "6555 ; 40214 ; 99999",
+                         "shelfmarks_historic": "DK IX", "library": "MTA", "library_abbrev": "MTA"})
+        writer.writerow({"shelfmark": "DK 1", "pgpids": "7", "library": "MTA", "library_abbrev": "MTA"})
+    with documents.open("w", newline="", encoding="utf-8-sig") as fh:
+        writer = csv.DictWriter(fh, fieldnames=doc_cols)
+        writer.writeheader()
+        for pgpid, mark in (("34078", "DK 314"), ("34079", "DK 314"),
+                            ("6555", "DK 231.1"), ("40214", "DK 231.1"), ("7", "DK 1")):
+            writer.writerow({"pgpid": pgpid, "shelfmark": mark, "description": f"doc {pgpid}"})
+
+    records, alias, skipped = load_pgp(str(fragments), str(documents))
+
+    by_mark = {blk["fragment"]["shelfmark"]: blk for blk in records.values()}
+    assert [d["pgpid"] for d in by_mark["DK 314"]["documents"]] == ["34078", "34079"]
+    assert [d["pgpid"] for d in by_mark["DK 231.1 (alt: IX)"]["documents"]] == ["6555", "40214"]
+    assert [d["pgpid"] for d in by_mark["DK 1"]["documents"]] == ["7"]
+    assert skipped == []
+    # The merged record built from the block carries the ids and the first description.
+    rec = build_merged_record("Budapest_MTA_DK_314", by_mark["DK 314"], [], None)
+    assert rec["pgpids"] == ["34078", "34079"]
+    assert rec["description"] == "doc 34078"
+    assert "pgp" in rec["sources_present"]

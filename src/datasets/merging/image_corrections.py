@@ -20,7 +20,11 @@ Image correction (one per image file):
 * ``to_canonical_id`` -- the record the photograph shows, or ``null`` to detach it (the photograph shows a fragment
   the corpus has no record for).
 * ``to_shelfmark_text`` -- the shelf mark the slip names, as read (required when ``to_canonical_id`` is ``null``).
-* ``side`` -- the side the slip names (``"r"``, ``"v"`` or an index such as ``"2"``), or ``null``.
+* ``side`` -- the side the slip names (``"r"``, ``"v"`` or an index such as ``"2"``), or ``null``. Two forms are in
+  use for one side: the leaf and side (``"1v"``) and the photograph number (``"2"``: the k-th photograph, 1 = ``1r``,
+  2 = ``1v``). The file keeps each record's form as recorded; the holds compare sides through :func:`normalise_side`,
+  which maps the numbers 1 and 2 to their leaf form, so the two forms of one side never count as a conflict (a number
+  beyond 2 is left as it is: there the leaf arithmetic and a store's file naming may disagree).
 * ``basis`` -- ``"slip_read"`` (an automatic read of the slip) or ``"eye"`` (checked by a person).
 * ``evidence`` -- the slip text, at most :data:`EVIDENCE_MAX_CHARS` characters.
 * ``reviewed`` -- whether a person has confirmed the correction.
@@ -151,6 +155,35 @@ def record_kind(record: Mapping[str, Any]) -> str:
     """
     kind = record.get("kind")
     return KIND_IMAGE if kind is None else kind
+
+
+#: photograph numbers whose leaf form is settled: 1 = the recto of leaf 1, 2 = its verso
+SIDE_BY_PHOTOGRAPH_NUMBER = {"1": "1r", "2": "1v"}
+
+
+def normalise_side(side: Optional[str]) -> Optional[str]:
+    """One comparison form of a ``side``: the photograph numbers ``"1"`` and ``"2"`` become ``"1r"`` and ``"1v"``,
+    everything else is lower-cased and stripped (``None`` stays ``None``).
+
+    :param side: A record's ``side``.
+    :returns: The comparison form.
+    """
+    if side is None:
+        return None
+    text = str(side).strip().lower()
+    return SIDE_BY_PHOTOGRAPH_NUMBER.get(text, text)
+
+
+def same_correction(first: Mapping[str, Any], second: Mapping[str, Any]) -> bool:
+    """Whether two image corrections say the same: same source record, same target, same side in either form.
+
+    :param first: A correction record.
+    :param second: Another.
+    :returns: True when they agree.
+    """
+    return (first.get("from_canonical_id") == second.get("from_canonical_id")
+            and first.get("to_canonical_id") == second.get("to_canonical_id")
+            and normalise_side(first.get("side")) == normalise_side(second.get("side")))
 
 
 def correction_kind(record: Mapping[str, Any]) -> str:
@@ -751,8 +784,9 @@ def hold_for_reviewed(
     """Keep automatic image corrections from overriding a reviewed one.
 
     An unreviewed candidate for an image whose established correction is reviewed is dropped when it says the same
-    (same source, target and side) and sent to review otherwise, since appending it would make it the later line
-    that wins. Reviewed candidates and candidates for other images are kept.
+    (same source, target and side, the side in either form: :func:`same_correction`) and sent to review otherwise,
+    since appending it would make it the later line that wins. Reviewed candidates and candidates for other images
+    are kept.
 
     :param candidates: Image corrections about to be appended (e.g. :func:`split_relabels` output).
     :param established: ``{image: correction}`` already recorded or appended in the same run (e.g.
@@ -768,8 +802,7 @@ def hold_for_reviewed(
         if candidate.get("reviewed") or not current or not current.get("reviewed"):
             kept.append(dict(candidate))
             continue
-        same = all(candidate.get(k) == current.get(k) for k in ("from_canonical_id", "to_canonical_id", "side"))
-        if same:
+        if same_correction(candidate, current):
             agreeing += 1
             continue
         held.append({**candidate, "review_reason": REVIEW_HAS_REVIEWED_CORRECTION,

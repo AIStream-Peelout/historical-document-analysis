@@ -356,6 +356,136 @@ def test_notes_cut_by_rule_and_legend(fonts: Dict[str, "fitz.Font"]) -> None:
     assert [f["notes_lines"] for f in folios] == [2, 2]
 
 
+def draw_sized(page: "fitz.Page", y: float, text: str, fonts: Dict[str, "fitz.Font"], size: float,
+               right: float = RIGHT) -> float:
+    """Draw one right-aligned run at a given font size.
+
+    :param page: Page.
+    :param y: Baseline.
+    :param text: Text.
+    :param fonts: Fonts by key.
+    :param size: Font size.
+    :param right: Right edge of the run.
+    :return: Left edge of the run (the right edge for a run placed before it).
+    """
+    x = right - fonts["heb"].text_length(text, fontsize=size)
+    tw = fitz.TextWriter(page.rect)
+    tw.append((x, y), text, font=fonts["heb"], fontsize=size, right_to_left=bool(P.RTL_CHAR_RE.search(text)))
+    tw.write_text(page)
+    return x
+
+
+def rule(page: "fitz.Page", y: float, x0: float, x1: float) -> None:
+    """Draw a horizontal rule.
+
+    :param page: Page.
+    :param y: Height.
+    :param x0: Left end.
+    :param x1: Right end.
+    """
+    page.draw_rect(fitz.Rect(x0, y, x1, y + 0.6), color=None, fill=(0, 0, 0))
+
+
+def test_layout_notes_cut_footnotes_below_a_separator(fonts: Dict[str, "fitz.Font"]) -> None:
+    """Footnotes below a margin-flush rule are cut with their numbers; the body's footnote mark goes too.
+
+    :param fonts: Fonts fixture.
+    """
+    doc = fitz.open()
+    page = doc.new_page()
+    left = draw_sized(page, 88, "שלום עולם גדול", fonts, SIZE)
+    draw_sized(page, 86, "1", fonts, 6.0, right=left - 1)          # superscript footnote mark in the body
+    draw_sized(page, 104, "אדם טוב בבית", fonts, SIZE)
+    rule(page, 300, RIGHT - 136, RIGHT)
+    left = draw_sized(page, 314, "1", fonts, 6.0)
+    draw_sized(page, 316, "הסופר חזר על אותה מילה", fonts, 9.5, right=left - 2)
+    draw_sized(page, 330, "המשך ההערה בשורה שנייה", fonts, 9.5)
+    assert len(P.split_folios(doc)[0]["lines"]) == 4                # default: nothing is cut
+    _, folios = P.split_document(doc, layout_notes=True)
+    assert [f["lines"] for f in folios] == [["שלום עולם גדול", "אדם טוב בבית"]]
+    assert [kind for kind, _ in folios[0]["layout_notes"]] == ["below_rule", "below_rule"]
+    assert folios[0]["flags"]["layout_notes_cut"] == 2
+    doc = fitz.open()                                               # a raised number on a line of its own
+    page = doc.new_page()
+    for i, text in enumerate(["שלום עולם גדול מאד", "אדם טוב בבית הגדול", "היה איש אחד בארץ"]):
+        draw_sized(page, 88 + 16 * i, text, fonts, SIZE)
+    rule(page, 300, 150, 400)                                       # not a separator's shape
+    draw_sized(page, 309, "1", fonts, 6.0)
+    draw_sized(page, 316, "כך בצילום", fonts, SIZE)                 # the note itself at body size
+    _, folios = P.split_document(doc, layout_notes=True)
+    assert len(folios[0]["lines"]) == 3
+    assert [kind for kind, _ in folios[0]["layout_notes"]] == ["below_rule", "below_rule"]
+
+
+def test_layout_notes_keep_numbered_lines_below_other_rules(fonts: Dict[str, "fitz.Font"]) -> None:
+    """An underline, a divider and the ruling of a numbered list cut nothing; body-size footnotes need the
+    separator's shape.
+
+    :param fonts: Fonts fixture.
+    """
+    doc = fitz.open()
+    page = doc.new_page()
+    left = draw_sized(page, 88, "שלום עולם גדול", fonts, SIZE)
+    rule(page, 90, left, RIGHT)                                      # underline of the first line
+    rule(page, 110, 150, RIGHT)                                      # long divider
+    for y, number, text in ((130, "1", "אדם טוב בבית"), (146, "2", "היה איש אחד")):   # numbered manuscript lines
+        draw_sized(page, y, text, fonts, SIZE, right=draw_sized(page, y, number, fonts, SIZE) - 8)
+    _, folios = P.split_document(doc, layout_notes=True)
+    assert [[ln.replace(" ", "") for ln in f["lines"]] for f in folios] == [["שלוםעולםגדול", "1אדםטובבבית",
+                                                                              "2היהאישאחד"]]
+    doc = fitz.open()
+    page = doc.new_page()
+    draw_sized(page, 88, "שלום עולם גדול", fonts, SIZE)
+    rule(page, 300, RIGHT - 136, RIGHT)                              # the only rule, separator-shaped
+    draw_sized(page, 316, "המילה במלואה: ספרגל", fonts, SIZE,       # numbered note at body size
+               right=draw_sized(page, 316, "1 .", fonts, SIZE) - 8)
+    _, folios = P.split_document(doc, layout_notes=True)
+    assert [f["lines"] for f in folios] == [["שלום עולם גדול"]]
+    assert [[kind, text.replace(" ", "")] for kind, text in folios[0]["layout_notes"]] == [
+        ["below_rule", "1.המילהבמלואה:ספרגל"]]
+
+
+def test_layout_notes_cut_small_font_lines_only_when_a_minority(fonts: Dict[str, "fitz.Font"]) -> None:
+    """Lines in a smaller size are notes unless that size holds a large share of the document.
+
+    :param fonts: Fonts fixture.
+    """
+    doc = fitz.open()
+    page = doc.new_page()
+    for i, text in enumerate(["שלום עולם גדול מאד", "אדם טוב בבית הגדול", "היה איש אחד בארץ", "כל העם הלך אחריו"]):
+        draw_sized(page, 88 + 16 * i, text, fonts, 13.2)
+    draw_sized(page, 170, "בקטע מקביל", fonts, 11.3)
+    _, folios = P.split_document(doc, layout_notes=True)
+    assert len(folios[0]["lines"]) == 4 and folios[0]["layout_notes"] == [["small_font", "בקטע מקביל"]]
+    doc = fitz.open()
+    page = doc.new_page()
+    draw_sized(page, 88, "שלום עולם גדול מאד", fonts, 13.2)
+    draw_sized(page, 104, "אדם טוב בבית הגדול", fonts, 11.3)         # a second body size: nearly half the letters
+    _, folios = P.split_document(doc, layout_notes=True)
+    assert len(folios[0]["lines"]) == 2 and not folios[0]["layout_notes"]
+
+
+def test_join_wraps_joins_a_short_line_below_a_full_line(fonts: Dict[str, "fitz.Font"]) -> None:
+    """A typeset wrap (a word below a line that fills the width) joins its line; other short lines stay.
+
+    :param fonts: Fonts fixture.
+    """
+    doc = fitz.open()
+    page = doc.new_page()
+    full = "שלום עולם גדול מאד אדם טוב בבית הגדול היה איש אחד בארץ כל העם"
+    draw_sized(page, 88, full, fonts, SIZE)
+    draw_sized(page, 104, "הלך", fonts, SIZE)                       # the wrapped last word
+    draw_sized(page, 120, "ספר תורה קטן", fonts, SIZE)             # a short manuscript line after a short line
+    draw_sized(page, 136, full, fonts, SIZE)
+    page = doc.new_page()
+    draw_sized(page, 88, "אחריו", fonts, SIZE)                      # the wrap of the last line, on the next page
+    draw_sized(page, 104, full, fonts, SIZE)
+    assert sum(len(f["lines"]) for f in P.split_document(doc)[1]) == 6
+    _, folios = P.split_document(doc, join_wraps=True)
+    assert [f["lines"] for f in folios] == [[full + " הלך", "ספר תורה קטן", full + " אחריו"], [full]]
+    assert folios[0]["flags"]["typeset_wraps_joined"] == 2
+
+
 # ───────────────────────────── shelf marks and markers ─────────────────────────────
 @pytest.mark.parametrize("mark,key", [
     ("Evr. IIA 223.2", ("Yevr_II_A", "223")),
@@ -667,6 +797,37 @@ def test_parse_side_file_name_normalises() -> None:
     cul = P.parse_side_file_name("transcription_manual_Cambridge_CUL_T_S_AS_97_1.pdf")
     assert cul["canonical_id"] == "T_S_AS_97_1"
     assert P.parse_side_file_name("transcription_0573c6a5-23c7-4601-8090-b6e5ab3de69b.pdf") is None
+
+
+@pytest.mark.parametrize("ruled", [True, False])
+@pytest.mark.parametrize("source_on_right", [True, False])
+def test_parallel_translation_needs_separate_labelled_cells(fonts: Dict[str, "fitz.Font"], ruled: bool,
+                                                            source_on_right: bool) -> None:
+    """Separate the translation inside its labelled box and retain all surrounding source lines.
+
+    :param fonts: Synthetic PDF fonts.
+    :param ruled: Whether two distinct table cells can be verified.
+    :param source_on_right: Which cell the edition labels as its manuscript source.
+    """
+    with fitz.open() as doc:
+        page = doc.new_page()
+        if ruled:
+            for x0 in (100, 250):
+                page.draw_rect(fitz.Rect(x0, 75, x0 + 150, 170))
+        left, right = (("תרגום", "תרגמנו"), ("מקור", "שלום")) if source_on_right else (
+            ("מקור", "שלום"), ("תרגום", "תרגמנו"))
+        for x, pair in ((115, left), (270, right)):
+            for y, word in zip((100, 140), pair):
+                tw = fitz.TextWriter(page.rect)
+                tw.append((x, y), word, font=fonts["heb"], fontsize=SIZE, right_to_left=True)
+                tw.write_text(page)
+        draw_line(page, 205, [("שורה אחרונה", "heb")], fonts)
+        lines = P.document_lines(doc, layout_notes=True)
+        kept = " ".join(ln.text for ln in lines if not ln.layout_note)
+        assert "שלום" in kept and "שורה אחרונה" in kept
+        assert ("תרגמנו" in kept) != ruled
+        assert any(ln.layout_note == "edition_translation" and "תרגמנו" in ln.text for ln in lines) == ruled
+        assert any("שלום" in ln.text and "תרגמנו" in ln.text for ln in P.document_lines(doc))
 
 
 def test_split_side_columns_keeps_two_columns_and_cuts_notes(fonts: Dict[str, "fitz.Font"]) -> None:
@@ -991,3 +1152,193 @@ def test_credit_kind_and_provenance_keep_no_wording() -> None:
     sig = P.provenance_signals(recs, "side_per_file", "site_user")
     assert sig["credit_kind"] == "site_user" and "team_credit" not in sig
     assert P.provenance_signals(recs, "side_per_file", "Example Team")["credit_kind"] == "project_team"
+
+
+# ───────────────────────────── position runs and overprints ─────────────────────────────
+def rtl_at(tw: "fitz.TextWriter", right: float, y: float, text: str, font: "fitz.Font") -> float:
+    """Append right-to-left text whose right edge is ``right``.
+
+    :param tw: Text writer.
+    :param right: Right edge.
+    :param y: Baseline.
+    :param text: Hebrew text.
+    :param font: Font.
+    :return: The text's left edge.
+    """
+    left = right - font.text_length(text, fontsize=SIZE)
+    tw.append((left, y), text, font=font, fontsize=SIZE, right_to_left=True)
+    return left
+
+
+def test_parts_stored_left_part_first_read_right_part_first(fonts: Dict[str, "fitz.Font"]) -> None:
+    """One span stored as left part, ``##``, right part (a tab-separated line) reads right part first.
+
+    :param fonts: Fonts fixture.
+    """
+    doc = fitz.open()
+    page = doc.new_page()
+    tw = fitz.TextWriter(page.rect)
+    rtl_at(tw, 300.0, 100, "שלום עולם", fonts["heb"])
+    tw.append((300.0, 100), "##", font=fonts["heb"], fontsize=SIZE)
+    rtl_at(tw, 490.0, 100, "ברוך הבא", fonts["heb"])
+    tw.write_text(page)
+    spans = [s for b in page.get_text("rawdict")["blocks"] for ln in b.get("lines", []) for s in ln["spans"]]
+    assert len(spans) == 1    # the case under test: one MuPDF span in the wrong order
+    assert [ln.text for ln in P.page_lines(page)] == ["ברוך הבא ##שלום עולם"]
+
+
+def test_ordinary_line_is_one_run_and_unchanged(fonts: Dict[str, "fitz.Font"]) -> None:
+    """An ordinary right-to-left line stays one span with the text layer's text.
+
+    :param fonts: Fonts fixture.
+    """
+    doc = fitz.open()
+    page = doc.new_page()
+    draw_line(page, 100, [("שלום עולם גדול, אדם טוב", "heb")], fonts)
+    spans = P.layer_spans(page)
+    assert len(spans) == 1
+    assert spans[0].text == P.normalise_span_text(page.get_text("dict")["blocks"][0]["lines"][0]["spans"][0]["text"])
+    assert [ln.text for ln in P.page_lines(page)] == ["שלום עולם גדול, אדם טוב"]
+
+
+def test_embedded_number_keeps_digit_order_and_place(fonts: Dict[str, "fitz.Font"]) -> None:
+    """A left-to-right number inside a right-to-left line keeps its digits' order and its place.
+
+    :param fonts: Fonts fixture.
+    """
+    doc = fitz.open()
+    page = doc.new_page()
+    tw = fitz.TextWriter(page.rect)
+    x = rtl_at(tw, RIGHT, 100, "שלום ", fonts["heb"])
+    x -= fonts["heb"].text_length("1234", fontsize=SIZE)
+    tw.append((x, 100), "1234", font=fonts["heb"], fontsize=SIZE)
+    rtl_at(tw, x, 100, " עולם", fonts["heb"])
+    tw.write_text(page)
+    assert [ln.text.strip() for ln in P.page_lines(page)] == ["שלום 1234 עולם"]    # the writer adds an edge space
+
+
+def test_text_layer_stored_reversed_is_unchanged() -> None:
+    """Hebrew stored in visual order (x increasing along the text, ``םולש``) stays one run in stored order.
+
+    PyMuPDF's writer and text extraction both apply the bidirectional algorithm, so a layer stored in visual order
+    cannot be built with them: the run splitting is tested on character records, and the span on such records.
+    """
+    stored = "םלוע םולש"
+    x, chars = 300.0, []
+    for ch in stored:
+        width = 3.0 if ch == " " else 6.0
+        chars.append((ch, x, x + width))
+        x += width
+    assert P.position_runs(chars, SIZE) == [list(range(len(stored)))]
+    assert "".join(chars[i][0] for i in P.position_runs(chars, SIZE)[0]) == stored
+
+
+def test_overprinted_heading_is_read_once(fonts: Dict[str, "fitz.Font"]) -> None:
+    """A heading printed four times at almost the same position (fake bold) is read once; a repeated word is kept.
+
+    :param fonts: Fonts fixture.
+    """
+    doc = fitz.open()
+    page = doc.new_page()
+    for dx, dy in ((0.0, 0.0), (-0.24, 0.24), (0.0, 0.24), (-0.24, 0.0)):
+        tw = fitz.TextWriter(page.rect)
+        rtl_at(tw, RIGHT + dx, 100 + dy, "כותרת ראשית", fonts["heb"])
+        tw.write_text(page)
+    draw_line(page, 130, [("שלום שלום", "heb")], fonts)
+    assert [ln.text for ln in P.page_lines(page)] == ["כותרת ראשית", "שלום שלום"]
+
+
+def test_overprint_inside_one_span_is_dropped() -> None:
+    """Characters one span repeats over themselves are dropped; neighbours and other fonts are kept.
+
+    PyMuPDF's writer makes a new span for each overprint, so the one-span form is tested on character records.
+    """
+    def box(x0: float, x1: float, y0: float = 527.0) -> Tuple[float, float, float, float]:
+        """A character box on the line.
+
+        :param x0: Left edge.
+        :param x1: Right edge.
+        :param y0: Top edge.
+        :return: The box.
+        """
+        return (x0, y0, x1, y0 + 14.0)
+
+    chars = [("'", "F", 11.28, box(323.4, 325.59)), (" ", "F", 11.28, box(320.16, 323.29)),
+             ("'", "F", 11.28, box(323.65, 325.83, 527.24)), (" ", "F", 11.28, box(320.4, 323.53, 527.24)),
+             ("ח", "F", 11.28, box(325.8, 332.05)), ("'", "F", 11.28, box(332.04, 334.23)),
+             ("'", "G", 11.28, box(323.4, 325.59))]
+    assert P.drop_overprints(chars) == [True, True, False, False, True, True, True]
+    # a rotated line: one horizontal extent for every character, distinct heights; nothing is dropped
+    upright = [(ch, "F", 11.28, (489.5, 111.7 + 4 * i, 500.8, 115.7 + 4 * i)) for i, ch in enumerate("1777")]
+    assert all(P.drop_overprints(upright))
+
+
+def test_position_runs_on_character_records() -> None:
+    """Run splitting: marks stay with their letter (also a zero-advance point under an ASCII code), one glyph
+    between two parts is never bridged, a space goes where it is drawn, and a run's extent ignores its spaces."""
+    marked = [("ש", 100.0, 107.0), ("ָ", 102.0, 102.0), ("ל", 95.0, 100.0)]
+    assert P.position_runs(marked, 12.0) == [[0, 1, 2]]
+    hashes = [("#", 481.8, 487.8), ("#", 487.8, 493.8), ("ר", 499.6, 505.2), ("ח", 493.9, 499.6)]
+    assert P.position_runs(hashes, 12.0) == [[0, 1], [2, 3]]
+    displaced = [(" ", 114.9, 118.0), ("ת", 184.2, 192.3), ("א", 176.0, 184.2)]
+    assert P.position_runs(displaced, 14.04) == [[0], [1, 2]]
+    assert P.run_extent(displaced, [0]) == (114.9, 118.0)
+    spaced = [(" ", 412.4, 415.4), ("ו", 408.9, 412.2), ("נ", 405.3, 408.9)]
+    assert P.run_extent(spaced, [0, 1, 2]) == (405.3, 412.2)
+    # T-S Ar.31.202: points drawn as zero-advance glyphs coded Q / T, stored at the end of the part before them,
+    # are runs of their own placed where they are drawn
+    pointed = [("ל", 369.8, 375.0), ("נ", 366.2, 369.8), ("א", 360.4, 366.2), ("Q", 410.8, 410.8),
+               ("נ", 422.1, 425.7), ("ו", 418.8, 422.1), (" ", 415.8, 418.8), ("ה", 410.1, 415.8), ("T", 426.5, 426.5)]
+    assert P.mark_flags(pointed, 12.0) == [False, False, False, True, False, False, False, False, True]
+    assert P.position_runs(pointed, 12.0) == [[0, 1, 2], [3], [4, 5, 6, 7], [8]]
+    in_place = [("ה", 443.5, 449.2), ("Q", 444.2, 444.2), ("נ", 439.8, 443.4), ("ך", 434.4, 439.8)]
+    assert P.position_runs(in_place, 12.0) == [[0, 1, 2, 3]]
+    assert P.mark_flags([("ש", 100.0, 107.0), ("x", 102.0, 104.0), ("ל", 95.0, 100.0)], 12.0) == [False, True, False]
+    assert P.position_runs([], 12.0) == []
+
+
+def test_glyph_letter_substituted_once_per_position() -> None:
+    """A final letter named by its glyph is written once although MuPDF adds a space at the same position.
+
+    Built on rawdict-shaped records (T-S Ar.47.88 shape): the writer cannot place two characters at one origin.
+    """
+    from src.datasets.indexing.legacy_store import pdf_glyphs
+
+    def span(*chars: Tuple[str, float]) -> Dict[str, object]:
+        """A rawdict span of font ``F`` on baseline 334.92.
+
+        :param chars: ``(char, origin x)`` in stored order.
+        :return: The span.
+        """
+        return {"font": "F", "chars": [{"c": c, "origin": (x, 334.92)} for c, x in chars]}
+
+    key = pdf_glyphs.position_key("F", 286.2, 334.92)
+    letters = {key: "ן"}
+    # (a) the real glyph, then an invented space at the same key (in another span)
+    layer = [span(("\x1f", 286.20), (" ", 280.08)), span((" ", 286.25), ("[", 283.44))]
+    assert P.substitute_once(layer, letters) == [["ן", " "], [" ", "["]]
+    # (b) the invented space stored before the real glyph
+    layer = [span((" ", 286.25), ("\x1f", 286.20))]
+    assert P.substitute_once(layer, letters) == [[" ", "ן"]]
+    # (c) the glyph's only character is a space: it takes the letter
+    layer = [span((" ", 286.20), ("א", 290.0))]
+    assert P.substitute_once(layer, letters) == [["ן", "א"]]
+    assert P.substitute_once(layer, {}) == [[" ", "א"]]
+
+
+def test_geresh_stored_after_the_space_is_placed_after_its_word() -> None:
+    """``אמ'`` stored as ``אמ``, space, geresh (T-S G1.7) splits the space-and-geresh run into characters."""
+    chars = [("א", 289.6, 295.6), ("מ", 283.5, 289.6), (" ", 278.1, 281.2), ("'", 281.3, 283.6),
+             ("ר", 272.3, 278.1), ("ב", 266.6, 272.3)]
+    assert P.position_runs(chars, 12.5) == [[0, 1], [2], [3], [4, 5]]
+
+
+def test_one_letter_stored_left_to_right_with_its_punctuation() -> None:
+    """``צ"ל:`` stored ``:``, spaces, ``ל``, ``"`` then ``צ`` (T-S NS 302.23) reads ``צ"ל:``; two letters stay."""
+    chars = [(":", 538.9, 542.3), (" ", 535.9, 538.9), (" ", 535.9, 547.5), ("ל", 542.3, 547.5),
+             ('"', 547.4, 552.3), (" ", 557.8, 560.8), ("צ", 552.2, 557.8)]
+    runs = P.position_runs(chars, 12.0)
+    texts = {"".join(chars[i][0] for i in r): min(chars[i][1] for i in r if chars[i][0] != " ") for r in runs}
+    assert "".join(sorted(texts, key=lambda t: -texts[t])) == ' צ"ל:  '    # runs read right to left
+    two = [("ם", 300.0, 306.0), ("ו", 306.0, 309.0), ("ל", 309.0, 314.0), ("ש", 314.0, 321.0)]
+    assert P.position_runs(two, 12.0) == [[0, 1, 2, 3]]

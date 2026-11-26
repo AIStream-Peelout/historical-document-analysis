@@ -294,6 +294,58 @@ def test_decide_genizah_precedence() -> None:
     assert gap.decide_genizah(None, {}, "JTS Ms. ENA 2808.59") == (True, "shelfmark")
     assert gap.decide_genizah(None, {}, "Ets Haim Library Ms. 48 B 13") == (None, "undecided")
     assert gap.decide_genizah({"genizah": None}, {}, None) == (None, "undecided")
+    # Catalogue subjects without a Genizah mention say no, after the shelf-mark yes.
+    binding = {"subject": "Manuscript waste (Binding)"}
+    assert gap.decide_genizah(None, binding, "Vatican Library Ms. ebr. 49") == (False, "search_fields")
+    assert gap.decide_genizah(None, binding, "Cambridge University Library Ms. T-S NS 1.1") == (True, "shelfmark")
+    assert gap.decide_genizah(None, {"lds10": ["Cairo Genizah fragments"]}, None) == (True, "search_fields")
+    # An empty subject field says nothing.
+    for empty in (None, "", []):
+        assert gap.decide_genizah(None, {"subject": empty}, "Ets Haim Library Ms. 48 B 13") == (None, "undecided")
+
+
+def test_plain_shelfmark_reads_the_per_language_json() -> None:
+    """Live listings send lds06 as a JSON string per language; 1033 (English) wins.
+
+    :returns: None.
+    """
+    assert gap.plain_shelfmark('{"1033": "The British Library, London, England Or. 5566", "1037": "x"}') == \
+        "The British Library, London, England Or. 5566"
+    assert gap.plain_shelfmark('{"1037": "שם", "Default": "Default name"}') == "Default name"
+    assert gap.plain_shelfmark('{"1037": "שם"}') == "שם"
+    assert gap.plain_shelfmark("  Ms. Heb. 4°162 ") == "Ms. Heb. 4°162"
+    assert gap.plain_shelfmark('{"1033": "cut off') == '{"1033": "cut off'
+    assert gap.plain_shelfmark(None) is None and gap.plain_shelfmark("  ") is None
+
+
+def test_live_listing_skips_catalogue_matches_and_targets_the_image_set_with_the_hits(tmp_path: Path) -> None:
+    """Records without snippets, hit pages or hits are catalogue-only matches: skipped and counted.
+    The English shelf mark is read, and doc_id points the manifest URL at the set with the hits.
+
+    :param tmp_path: Pytest temp dir.
+    :returns: None.
+    """
+    sys_live = "990001981130205171"
+    shelf = json.dumps({"1033": "Cambridge University Library, Cambridge, England Ms. T-S NS 1.2",
+                        "1037": "ספריית אוניברסיטת קיימברידג' Ms. T-S NS 1.2"}, ensure_ascii=False)
+    live = {**_ms(sys_live, ["אשר"], shelf, fields={"subject": "Cairo Genizah fragments"}),
+            "pages": [10], "snippets": [{"token": "אשר", "page": 10, "text": "אשר"}], "hits": 157,
+            "doc_id": f"{sys_live}-3"}
+    catalogue_only = {**_ms(SYS_NEW_HE, ["في"]), "pages": [], "snippets": []}
+    path = tmp_path / "ktiv_fts_transcribed_20261108_partial.json"
+    _write(path, _export([live, catalogue_only], complete=False))
+    by_sysnum, meta = gap.load_enumerations([str(path)])
+    assert list(by_sysnum) == [sys_live]
+    assert (meta["files"][0]["manuscripts"], meta["files"][0]["catalogue_only_skipped"]) == (1, 1)
+    record = by_sysnum[sys_live]
+    assert record["shelfmark"] == "Cambridge University Library, Cambridge, England Ms. T-S NS 1.2"
+    assert record["doc_id"] == f"{sys_live}-3"
+    assert gap.manifest_url_for(sys_live, record["doc_id"]) == (
+        f"https://iiif.nli.org.il/IIIFv21/DOCID/PNX_MANUSCRIPTS{sys_live}-3/manifest")
+    # A missing or foreign doc_id falls back to the first set.
+    assert gap.manifest_url_for(sys_live, None).endswith(f"PNX_MANUSCRIPTS{sys_live}-1/manifest")
+    assert gap.manifest_url_for(sys_live, f"{SYS_HELD}-3").endswith(f"PNX_MANUSCRIPTS{sys_live}-1/manifest")
+    assert gap.is_transcription_hit({"hits": 2}) and not gap.is_transcription_hit({"hits": 0, "pages": []})
 
 
 def test_library_of_uses_institution_tokens() -> None:

@@ -7,7 +7,7 @@ same function, so the two can never disagree about which objects exist.
 
 import json
 
-from src.datasets.document_models.genizah_document import GenizahDocument, _merged_image_urls
+from src.datasets.document_models.genizah_document import GenizahDocument, _merged_image_urls, fjp_image_url
 from src.datasets.indexing.es_image_gap_report import _to_record, summarize
 from src.datasets.merging.bodleian_images import (
     bodleian_image_manifest,
@@ -88,6 +88,23 @@ def test_merged_image_urls_follow_preference_then_fixed_order():
         "https://gcs/KTIV/1/k.jpg", "https://gcs/BODLEIAN/x/b.jpg", fjp]
     assert _merged_image_urls(_images("fjp")) == [
         fjp, "https://gcs/KTIV/1/k.jpg", "https://gcs/BODLEIAN/x/b.jpg"]
+
+
+def test_fjp_image_url_quotes_bare_names_and_keeps_urls() -> None:
+    """A bare image-store name resolves under the bucket, URL-quoted; an http(s) URL is returned unchanged."""
+    base = "https://storage.googleapis.com/cairo-genizah-es-json/images"
+    assert fjp_image_url("X_1_1r.jpg") == f"{base}/X_1_1r.jpg"                      # nothing to quote: as before
+    assert fjp_image_url("X_1_1r 2.jpg") == f"{base}/X_1_1r%202.jpg"
+    assert fjp_image_url("sub/X#1+.jpg") == f"{base}/sub/X%231%2B.jpg"                # "/" kept, the rest quoted
+    for url in ("https://example.org/a b.jpg", "http://example.org/x_1v.jpg"):
+        assert fjp_image_url(url) == url
+
+
+def test_merged_image_urls_resolve_store_names_with_fjp_image_url() -> None:
+    """The index builder's image list uses :func:`fjp_image_url` for every image-store entry."""
+    images = {"fjp": ["X_1r 2.jpg", "https://example.org/y.jpg"], "preferred_source": "fjp"}
+    assert _merged_image_urls(images) == [fjp_image_url("X_1r 2.jpg"), "https://example.org/y.jpg"]
+    assert _merged_image_urls(images)[0].endswith("/X_1r%202.jpg")
 
 
 def test_from_merged_format_surfaces_bodleian_fields_and_tei_date():

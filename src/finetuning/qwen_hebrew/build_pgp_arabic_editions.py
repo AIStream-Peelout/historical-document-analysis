@@ -8,10 +8,11 @@ Arabic *script*. This builder makes page-transcription rows from the PGP edition
 written in Arabic script that no benchmark holds out.
 
 Documents: rows of ``merged/arabic_scrape_priority_queue.csv`` with a permitted image (tiers 1 to
-3), a single fragment, a library IIIF manifest, and an edition that is at least 90 % Arabic
-letters. Held out: every registered benchmark document (``benchmark_registry``, which includes the
-Arabic-script benchmark) and every fragment of the Hebrew-script benchmarks
-(``build_documentary_grounding.decontam_reason``).
+3), a single fragment, a library IIIF manifest or, when there is none, photographs in the project's
+image store (the queue's ``fjp_images``, resolved by ``genizah_document.fjp_image_url``; a manifest
+wins when a row has both), and an edition that is at least 90 % Arabic letters. Held out: every
+registered benchmark document (``benchmark_registry``, which includes the Arabic-script benchmark)
+and every fragment of the Hebrew-script benchmarks (``build_documentary_grounding.decontam_reason``).
 
 Pages: a library image is used only when the record says which text is on it:
 
@@ -21,10 +22,40 @@ Pages: a library image is used only when the record says which text is on it:
 * or the edition has no side labels, PGP's ``side`` field names one side, and exactly one image
   carries that label.
 
-Everything else is skipped with a reason. Images of the image store carry no side label, so
-only library images are used. A page is also skipped when its text is too dense for the image
-(more than 1,000 letters per megapixel: Cambridge serves 2,000 pixels on the long side, and a long
-scroll at that size has letters a few pixels wide; such a row would teach the model to invent).
+Everything else is skipped with a reason. Store photographs are never placed by these rules: a
+store photograph is used only when a read of it matched the edition, that is through an accepted
+side assignment (``--side-assignments``, ``side_source`` ``side_match:<reader>``) whose read scores
+for the page pass the store read gate (:func:`store_read_problem`): at least
+:data:`STORE_MIN_RECALL` of the page text's letter 5-grams found in the read
+(:data:`STORE_SHORT_MIN_RECALL` for a page text under :data:`STORE_SHORT_LETTERS` Arabic letters,
+which is mostly formulae such as an address or a closing), at least :data:`STORE_MIN_PRECISION` of
+the read's 5-grams found in the edition and at least :data:`STORE_MIN_SHARED` shared 5-grams, so
+that a photograph of another document sharing only formulaic text (a basmala has 15) is never
+placed, even when the matcher had no other photograph to compare it with. The thresholds were
+calibrated on reads of library pages of known side against other documents' editions (2026-11-01).
+A store page without read scores is skipped as ``store photograph: no read
+scores``, a weaker one as ``store photograph: read does not match the edition``. One photograph may
+show either side, or a neighbouring fragment, so a store document without an accepted assignment is
+skipped and, with ``--emit-unassigned``, offered to the side matcher (a single photograph with the
+reason ``store photograph: side by reads only``, or ``one store photograph left after the label
+check`` when the check dropped the others; several with the usual side reason). Most store file
+names carry a ``_1r`` / ``_1v`` token, but a side is never taken from a file name or from image
+order. The token is kept as the canvas label (``file:1r``, provenance only; emitted to the side
+matcher as an empty label) and the canvas side stays empty. More than ``max_canvases`` store
+photographs are a whole volume (``whole volume (<n> store photographs)``). Some store photographs
+were filed under a neighbouring fragment's name, so every one must pass a shelf-mark label check
+(``--store-label-checks``, :func:`load_store_label_checks`: the label in the photograph was read and
+compared with the document's shelf marks) before side assignment. The check that applies to a
+document is the one recorded for its PGP id, else the one recorded for the image alone
+(:func:`check_for`); a photograph without one leaves its document out (``store photograph not
+label-checked``), and one labelled as another fragment is dropped: a ``no``, or a ``yes`` whose
+``resolved_to`` names another record (applied as ``yes for another record``). A dataset with store
+photographs is private (``stats.json``: ``private``; ``README.md``): it must never be pushed or
+released.
+
+A page is also skipped when its text is too dense for the image (more than 1,000 letters per
+megapixel: Cambridge serves 2,000 pixels on the long side, and a long scroll at that size has
+letters a few pixels wide; such a row would teach the model to invent).
 An image gets one row: when PGP has two records of the same text on it, the fuller edition is
 kept; when two different documents share the side, the image is dropped (neither edition is the
 whole page).
@@ -33,15 +64,20 @@ Side assignments. A document skipped for a *side* reason (an unlabelled edition 
 images, image labels that are missing, duplicated or do not name sides such as figgy's
 ``00000001.tif``, or text outside the side labels) can be written to ``--emit-unassigned`` (one
 :func:`unassigned_record` per document) for a reader that looks at the images and decides which
-text is on which image. Its decisions come back through ``--side-assignments`` (one object per
+text is on which image. The side matcher keeps its image and read caches next to that file, so it
+may not lie inside the NAS datasets directory (:func:`check_unassigned_location`). Its decisions come back through ``--side-assignments`` (one object per
 document: ``pgpid``, ``edition_fingerprint``, ``decision`` accept / drop, ``reader``, ``pages`` of
 ``{canvas_index, image_url, assign}`` with ``assign`` in ``all`` / ``recto`` / ``verso``, free-form
-``evidence``) and are applied by :func:`apply_side_assignment` only where the labels say nothing:
-a decision made for another edition text (:func:`edition_fingerprint`; a drop too) or other
+``evidence``: the matcher's scores, ``evidence.canvases`` ``[{canvas_index, recall: {section: r},
+precision}]``, which the store read gate needs) and are applied by :func:`apply_side_assignment`
+only where the labels say nothing: a decision made for another edition text (:func:`edition_fingerprint`; a drop too) or other
 images is stale and the document is offered again, a dropped document stays out, ``all`` places
 only an edition without side labels, and an unlabelled edition is never split across images.
 Every manifest row says how its side was found (``side_source``: ``single`` when the manifest
-has one image, ``label`` from image labels, ``side_match:<reader>`` from an assignment).
+has one image, ``label`` from image labels, ``side_match:<reader>`` from an assignment, the only
+source of a store photograph), where its
+image came from (``image_origin``: ``manifest`` or ``store``) and, for a store photograph, its label
+check (``label_check``: the verdict, ``label_read``: the label as read; both null for a manifest page).
 
 Rows (KTIV ``FEATURES`` schema, ``label_source="pgp_edition"``): one ``fragment_transcribe`` row
 per page, asking with :data:`ARABIC_FRAGMENT_PROMPT` for the visible text of that side, one line
@@ -56,11 +92,11 @@ defaults: the export and queue under ``raw_data``. ``--pgp-dir`` needs ``--queue
 either side is a pinned export (``COMMIT``) the queue's summary must record the same commit
 (:func:`check_queue_export`); ``stats.json`` records both.
 
-Output (default ``pgp_arabic_editions_v2`` on the NAS; the v1 set and its image directories are
-refused as outputs, as is any directory that contains one of them, in any spelling the
-filesystem treats as the same: :func:`check_outputs`)::
+Output (default ``pgp_arabic_editions_v3`` on the NAS; the v1 and v2 sets, pinned inputs of earlier
+mixtures, and their image directories are refused as outputs, as is any directory that contains one
+of them, in any spelling the filesystem treats as the same: :func:`check_outputs`)::
 
-    <out>/            saved DatasetDict + manifest.jsonl + stats.json
+    <out>/            saved DatasetDict + manifest.jsonl + stats.json (+ README.md with store photographs)
     <out>_images/     the page images (<pgpid>_<n>.jpg; ``--image-cache`` puts them elsewhere)
 
 ``--seed-cache-from IMAGES_DIR MANIFEST`` copies an image from an earlier build (its images
@@ -72,7 +108,7 @@ Usage::
 
     PYTHONPATH=. .venv/bin/python -m src.finetuning.qwen_hebrew.build_pgp_arabic_editions [--out DIR] [--limit N]
         [--pgp-dir DIR] [--queue-csv FILE] [--image-cache DIR] [--seed-cache-from IMAGES_DIR MANIFEST]
-        [--side-assignments FILE] [--emit-unassigned FILE]
+        [--side-assignments FILE] [--emit-unassigned FILE] [--store-label-checks FILE]
 """
 import argparse
 import csv
@@ -85,9 +121,11 @@ import unicodedata
 from collections import Counter
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
+from urllib.parse import unquote
 
 from PIL import Image as PILImage
 
+from src.datasets.document_models.genizah_document import fjp_image_url
 from src.datasets.evaluations import arabic_script as ar
 from src.datasets.evaluations.benchmark_registry import registered_benchmark_documents
 from src.datasets.evaluations.helper_eval_scripts import build_arabic_benchmark as bab
@@ -97,8 +135,10 @@ from src.finetuning.qwen_hebrew.build_pgp_editions import save_dataset
 from src.finetuning.qwen_hebrew.prompts import ARABIC_FRAGMENT_PROMPT, FRAGMENT_TRANSCRIBE_PROMPT, HEBREW_SCRIPT_CLAUSE
 
 V1_OUT = bab.NAS_DATASETS / "pgp_arabic_editions_v1"
-DEFAULT_OUT = bab.NAS_DATASETS / "pgp_arabic_editions_v2"
-PROTECTED_OUTPUTS = (V1_OUT, V1_OUT.with_name(V1_OUT.name + "_images"), V1_OUT.with_name(V1_OUT.name + "_images_once"))
+V2_OUT = bab.NAS_DATASETS / "pgp_arabic_editions_v2"           # pinned input of the v2.5a mixture
+DEFAULT_OUT = bab.NAS_DATASETS / "pgp_arabic_editions_v3"
+PROTECTED_OUTPUTS = tuple(published.with_name(published.name + suffix) for published in (V1_OUT, V2_OUT)
+                          for suffix in ("", "_images", "_images_once"))
 GAP = "[...]"
 MIN_PAGE_LETTERS = 40
 MIN_ARABIC_SHARE = 0.9
@@ -121,12 +161,41 @@ DECISIONS = ("accept", "drop")
 STALE = "side assignment stale"
 DROPPED = "side match dropped"
 INVALID = "side assignment invalid"
+STORE_ORIGIN, MANIFEST_ORIGIN = "store", "manifest"
+LABEL_CHECK_KEYS = ("image_url", "image", "label_read", "label_matches", "resolved_to", "basis", "recorded_at")
+LABEL_VERDICTS = ("yes", "no", "unclear", "no label visible")
+NOT_LABEL_CHECKED = "store photograph not label-checked"
+OTHER_FRAGMENT = "store photograph labelled as another fragment"
+STORE_ONE_LEFT = "one store photograph left after the label check"
+STORE_READS_ONLY = "store photograph: side by reads only"
+YES_FOR_ANOTHER = "yes for another record"     # a yes whose resolved_to names another record: the label names another fragment
+DROP_VERDICTS = ("no", YES_FOR_ANOTHER)         # applied label verdicts that drop a store photograph
+NO_MANIFEST = "no library manifest"
+# Store read gate: a store photograph is placed only when the read of it shows the edition's text. With one photograph
+# the side matcher has nothing to compare the read with (no ratio, margin or veto), so a photograph of another document
+# that shares formulaic text (a basmala, an opening formula) could pass its recall floor; this gate asks for the text.
+STORE_NGRAM = 5                 # the side matcher's letter n-gram length (side_match.NGRAM): its scores are on 5-grams
+STORE_MIN_RECALL = 0.15         # least share of the page text's 5-grams found in the read of its photograph
+STORE_MIN_PRECISION = 0.2       # least share of the read's 5-grams found in the edition
+STORE_MIN_SHARED = 20           # least number of the page text's 5-grams found in the read (a basmala alone has 15)
+STORE_SHORT_LETTERS = 100       # a page text under this many Arabic letters is mostly formulae (address, closing) ...
+STORE_SHORT_MIN_RECALL = 0.4    # ... so its read needs this recall (other documents' reads reach 0.35 on such texts)
+STORE_UNSCORED = "store photograph: no read scores"
+STORE_WEAK_READ = "store photograph: read does not match the edition"
+_STORE_FILE_SIDE = re.compile(r"_(\d{1,3}[rv])(?:\s*\(\d+\)|\s+\d+)?\.(?:jpe?g|png|tiff?)$", re.IGNORECASE)
 _SIDE_PROBLEM = re.compile(r"edition without side labels and several images|edition has text outside its side labels"
+                           rf"|{re.escape(STORE_ONE_LEFT)}|{re.escape(STORE_READS_ONLY)}"
                            r"|\d+ images labelled (recto|verso)(; \d+ images labelled (recto|verso))*")
 
 
 def candidate_documents(queue_csv: Path, held_ids: Set[str], held_pgpids: Set[str]) -> Tuple[Dict[str, Dict[str, Any]], Dict[str, str]]:
     """PGP documents of the Arabic queue that may become training pages.
+
+    A row's images come from its library IIIF manifests; a row without one uses the photographs of
+    the project's image store listed in its ``fjp_images`` column (``;``-separated bare names or
+    URLs, resolved by ``genizah_document.fjp_image_url``; an older queue without the column has
+    none). A manifest wins when a row has both, and ``store_images`` is then empty. A row with neither
+    is left out as :data:`NO_MANIFEST` (the reason an older queue gave).
 
     :param queue_csv: ``arabic_scrape_priority_queue.csv``.
     :type queue_csv: Path
@@ -134,8 +203,8 @@ def candidate_documents(queue_csv: Path, held_ids: Set[str], held_pgpids: Set[st
     :type held_ids: Set[str]
     :param held_pgpids: PGP ids held out by a registered benchmark.
     :type held_pgpids: Set[str]
-    :return: ``({pgpid: {canonical_id, shelfmark, library, tier, pgp_side, manifests}}, {pgpid: reason
-        it was left out})`` in queue order.
+    :return: ``({pgpid: {canonical_id, shelfmark, library, tier, pgp_side, manifests, store_images}},
+        {pgpid: reason it was left out})`` in queue order.
     :rtype: Tuple[Dict[str, Dict[str, Any]], Dict[str, str]]
     """
     docs: Dict[str, Dict[str, Any]] = {}
@@ -144,18 +213,185 @@ def candidate_documents(queue_csv: Path, held_ids: Set[str], held_pgpids: Set[st
         for row in csv.DictReader(fh):
             pgpid = row["pgpid"]
             manifests = [u for u in re.split(r"[;|\s]+", (row["iiif_urls"] or row["suggested_iiif"] or "").strip()) if u.startswith("http")]
+            store = [fjp_image_url(entry.strip()) for entry in (row.get("fjp_images") or "").split(";") if entry.strip()]
             if pgpid in held_pgpids or row["canonical_id"] in held_ids:
                 skipped[pgpid] = "held out by a benchmark"
             elif row["tier"] not in ("1", "2", "3"):
                 skipped[pgpid] = "no permitted image"
             elif row["single_fragment"] != "True":
                 skipped[pgpid] = "join: the edition covers several fragments"
-            elif not manifests:
-                skipped[pgpid] = "no library manifest"
+            elif not manifests and not store:
+                skipped[pgpid] = NO_MANIFEST
             else:
                 docs[pgpid] = {"canonical_id": row["canonical_id"], "shelfmark": row["shelfmark"], "library": row["library"],
-                               "tier": row["tier"], "pgp_side": row["side"], "manifests": manifests}
+                               "tier": row["tier"], "pgp_side": row["side"], "manifests": manifests,
+                               "store_images": [] if manifests else store}
     return docs, skipped
+
+
+def store_file_label(url: str) -> str:
+    """Provenance label of a store photograph: the side token of its file name, never used as a side.
+
+    :param url: Image URL (the file name is its last path segment, URL-unquoted).
+    :type url: str
+    :return: ``"file:1r"`` for ``..._1r.jpg`` (lower case; a copy number such as ``(2)`` or `` 2``
+        may follow), ``""`` when the file name has no side token.
+    :rtype: str
+    """
+    match = _STORE_FILE_SIDE.search(unquote(url.split("?")[0].rsplit("/", 1)[-1]))
+    return f"file:{match.group(1).lower()}" if match else ""
+
+
+def store_canvases(canvases: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Store photographs as canvases whose side is unknown.
+
+    :param canvases: ``bab.planned_images`` result for a document's store photographs (source
+        ``image_store``).
+    :type canvases: List[Dict[str, Any]]
+    :return: Copies with ``label`` = :func:`store_file_label` (provenance only) and ``side`` always
+        ``""``: a side comes from library labels or reads, never from a file name or image order.
+    :rtype: List[Dict[str, Any]]
+    """
+    return [dict(canvas, label=store_file_label(canvas["url"]), side="") for canvas in canvases]
+
+
+def check_pgpid(record: Dict[str, Any]) -> str:
+    """The document a label check was recorded for.
+
+    :param record: One label-check record (a line of ``--store-label-checks``).
+    :type record: Dict[str, Any]
+    :return: Its provenance ``pgpid`` as text; ``""`` for a check recorded for the image alone (no
+        ``pgpid``, null or empty).
+    :rtype: str
+    """
+    pgpid = record.get("pgpid")
+    return "" if pgpid is None else str(pgpid).strip()
+
+
+def load_store_label_checks(path: Path) -> Dict[str, List[Dict[str, Any]]]:
+    """Read the shelf-mark label checks of store photographs.
+
+    One photograph may be filed under several records, and a verdict says whether the label names the
+    document it was checked for, so every check is kept: one per image and provenance ``pgpid``.
+
+    :param path: JSONL, one object per check of a store photograph: ``image_url``, ``image`` (file
+        name), ``label_read`` (the label as read, or null), ``label_matches`` (one of
+        :data:`LABEL_VERDICTS`), ``resolved_to`` (the fragment the label names), ``basis``,
+        ``recorded_at``; optional provenance: ``pgpid`` (the document the check was made for;
+        absent, null or empty: a check of the image alone), ``canonical_id``, ``sha256``, ``outcome``,
+        ``reason``.
+    :type path: Path
+    :return: ``{image_url: [record, ...]}`` in file order; a later line for the same image and the
+        same ``pgpid`` (or the same image without one) replaces the earlier one in its place.
+    :rtype: Dict[str, List[Dict[str, Any]]]
+    :raises ValueError: naming the line, when it is not an object, lacks a field, has an empty
+        ``image_url``, a ``label_read`` that is neither text nor null, a verdict outside
+        :data:`LABEL_VERDICTS`, or a ``pgpid`` that is neither text, an integer nor null.
+    """
+    checks: Dict[str, List[Dict[str, Any]]] = {}
+    with open(path, encoding="utf-8") as fh:
+        for number, line in enumerate(fh, 1):
+            if not line.strip():
+                continue
+            record = json.loads(line)
+            if not isinstance(record, dict):
+                raise ValueError(f"{path}:{number}: not a JSON object")
+            missing = [key for key in LABEL_CHECK_KEYS if key not in record]
+            if missing:
+                raise ValueError(f"{path}:{number}: missing {', '.join(missing)}")
+            if not isinstance(record["image_url"], str) or not record["image_url"]:
+                raise ValueError(f"{path}:{number}: image_url must be a non-empty string")
+            if record["label_read"] is not None and not isinstance(record["label_read"], str):
+                raise ValueError(f"{path}:{number}: label_read must be text or null")
+            if record["label_matches"] not in LABEL_VERDICTS:
+                raise ValueError(f"{path}:{number}: label_matches {record['label_matches']!r} is not one of {LABEL_VERDICTS}")
+            pgpid = record.get("pgpid")
+            if pgpid is not None and (isinstance(pgpid, bool) or not isinstance(pgpid, (str, int))):
+                raise ValueError(f"{path}:{number}: pgpid must be text, an integer or null")
+            entries = checks.setdefault(record["image_url"], [])
+            same = next((n for n, entry in enumerate(entries) if check_pgpid(entry) == check_pgpid(record)), None)
+            if same is None:
+                entries.append(record)
+            else:
+                entries[same] = record
+    return checks
+
+
+def check_for(entries: List[Dict[str, Any]], pgpid: str) -> Optional[Dict[str, Any]]:
+    """The label check of a store photograph that applies to one document.
+
+    :param entries: Checks of the photograph (one value of :func:`load_store_label_checks`).
+    :type entries: List[Dict[str, Any]]
+    :param pgpid: The document's PGP id.
+    :type pgpid: str
+    :return: The check recorded for this document (provenance ``pgpid``; the last when several) when
+        there is one, else the single check recorded for the image alone (no ``pgpid``); None
+        otherwise (checks recorded for other documents say nothing about this one).
+    :rtype: Optional[Dict[str, Any]]
+    """
+    own = [entry for entry in entries if check_pgpid(entry) == str(pgpid)]
+    by_image = [entry for entry in entries if not check_pgpid(entry)]
+    return own[-1] if own else by_image[0] if len(by_image) == 1 else None
+
+
+def names_document(resolved_to: Optional[str], doc: Dict[str, Any]) -> bool:
+    """Whether the fragment a label check resolved to is the document (or nothing was resolved).
+
+    :param resolved_to: ``resolved_to`` of a label check: a canonical id or shelf mark; empty or
+        None when the label was not resolved.
+    :type resolved_to: Optional[str]
+    :param doc: Entry of :func:`candidate_documents` (``canonical_id``, ``shelfmark``).
+    :type doc: Dict[str, Any]
+    :return: True when ``resolved_to`` is empty, or its loose form (``arabic_scrape_queue.loose_key``)
+        equals that of the document's canonical id or shelf mark.
+    :rtype: bool
+    """
+    if not (resolved_to or "").strip():
+        return True
+    key = asq.loose_key(resolved_to)
+    return bool(key) and key in {asq.loose_key(value) for value in (doc.get("canonical_id"), doc.get("shelfmark")) if value}
+
+
+def label_checked(canvases: List[Dict[str, Any]], checks: Optional[Dict[str, List[Dict[str, Any]]]], pgpid: str,
+                  doc: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], str]:
+    """Store canvases with the label verdicts that apply to one document, or why it cannot use them.
+
+    Each photograph takes the check :func:`check_for` picks for the document. A ``yes`` counts only
+    when its ``resolved_to`` is empty or names the document (:func:`names_document`); a ``yes`` for
+    another record means the label names another fragment and is applied as :data:`YES_FOR_ANOTHER`,
+    which drops the photograph like ``no`` (:data:`DROP_VERDICTS`).
+
+    :param canvases: Store canvases of one document (:func:`store_canvases`).
+    :type canvases: List[Dict[str, Any]]
+    :param checks: :func:`load_store_label_checks` result (None: no check file was given).
+    :type checks: Optional[Dict[str, List[Dict[str, Any]]]]
+    :param pgpid: The document's PGP id.
+    :type pgpid: str
+    :param doc: Entry of :func:`candidate_documents` (``canonical_id``, ``shelfmark``).
+    :type doc: Dict[str, Any]
+    :return: ``(canvases with label_check, label_read, resolved_to and image added, "")``, or ``([],
+        NOT_LABEL_CHECKED)`` when a canvas has no check that applies: an unchecked photograph is never
+        used.
+    :rtype: Tuple[List[Dict[str, Any]], str]
+    """
+    picked = [check_for((checks or {}).get(canvas["url"], []), pgpid) for canvas in canvases]
+    if checks is None or any(entry is None for entry in picked):
+        return [], NOT_LABEL_CHECKED
+    return [dict(canvas, label_check=YES_FOR_ANOTHER if entry["label_matches"] == "yes" and not names_document(entry["resolved_to"], doc)
+                 else entry["label_matches"], label_read=entry["label_read"], resolved_to=entry["resolved_to"], image=entry["image"])
+            for canvas, entry in zip(canvases, picked)], ""
+
+
+def other_fragment_reason(canvas: Dict[str, Any]) -> str:
+    """Why a store canvas whose label names another fragment is dropped.
+
+    :param canvas: A :func:`label_checked` canvas with a verdict in :data:`DROP_VERDICTS`.
+    :type canvas: Dict[str, Any]
+    :return: ``"store photograph labelled as another fragment: <resolved_to>"`` (the label as read
+        when nothing was resolved).
+    :rtype: str
+    """
+    return f"{OTHER_FRAGMENT}: {canvas['resolved_to'] or canvas['label_read'] or 'unresolved'}"
 
 
 def best_sections(editions: List[str]) -> List[Tuple[str, List[str]]]:
@@ -240,7 +476,8 @@ def is_side_problem(problem: str) -> bool:
     :param problem: Second value returned by :func:`assign_pages`.
     :type problem: str
     :return: True for an unlabelled edition with several images, image labels missing or repeated
-        for the edition's sides, and text outside the side labels; False for no text or no image.
+        for the edition's sides, text outside the side labels, and store photographs (placed by reads
+        only: :data:`STORE_READS_ONLY`, :data:`STORE_ONE_LEFT`); False for no text or no image.
     :rtype: bool
     """
     return bool(_SIDE_PROBLEM.fullmatch(problem))
@@ -276,17 +513,19 @@ def unassigned_record(pgpid: str, doc: Dict[str, Any], sides: Dict[str, List[str
     :type doc: Dict[str, Any]
     :param sides: ``{side: lines}`` of the edition used (:func:`sides_of`).
     :type sides: Dict[str, List[str]]
-    :param canvases: Images of the document (``bab.planned_images``: ``url``, ``label``).
+    :param canvases: Images of the document (``bab.planned_images``: ``url``, ``label``, ``source``).
     :type canvases: List[Dict[str, Any]]
     :param reason: Why the builder could not pair text and images.
     :type reason: str
     :return: ``{pgpid, shelfmark, canonical_id, library, edition_fingerprint, sections: {side: lines},
-        canvases: [{index, label, image_url}], reason}``.
+        canvases: [{index, label, image_url}], reason}``; a store photograph's label is ``""`` (its
+        file-name token is provenance only, and a matcher would read a side into ``file:1r``).
     :rtype: Dict[str, Any]
     """
     return {"pgpid": pgpid, "shelfmark": doc["shelfmark"], "canonical_id": doc["canonical_id"], "library": doc["library"],
             "edition_fingerprint": edition_fingerprint(sides), "sections": {side: list(lines) for side, lines in sides.items()},
-            "canvases": [{"index": n, "label": canvas["label"], "image_url": canvas["url"]} for n, canvas in enumerate(canvases)],
+            "canvases": [{"index": n, "label": "" if canvas.get("source") == "image_store" else canvas["label"], "image_url": canvas["url"]}
+                         for n, canvas in enumerate(canvases)],
             "reason": reason}
 
 
@@ -381,6 +620,61 @@ def apply_side_assignment(sides: Dict[str, List[str]], canvases: List[Dict[str, 
                                                                                        for side in unassigned)
 
 
+def _score(value: Any) -> Optional[float]:
+    """A read score as a number.
+
+    :param value: A value from a side assignment's ``evidence``.
+    :type value: Any
+    :return: The value as a float when it is an int or float (not a bool), else None.
+    :rtype: Optional[float]
+    """
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def store_read_problem(sides: Dict[str, List[str]], assignment: Dict[str, Any], canvas_index: int) -> str:
+    """Why the read behind an accepted store page does not show the edition's text (the store read gate).
+
+    A store photograph may show another document, and with one photograph the side matcher has no other
+    read to compare with, so its acceptance alone does not show that the photograph is the edition's
+    page. The page is kept only when the matcher's scores of the read of its photograph
+    (``evidence.canvases``, :func:`side_match.score_canvases`) show the text: recall of the assigned
+    section at least :data:`STORE_MIN_RECALL` (:data:`STORE_SHORT_MIN_RECALL` for a page text under
+    :data:`STORE_SHORT_LETTERS` Arabic letters, which is mostly formulae: other documents' reads share
+    its address or closing), precision against the edition at least :data:`STORE_MIN_PRECISION`, and
+    at least :data:`STORE_MIN_SHARED` of the section's letter 5-grams found (recall times the section's
+    5-gram count, computed from ``sides``; the assignment's fingerprint matched, so this is the text the
+    matcher scored).
+
+    :param sides: ``{side: lines}`` of the current edition (:func:`sides_of`).
+    :type sides: Dict[str, List[str]]
+    :param assignment: An accepted :func:`load_side_assignments` entry that :func:`apply_side_assignment`
+        placed.
+    :type assignment: Dict[str, Any]
+    :param canvas_index: The page's canvas index (one of the assignment's ``pages``).
+    :type canvas_index: int
+    :return: ``""`` when the read matches; :data:`STORE_UNSCORED` when the evidence has no scores for
+        the page (no single ``canvases`` entry for it, no recall for its section or no precision, or
+        scores on n-grams other than :data:`STORE_NGRAM`); :data:`STORE_WEAK_READ` otherwise.
+    :rtype: str
+    """
+    page = next(page for page in assignment["pages"] if page["canvas_index"] == canvas_index)
+    section = "" if page["assign"] == "all" else page["assign"]
+    evidence = assignment.get("evidence") if isinstance(assignment.get("evidence"), dict) else {}
+    thresholds = evidence.get("thresholds") if isinstance(evidence.get("thresholds"), dict) else {}
+    scores = [score for score in evidence.get("canvases") or [] if isinstance(score, dict) and score.get("canvas_index") == canvas_index]
+    recalls = scores[0].get("recall") if len(scores) == 1 else None
+    recall = _score(recalls.get(section)) if isinstance(recalls, dict) else None
+    precision = _score(scores[0].get("precision")) if len(scores) == 1 else None
+    if recall is None or precision is None or thresholds.get("ngram", STORE_NGRAM) != STORE_NGRAM:
+        return STORE_UNSCORED
+    letters = len(ar.arabic_letters("\n".join(sides[section])))
+    grams = max(letters - STORE_NGRAM + 1, 0)
+    least_recall = STORE_SHORT_MIN_RECALL if letters < STORE_SHORT_LETTERS else STORE_MIN_RECALL
+    if recall < least_recall or precision < STORE_MIN_PRECISION or round(recall * grams) < STORE_MIN_SHARED:
+        return STORE_WEAK_READ
+    return ""
+
+
 def seed_cache_index(images_dir: Path, manifest: Path) -> Dict[str, Path]:
     """Images an earlier build downloaded, by URL.
 
@@ -458,7 +752,7 @@ def check_outputs(paths: Iterable[Optional[Path]], protected: Optional[Iterable[
     """Refuse to write into, or over, an earlier, published build.
 
     An output may not be a protected directory, lie inside one, or contain one (``save_dataset``
-    replaces its output directory, so an ancestor of v1 would take v1 with it). Paths are compared
+    replaces its output directory, so an ancestor of v1 or v2 would take it along). Paths are compared
     after resolving, case folding and Unicode normalisation (:func:`path_key`), and paths that
     exist are also compared by file identity, so a spelling the filesystem treats as the same
     directory is refused too.
@@ -466,7 +760,8 @@ def check_outputs(paths: Iterable[Optional[Path]], protected: Optional[Iterable[
     :param paths: Output files and directories of this run (``None`` entries are ignored).
     :type paths: Iterable[Optional[Path]]
     :param protected: Directories that must never be written; default :data:`PROTECTED_OUTPUTS`
-        (the v1 set, its image cache and its images-once export), read when called.
+        (the v1 and v2 sets, each with its image cache and its images-once export; v2 is a pinned
+        input of the v2.5a mixture), read when called.
     :type protected: Optional[Iterable[Path]]
     :raises ValueError: when an output is a protected directory, inside one or an ancestor of one.
     """
@@ -484,6 +779,27 @@ def check_outputs(paths: Iterable[Optional[Path]], protected: Optional[Iterable[
                     or (exists and guarded_chain[0] in chain)        # same file: the output is it or inside it
                     or (own is not None and own in guarded_chain)):  # same file: the output is it or contains it
                 raise ValueError(f"refusing to write {path}: {directory} is a published build and must not be overwritten")
+
+
+def check_unassigned_location(path: Optional[Path], datasets: Optional[Path] = None) -> None:
+    """Refuse an ``--emit-unassigned`` file inside the NAS datasets directory.
+
+    The side matcher keeps its image and read caches next to the ``unassigned.jsonl`` it is given
+    (``side_match_images/``), so the file must not lie where pinned datasets and builds live. Paths are
+    compared as :func:`check_outputs` compares them (:func:`path_key`).
+
+    :param path: The ``--emit-unassigned`` file (None: nothing is emitted, nothing to check).
+    :type path: Optional[Path]
+    :param datasets: The datasets directory; default ``bab.NAS_DATASETS``, read when called.
+    :type datasets: Optional[Path]
+    :raises ValueError: when ``path`` is inside ``datasets``.
+    """
+    if path is None:
+        return
+    root = path_key(datasets if datasets is not None else bab.NAS_DATASETS)
+    if path_key(path)[:len(root)] == root:
+        raise ValueError(f"refusing to write {path}: the side matcher would keep its caches next to it, inside the datasets "
+                         f"directory {datasets if datasets is not None else bab.NAS_DATASETS}; emit it under logs/")
 
 
 def check_queue_export(queue_csv: Path, pgp_dir: Path) -> Dict[str, str]:
@@ -584,12 +900,57 @@ def page_row(image_path: Path, text: str, stem: str, width: int, height: int) ->
             "image_width": width, "image_height": height}
 
 
+def _cell(value: Any) -> str:
+    """A value as one Markdown table cell.
+
+    :param value: Any value (None is shown as empty).
+    :type value: Any
+    :return: Text with ``|`` escaped and line breaks folded.
+    :rtype: str
+    """
+    return "" if value is None else " ".join(str(value).split()).replace("|", "\\|")
+
+
+def store_readme(name: str, rows: int, documents: List[Dict[str, Any]]) -> str:
+    """``README.md`` of a dataset built with photographs from the project's image store.
+
+    :param name: Dataset directory name.
+    :type name: str
+    :param rows: Rows made from store photographs.
+    :type rows: int
+    :param documents: Store documents with rows: ``{pgpid, shelfmark, photographs: [{image,
+        label_check, label_read, use}]}``.
+    :type documents: List[Dict[str, Any]]
+    :return: Markdown saying the set is private and listing the store documents and label verdicts.
+    :rtype: str
+    """
+    lines = [f"# {name}", "",
+             "**PRIVATE. This dataset was built with photographs from the project's image store. Never push it (or its "
+             "images) to a hub or any other public place, and never release it.**", "",
+             f"{rows} rows from {len(documents)} documents use store photographs. Every store photograph went through the "
+             "shelf-mark label check (`--store-label-checks`): the label in the photograph was read and compared with the "
+             "document's shelf marks, and a photograph labelled as another fragment (`no`, or a `yes` naming another record) "
+             "was dropped (listed below with its reason). A store photograph was placed only where a read of it matched the "
+             "edition: an accepted side assignment whose read scores passed the store read gate (recall of the page text "
+             f"at least {STORE_MIN_RECALL}, or at least {STORE_SHORT_MIN_RECALL} for a page text under {STORE_SHORT_LETTERS} "
+             f"Arabic letters; precision at least {STORE_MIN_PRECISION}; at least {STORE_MIN_SHARED} shared "
+             f"letter {STORE_NGRAM}-grams); no side was taken from a file name or from image order.", "",
+             "## Store documents", "",
+             "| pgpid | shelf mark | photograph | label check | label read | use |", "|---|---|---|---|---|---|"]
+    for document in documents:
+        for photo in document["photographs"]:
+            lines.append("| " + " | ".join(_cell(value) for value in (document["pgpid"], document["shelfmark"], photo["image"],
+                                                                      photo["label_check"], photo["label_read"], photo["use"])) + " |")
+    return "\n".join(lines) + "\n"
+
+
 def build(out: Path, limit: Optional[int] = None, delay_s: float = 0.5, max_side: int = 4000, max_canvases: int = 8,
           val_share: float = VAL_SHARE, held_out: Optional[Tuple[Set[str], Set[str]]] = None,
           benchmark_index: Optional[bdg.BenchmarkIndex] = None, in_training: Optional[Dict[str, str]] = None,
           queue_csv: Optional[Path] = None, footnotes_csv: Optional[Path] = None, image_cache: Optional[Path] = None,
           seed_cache: Optional[Dict[str, Path]] = None, side_assignments: Optional[Dict[str, Dict[str, Any]]] = None,
-          emit_unassigned: Optional[Path] = None) -> Dict[str, Any]:
+          emit_unassigned: Optional[Path] = None, store_label_checks: Optional[Dict[str, List[Dict[str, Any]]]] = None,
+          store_label_checks_path: Optional[Path] = None) -> Dict[str, Any]:
     """Build the dataset directory.
 
     :param out: Output directory of the saved DatasetDict.
@@ -600,7 +961,8 @@ def build(out: Path, limit: Optional[int] = None, delay_s: float = 0.5, max_side
     :type delay_s: float
     :param max_side: Long-side cap of the requested images.
     :type max_side: int
-    :param max_canvases: A manifest with more images is a whole volume and is skipped.
+    :param max_canvases: A manifest with more images, or a document with more store photographs, is a
+        whole volume and is skipped.
     :type max_canvases: int
     :param val_share: Share of documents for validation.
     :type val_share: float
@@ -620,22 +982,42 @@ def build(out: Path, limit: Optional[int] = None, delay_s: float = 0.5, max_side
         are copied from it instead of downloaded.
     :type seed_cache: Optional[Dict[str, Path]]
     :param side_assignments: :func:`load_side_assignments` result, used for documents whose
-        records do not say which image holds which text.
+        records do not say which image holds which text; a store page also needs read scores that
+        pass the store read gate (:func:`store_read_problem`).
     :type side_assignments: Optional[Dict[str, Dict[str, Any]]]
     :param emit_unassigned: Where to write ``unassigned.jsonl`` (:func:`unassigned_record` of every
-        document left out for a side reason and without a usable assignment); not written when None.
+        document left out for a side reason, every store document among them, and without a usable
+        assignment); not written when None, and never inside the NAS datasets directory
+        (:func:`check_unassigned_location`).
     :type emit_unassigned: Optional[Path]
-    :return: The statistics (also written to ``stats.json``).
+    :param store_label_checks: :func:`load_store_label_checks` result. A store document with a
+        photograph that has no applicable check (:func:`check_for`) is left out (all of them when
+        None); a photograph whose label names another fragment (``no``, or a ``yes`` for another
+        record) is dropped before side assignment. A store photograph is placed only by an accepted
+        side assignment whose read of it passes the store read gate.
+    :type store_label_checks: Optional[Dict[str, List[Dict[str, Any]]]]
+    :param store_label_checks_path: The file ``store_label_checks`` was read from; ``stats.json``
+        records it and its sha256 under ``inputs`` (both null when None).
+    :type store_label_checks_path: Optional[Path]
+    :return: The statistics (also written to ``stats.json``; with store rows, ``private`` is true
+        and ``README.md`` says the set must never be pushed or released).
     :rtype: Dict[str, Any]
-    :raises ValueError: when an output would land in or over the v1 build (:func:`check_outputs`), or
-        the queue was built from another PGP export than the edition text (:func:`check_queue_export`);
-        both are checked before anything is read from the network or written.
+    :raises ValueError: when an output would land in, over or around the v1 or v2 builds or their
+        image directories (:func:`check_outputs`), ``emit_unassigned`` lies inside the NAS datasets
+        directory (:func:`check_unassigned_location`), or the queue was built from another PGP export
+        than the edition text (:func:`check_queue_export`); all are checked before anything is read
+        from the network or written.
     """
     queue_csv = queue_csv if queue_csv is not None else bab.QUEUE_CSV
     footnotes_csv = footnotes_csv if footnotes_csv is not None else bab.FOOTNOTES_CSV
     images_dir = image_cache if image_cache is not None else out.with_name(out.name + "_images")
     check_outputs([out, images_dir, emit_unassigned])
+    check_unassigned_location(emit_unassigned)
     exports = check_queue_export(queue_csv, footnotes_csv.parent)
+    label_check_inputs = {"store_label_checks": None, "store_label_checks_sha256": None}
+    if store_label_checks_path is not None:
+        label_check_inputs = {"store_label_checks": str(store_label_checks_path),
+                              "store_label_checks_sha256": hashlib.sha256(Path(store_label_checks_path).read_bytes()).hexdigest()}
     assignments = side_assignments or {}
     held_ids, held_pgpids = held_out if held_out is not None else registered_benchmark_documents()
     index = benchmark_index if benchmark_index is not None else bdg.load_benchmark_index()
@@ -652,6 +1034,9 @@ def build(out: Path, limit: Optional[int] = None, delay_s: float = 0.5, max_side
     page_skips: Counter = Counter()
     assignment_outcomes: Counter = Counter()
     image_sources: Counter = Counter()
+    store_verdicts: Counter = Counter()
+    store_unchecked = 0
+    store_checked: Dict[str, List[Dict[str, Any]]] = {}
     for pgpid, doc in docs.items():
         reason = bdg.decontam_reason(doc["canonical_id"] or doc["shelfmark"], (), bdg.DocRefs(shelfmarks={doc["shelfmark"]}), index)
         if reason:
@@ -666,17 +1051,49 @@ def build(out: Path, limit: Optional[int] = None, delay_s: float = 0.5, max_side
         if share < MIN_ARABIC_SHARE:
             skipped[pgpid] = "mixed script"
             continue
-        canvases, note = bab.planned_images(pgpid, doc, [], True, max_side, max_canvases, delay_s)
+        store = bool(doc.get("store_images"))
+        if store and len(doc["store_images"]) > max_canvases:
+            skipped[pgpid] = f"whole volume ({len(doc['store_images'])} store photographs)"
+            continue
+        canvases, note = bab.planned_images(pgpid, doc, doc.get("store_images") or [], True, max_side, max_canvases, delay_s)
+        # image_index: the image's place in the document's full list, so a cached file keeps its name when a photograph is dropped
+        canvases = [dict(canvas, image_index=n) for n, canvas in enumerate(store_canvases(canvases) if store else canvases)]
+        lost_store_photograph = False
+        if store:                                                        # the shelf-mark label check, before any side decision
+            checked, unchecked = label_checked(canvases, store_label_checks, pgpid, doc)
+            if unchecked:
+                store_unchecked += sum(check_for((store_label_checks or {}).get(canvas["url"], []), pgpid) is None for canvas in canvases)
+                skipped[pgpid] = unchecked
+                continue
+            store_verdicts.update(canvas["label_check"] for canvas in checked)
+            store_checked[pgpid] = checked
+            canvases = [canvas for canvas in checked if canvas["label_check"] not in DROP_VERDICTS]
+            dropped = [other_fragment_reason(canvas) for canvas in checked if canvas["label_check"] in DROP_VERDICTS]
+            if not canvases:
+                skipped[pgpid] = "; ".join(dict.fromkeys(dropped))
+                continue
+            page_skips.update(dropped)
+            lost_store_photograph = bool(dropped)
         pages, problem = assign_pages(sections, [c["side"] for c in canvases], doc["pgp_side"])
+        if store and (pages or len(canvases) == 1):     # a store photograph is placed only by a read of it, never by the
+            # single-image or PGP-side rule: one photograph may show either side, or another fragment; the matcher decides
+            pages, problem = {}, STORE_ONE_LEFT if lost_store_photograph and len(canvases) == 1 else STORE_READS_ONLY
         side_source = "single" if len(canvases) == 1 else "label"
         assigned_sides: Dict[int, str] = {}
         if not pages and canvases and is_side_problem(problem):          # the record does not say which image: a side matcher may
             sides = sides_of(sections)
             assignment = assignments.get(pgpid)
             outcome = ""
+            weak: List[str] = []
             if assignment is not None:
                 pages, outcome = apply_side_assignment(sides, canvases, assignment)
-                assignment_outcomes["accepted" if pages else "dropped" if outcome == DROPPED
+                if store:                                                # the store read gate: the read must show the text
+                    gate = {index: store_read_problem(sides, assignment, index) for index in pages}
+                    weak = [reason for reason in gate.values() if reason]
+                    pages = {index: lines for index, lines in pages.items() if not gate[index]}
+                    if weak and not pages:
+                        outcome = "; ".join(dict.fromkeys(weak))
+                assignment_outcomes["accepted" if pages else "store_unmatched" if weak else "dropped" if outcome == DROPPED
                                     else "stale" if outcome.startswith(STALE) else "invalid"] += 1
             if emit_unassigned is not None and not note and (assignment is None or outcome.startswith(STALE)):
                 unassigned.append(unassigned_record(pgpid, doc, sides, canvases, f"{problem} ({outcome})" if outcome else problem))
@@ -684,6 +1101,7 @@ def build(out: Path, limit: Optional[int] = None, delay_s: float = 0.5, max_side
                 if not pages:
                     skipped[pgpid] = outcome
                     continue
+                page_skips.update(weak)                                  # store pages of the assignment that failed the gate
                 side_source = f"side_match:{assignment['reader']}"
                 assigned_sides = {page["canvas_index"]: page["assign"] for page in assignment["pages"]
                                   if page["assign"] in ("recto", "verso")}
@@ -703,10 +1121,12 @@ def build(out: Path, limit: Optional[int] = None, delay_s: float = 0.5, max_side
             if not mainly_arabic_script(page_text):
                 page_skips["page not mainly Arabic script (notebook gate)"] += 1
                 continue
-            planned.append({"pgpid": pgpid, "doc": doc, "split": split, "image_index": canvas_index, "text": page_text,
-                            "lines": len(lines), "letters": letters, "url": canvases[canvas_index]["url"],
-                            "label": canvases[canvas_index]["label"],
-                            "side": assigned_sides.get(canvas_index, canvases[canvas_index]["side"]), "side_source": side_source})
+            canvas = canvases[canvas_index]
+            planned.append({"pgpid": pgpid, "doc": doc, "split": split, "image_index": canvas["image_index"], "text": page_text,
+                            "lines": len(lines), "letters": letters, "url": canvas["url"], "label": canvas["label"],
+                            "side": assigned_sides.get(canvas_index, canvas["side"]), "side_source": side_source,
+                            "image_origin": STORE_ORIGIN if store else MANIFEST_ORIGIN,
+                            "label_check": canvas.get("label_check"), "label_read": canvas.get("label_read")})
     planned, shared = resolve_shared_images(planned)
     page_skips.update(shared)
     for page in planned:
@@ -726,8 +1146,17 @@ def build(out: Path, limit: Optional[int] = None, delay_s: float = 0.5, max_side
         splits[page["split"]].append(page_row(path, page["text"], stem, width, height))
         manifest.append({"stem": stem, "pgpid": pgpid, "canonical_id": doc["canonical_id"], "shelfmark": doc["shelfmark"],
                          "tier": doc["tier"], "split": page["split"], "image_index": page["image_index"], "label": page["label"],
-                         "side": page["side"], "side_source": page["side_source"], "image_url": page["url"], "image_path": str(path),
-                         "lines": page["lines"], "arabic_letters": page["letters"]})
+                         "side": page["side"], "side_source": page["side_source"], "image_origin": page["image_origin"],
+                         "label_check": page["label_check"], "label_read": page["label_read"], "image_url": page["url"],
+                         "image_path": str(path), "lines": page["lines"], "arabic_letters": page["letters"]})
+    store_rows = [m for m in manifest if m["image_origin"] == STORE_ORIGIN]
+    used_urls = {m["image_url"] for m in manifest}
+    store_documents = [{"pgpid": pid, "shelfmark": docs[pid]["shelfmark"],
+                        "photographs": [{"image": canvas["image"], "label_check": canvas["label_check"], "label_read": canvas["label_read"],
+                                         "use": "row" if canvas["url"] in used_urls
+                                         else other_fragment_reason(canvas) if canvas["label_check"] in DROP_VERDICTS else "no row"}
+                                        for canvas in store_checked[pid]]}
+                       for pid in dict.fromkeys(m["pgpid"] for m in store_rows)]
     stats = {"candidate_documents": len(docs), "documents": len({m["pgpid"] for m in manifest}), "pages": len(manifest),
              "rows": {name: len(rows) for name, rows in splits.items()},
              "arabic_letters": sum(m["arabic_letters"] for m in manifest),
@@ -738,14 +1167,24 @@ def build(out: Path, limit: Optional[int] = None, delay_s: float = 0.5, max_side
              "side_sources": dict(Counter("side_match" if m["side_source"].startswith("side_match:") else m["side_source"]
                                           for m in manifest)),
              "side_assignments": {"loaded": len(assignments), **{key: assignment_outcomes[key]
-                                                                 for key in ("accepted", "dropped", "stale", "invalid")},
+                                                                 for key in ("accepted", "store_unmatched", "dropped", "stale", "invalid")},
                                   "unused": len(assignments) - sum(assignment_outcomes.values())},
              "unassigned_emitted": len(unassigned) if emit_unassigned is not None else None,
              "images": dict(image_sources),
-             "inputs": {"queue_csv": str(queue_csv), "footnotes_csv": str(footnotes_csv), **exports, "image_cache": str(images_dir)},
+             "store_label_checks_loaded": sum(map(len, store_label_checks.values())) if store_label_checks is not None else None,
+             "store_canvases": dict(store_verdicts), "store_canvases_unchecked": store_unchecked,
+             "store_rows": len(store_rows), "store_documents": len(store_documents), "private": bool(store_rows),
+             "store_read_gate": {"ngram": STORE_NGRAM, "min_recall": STORE_MIN_RECALL, "min_precision": STORE_MIN_PRECISION,
+                                 "min_shared_ngrams": STORE_MIN_SHARED, "short_letters": STORE_SHORT_LETTERS,
+                                 "short_min_recall": STORE_SHORT_MIN_RECALL},
+             "inputs": {"queue_csv": str(queue_csv), "footnotes_csv": str(footnotes_csv), **exports, "image_cache": str(images_dir),
+                        **label_check_inputs},
              "skipped_documents": skipped, "prompt": ARABIC_FRAGMENT_PROMPT}
-    save_dataset(splits, out, {"manifest.jsonl": "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in manifest),
-                               "stats.json": json.dumps(stats, ensure_ascii=False, indent=1)})
+    sidecars = {"manifest.jsonl": "".join(json.dumps(m, ensure_ascii=False) + "\n" for m in manifest),
+                "stats.json": json.dumps(stats, ensure_ascii=False, indent=1)}
+    if store_rows:
+        sidecars["README.md"] = store_readme(out.name, len(store_rows), store_documents)
+    save_dataset(splits, out, sidecars)
     if emit_unassigned is not None:
         emit_unassigned.parent.mkdir(parents=True, exist_ok=True)
         emit_unassigned.write_text("".join(json.dumps(record, ensure_ascii=False) + "\n" for record in unassigned), encoding="utf-8")
@@ -756,11 +1195,13 @@ def build_parser() -> argparse.ArgumentParser:
     """The command-line interface.
 
     :return: Parser; ``--pgp-dir``, ``--queue-csv`` and ``--image-cache`` default to ``None``,
-        meaning the export and queue under ``raw_data`` and ``<out>_images``.
+        meaning the export and queue under ``raw_data`` and ``<out>_images``; ``--store-label-checks``
+        defaults to ``None`` (no store photograph is used).
     :rtype: argparse.ArgumentParser
     """
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--out", type=Path, default=DEFAULT_OUT, help=f"dataset directory (default: {DEFAULT_OUT}; v1 is refused)")
+    parser.add_argument("--out", type=Path, default=DEFAULT_OUT,
+                        help=f"dataset directory (default: {DEFAULT_OUT}; v1 and v2 are refused)")
     parser.add_argument("--limit", type=int, default=None, help="only the first N candidate documents")
     parser.add_argument("--delay", type=float, default=0.5, help="seconds between requests to library servers")
     parser.add_argument("--pgp-dir", type=Path, default=None,
@@ -774,9 +1215,15 @@ def build_parser() -> argparse.ArgumentParser:
                         help="an earlier build's images directory and manifest.jsonl: images with an identical URL are copied, "
                              "not downloaded (the earlier build is only read)")
     parser.add_argument("--side-assignments", type=Path, default=None,
-                        help="side_assignments.jsonl of a side matcher, for documents whose labels do not place the text")
+                        help="side_assignments.jsonl of a side matcher, for documents whose labels do not place the text; "
+                             "a store page also needs read scores (evidence.canvases) that pass the store read gate")
     parser.add_argument("--emit-unassigned", type=Path, default=None,
-                        help="write unassigned.jsonl: documents left out for a side reason and without a usable assignment")
+                        help="write unassigned.jsonl: documents left out for a side reason and without a usable assignment "
+                             "(never inside the NAS datasets directory: the side matcher caches next to it)")
+    parser.add_argument("--store-label-checks", type=Path, default=None,
+                        help="JSONL of shelf-mark label checks of store photographs (one per photograph and document); a store "
+                             "photograph without one is never used, one labelled as another fragment (no, or yes for another "
+                             "record) is dropped")
     return parser
 
 
@@ -796,7 +1243,9 @@ def main(argv: Optional[List[str]] = None) -> None:
                   footnotes_csv=args.pgp_dir / "footnotes.csv" if args.pgp_dir is not None else None,
                   image_cache=args.image_cache, seed_cache=seed,
                   side_assignments=load_side_assignments(args.side_assignments) if args.side_assignments else None,
-                  emit_unassigned=args.emit_unassigned)
+                  emit_unassigned=args.emit_unassigned,
+                  store_label_checks=load_store_label_checks(args.store_label_checks) if args.store_label_checks else None,
+                  store_label_checks_path=args.store_label_checks)
     print(json.dumps({k: v for k, v in stats.items() if k not in ("skipped_documents", "prompt")}, ensure_ascii=False, indent=1))
 
 

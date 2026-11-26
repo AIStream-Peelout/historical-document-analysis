@@ -29,6 +29,8 @@ from src.datasets.merging.image_corrections import (
     load_image_corrections,
     load_transcription_corrections,
     new_corrections,
+    normalise_side,
+    same_correction,
     section_digest,
     short_evidence,
     split_relabels,
@@ -387,6 +389,21 @@ def test_hold_for_reviewed_never_lets_an_automatic_row_override_a_reviewed_one()
     assert [c["image"] for c in kept] == ["U_1_1r.jpg", "N_1_1r.jpg"] and agreeing == 1
     assert [(h["image"], h["review_reason"], h["reviewed_correction"]["to_canonical_id"]) for h in held] == [
         ("R_1_1r.jpg", REVIEW_HAS_REVIEWED_CORRECTION, "Testville_LIB_R_0")]
+
+
+def test_hold_for_reviewed_compares_sides_in_either_form():
+    """A photograph number (the pilot's convention) and its leaf form (what split_relabels writes) are one side."""
+    assert normalise_side("2") == "1v" and normalise_side("1") == "1r" and normalise_side(" 1V ") == "1v"
+    assert normalise_side("3") == "3" and normalise_side("v") == "v" and normalise_side(None) is None
+    reviewed = validate_correction(_correction(image="R_1_1r.jpg", url=None, from_canonical_id="Testville_LIB_R_1",
+                                               to_canonical_id="Testville_LIB_R_0", side="2", basis=BASIS_EYE,
+                                               reviewed=True, source=SOURCE_LABEL_PILOT))
+    leaf_form = _correction(image="R_1_1r.jpg", url=None, from_canonical_id="Testville_LIB_R_1",
+                            to_canonical_id="Testville_LIB_R_0", side="1v")
+    assert same_correction(leaf_form, reviewed) and not same_correction({**leaf_form, "side": "1r"}, reviewed)
+    assert not same_correction({**leaf_form, "side": "3"}, {**reviewed, "side": "2r"})
+    kept, held, agreeing = hold_for_reviewed([leaf_form, {**leaf_form, "side": "1r"}], {"R_1_1r.jpg": reviewed})
+    assert kept == [] and agreeing == 1 and [h["side"] for h in held] == ["1r"]
 
 
 def test_relabels_reject_an_unknown_outcome(tmp_path):
