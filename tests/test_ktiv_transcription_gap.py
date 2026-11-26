@@ -299,6 +299,9 @@ def test_decide_genizah_precedence() -> None:
     assert gap.decide_genizah(None, binding, "Vatican Library Ms. ebr. 49") == (False, "search_fields")
     assert gap.decide_genizah(None, binding, "Cambridge University Library Ms. T-S NS 1.1") == (True, "shelfmark")
     assert gap.decide_genizah(None, {"lds10": ["Cairo Genizah fragments"]}, None) == (True, "search_fields")
+    # An empty subject field says nothing.
+    for empty in (None, "", []):
+        assert gap.decide_genizah(None, {"subject": empty}, "Ets Haim Library Ms. 48 B 13") == (None, "undecided")
 
 
 def test_plain_shelfmark_reads_the_per_language_json() -> None:

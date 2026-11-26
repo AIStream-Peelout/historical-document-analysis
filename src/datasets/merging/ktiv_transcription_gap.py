@@ -524,7 +524,7 @@ def decide_genizah(item: Optional[dict], fields: dict, shelfmark: Optional[str])
         return True, "search_fields"
     if shelfmark and GENIZAH_SHELFMARK_RE.search(shelfmark):
         return True, "shelfmark"
-    if any(key in (fields or {}) for key in CATALOGUE_SUBJECT_FIELDS):
+    if any((fields or {}).get(key) for key in CATALOGUE_SUBJECT_FIELDS):    # a subject heading is present (not empty)
         return False, "search_fields"
     return None, "undecided"
 
