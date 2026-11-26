@@ -128,6 +128,10 @@ GENIZAH_SHELFMARK_RE = re.compile(
     r"Yevr\.?-Arab|EVR[ _-]ARAB|Antonin|Westminster College|\bAIU\b|Or\.\s*108[01]\b",
     re.IGNORECASE,
 )
+# Kept search fields that carry the catalogue's subject headings. Live Genizah records list
+# "Cairo Genizah fragments" there, so a record with these fields but no Genizah mention is
+# not Genizah material.
+CATALOGUE_SUBJECT_FIELDS: Tuple[str, ...] = ("subject", "lds10")
 
 GROUP_HEBREW = "hebrew"
 GROUP_JA = "judaeo_arabic"
@@ -173,13 +177,73 @@ def token_group(token: str, token_groups: Dict[str, str]) -> str:
     return GROUP_ARABIC if ARABIC_SCRIPT_RE.search(token or "") else GROUP_HEBREW
 
 
+def is_transcription_hit(item: dict) -> bool:
+    """Whether a listed record matched inside a transcription.
+
+    The search also matches catalogue text. Listing files written before 2026-11-05 kept those
+    catalogue-only matches too: no hit contexts, so no snippets and no hit pages. Newer files
+    keep transcription hits only and carry ``hits`` (the reply's contextCount).
+
+    :param item: One record of a listing file's ``manuscripts``.
+    :returns: True when it has snippets, hit pages or a positive hit count.
+    """
+    hits = item.get("hits")
+    return bool(item.get("snippets") or item.get("pages") or (isinstance(hits, int) and hits > 0))
+
+
+def plain_shelfmark(value: object) -> Optional[str]:
+    """The English shelf mark of a listing record.
+
+    Live replies send lds06 as a JSON string per language, e.g.
+    ``{"1033": "Cambridge University Library, Cambridge, England Ms. Add. 3207", "1037": …}``
+    (1033 = English). Plain strings are returned stripped.
+
+    :param value: The record's ``shelfmark``.
+    :returns: The English (else default, else first) name, or None when empty.
+    """
+    if not isinstance(value, str) or not value.strip():
+        return None
+    text = value.strip()
+    if not text.startswith("{"):
+        return text
+    try:
+        names = json.loads(text)
+    except json.JSONDecodeError:
+        return text
+    if not isinstance(names, dict):
+        return text
+    for key in ("1033", "Default"):
+        name = names.get(key)
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    for name in names.values():
+        if isinstance(name, str) and name.strip():
+            return name.strip()
+    return None
+
+
+def manifest_url_for(sysnum: str, doc_id: Optional[str]) -> Optional[str]:
+    """IIIF manifest URL of the image set that holds the transcription hits.
+
+    :param sysnum: System number.
+    :param doc_id: The listing's ``doc_id`` (``<sysnum>-<n>``), or None.
+    :returns: That set's manifest URL; the first set's when doc_id is missing or foreign.
+    """
+    if doc_id and re.fullmatch(rf"{re.escape(sysnum)}-\d+", doc_id):
+        return f"https://iiif.nli.org.il/IIIFv21/DOCID/PNX_MANUSCRIPTS{doc_id}/manifest"
+    return _ktiv_manifest_url({"sys_num": sysnum})
+
+
 def load_enumerations(paths: Sequence[str]) -> Tuple[Dict[str, dict], dict]:
     """Union the enumeration files by system number.
 
+    Catalogue-only matches (see :func:`is_transcription_hit`) are skipped and counted per file.
+
     :param paths: ``ktiv_fts_transcribed_*.json`` files.
     :returns: ``(by_sysnum, meta)``: one merged record per system number (``tokens``,
-        ``ja_tokens``, ``groups``, ``pages`` as sets; first non-empty ``shelfmark``, ``ie``,
-        ``team``; ``fields`` merged) and per-file metadata.
+        ``ja_tokens``, ``groups``, ``pages`` as sets; first non-empty ``shelfmark`` (English,
+        see :func:`plain_shelfmark`), ``ie``, ``doc_id``, ``team``; ``fields`` merged) and
+        per-file metadata.
     """
     by_sysnum: Dict[str, dict] = {}
     files: List[dict] = []
@@ -187,7 +251,8 @@ def load_enumerations(paths: Sequence[str]) -> Tuple[Dict[str, dict], dict]:
         with open(path, encoding="utf-8") as fh:
             data = json.load(fh)
         token_groups = data.get("token_groups") or {}
-        manuscripts = data.get("manuscripts") or []
+        listed = [item for item in data.get("manuscripts") or [] if isinstance(item, dict)]
+        manuscripts = [item for item in listed if is_transcription_hit(item)]
         files.append({
             "file": os.path.basename(path),
             "generated_at": data.get("generated_at"),
@@ -197,6 +262,7 @@ def load_enumerations(paths: Sequence[str]) -> Tuple[Dict[str, dict], dict]:
             "bulk_size": data.get("bulk_size") or 50,
             "facet_filtered": bool(data.get("multi_facet_query") or data.get("single_facet_query")),
             "manuscripts": len(manuscripts),
+            "catalogue_only_skipped": len(listed) - len(manuscripts),
             "token_stats": data.get("token_stats") or [],
         })
         for item in manuscripts:
@@ -206,10 +272,12 @@ def load_enumerations(paths: Sequence[str]) -> Tuple[Dict[str, dict], dict]:
                 continue
             sysnum = match.group(0)
             record = by_sysnum.setdefault(sysnum, {
-                "sysnum": sysnum, "shelfmark": None, "ie": None, "team": None,
+                "sysnum": sysnum, "shelfmark": None, "ie": None, "doc_id": None, "team": None,
                 "tokens": set(), "ja_tokens": set(), "groups": set(), "pages": set(), "fields": {},
             })
-            for key in ("shelfmark", "ie", "team"):
+            if not record["shelfmark"]:
+                record["shelfmark"] = plain_shelfmark(item.get("shelfmark"))
+            for key in ("ie", "doc_id", "team"):
                 if not record[key] and item.get(key):
                     record[key] = item[key]
             for token in item.get("tokens") or []:
@@ -456,6 +524,8 @@ def decide_genizah(item: Optional[dict], fields: dict, shelfmark: Optional[str])
         return True, "search_fields"
     if shelfmark and GENIZAH_SHELFMARK_RE.search(shelfmark):
         return True, "shelfmark"
+    if any(key in (fields or {}) for key in CATALOGUE_SUBJECT_FIELDS):
+        return False, "search_fields"
     return None, "undecided"
 
 
@@ -538,7 +608,7 @@ def classify(enumerated: Dict[str, dict], bundles: Dict[str, dict], items: Dict[
             "team": record["team"],
             "zip_on_disk": sysnum in zip_sysnums,
             "text_on_disk": TEXT_ON_DISK_ITEM_PAGE if item_text else TEXT_ON_DISK_NONE,
-            "ktiv_manifest_url": _ktiv_manifest_url({"sys_num": sysnum}),
+            "ktiv_manifest_url": manifest_url_for(sysnum, record.get("doc_id")),
         })
     return rows
 
@@ -748,7 +818,8 @@ def render_markdown(summary: dict) -> str:
     lines = ["# KTIV transcription gap", ""]
     for f in summary["enumeration_files"]:
         lines.append(f"* `{f['file']}`: {f['manuscripts']:,} manuscripts, {f['total_requests']} requests, "
-                     f"complete={f['complete']}, stopped_reason={f['stopped_reason']}")
+                     f"complete={f['complete']}, stopped_reason={f['stopped_reason']}, "
+                     f"catalogue-only matches skipped={f.get('catalogue_only_skipped', 0):,}")
     lines += ["", f"Transcribed manuscripts enumerated: **{total:,}**", "",
               "| status | manuscripts |", "| --- | --- |"]
     for status, n in summary["by_status"].items():
