@@ -28,6 +28,12 @@ Output conventions (the target of a script-neutral page reader):
   and their letters are counted as reconstruction.
 * A bracket without a partner never erases text: the bracket is removed (an unpaired square
   bracket marks a damaged edge and becomes a gap), the text stays, and the side is flagged.
+  Brackets pair within a line only.
+* Brackets stored mirrored (``]x[``, the glyph of a right-to-left run) are mirrored back line by
+  line before any pairing (:func:`normalise_brackets`): each line's orientation is chosen with its
+  neighbouring lines and the whole section as context.
+* Editor's running paragraph numbers (a numeral with one lone parenthesis, ``יא(``, in a run of at
+  least three consecutive values) are dropped.
 * Legacy-font mojibake finals are repaired with a per-section symbol -> letter mapping
   (:data:`FINALS_MAPPING`, keyed by :func:`section_digest`); local visual-order fragments
   (``םא`` for ``אם``) are re-ordered, and so are multi-letter uncertain wraps stored in visual
@@ -57,6 +63,7 @@ from src.datasets.cleaning.clean_genizah_transcriptions import (
 GAP = "[...]"
 _GAP = "\ue000"          # internal gap placeholder (brackets of GAP must not meet bracket rules)
 _UNRESOLVED = "\ue001"   # internal placeholder for a word-final mojibake symbol without a mapping
+_PARA = "\ue003"         # internal placeholder for a dropped paragraph number (keeps the text's length)
 HEB = "א-ת"
 FINALS = "ךםןףץ"
 NONFINAL_LETTERS = "אבגדהוזחטיכלמנסעפצקרשת"
@@ -64,6 +71,7 @@ HEBREW_LETTER_RE = re.compile(f"[{HEB}]")
 ARABIC_LETTER_RE = re.compile(r"[\u0620-\u064A\u066E-\u066F\u0671-\u06D3\u06D5\u06FA-\u06FC\u06FF]")
 LETTER_RE = re.compile(r"[\u05D0-\u05EA\u0620-\u064A\u066E-\u066F\u0671-\u06D3\u06D5\u06FA-\u06FC\u06FF]")
 HEB_RUN_RE = re.compile(f"[{HEB}]+")
+LETTER_RUN_RE = re.compile(LETTER_RE.pattern + "+")      # a word in either script
 CONTROL_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 LATIN_RE = re.compile(r"[A-Za-z\u00C0-\u024F]+")
 FAMILIES = ("ktiv_sigla", "edition_apparatus", "liturgical_markup", "documentary_plain", "empty")
@@ -571,18 +579,245 @@ def bracket_orientation(text: str, opener: str, closer: str) -> str:
     return "logical" if a < b else "flipped" if b < a else "tie"
 
 
-def normalise_brackets(text: str) -> Tuple[str, Dict[str, str]]:
-    """Mirror back every bracket type whose orientation is ``flipped``.
+def line_bracket_reduction(line: str, opener: str, closer: str) -> Tuple[int, int]:
+    """Reduce one line's brackets of one type to what it leaves unpaired.
+
+    :param line: One line of text.
+    :param opener: The character that opens under this hypothesis.
+    :param closer: The character that closes under this hypothesis.
+    :return: (closers that find no opener on the line, openers still open at the line end).
+    """
+    depth = unopened = 0
+    for ch in line:
+        if ch == opener:
+            depth += 1
+        elif ch == closer:
+            if depth:
+                depth -= 1
+            else:
+                unopened += 1
+    return unopened, depth
+
+
+# (violations, lines against the section's preference, brackets paired across a line break, orientation changes,
+#  lines mirrored), compared lexicographically
+_Cost = Tuple[int, int, int, int, int]
+_ZERO: _Cost = (0, 0, 0, 0, 0)
+
+
+def _add(a: _Cost, b: _Cost) -> _Cost:
+    """Component-wise sum of two lexicographic costs.
+
+    :param a: Cost.
+    :param b: Cost.
+    :return: Their sum.
+    """
+    return (a[0] + b[0], a[1] + b[1], a[2] + b[2], a[3] + b[3], a[4] + b[4])
+
+
+def line_orientations(lines: Sequence[str], opener: str, closer: str, prefer: str,
+                      ignore: Optional["re.Pattern[str]"] = None,
+                      prefer_in_line_pairs: bool = True) -> Tuple[List[bool], List[bool]]:
+    """Decide per line whether one bracket type is stored mirrored.
+
+    Each line holding the type is reduced under both hypotheses (logical, mirrored) by
+    :func:`line_bracket_reduction`. A violation is a closer with no opener on its line nor left
+    open at the end of the line directly before it, or an opener closed neither on its line nor at
+    the start of the line directly after it (open brackets carry across ONE line break; a line
+    without the type carries nothing). A two-state shortest path over the lines minimises, in this
+    order: violations; lines against the section's preference ``prefer`` (when it is ``logical``
+    or ``flipped``); brackets paired across a line break (``prefer_in_line_pairs``); changes of
+    orientation between neighbouring lines (adjacent lines that both hold the type); lines mirrored
+    (an undecided line stays as it is).
+
+    The third criterion settles pages torn at both edges whose lines read ``]x[ y`` or ``y ]x[``: read
+    logically, every such line closes a bracket the line before left open, which costs no more
+    violations than the mirrored reading as soon as one line of the page mixes both storages, so
+    without it whole pages stay logical. A section stored logically whose restorations cross line
+    breaks (``a [b`` / ``c] d [e`` / ``f] g``) is decided by the violations already.
+
+    A line is *undecided* when the best section reading with it logical and the best with it
+    mirrored cost the same on every criterion but the last.
+
+    :param lines: The section's lines.
+    :param opener: Logical opening character.
+    :param closer: Logical closing character.
+    :param prefer: Whole-section orientation (:func:`bracket_orientation`).
+    :param ignore: Pattern of bracket groups that are resolved the same in either orientation (blank
+        pairs ``[ ... ]`` / ``] ... [``); they are left out of the decision.
+    :param prefer_in_line_pairs: Use the third criterion (False: skip it).
+    :return: (mirrored per line, undecided per line); lines without the type are False in both.
+    """
+    if ignore is not None:
+        lines = [ignore.sub(" ", ln) for ln in lines]
+    n = len(lines)
+    mirrored, undecided = [False] * n, [False] * n
+    idx = [i for i, ln in enumerate(lines) if opener in ln or closer in ln]
+    if not idx:
+        return mirrored, undecided
+    red = [(line_bracket_reduction(lines[i], opener, closer), line_bracket_reduction(lines[i], closer, opener))
+           for i in idx]
+
+    def node(k: int, s: int) -> _Cost:
+        """Cost of line ``idx[k]`` read in state ``s`` (0 logical, 1 mirrored), alone.
+
+        :param k: Position in ``idx``.
+        :param s: State.
+        :return: Cost.
+        """
+        a, b = red[k][s]
+        against = int((prefer == "logical" and s == 1) or (prefer == "flipped" and s == 0))
+        return (a + b, against, 0, 0, s)
+
+    def edge(k: int, s_prev: int, s: int) -> _Cost:
+        """Cost between line ``idx[k-1]`` in ``s_prev`` and line ``idx[k]`` in ``s``.
+
+        :param k: Position in ``idx`` of the second line (>= 1).
+        :param s_prev: State of the first line.
+        :param s: State of the second line.
+        :return: Cost (negative violations: each bracket carried across the break pairs two).
+        """
+        if idx[k] != idx[k - 1] + 1:     # a line without the type stands between: nothing carries
+            return _ZERO
+        carried = min(red[k - 1][s_prev][1], red[k][s][0])
+        return (-2 * carried, 0, carried if prefer_in_line_pairs else 0, int(s_prev != s), 0)
+
+    m = len(idx)
+    fwd: List[List[_Cost]] = [[node(0, 0), node(0, 1)]]
+    back: List[List[int]] = [[0, 0]]
+    for k in range(1, m):
+        row, ptr = [], []
+        for s in (0, 1):
+            options = [_add(fwd[k - 1][p], edge(k, p, s)) for p in (0, 1)]
+            p = 0 if options[0] <= options[1] else 1
+            row.append(_add(options[p], node(k, s)))
+            ptr.append(p)
+        fwd.append(row)
+        back.append(ptr)
+    bwd: List[List[_Cost]] = [[_ZERO, _ZERO] for _ in range(m)]
+    for k in range(m - 2, -1, -1):
+        for s in (0, 1):
+            bwd[k][s] = min(_add(_add(edge(k + 1, s, q), node(k + 1, q)), bwd[k + 1][q]) for q in (0, 1))
+    s = 0 if fwd[-1][0] <= fwd[-1][1] else 1
+    for k in range(m - 1, -1, -1):
+        mirrored[idx[k]] = bool(s)
+        best = [_add(fwd[k][q], bwd[k][q]) for q in (0, 1)]
+        undecided[idx[k]] = best[0][:4] == best[1][:4]
+        s = back[k][s]
+    return mirrored, undecided
+
+
+# Bracket groups that are a lacuna in either orientation (:data:`BLANK_BRACKETS_RE`) say nothing about a line's orientation.
+ORIENTATION_IGNORE: Dict[str, "re.Pattern[str]"] = {"[]": BLANK_BRACKETS_RE}
+
+
+def normalise_brackets(text: str) -> Tuple[str, Dict[str, str], Dict[str, Dict[str, int]]]:
+    """Mirror back, line by line, the brackets stored mirrored (``]x[`` for ``[x]``).
+
+    PDF exports often store brackets as the glyph drawn in a right-to-left run, and a section can
+    mix both storages. For each bracket type of :data:`BRACKET_PAIRS` separately, the orientation
+    of every line is chosen by :func:`line_orientations`, with the whole-section count of
+    :func:`bracket_orientation` as the first tie-break; the lines found mirrored are mirrored back
+    (character-aligned: the text keeps its length). Blank pairs (:data:`ORIENTATION_IGNORE`) take
+    no part in the decision. Brackets are never paired across lines here.
 
     :param text: Section text.
-    :return: (text, orientation per bracket type).
+    :return: (text, whole-section orientation per bracket type, per type ``{"lines_mirrored": n,
+        "lines_with_type": n, "undecided": n}`` where ``undecided`` counts lines holding at least two
+        brackets of the type that the search left undecided in a section without a preference).
     """
-    orient = {}
+    orient: Dict[str, str] = {}
+    stats: Dict[str, Dict[str, int]] = {}
+    lines = text.split("\n")
     for name, (o, c) in BRACKET_PAIRS.items():
         orient[name] = bracket_orientation(text, o, c)
-        if orient[name] == "flipped":
-            text = text.translate(str.maketrans({o: c, c: o}))
-    return text, orient
+        mirrored, undecided = line_orientations(lines, o, c, orient[name], ORIENTATION_IGNORE.get(name))
+        swap = str.maketrans({o: c, c: o})
+        lines = [ln.translate(swap) if mir else ln for ln, mir in zip(lines, mirrored)]
+        no_preference = orient[name] in ("tie", "none")
+        masked = [ORIENTATION_IGNORE[name].sub(" ", ln) for ln in lines] if name in ORIENTATION_IGNORE else lines
+        stats[name] = {
+            "lines_mirrored": sum(mirrored),
+            "lines_with_type": sum(1 for ln in masked if o in ln or c in ln),
+            "undecided": sum(1 for ln, u in zip(masked, undecided)
+                             if u and no_preference and ln.count(o) + ln.count(c) >= 2)}
+    return "\n".join(lines), orient, stats
+
+
+def _numeral_value(token: str) -> Optional[int]:
+    """Value of a Hebrew numeral of one or two letters (1-99), or None when it is not one.
+
+    :param token: One or two non-final Hebrew letters.
+    :return: Value; two letters must be tens + units (``יא``) or ``טו`` / ``טז``.
+    """
+    if any(ch not in NONFINAL_LETTERS for ch in token):
+        return None
+    if len(token) == 1:
+        return _GEMATRIA[token]
+    if token in ("טו", "טז"):
+        return _GEMATRIA[token[0]] + _GEMATRIA[token[1]]
+    tens, units = _GEMATRIA[token[0]], _GEMATRIA[token[1]]
+    if token in ("יה", "יו") or not (10 <= tens <= 90 and 1 <= units <= 9):
+        return None
+    return tens + units
+
+
+def _unpartnered_parens(line: str) -> List[int]:
+    """Positions of the parentheses on a line that have no partner on it.
+
+    :param line: One line (orientation already normalised).
+    :return: Sorted positions.
+    """
+    stack: List[int] = []
+    lone: List[int] = []
+    for i, ch in enumerate(line):
+        if ch == "(":
+            stack.append(i)
+        elif ch == ")":
+            if stack:
+                stack.pop()
+            else:
+                lone.append(i)
+    return sorted(lone + stack)
+
+
+PARA_NUMBER_BEFORE_RE = re.compile(rf"(?<![^\s])[\"״]?([{HEB}]{{1,2}})[ \t]*[()](?=[\s.:,]|$)")
+PARA_NUMBER_AFTER_RE = re.compile(rf"(?<![^\s])[()][ \t]*([{HEB}]{{1,2}})(?=[\s.:,]|$)")
+
+
+def find_paragraph_numbers(text: str, min_run: int = 3) -> List[Tuple[int, int]]:
+    """Spans of the editor's running paragraph numbers written ``numeral(`` in the running text.
+
+    A candidate is a Hebrew numeral of one or two letters standing alone, followed or preceded
+    (spaces allowed between) by one parenthesis without a partner on its line. Candidates are taken
+    in order of appearance; when at least ``min_run`` of them carry consecutive values n, n+1,
+    n+2, ... (other candidates may stand between), every member of that run is a paragraph number.
+
+    :param text: Section text (bracket orientation normalised, parentheses still present).
+    :param min_run: Shortest run of consecutive values trusted.
+    :return: (start, end) character spans of the numbers with their parenthesis, in order.
+    """
+    cands: List[Tuple[int, int, int]] = []
+    offset = 0
+    for line in text.split("\n"):
+        lone = set(_unpartnered_parens(line))
+        found: Dict[int, Tuple[int, int, int]] = {}   # keyed by the parenthesis: one number per parenthesis
+        for rx in (PARA_NUMBER_BEFORE_RE, PARA_NUMBER_AFTER_RE):
+            for m in rx.finditer(line):
+                paren = m.end() - 1 if rx is PARA_NUMBER_BEFORE_RE else m.start()
+                value = _numeral_value(m.group(1))
+                if paren in lone and value is not None and paren not in found:
+                    found[paren] = (offset + m.start(), offset + m.end(), value)
+        cands.extend(sorted(found.values()))
+        offset += len(line) + 1
+    chains: Dict[int, List[int]] = {}
+    keep: set = set()
+    for i, (_, _, value) in enumerate(cands):
+        chain = chains.get(value - 1, []) + [i]
+        chains[value] = chain
+        if len(chain) >= min_run:
+            keep.update(chain)
+    return [cands[i][:2] for i in sorted(keep)]
 
 
 # ───────────────────────────── structure ─────────────────────────────
@@ -982,12 +1217,15 @@ def _is_header(prefix: str, max_words: int = 15) -> bool:
     A long prefix is never a header, even with Latin in it: it is kept (its Latin is dropped by
     the mark rules) rather than risking a side of ink.
 
+    Words are counted in both scripts: counted in Hebrew letters only, a whole Arabic-script side standing before
+    the first heading had no words and was dropped as a header (found 2026-11-19).
+
     :param prefix: The text.
-    :param max_words: Most Hebrew words a catalogue header may hold.
-    :return: True for Latin catalogue lines of at most ``max_words`` Hebrew words, numbered labels
-        and one- or two-word labels.
+    :param max_words: Most words a catalogue header may hold.
+    :return: True for Latin catalogue lines of at most ``max_words`` words, numbered labels and one- or two-word
+        labels.
     """
-    words = HEB_RUN_RE.findall(prefix)
+    words = LETTER_RUN_RE.findall(prefix)
     latin = sum(len(x) for x in LATIN_RE.findall(prefix))
     return (len(words) <= 2 or (latin >= 3 and len(words) <= max_words)
             or (bool(DIGITS_RE.search(prefix)) and len(words) <= 3))
@@ -997,8 +1235,8 @@ def clean_section(text: str, finals_mapping: Optional[Mapping[str, str]] = None,
                   lexicon: Optional[Collection[str]] = None) -> List[CleanedSection]:
     """Clean one raw legacy-store section into one record per side.
 
-    Order: Unicode clean-up; whole-section reversal; bracket orientation (per bracket type, on the
-    whole section); side split (headings found in the text as it was before bracket mirroring, which
+    Order: Unicode clean-up; whole-section reversal; bracket orientation (per bracket type and line,
+    :func:`normalise_brackets`); editor's paragraph numbers (:func:`find_paragraph_numbers`); side split (headings found in the text as it was before bracket mirroring, which
     is character-aligned with the mirrored text); then per side: finals repair (``finals_mapping``),
     unresolved finals noted, control characters removed, visual-order fragments re-ordered,
     multi-letter uncertain wraps re-ordered (``ktiv_sigla`` only, :func:`repair_uncertain_wraps`),
@@ -1023,14 +1261,34 @@ def clean_section(text: str, finals_mapping: Optional[Mapping[str, str]] = None,
     # Side headings are found before mirroring: in a flipped section the ")" that closes an edition
     # header's ע"ב would otherwise turn into "(" and hide the heading.
     heading_text = t
-    t, orient = normalise_brackets(t)
+    t, orient, line_stats = normalise_brackets(t)
     weiss = family != "ktiv_sigla" and bool(EMPTY_PARENS_RE.search(t))
     section_flags: Dict[str, int] = {}
-    if orient["[]"] == "tie":
+    if line_stats["[]"]["undecided"]:
         section_flags["bracket_orientation_tie"] = 1
+    # lines whose orientation differs from the whole-section decision (mirrored alone / left alone)
+    against = {"mirrored": 0, "unmirrored": 0}
+    for name, st in line_stats.items():
+        if orient[name] == "flipped":
+            against["unmirrored"] += st["lines_with_type"] - st["lines_mirrored"]
+        else:
+            against["mirrored"] += st["lines_mirrored"]
+    for kind, n in against.items():
+        if n:
+            section_flags[f"bracket_lines_{kind}"] = n
     if {"flipped", "logical"} <= set(orient.values()):
         section_flags["bracket_orientation_mixed"] = 1
+    # editor's running paragraph numbers ("יא(") -> same-length placeholder, recorded per side below
+    para_spans = find_paragraph_numbers(t)
+    para_dropped = [t[a:b] for a, b in para_spans]
+    for a, b in para_spans:
+        t = t[:a] + _PARA + " " * (b - a - 1) + t[b:]
     segs = _side_segments(t, heading_text)
+    seg_para: Dict[int, List[str]] = {}
+    for seg in segs:
+        n = seg.marker.count(_PARA) + seg.text.count(_PARA)
+        seg_para[id(seg)], para_dropped = para_dropped[:n], para_dropped[n:]
+        seg.marker, seg.text = seg.marker.replace(_PARA, " "), seg.text.replace(_PARA, " ")
     header_drop: List[Tuple[str, str]] = []
     if segs[0].side is None and len(segs) > 1:
         prefix = segs[0].text
@@ -1038,6 +1296,7 @@ def clean_section(text: str, finals_mapping: Optional[Mapping[str, str]] = None,
             segs = segs[1:]
         elif _is_header(prefix):
             header_drop.append(("header", repair_finals(prefix, finals_mapping)[0].strip()))
+            header_drop.extend(("paragraph_number", span) for span in seg_para[id(segs[0])])
             segs = segs[1:]
         elif segs[1].side and segs[1].side.endswith("v"):
             segs[0].side = segs[1].side[:-1] + "r"
@@ -1051,6 +1310,9 @@ def clean_section(text: str, finals_mapping: Optional[Mapping[str, str]] = None,
             acc.flags["header_cut"] += 1
             header_drop = []
         acc.drop("side_marker", seg.marker)
+        for span in seg_para[id(seg)]:
+            acc.drop("paragraph_number", span)
+            acc.flags["paragraph_numbers"] += 1
         body, n_fin = repair_finals(seg.text, finals_mapping)
         if mojibake:
             body = re.sub(rf"(?<=[{HEB}])[\x00-\x08\x0b-\x1f](?![{HEB}])", _UNRESOLVED, body)

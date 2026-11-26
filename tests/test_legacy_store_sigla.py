@@ -422,6 +422,115 @@ def test_edition_side_heading_survives_mirrored_parentheses() -> None:
     assert ("expansion", "טוב") in s.dropped_spans
 
 
+# --------------------------------------------------------------------------- per-line bracket orientation
+
+
+def test_mirrored_torn_line_ends_in_a_tie_section_become_gaps() -> None:
+    """Regression (edition lines of T-S Ar.47.88, torn line ends): each line's mirrored pair is resolved.
+
+    The whole-section count is a tie (an ordinary pair on the last line), which used to leave every
+    line logical: the restored words stayed as ink between two edge gaps.
+    """
+    raw = "\n".join([
+        "ועלי אן כל ואחד מן אהל ]דלך אלדרב עלי חאלה פי מלכה   [",
+        "לעקארה לא ישארכה ]פיה גירה ממן לא חק לה פיה   [",
+        "העברים ועל ידי אשתו אבל אינו ]מזכה לא   [",
+        "שלום [טוב] בית",
+    ])
+    assert L.bracket_orientation(raw, "[", "]") == "tie"
+    s = one(raw)
+    assert s.text.splitlines() == [f"ועלי אן כל ואחד מן אהל {GAP}", f"לעקארה לא ישארכה {GAP}",
+                                   f"העברים ועל ידי אשתו אבל אינו {GAP}", f"שלום {GAP} בית"]
+    assert s.flags["bracket_lines_mirrored"] == 3
+    assert "bracket_orientation_tie" not in s.flags and "edge_bracket" not in s.flags
+
+
+def test_logical_restorations_across_line_breaks_keep_the_ink_between() -> None:
+    """A logical line inside two line-crossing restorations ('x] ink [y') is not a mirrored pair around the ink.
+
+    Read alone, 'ספר] מים חיים [עץ' looks mirrored; the open bracket the line before leaves open (and the
+    close bracket of the line after) is what keeps it logical, so 'מים חיים' stays.
+    """
+    raw = "שלום טוב [בית\nספר] מים חיים [עץ\nגדול] ארץ"
+    _, orient, stats = L.normalise_brackets(raw)
+    assert stats["[]"]["lines_mirrored"] == 0
+    s = one(raw)
+    assert s.text.splitlines() == [f"שלום טוב {GAP}בית", f"ספר{GAP} מים חיים {GAP}עץ", f"גדול{GAP} ארץ"]
+    assert s.recon_letters == 0
+
+
+def test_mixed_section_resolves_each_line() -> None:
+    """Logical and mirrored pairs on different lines: each line gets its own orientation."""
+    raw = "שלום [טוב] בית\nספר ]מים[ עץ\nאור [חושך] יום"
+    s = one(raw)
+    assert s.text.splitlines() == [f"שלום {GAP} בית", f"ספר {GAP} עץ", f"אור {GAP} יום"]
+    assert s.recon_letters == 10
+    assert s.flags["bracket_lines_mirrored"] == 1
+
+
+def test_section_mirrored_throughout_behaves_as_before() -> None:
+    """Every line mirrored: the whole-section decision already mirrors them; no line goes against it."""
+    raw = "שלום ]טו[ בית\nספר ]מים[ עץ"
+    assert L.normalise_brackets(raw)[1]["[]"] == "flipped"
+    s = one(raw)
+    assert s.text.splitlines() == [f"שלום {GAP} בית", f"ספר {GAP} עץ"]
+    assert s.recon_letters == 5
+    assert not any(k.startswith("bracket_lines_") for k in s.flags)
+
+
+def test_undecidable_section_sets_the_tie_flag_and_changes_nothing() -> None:
+    """']x[ ... [y]' on one line reads equally badly both ways: it stays logical and is flagged."""
+    raw = "שלום ]טוב[ בית [ספר] מים"
+    text, orient, stats = L.normalise_brackets(raw)
+    assert text == raw and orient["[]"] == "tie" and stats["[]"]["undecided"] == 1
+    s = one(raw)
+    assert s.text == f"שלום {GAP}טוב{GAP} בית {GAP} מים"
+    assert s.flags["bracket_orientation_tie"] == 1
+    assert "bracket_lines_mirrored" not in s.flags
+
+
+def test_mirrored_parentheses_in_weiss_section_become_gaps() -> None:
+    """In a Weiss-format section a mirrored ')x(' line is a restoration, like '(x)'."""
+    raw = "שלום ( ) בית\nספר )טוב( מים"
+    assert L.normalise_brackets(raw)[1]["()"] == "tie"
+    s = one(raw)
+    assert s.text.splitlines() == [f"שלום {GAP} בית", f"ספר {GAP} מים"]
+    assert ("restoration", "טוב") in s.dropped_spans
+    assert s.flags["weiss_parens"] == 1
+
+
+# --------------------------------------------------------------------------- editor's paragraph numbers
+
+
+def test_three_consecutive_paragraph_numbers_are_dropped() -> None:
+    """'א( ... ב( ... ג(' (numeral + lone parenthesis, consecutive values) is the editor's numbering."""
+    s = one("שלום א( בית ב( ספר ג( מים")
+    assert s.text == "שלום בית ספר מים"
+    assert [d for d in s.dropped_spans if d[0] == "paragraph_number"] == [
+        ("paragraph_number", "א("), ("paragraph_number", "ב("), ("paragraph_number", "ג(")]
+
+
+@pytest.mark.parametrize("raw,expected", [
+    ("שלום א( בית ב( ספר", "שלום א בית ב ספר"),                    # two values only
+    ("שלום א( בית ג( ספר ה( מים", "שלום א בית ג ספר ה מים"),        # not consecutive
+])
+def test_short_or_broken_paragraph_number_runs_are_kept(raw: str, expected: str) -> None:
+    """Fewer than three consecutive values: the letters stay and the lone parentheses go, as before.
+
+    :param raw: Synthetic raw section.
+    :param expected: Cleaned text.
+    """
+    s = one(raw)
+    assert s.text == expected
+    assert not any(k == "paragraph_number" for k, _ in s.dropped_spans)
+
+
+def test_paragraph_numbers_need_a_lone_parenthesis() -> None:
+    """A numeral next to a parenthesis that has a partner on its line is not a paragraph number."""
+    spans = L.find_paragraph_numbers("שלום יא( בית יב( ספר )יג מים\nטוב יד( עץ")
+    assert spans == []
+
+
 # --------------------------------------------------------------------------- finals
 
 
@@ -591,3 +700,14 @@ def test_round_trip_never_invents_or_silently_loses_letters(seed: int) -> None:
             assert not _FORBIDDEN_RE.search(residue), (family, raw, s.text)
             assert s.letters == len(L.letters_of(s.text))
             assert s.gaps == s.text.count(GAP)
+
+
+def test_arabic_side_before_the_first_heading_is_not_a_header() -> None:
+    """An Arabic-script side standing before the first side heading is text, not a catalogue header."""
+    recto = "\n".join(["ثبت", "الدور التي في يد الوكيل لفقراء الجماعة", "من جملتها ما ذكره الكاتب في الدفتر",
+                       "دار في السوق الكبير قام بها عليه"])
+    verso = "\n".join(["النصف من دار في الحارة الجديدة قام بها عليه", "دار صغيرة في الحارة قام بها عليه"])
+    sides = L.clean_section(recto + "\n1v\n" + verso)
+    assert [s.side for s in sides] == ["1r", "1v"]
+    assert sides[0].text.splitlines() == recto.splitlines() and sides[1].text.splitlines() == verso.splitlines()
+    assert not any(s.flags.get("header_cut") for s in sides)
