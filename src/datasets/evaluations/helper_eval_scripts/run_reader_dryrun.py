@@ -21,9 +21,8 @@ Outputs (``--out-dir``, default ``<benchmark>/outputs_reader_dryrun``): ``<model
 ``documents.csv``. The run is resumable: an image with a stored read is skipped, a failed request is
 retried on the next run.
 
-Shared machine: one LM Studio consumer at a time. The run yields while any other loaded model is busy
-(``lms ps``), waits while local free disk is under ``--min-free-gb`` and stops when LM Studio no longer
-serves the model.
+Shared machine: the run never pauses for other LM Studio work (user 2026-11-08: run in parallel). It waits
+only while local free disk is under ``--min-free-gb`` and stops when LM Studio no longer serves the model.
 
 Usage::
 
@@ -91,8 +90,7 @@ def raw_rows(rows: Mapping[Tuple[str, int], Mapping[str, Any]]) -> Dict[Tuple[st
 async def run(panel: Sequence[Mapping[str, Any]], model: str, out_dir: Path, benchmark: Path,
               settings: pr.ReaderSettings = pr.DEFAULT_SETTINGS, limit: Optional[int] = None, min_free_gb: float = 10.0,
               reader: Optional[Callable[..., Awaitable[Dict[str, Any]]]] = None, served_check: Optional[Callable[[str], bool]] = None,
-              free_check: Optional[Callable[[], float]] = None, status_check: Optional[Callable[[], List[Dict[str, Any]]]] = None,
-              wait_s: float = 30.0) -> Dict[str, int]:
+              free_check: Optional[Callable[[], float]] = None, wait_s: float = 30.0) -> Dict[str, int]:
     """Read every panel image that has no stored read yet.
 
     :param panel: Panel rows.
@@ -112,21 +110,19 @@ async def run(panel: Sequence[Mapping[str, Any]], model: str, out_dir: Path, ben
     :param reader: ``(model, image_path, settings) -> read`` (default :func:`page_reader.read_page`; injectable for tests).
     :param served_check: ``model -> bool`` (default: LM Studio lists the model).
     :param free_check: ``() -> GiB free`` (default: the local data volume).
-    :param status_check: ``() -> loaded models`` (default ``run_prompt_ablation.lms_models``).
-    :param wait_s: Seconds between checks while waiting.
+    :param wait_s: Seconds between disk checks while waiting.
     :type wait_s: float
-    :return: ``answered``, ``failed``, ``skipped`` (already stored), ``stopped`` (1 when the model vanished), ``yield_s``,
+    :return: ``answered``, ``failed``, ``skipped`` (already stored), ``stopped`` (1 when the model vanished),
         ``blank`` (gated), ``looped``, ``retried``.
     :rtype: Dict[str, int]
     """
     reader = reader or pr.read_page
     served_check = served_check or model_served
     free_check = free_check or free_gb
-    status_check = status_check or rpa.lms_models
     out_path = rpa.output_path(out_dir, model, PROMPT_TAG, settings.max_tokens)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     jobs, skipped = rpa.pending_jobs(panel, out_path, limit)
-    stats = {"answered": 0, "failed": 0, "skipped": skipped, "stopped": 0, "yield_s": 0, "blank": 0, "looped": 0, "retried": 0}
+    stats = {"answered": 0, "failed": 0, "skipped": skipped, "stopped": 0, "blank": 0, "looped": 0, "retried": 0}
     print(f"{model} / {PROMPT_TAG} / max_tokens {settings.max_tokens}: {len(jobs)} images to read, {skipped} already stored", flush=True)
     started = time.time()
     with open(out_path, "a", encoding="utf-8") as fh:
@@ -134,12 +130,6 @@ async def run(panel: Sequence[Mapping[str, Any]], model: str, out_dir: Path, ben
             while free_check() < min_free_gb:
                 print(f"  disk floor: {free_check():.1f} GiB free < {min_free_gb} GiB; waiting", flush=True)
                 await asyncio.sleep(wait_s)
-            busy = rpa.busy_others(status_check(), model)
-            while busy:
-                print(f"  yielding: other model(s) busy {busy}; waiting {wait_s:.0f}s", flush=True)
-                stats["yield_s"] += int(wait_s)
-                await asyncio.sleep(wait_s)
-                busy = rpa.busy_others(status_check(), model)
             read = await reader(model, str(benchmark / "images" / row["image_file"]), settings)
             if read["reason"] == pr.REASON_FAILED and not served_check(model):
                 print(f"  {model} is no longer served by LM Studio; stopping after {n - 1} images (resumable)", flush=True)

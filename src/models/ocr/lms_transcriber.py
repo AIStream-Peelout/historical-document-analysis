@@ -246,15 +246,20 @@ def completion_meta(data: Dict[str, Any]) -> Dict[str, Any]:
     :return: ``text`` (stripped content, None when empty), ``finish_reason`` (``"stop"`` when the model
         emitted its end token, ``"length"`` when the ``max_tokens`` budget cut the generation, else what
         the server says, None when absent) and the server's ``usage`` counts ``prompt_tokens``,
-        ``completion_tokens`` and ``total_tokens`` (None when absent).
+        ``completion_tokens`` and ``total_tokens`` (None when absent); plus ``token_logprobs`` (one
+        log-probability per generated token) only when the response carries ``logprobs.content``.
     :rtype: Dict[str, Any]
     """
     choice = data["choices"][0]
     content = (choice.get("message") or {}).get("content", "")
     usage = data.get("usage") or {}
-    return {"text": content.strip() if content else None, "finish_reason": choice.get("finish_reason"),
+    meta = {"text": content.strip() if content else None, "finish_reason": choice.get("finish_reason"),
             "prompt_tokens": usage.get("prompt_tokens"), "completion_tokens": usage.get("completion_tokens"),
             "total_tokens": usage.get("total_tokens")}
+    tokens = (choice.get("logprobs") or {}).get("content")
+    if tokens:      # only when the request asked for ``logprobs`` (the page reader's orientation probe)
+        meta["token_logprobs"] = [t.get("logprob") for t in tokens]
+    return meta
 
 
 async def transcribe_with_lm_studio_meta(

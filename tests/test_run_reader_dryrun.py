@@ -43,7 +43,10 @@ def _read(text: Optional[str], finish: Optional[str] = "stop", **over: Any) -> D
     read = {"text": text, "raw_text": None, "reason": None, "blank": False, "looped": False, "cut_at": None, "letters_removed": 0,
             "repeat_share": 0.0, "finish_reason": finish, "prompt_tokens": 6500, "completion_tokens": 200, "total_tokens": 6700,
             "attempts": 1, "retried": False, "prompt": "script_neutral", "max_tokens": 1200, "temperature": 0.1, "model": MODEL,
-            "ink": {"mask_ok": True, "ink_permille": 90.0, "class": "text"}, "secs": 25.0}
+            "ink": {"mask_ok": True, "ink_permille": 90.0, "class": "text"}, "secs": 25.0,
+            # the decode-option fields at their defaults (options off)
+            "first_finish_reason": finish, "markers": 0, "unit_repeat_share": None, "stripped_chars": 0, "stripped": None,
+            "rotation": 0, "orientation": None, "crop": None, "options": ""}
     read.update(over)
     assert set(read) == set(pr.READ_FIELDS)
     return read
@@ -85,7 +88,7 @@ def _rows(path: Path) -> List[Dict[str, Any]]:
 def _run(tmp_path: Path, reader: FakeReader, served: bool = True, **kwargs: Any) -> Dict[str, int]:
     """Run the dry run with fakes."""
     return asyncio.run(rrd.run(PANEL, MODEL, tmp_path / "out", tmp_path, reader=reader, served_check=lambda m: served,
-                               free_check=lambda: 99.0, status_check=lambda: [], wait_s=0.0, **kwargs))
+                               free_check=lambda: 99.0, wait_s=0.0, **kwargs))
 
 
 # --- rows ---------------------------------------------------------------------------------------------------------------
@@ -117,7 +120,7 @@ def test_run_reads_every_image_once_writes_rows_counts_decisions_and_resumes(tmp
     reader = FakeReader({"a__0.jpg": LOOPED_READ, "b__0.jpg": BLANK_READ})
     settings = pr.ReaderSettings(max_tokens=1200)
     stats = _run(tmp_path, reader, settings=settings)
-    assert stats == {"answered": 4, "failed": 0, "skipped": 0, "stopped": 0, "yield_s": 0, "blank": 1, "looped": 1, "retried": 1}
+    assert stats == {"answered": 4, "failed": 0, "skipped": 0, "stopped": 0, "blank": 1, "looped": 1, "retried": 1}
     assert [Path(c[1]) for c in reader.calls] == [tmp_path / "images" / p["image_file"] for p in PANEL]
     assert all(c[0] == MODEL and c[2] is settings for c in reader.calls)
     out = rpa.output_path(tmp_path / "out", MODEL, "reader", 1200)
@@ -140,20 +143,6 @@ def test_run_retries_failed_reads_next_time_and_stops_when_the_model_vanishes(tm
     assert (again["answered"], again["skipped"]) == (1, 3)                 # only the failed image is read again
     stopped = _run(tmp_path / "second", FakeReader({"a__1.jpg": FAILED_READ}), served=False)
     assert stopped["stopped"] == 1 and stopped["answered"] == 1 and len(_rows(rpa.output_path(tmp_path / "second" / "out", MODEL, "reader", 1200))) == 1
-
-
-def test_run_yields_while_another_model_is_busy(tmp_path: Path) -> None:
-    states = iter([[{"identifier": "qwen/prod", "status": "generating"}], [{"identifier": "qwen/prod", "status": "idle"}]])
-    seen: List[Any] = []
-
-    def status() -> List[Dict[str, Any]]:
-        state = next(states, [])
-        seen.append(state)
-        return state
-
-    stats = asyncio.run(rrd.run(PANEL[:1], MODEL, tmp_path / "out", tmp_path, reader=FakeReader({}), served_check=lambda m: True,
-                                free_check=lambda: 99.0, status_check=status, wait_s=0.0))
-    assert stats["answered"] == 1 and stats["yield_s"] == 0 and len(seen) == 2
 
 
 # --- decisions --------------------------------------------------------------------------------------------------------------
@@ -226,7 +215,7 @@ def test_score_writes_the_report_next_to_the_ablation_arms(tmp_path: Path) -> No
     reads = {"a__0.jpg": LOOPED_READ, "a__1.jpg": _read(HEBREW), "b__0.jpg": BLANK_READ, "c__0.jpg": _read(VERSO)}
     out = bench / "dry"
     asyncio.run(rrd.run(PANEL, MODEL, out, bench, reader=FakeReader(reads), served_check=lambda m: True, free_check=lambda: 99.0,
-                        status_check=lambda: [], wait_s=0.0))
+                        wait_s=0.0))
     report, summary = rrd.score(panel, bench, out, MODEL, 1200)
     tags = [f"{MODEL}__trained__mt2500", f"{MODEL}__noscript__mt1200", f"{MODEL}__reader__mt1200", f"{MODEL}__reader-raw__mt1200"]
     assert list(summary["arms"]) == tags                                   # the missing trained / 1200 arm is left out, in order
