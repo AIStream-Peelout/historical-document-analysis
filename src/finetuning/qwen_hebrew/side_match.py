@@ -27,10 +27,13 @@ Reads: :data:`READER_PROMPT` (all Arabic-script text on the page, line by line, 
 like the ``arabic`` prompt of ``run_arabic_benchmark``) on each canvas, downscaled to
 :data:`MAX_SIDE` pixels on the long side. Every read is appended to a resumable JSONL cache keyed by
 ``(image_url, model, prompt hash)``; a re-run only reads what is missing (changing ``--effort``
-does not invalidate cached reads). Transient API errors are retried with exponential backoff; a
-document whose reads or image downloads failed stays pending (not written) and is picked up by the
-next run. ``--max-usd`` is a hard cap: no call starts unless spent + the worst case of every call in
-flight and of this one (largest image, :data:`MAX_TOKENS` of output) stays within it. Besides, no new
+does not invalidate cached reads). The caches default to ``<dir>/side_match_images/`` (downloads and
+reader copies) and ``<dir>/side_match_images/reads.jsonl``, where ``<dir>`` is the directory of
+``--unassigned`` (with ``--calibrate``: of the calibration report), so a run never writes into a
+pinned dataset; ``--image-cache`` / ``--reads-cache`` override them. Transient API errors are
+retried with exponential backoff; a document whose reads or image downloads failed stays pending
+(not written) and is picked up by the next run. ``--max-usd`` is a hard cap: no call starts unless
+spent + the worst case of every call in flight and of this one (largest image, :data:`MAX_TOKENS` of output) stays within it. Besides, no new
 document starts once spent + reserved + its estimate (mean cost of the reads so far, or a prior
 before the first read) would pass the budget.
 
@@ -48,7 +51,11 @@ Rules (on :func:`arabic_script.arabic_letters` of the read and of each edition s
 * edition with recto / verso sections: the assignment of sections to distinct canvases with the
   largest summed recall wins if it beats the second-best by :data:`MIN_MARGIN`, each section reaches
   :data:`MIN_RECALL` and no canvas outside the assignment reads edition text (precision above
-  :data:`OTHER_PRECISION_FLOOR`); else drop. A canvas whose label names a side may only take that side.
+  :data:`OTHER_PRECISION_FLOOR`); else drop. A canvas whose label names a side may only take that side;
+* one canvas (e.g. a single photograph): an edition without side labels follows the unlabelled rule (no
+  other canvas, so the ratio and the veto are void: recall and the loop guard decide); an edition of one
+  labelled side gets that side iff its recall reaches :data:`MIN_RECALL` and the read is not looping (no
+  competing assignment, so no margin); an edition of two sides is dropped (fewer canvases than sides).
 
 ``--calibrate`` runs the same rules on the frozen Arabic-script benchmark, on documents whose
 images carry CUDL ``1r`` / ``1v`` labels and whose edition is labelled by side: the image labels
@@ -56,10 +63,11 @@ are hidden (and, for an edition of one side, the edition label too, which tests 
 rule) and the decision is compared with the labels. ``--calibrate-reads`` scores reads already on
 disk (a benchmark outputs JSONL of ``{doc_id, image_index, text}``) instead of calling the API.
 
-Usage::
+Usage (caches default to ``side_match_images/`` next to ``--unassigned``, or next to the ``--calibrate`` report)::
 
     .venv/bin/python -m src.finetuning.qwen_hebrew.side_match --unassigned PATH --dry-run
     .venv/bin/python -m src.finetuning.qwen_hebrew.side_match --unassigned PATH [--out PATH] [--max-usd 20]
+        [--image-cache DIR] [--reads-cache FILE]
     .venv/bin/python -m src.finetuning.qwen_hebrew.side_match --calibrate [--limit 20] [--calibrate-reads FILE]
 """
 import argparse
@@ -93,8 +101,8 @@ NAS_MOUNT = Path("/Volumes/home")
 ROUND_DIR = REPO / "logs" / "next_round" / "arabic_v24a"
 DEFAULT_OUT = ROUND_DIR / "side_match" / "side_assignments.jsonl"          # next to the builder's unassigned.jsonl (README)
 DEFAULT_CALIBRATION_OUT = ROUND_DIR / "side_match" / "side_match_calibration.json"
-DEFAULT_IMAGE_CACHE = bab.NAS_DATASETS / "pgp_arabic_editions_v2_images" / "side_match"
-DEFAULT_READS_CACHE = DEFAULT_IMAGE_CACHE / "reads.jsonl"
+CACHE_DIRNAME = "side_match_images"      # default image cache: next to --unassigned (or the calibration report)
+READS_CACHE_NAME = "reads.jsonl"          # default read cache: inside the image cache
 CALIBRATION_LIMIT = 20
 
 # ---- reader -------------------------------------------------------------------------------------------------
@@ -372,7 +380,10 @@ def decide_labelled(scores: List[Dict[str, Any]], sides: Sequence[str],
 
     Besides the margin and the recall floor, a canvas left out of the best assignment must not read edition
     text (precision above :data:`OTHER_PRECISION_FLOOR`): a side spread over two images would otherwise be put
-    whole on the larger part, giving a page whose text is partly not in its image.
+    whole on the larger part, giving a page whose text is partly not in its image. With a single possible
+    assignment (one canvas, or canvas labels that leave one) there is no second-best, so no margin test: the
+    recall floor decides. A document of one canvas has no other read to compare with, so the read must also
+    not be looping (``repeat_share`` below :data:`MAX_REPEAT_SHARE`), as in the unlabelled rule.
 
     :param scores: :func:`score_canvases` result.
     :type scores: List[Dict[str, Any]]
@@ -395,11 +406,13 @@ def decide_labelled(scores: List[Dict[str, Any]], sides: Sequence[str],
     second_total = options[1][0] if len(options) > 1 else 0.0
     evidence = {"assignment": {side: scores[c]["canvas_index"] for c, side in zip(best, sides)}, "best_total": best_total,
                 "second_total": second_total, "margin": best_total - second_total}
-    if best_total - second_total < MIN_MARGIN:
+    if len(options) > 1 and best_total - second_total < MIN_MARGIN:
         return [], "ambiguous: the best and second-best side assignments are within the margin", evidence
     weak = [side for c, side in zip(best, sides) if scores[c]["recall"][side] < MIN_RECALL]
     if weak:
         return [], f"{' and '.join(weak)} text not found on its canvas", evidence
+    if len(scores) == 1 and scores[0]["repeat_share"] >= MAX_REPEAT_SHARE:
+        return [], "the read of the only canvas is looping", evidence
     spill = [score["canvas_index"] for c, score in enumerate(scores) if c not in best and score["precision"] > OTHER_PRECISION_FLOOR]
     if spill:
         evidence["other_canvases_with_edition_text"] = spill
@@ -1173,6 +1186,18 @@ def review_path(out: Path) -> Path:
     return out.with_name(out.stem + "_review.csv")
 
 
+def default_caches(anchor: Path) -> Tuple[Path, Path]:
+    """Default read cache and image cache of a run, next to its input (never inside a pinned dataset).
+
+    :param anchor: The run's ``unassigned.jsonl`` (with ``--calibrate``: the calibration report).
+    :type anchor: Path
+    :return: ``(<dir>/side_match_images/reads.jsonl, <dir>/side_match_images)`` with ``<dir>`` the anchor's directory.
+    :rtype: Tuple[Path, Path]
+    """
+    image_cache = anchor.parent / CACHE_DIRNAME
+    return image_cache / READS_CACHE_NAME, image_cache
+
+
 def _image_paths(record: Dict[str, Any], fetcher: ImageFetcher) -> Dict[int, str]:
     """Local image of each canvas (the reader copy when it exists, else ``local_path``).
 
@@ -1190,7 +1215,7 @@ def _image_paths(record: Dict[str, Any], fetcher: ImageFetcher) -> Dict[int, str
     return paths
 
 
-def run_side_match(unassigned: Path, out: Path, reads_cache: Path = DEFAULT_READS_CACHE, image_cache: Path = DEFAULT_IMAGE_CACHE,
+def run_side_match(unassigned: Path, out: Path, reads_cache: Optional[Path] = None, image_cache: Optional[Path] = None,
                    model: str = DEFAULT_MODEL, effort: str = DEFAULT_EFFORT, concurrency: int = DEFAULT_CONCURRENCY,
                    max_usd: float = DEFAULT_MAX_USD, limit: Optional[int] = None, dry_run: bool = False, max_side: int = MAX_SIDE,
                    review_csv: Optional[Path] = None, read: Optional[Reader] = None, download: Download = bab.save_image,
@@ -1203,10 +1228,11 @@ def run_side_match(unassigned: Path, out: Path, reads_cache: Path = DEFAULT_READ
     :param out: ``side_assignments.jsonl`` to write, merged with what it already holds (:func:`merge_assignments`):
         this run's decisions replace or add rows by ``pgpid``; pending and unsupported documents get no new row.
     :type out: Path
-    :param reads_cache: Read cache file.
-    :type reads_cache: Path
-    :param image_cache: Image cache directory.
-    :type image_cache: Path
+    :param reads_cache: Read cache file (None: ``side_match_images/reads.jsonl`` next to ``unassigned``,
+        :func:`default_caches`).
+    :type reads_cache: Optional[Path]
+    :param image_cache: Image cache directory (None: ``side_match_images/`` next to ``unassigned``).
+    :type image_cache: Optional[Path]
     :param model: Model id (also the ``reader`` of the assignments).
     :type model: str
     :param effort: Effort level.
@@ -1236,6 +1262,8 @@ def run_side_match(unassigned: Path, out: Path, reads_cache: Path = DEFAULT_READ
     :return: Run summary.
     :rtype: Dict[str, Any]
     """
+    default_reads, default_images = default_caches(unassigned)
+    reads_cache, image_cache = reads_cache or default_reads, image_cache or default_images
     records = load_unassigned(unassigned, limit)
     prices = prices_for(model)
     cache = ReadCache(reads_cache)
@@ -1272,7 +1300,8 @@ def run_side_match(unassigned: Path, out: Path, reads_cache: Path = DEFAULT_READ
             "reads": dict(stats), "tokens": dict(budget.tokens), "spent_usd": round(budget.spent, 4), "max_usd": max_usd,
             "worst_case_usd_per_call": round(budget.worst_read(), 4),
             "budget_stopped": budget.stopped, "halted": bool(stats["halted"]), "minutes": round((time.time() - started) / 60, 1), "out": str(out),
-            "review_csv": str(review_csv or review_path(out)), "pending_pgpids": pending[:50]}
+            "review_csv": str(review_csv or review_path(out)), "reads_cache": str(reads_cache), "image_cache": str(image_cache),
+            "pending_pgpids": pending[:50]}
 
 
 # =============================================================================================================
@@ -1362,7 +1391,7 @@ def score_case(case: Dict[str, Any], row: Dict[str, Any]) -> str:
 
 
 def run_calibration(benchmark: Path, out: Path, limit: int = CALIBRATION_LIMIT, calibrate_reads: Optional[Path] = None,
-                    reads_cache: Path = DEFAULT_READS_CACHE, image_cache: Path = DEFAULT_IMAGE_CACHE, model: str = DEFAULT_MODEL,
+                    reads_cache: Optional[Path] = None, image_cache: Optional[Path] = None, model: str = DEFAULT_MODEL,
                     effort: str = DEFAULT_EFFORT, concurrency: int = DEFAULT_CONCURRENCY, max_usd: float = DEFAULT_MAX_USD,
                     dry_run: bool = False, max_side: int = MAX_SIDE, review_csv: Optional[Path] = None,
                     read: Optional[Reader] = None, log: Callable[[str], None] = _log,
@@ -1377,10 +1406,12 @@ def run_calibration(benchmark: Path, out: Path, limit: int = CALIBRATION_LIMIT, 
     :type limit: int
     :param calibrate_reads: Score these reads (benchmark outputs JSONL) instead of reading with the API.
     :type calibrate_reads: Optional[Path]
-    :param reads_cache: Read cache file (API reads).
-    :type reads_cache: Path
-    :param image_cache: Directory for the reader copies of the benchmark images.
-    :type image_cache: Path
+    :param reads_cache: Read cache file (API reads; None: ``side_match_images/reads.jsonl`` next to ``out``,
+        :func:`default_caches`).
+    :type reads_cache: Optional[Path]
+    :param image_cache: Directory for the reader copies of the benchmark images (None: ``side_match_images/``
+        next to ``out``).
+    :type image_cache: Optional[Path]
     :param model: Model id.
     :type model: str
     :param effort: Effort level.
@@ -1404,6 +1435,8 @@ def run_calibration(benchmark: Path, out: Path, limit: int = CALIBRATION_LIMIT, 
     :return: The report (also written to ``out``).
     :rtype: Dict[str, Any]
     """
+    default_reads, default_images = default_caches(out)
+    reads_cache, image_cache = reads_cache or default_reads, image_cache or default_images
     cases = calibration_cases(benchmark, limit)
     documents = list({case["doc_id"]: case["record"] for case in cases if case["mode"] == "labelled"}.values())
     fetcher = ImageFetcher(image_cache, max_side)
@@ -1502,8 +1535,12 @@ def main(argv: Optional[List[str]] = None) -> None:
     parser.add_argument("--out", type=Path, default=None,
                         help=f"side_assignments.jsonl, merged with the rows it already holds (default {DEFAULT_OUT}); "
                              f"with --calibrate the report (default {DEFAULT_CALIBRATION_OUT})")
-    parser.add_argument("--reads-cache", type=Path, default=DEFAULT_READS_CACHE)
-    parser.add_argument("--image-cache", type=Path, default=DEFAULT_IMAGE_CACHE)
+    parser.add_argument("--reads-cache", type=Path, default=None,
+                        help=f"read cache JSONL (default <dir of --unassigned>/{CACHE_DIRNAME}/{READS_CACHE_NAME}; "
+                             f"with --calibrate next to the report)")
+    parser.add_argument("--image-cache", type=Path, default=None,
+                        help=f"downloads and reader copies (default <dir of --unassigned>/{CACHE_DIRNAME}/; "
+                             f"with --calibrate next to the report)")
     parser.add_argument("--model", default=DEFAULT_MODEL)
     parser.add_argument("--effort", choices=EFFORTS, default=DEFAULT_EFFORT)
     parser.add_argument("--concurrency", type=int, default=DEFAULT_CONCURRENCY)

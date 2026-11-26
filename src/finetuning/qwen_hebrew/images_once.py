@@ -13,6 +13,9 @@ every other column per split with an ``image_sha1`` pointer::
     <out_dir>/images/<sha1>.jpg       original JPEG bytes, verbatim (or a re-encode, below)
     <out_dir>/rows/<split>.parquet    all non-image columns + image_sha1
     <out_dir>/manifest.json           counts, bytes, dedupe ratio, features
+    <out_dir>/stats.json, README.md, PRIVATE.md
+                                      copied verbatim from the source when it has them (a
+                                      dataset's PRIVATE notice travels with its export)
 
 :class:`ImagesOnceDataset` reads one split back as a map-style dataset whose
 items equal the original rows: same keys in the same order, the image
@@ -67,6 +70,7 @@ META_KEY = b"images_once"
 JPEG_MAGIC = b"\xff\xd8\xff"
 JPEG_QUALITY = 95
 REENCODE_WORKERS = 4
+SIDECAR_FILES = ("stats.json", "README.md", "PRIVATE.md")   # copied from a saved dataset into its export
 
 
 def image_sha1(data: bytes) -> str:
@@ -254,6 +258,26 @@ def rows_table(batch: pa.RecordBatch, shas: List[str]) -> pa.Table:
     return table.take(pa.array(range(table.num_rows))).replace_schema_metadata(None)
 
 
+def copy_sidecars(dataset_dir: Path, out_dir: Path, names: Sequence[str] = SIDECAR_FILES) -> List[str]:
+    """Copy a saved dataset's stats and notices (``stats.json``, ``README.md``, ``PRIVATE.md``) into its export.
+
+    :param dataset_dir: ``save_to_disk`` directory.
+    :type dataset_dir: Path
+    :param out_dir: Export directory (exists).
+    :type out_dir: Path
+    :param names: File names to copy when the source has them.
+    :type names: Sequence[str]
+    :return: The names copied, in ``names`` order.
+    :rtype: List[str]
+    """
+    copied = []
+    for name in names:
+        if (dataset_dir / name).is_file():
+            shutil.copy2(dataset_dir / name, out_dir / name)
+            copied.append(name)
+    return copied
+
+
 def export_images_once(dataset_dir: Path, out_dir: Path, reencode_jpeg: bool = False,
                        workers: int = REENCODE_WORKERS) -> Dict:
     """Convert a saved DatasetDict with embedded images into the images-once layout.
@@ -322,8 +346,7 @@ def export_images_once(dataset_dir: Path, out_dir: Path, reencode_jpeg: bool = F
     manifest["image_bytes"] = sum(seen.values())
     manifest["row_image_bytes"] = sum(s["row_image_bytes"] for s in manifest["splits"].values())
     manifest["dedupe_ratio"] = round(manifest["row_image_bytes"] / max(1, manifest["image_bytes"]), 3)
-    if (dataset_dir / "stats.json").exists():
-        shutil.copy2(dataset_dir / "stats.json", out_dir / "stats.json")
+    manifest["copied_files"] = copy_sidecars(dataset_dir, out_dir)
     with open(out_dir / "manifest.json", "w") as fh:
         json.dump(manifest, fh, indent=2, ensure_ascii=False)
     return manifest

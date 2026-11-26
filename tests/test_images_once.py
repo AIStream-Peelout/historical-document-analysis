@@ -122,6 +122,31 @@ def test_export_is_resumable(saved, tmp_path):
     assert len(stamps) == 4
 
 
+def test_export_copies_stats_and_notices(saved: Tuple[Path, Dict[str, List[Path]]], tmp_path: Path) -> None:
+    """The source's stats.json, README.md and PRIVATE.md travel with the export verbatim; absent ones are skipped.
+
+    :param saved: :func:`saved` fixture.
+    :type saved: Tuple[Path, Dict[str, List[Path]]]
+    :param tmp_path: Pytest temporary directory.
+    :type tmp_path: Path
+    """
+    ds_dir, _ = saved
+    plain = images_once.export_images_once(ds_dir, tmp_path / "plain")
+    assert plain["copied_files"] == [] and sorted(p.name for p in (tmp_path / "plain").iterdir()) == [
+        "images", "manifest.json", "rows"]
+    (ds_dir / "stats.json").write_text('{"rows": 8}', encoding="utf-8")
+    (ds_dir / "README.md").write_text("# PRIVATE dataset\n\nInternal training only; never publish.\n", encoding="utf-8")
+    out = tmp_path / "once"
+    manifest = images_once.export_images_once(ds_dir, out)
+    assert manifest["copied_files"] == ["stats.json", "README.md"] and not (out / "PRIVATE.md").exists()
+    (ds_dir / "PRIVATE.md").write_text("PRIVATE: internal training only.\n", encoding="utf-8")
+    again = images_once.export_images_once(ds_dir, out)
+    assert again["copied_files"] == list(images_once.SIDECAR_FILES)
+    for name in images_once.SIDECAR_FILES:
+        assert (out / name).read_bytes() == (ds_dir / name).read_bytes()
+    assert json.loads((out / "manifest.json").read_text())["copied_files"] == list(images_once.SIDECAR_FILES)
+
+
 def test_task_filter_gives_one_family(saved, tmp_path):
     ds_dir, _ = saved
     out = tmp_path / "once"

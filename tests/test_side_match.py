@@ -297,6 +297,61 @@ def test_labelled_one_side_spread_over_two_images_drops() -> None:
     assert unrelated["decision"] == "accept" and unrelated["pages"][0]["assign"] == "recto"      # other text does not veto
 
 
+def looping_read(lines: List[str]) -> str:
+    """A read that collapsed into a decoder loop after its first line.
+
+    :param lines: Edition lines.
+    :type lines: List[str]
+    :return: The first line, then the second repeated 30 times.
+    :rtype: str
+    """
+    return lines[0] + "\n" + (lines[1] + " ") * 30
+
+
+def test_one_canvas_one_labelled_side() -> None:
+    """One photograph and an edition of one labelled side: that side iff the read recalls it and is not looping.
+
+    There is no competing assignment, so no margin: a read without the edition's text (a photograph of another
+    text, read as NONE) is "not found", never "ambiguous"; the builder places the accepted row on its one image.
+    """
+    from src.finetuning.qwen_hebrew import build_pgp_arabic_editions as bpe
+
+    verso = fake_lines(4)
+    record = make_record({"verso": verso}, [""], fingerprint=bpe.edition_fingerprint({"verso": verso}))
+    row = sm.decide_record(record, [text(verso[:5])], MODEL)
+    assert row["decision"] == "accept" and row["evidence"]["rule"] == "labelled" and row["evidence"]["reason"] == ""
+    assert row["pages"] == [{"canvas_index": 0, "image_url": "https://example.org/1001/0.jpg", "assign": "verso"}]
+    assert bpe.apply_side_assignment({"verso": verso}, [{"url": "https://example.org/1001/0.jpg", "side": ""}], row) == ({0: verso}, "")
+    other_text = sm.decide_record(record, ["NONE"], MODEL)
+    assert other_text["decision"] == "drop" and other_text["evidence"]["reason"] == "verso text not found on its canvas"
+    weak = sm.decide_record(record, [verso[0][:12]], MODEL)
+    assert weak["decision"] == "drop" and weak["evidence"]["canvases"][0]["recall"]["verso"] < sm.MIN_RECALL
+    loop = looping_read(verso)
+    assert sm.score_canvases({"verso": verso}, [0], [loop])[0]["recall"]["verso"] >= sm.MIN_RECALL
+    looping = sm.decide_record(record, [loop], MODEL)
+    assert looping["decision"] == "drop" and looping["evidence"]["reason"] == "the read of the only canvas is looping"
+    named_other_side = sm.decide_record(make_record({"verso": verso}, ["1r"]), [text(verso)], MODEL)
+    assert named_other_side["decision"] == "drop" and named_other_side["pages"] == []
+    two_sides = sm.decide_record(make_record({"recto": fake_lines(3), "verso": verso}, [""]), [text(verso)], MODEL)
+    assert two_sides["decision"] == "drop" and two_sides["evidence"]["reason"] == "fewer usable canvases than edition sides"
+
+
+def test_one_canvas_unlabelled_edition() -> None:
+    """One photograph and an edition without side labels: ``all`` iff the read recalls it and is not looping."""
+    from src.finetuning.qwen_hebrew import build_pgp_arabic_editions as bpe
+
+    lines = fake_lines(1)
+    record = make_record({"": lines}, [""], fingerprint=bpe.edition_fingerprint({"": lines}))
+    row = sm.decide_record(record, [text(lines[:6])], MODEL)
+    assert row["decision"] == "accept" and row["evidence"]["rule"] == "unlabelled"
+    assert row["pages"] == [{"canvas_index": 0, "image_url": "https://example.org/1001/0.jpg", "assign": "all"}]
+    assert row["evidence"]["best_other_recall"] == 0.0
+    assert bpe.apply_side_assignment({"": lines}, [{"url": "https://example.org/1001/0.jpg", "side": ""}], row) == ({0: lines}, "")
+    for read, reason in (("NONE", "no canvas recalls"), (looping_read(lines), "looping")):
+        dropped = sm.decide_record(record, [read], MODEL)
+        assert dropped["decision"] == "drop" and reason in dropped["evidence"]["reason"]
+
+
 # ---- files, budget, cache ---------------------------------------------------------------------------------------
 
 def four_documents() -> List[Dict[str, Any]]:
@@ -593,6 +648,70 @@ def test_default_out_is_next_to_unassigned() -> None:
     assert sm.DEFAULT_CALIBRATION_OUT.parent == sm.DEFAULT_OUT.parent
 
 
+def test_cache_defaults_derive_from_the_unassigned_path(tmp_path: Path) -> None:
+    """Without cache paths the reads and images go to side_match_images/ next to unassigned.jsonl (never a dataset).
+
+    One-canvas documents (a labelled side and an unlabelled edition) run end to end on the derived caches.
+
+    :param tmp_path: Pytest temporary directory.
+    :type tmp_path: Path
+    """
+    round_dir = tmp_path / "round" / "side_match"
+    round_dir.mkdir(parents=True)
+    unassigned = round_dir / "unassigned_after.jsonl"
+    derived = round_dir / "side_match_images"
+    assert sm.default_caches(unassigned) == (derived / "reads.jsonl", derived)
+    verso, lines = fake_lines(4), fake_lines(1)
+    records = [make_record({"verso": verso}, [""], pgpid="1"), make_record({"": lines}, [""], pgpid="2")]
+    write_unassigned(unassigned, records)
+    reads = {records[0]["canvases"][0]["image_url"]: text(verso), records[1]["canvases"][0]["image_url"]: text(lines)}
+    reader = FakeReader(reads)
+    summary = sm.run_side_match(unassigned, round_dir / "side_assignments.jsonl", read=reader, download=fake_download, delay_s=0.0,
+                                log=lambda message: None, sleep=no_sleep)
+    assert summary["reads_cache"] == str(derived / "reads.jsonl") and summary["image_cache"] == str(derived)
+    assert len(read_jsonl(derived / "reads.jsonl")) == 2 and all(path.parent == derived for path in reader.calls)
+    assert summary["accepted"] == 2 and summary["assign"] == {"verso": 1, "all": 1}
+    elsewhere = tmp_path / "elsewhere"
+    explicit = sm.run_side_match(unassigned, round_dir / "side_assignments.jsonl", reads_cache=elsewhere / "r.jsonl",
+                                 image_cache=elsewhere / "img", read=FakeReader(reads), download=fake_download, delay_s=0.0,
+                                 log=lambda message: None, sleep=no_sleep)
+    assert explicit["reads_cache"] == str(elsewhere / "r.jsonl") and len(read_jsonl(elsewhere / "r.jsonl")) == 2
+    assert (elsewhere / "img").is_dir() and len(read_jsonl(derived / "reads.jsonl")) == 2       # the default cache untouched
+
+
+def test_cli_passes_cache_flags_through_and_defaults_to_none(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The CLI has no fixed cache path: absent flags reach the run as None (derived there), given ones unchanged.
+
+    :param tmp_path: Pytest temporary directory.
+    :type tmp_path: Path
+    :param monkeypatch: Pytest monkeypatch.
+    :type monkeypatch: pytest.MonkeyPatch
+    """
+    calls: List[tuple] = []
+
+    def capture(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+        """Record the positional arguments of a run.
+
+        :param args: Positional arguments.
+        :type args: Any
+        :param kwargs: Keyword arguments.
+        :type kwargs: Any
+        :return: An empty summary.
+        :rtype: Dict[str, Any]
+        """
+        calls.append(args)
+        return {}
+
+    monkeypatch.setattr(sm, "run_side_match", capture)
+    monkeypatch.setattr(sm, "run_calibration", capture)
+    unassigned = str(tmp_path / "unassigned.jsonl")
+    sm.main(["--unassigned", unassigned])
+    sm.main(["--unassigned", unassigned, "--reads-cache", str(tmp_path / "r.jsonl"), "--image-cache", str(tmp_path / "img")])
+    sm.main(["--calibrate", "--out", str(tmp_path / "calibration.json")])
+    assert calls[0][2:4] == (None, None) and calls[1][2:4] == (tmp_path / "r.jsonl", tmp_path / "img")
+    assert calls[2][4:6] == (None, None)                                 # run_calibration(benchmark, out, limit, reads, reads_cache, image_cache)
+
+
 def test_authentication_error_halts_the_run(tmp_path: Path) -> None:
     """A rejected key fails the first document and starts no other: every further call would fail the same way."""
     request = httpx.Request("POST", "https://api.anthropic.com/v1/messages")
@@ -771,3 +890,20 @@ def test_calibration_through_the_reader_scores_a_wrong_pick(bench: Dict[str, Any
     dry = sm.run_calibration(bench["dir"], tmp_path / "dry.json", reads_cache=tmp_path / "reads.jsonl", image_cache=tmp_path / "img",
                              read=refusing_reader, dry_run=True)
     assert dry["images_to_read"] == 0 and dry["images_cached"] == 4
+
+
+def test_calibration_caches_default_next_to_the_report(bench: Dict[str, Any], tmp_path: Path) -> None:
+    """--calibrate without cache paths keeps its reads and images in side_match_images/ next to the report.
+
+    :param bench: :func:`bench` fixture.
+    :type bench: Dict[str, Any]
+    :param tmp_path: Pytest temporary directory.
+    :type tmp_path: Path
+    """
+    texts = {f"https://example.org/{doc_id}/{index}.jpg": value for (doc_id, index), value in bench["texts"].items()}
+    report_dir = tmp_path / "calibration"
+    report = sm.run_calibration(bench["dir"], report_dir / "calibration.json", read=FakeReader(texts), log=lambda m: None,
+                                sleep=no_sleep)
+    assert report["reads"]["reads"] == 4 and report["summary"]["labelled"]["correct"] == 2
+    assert len(read_jsonl(report_dir / "side_match_images" / "reads.jsonl")) == 4
+    assert list((bench["dir"] / "images").glob("*_2000.jpg")) == []      # reader copies never go into the benchmark
